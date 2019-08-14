@@ -48,7 +48,7 @@ dataset_test = datasets.MNIST(root='MNIST', train=False, transform=transformatio
 import torch.utils.data as data
 dataloader_train = data.DataLoader(dataset_train, batch_size=32, shuffle=True, num_workers=2)
 # we do the same thing for test 
-dataloader_test = data.DataLoader(dataset_test, batch_size=32,shuffle=False,num_workers=2)
+dataloader_test = data.DataLoader(dataset_test, batch_size=32, shuffle=False,num_workers=2)
 print(f'test dataloader size: {len(dataloader_test)}')
 # there is a note here. whenever you get wierd errors concerning dataloader/dataset, the first thing 
 # you do first is  to set num_workers = 0. usually when you have a probelm in your dataset (specially
@@ -102,8 +102,8 @@ def visualize_img(img):
             color='white' if img[i,j]<threshold else 'black')
 
 visualize_img(imgs[0])
-#%%
 
+#%%
 # OK now that we have done  this lets  see how we train a model ! 
 # before that we need a model 
 # we can create one or use an existing one, 
@@ -913,31 +913,31 @@ class sequential_net9(nn.Module):
 # to see how the look 
 simple_net1 = simple_net()
 simple_net2 = simple_net2()
-sequential_net1 = sequential_net1()
-sequential_net2 = sequential_net2()
-sequential_net3 = sequential_net3()
-sequential_net4 = sequential_net4()
-sequential_net5 = sequential_net5()
-sequential_net6 = sequential_net6()
-sequential_net7 = sequential_net7()
-sequential_net8 = sequential_net8()
-sequential_net9 = sequential_net9()
+sequentialnet1 = sequential_net1()
+# sequentialnet2 = sequential_net2()
+sequentialnet3 = sequential_net3()
+sequentialnet4 = sequential_net4()
+sequentialnet5 = sequential_net5()
+sequentialnet6 = sequential_net6()
+sequentialnet7 = sequential_net7()
+sequentialnet8 = sequential_net8()
+sequentialnet9 = sequential_net9()
 
 print(simple_net1)
 print(simple_net2)
 
-print(sequential_net1)
-print(sequential_net2)
+print(sequentialnet1)
+# print(sequentialnet2)
 
-print(sequential_net3)
-print(sequential_net4)
+print(sequentialnet3)
+print(sequentialnet4)
 
-print(sequential_net5)
-print(sequential_net6)
+print(sequentialnet5)
+print(sequentialnet6)
 
-print(sequential_net7)
-print(sequential_net8)
-print(sequential_net9)
+print(sequentialnet7)
+print(sequentialnet8)
+print(sequentialnet9)
 
 
 #%% 
@@ -954,13 +954,553 @@ print(simple_net1._modules)
 # get the conv1 number of input channels: 
 print(f"conv1 input channels : {simple_net1._modules['conv1'].in_channels}")
 #%%
+# now that we learnt how to create a neural network, lets see how we can create a new layer 
+# or module in Pytorch! 
+# As always there are many ways to do this but here I'll try to demonstrate something simple 
+# and easy to follow . 
+# lets create a flatten layer for Pytorch that we can use in our nn.Sequential
+# so that we can flatten a convolution layers output so that we can use it in a
+# fully connected layer (nn.Linear). 
+# As you have seen , before we can add a fc layer after a conv layer
+# the output needs to be flattened and there is no layer for flattening in Pytorch as 
+# I'm writting this. (Pytorch 1.0)
+# up until now, we have been using something like : 
+# output = output.view(x.size(0), -1)
+# in our forward() method to flatten an output .and we couldnt do this in a nn.sequential!
+# lets create a new module(layer in Pytorch)! 
+# for creating a new module/layer, we inherit from nn.Module. 
+# the rest is self explanatory. lets see how it is done 
+class Flatten(nn.Module): 
+    # our flatten layer doesnt need any argument, as it only 
+    # flattens the input!
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, x): 
+        # uncomment to see the changes if you like
+        print(f'before flattening: {x.shape}')
+        x = x.view(x.size(0), -1)
+        print(f'after flattening: {x.shape}')
+        return x 
+# thats all ! 
+# our flatten layer doesnt need any arguements, nor does it need any layer
+# all that this layer does is to reshape the input featuremap, into flat
+# representation. lets use this in action ! 
+# lets create a simple network for classification that accepts input of size 32x32x3 
+# and has 3 classes! 
+class MyNet(nn.Module): 
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Sequential(nn.Conv2d(3, 6, 3, 1, 1), 
+                                   nn.ReLU(), 
+                                   nn.MaxPool2d(2, 2), # 16x16
+                                   nn.Conv2d(6, 12, 3, 1, 1),
+                                   nn.ReLU(),
+                                   nn.MaxPool2d(2, 2), # 8x8 
+                                   nn.Conv2d(12, 24, 3, 1, 1),
+                                   nn.ReLU(),
+                                   nn.MaxPool2d(2, 2), # 4x4
+                                   nn.Conv2d(24, 32, 3, 1, 1),
+                                   nn.ReLU(), 
+                                   nn.MaxPool2d(2, 2), # 2x2
+                                   Flatten(), 
+                                   nn.Linear(128, 3)   # 32 * 2 * 2 = 128 
+                                   )
+    def forward(self, x):
+        return self.model(x)
 
+# now lets test the output 
+fake_input = torch.rand(2, 3, 32, 32)
+mynet = MyNet()
+logits = mynet(fake_input)
+print(logits)
 
+# before that let us try to create a ResNet architecture. 
+# Resnet as you know is one of the mostly used architectures out there, and the 
+# main building of this network is something called a resblock which is just a block 
+# # with residual connection! let us create this network. 
+# first we create the resblock. 
+# a resblock is simply one( or more conv layers) that gets applied on an input
+# and at the end, the input is summed with the output of the conv layer(s)
+# basically, we are trying to do (h(x) = x + f(x) where x is the input to resblock
+# f(x) is the function learned using the conv layers inside resblock and h(x) is the
+# function learnt at the end. 
+# 
+import torch 
+import torch.nn as nn 
+import torch.nn.functional as F 
+class ResBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.conv1 = nn.Sequential(nn.Conv2d(in_dim,
+                                             out_dim,
+                                             kernel_size, 
+                                             stride=stride,
+                                             padding=padding),
+                                    nn.BatchNorm2d(out_dim))                               
+        
+
+    def forward(self, x):
+        output = self.conv1(x)
+        output += x
+        F.relu(output)
+        return output
+# now lets use this layer/module/block in a new network! 
+class Resnet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Sequential(nn.Conv2d(3,  6, 3, 1, 1),
+                                    ResBlock(6, 12, 3, 1, 1),
+                                    nn.MaxPool2d(2, 2), #16x16 
+                                    ResBlock(12, 24, 3, 1, 1),
+                                    nn.MaxPool2d(2, 2), #8x8
+                                    ResBlock(24, 32, 3, 1, 1),
+                                    nn.MaxPool2d(2, 2), #4x4 
+                                    Flatten(),
+                                    nn.Linear(32 * 4*4 , 3))
+    def forward(self, input):
+        return self.model(input)
+
+# thats it!
+resnet = Resnet()
+print(resnet)
+# thats it! thats the basic resnet. there are other variants as well, which incorporate bottleneck!
+# as well. you can easily add that too !  
+# Now you should have a good idea how powerful and flexible Pytorch is and how you can 
+# just create anything you have in your mind! 
+        
+#%%
+# Lets see how we can use finetuning in Pytorch! 
+# but before that let me tell you how you can save/load your models in Pytorch ! 
+# in order to save your model, all you need to do is to use torch.save() 
+# and pass your model.state_dict() which is a dictionary containing your model parameters: 
+torch.save(model.state_dict(),'mymodel.t')
+# you can get fancier and take advantage of the fact that torch.save() accepts a dictionary 
+# and thus add more items to be saved! for example, you can save the parameters you used to
+# instantiate your model, optimizer, schedulers, save the loss, the best acc, epochs passed, etc. 
+# just create a dictionary and add what you want and use this dictionary instead to save your 
+# model. 
+# example input!
+e = 10 
+acc_val = 0.82
+acc_train = 0.95
+loss_train  = 0.1025
+model = Resnet()
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
+
+settings = {'state_dict': model.state_dict(),
+            'optimizer':optimizer.state_dict(),
+            'epoch': e, 
+            'acc_val': acc_val,
+            'acc_train': acc_train, 
+            'loss_train': loss_train
+            } 
+torch.save(settings, 'ourmodel.t')
+#  thats it 
+print('save done!')
+#%%
+# now to load the settings 
+# for this we use  torch.load! but thats not all! lets see how it works!
+# we first load the whole dictionary from our model! 
+model_settings_dict = torch.load('ourmodel.t')
+# now that we have our dictionary of settings, lets load the values 
+# before we continue lets create the variables with garbage values so
+# we know for sure the loading is done successfully 
+e = -111111
+acc_val = -0.00000
+acc_train = 0.00000
+loss_train = 0.00000
+model = Resnet() 
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.555555)
+# now lets start loading! 
+e = model_settings_dict['epoch']
+acc_val = model_settings_dict['acc_val']
+acc_train = model_settings_dict['acc_train']
+loss_train = model_settings_dict['loss_train']
+# now for optimizer and our model, we can simply do this, instead
+# we use a specific method in our model/optimizer called load_state_dict 
+model.load_state_dict(model_settings_dict['state_dict'])
+optimizer.load_state_dict(model_settings_dict['optimizer'])
+print('load done! ')
+print('some loaded variables: ')
+print(optimizer)
+print(e)
+print(acc_val)
+print(acc_train)
 
 #%%
+# now we are ready to see how finte-tuning works in Pytorch 
+# there are several models in github models repository that we can use
+# lets choose one but before lets see what we have at our disposal 
+from torchvision import models
+import torch.nn as nn 
 
+print(dir(models))
+# lets use resnet18! by setting pretrained = True, we'll also be down-
+#loading the imagenet weights. 
+resnet18 = models.resnet18(pretrained=True)
+# lets print the model 
+print(f'\nORIGINAL MODEL : \n{resnet18}\n')
+
+# by looking at the architecure, we notice 
+# (fc): Linear(in_features=512, out_features=1000, bias=True) 
+# this means in order to make retrain this network for our usecase
+# lets train this for cifar10 which has 10 classes. 
+resnet18.fc = nn.Linear(512, 10)
+# instead of hardcoding the 512 which we saw from the printed version of
+# our model. we can simply use the in_features attribute of the fc layer!
+# and write : 
+# resnet18.fc = nn.Linear(resnet18.fc.in_features, 10)
+
+print(f'\nNEW MODEL(after adding the new fc layer): \n{resnet18}')
+# now before we dive in to train our net we should frst 
+# freeze all layers but this new one, and train for several epochs, 
+# so that it converges to a reasonable set of weights
+# then we unfreeze all previous layers and train the whole net
+# altogether again. 
+# So lets freeze all layers before this fc layer!
+# for module in resnet18.modules():
+#     if module._get_name() != nn.Linear.__name__:
+#         print('layer: ',module._get_name())
+#         for param in module.parameters():
+#              param.requires_grad_(False)
+    # this else clause is necessary becasue weight and bias for fc layer
+    # are also modules and thus their name is not 'Linear' obviously!
+    # So this last part is needed        
+    # elif module._get_name() == nn.Linear.__name__:
+    #     for param in module.parameters():
+    #         param.requires_grad_(True)
+
+# we could also use the isinstance!: 
+# for module in resnet18.modules():
+#     if not isinstance(module, nn.Linear):
+#         for param in module.parameters():
+#             param.require_grad = False
+#     if isinstance(module, nn.Linear):
+#         for param in module.paramertes():
+#             param.require_grad = True
+
+# However, a better way is to just use parameters 
+# and split it into two 
+for param in resnet18.parameters():
+    param.requires_grad = False 
+# and for fc 
+for param in resnet18.fc.parameters():
+    param.requires_grad = True
+# in case we want to have the parameters name, we can use named_parameters!
+# print('Freezing All layers')
+# for name, param in resnet18.named_parameters():
+#     param.requires_grad = False
+#     print(f'name: {name} requires_grad : {param.requires_grad}')        
+
+# print('\nUnfreezing the new FC layer')
+# for name, param in resnet18.fc.named_parameters():
+#     param.requires_grad = True      
+#     print(f'name: {name} requires_grad : {param.requires_grad}')
+
+
+# check all layers status again!
+for name, param in resnet18.named_parameters():
+    print(f'{name} : {param.requires_grad}')            
 
 #%%
+# first version ! 
+# lets create a training and testing functions for our case 
+def validation(model, dataloader_test, criterion, k, device):
+    loss_total = 0.0
+    acc_perbatch = 0.0
+    # this disables gradient acumulation 
+    # Context-manager that disabled gradient calculation.
+    # Disabling gradient calculation is useful for inference,
+    # when you are sure that you will not call Tensor.backward().
+    # It will reduce memory consumption for computations that would
+    # otherwise have requires_grad=True. 
+    # In this mode, the result of every computation will have requires_grad=False,
+    # even when the inputs have requires_grad=True.
+    with torch.no_grad(): 
+        for imgs, labels in dataloader_test:
+            imgs, labels = imgs.to(device), labels.to(device)
+            # actiate evaluation mode 
+            model.eval()
+            preds = model(imgs)
+            loss_val = criterion(preds, labels)
+            _, indexes = preds.topk(k, dim=1)
+            results = (indexes.view(*labels.shape) == labels).float()
+            acc_perbatch += torch.mean(results)
+            loss_total += loss_val.item()
+        
+        acc = acc_perbatch/len(dataloader_test)
+        loss_final = loss_total/len(dataloader_test)
+    return loss_final, acc
 
+def training(model, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device):
+
+    model = model.to(device)
+    # activate trainig mode
+    model.train()
+    training_acc_losses = []
+    val_acc_losses = []
+    trainig_batch_count = len(dataloader_train)
+    test_batch_count = len(dataloader_test)
+
+    for e in range(epochs):
+        
+        acc_per_batch = 0.0
+        training_loss = 0.0
+        for i, (imgs, labels) in enumerate(dataloader_train):
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+
+            preds = model(imgs)
+            loss = criterion(preds, labels)
+            
+            # calculate training accuracy 
+            _, class_indexes= preds.topk(k=1, dim=1)
+            results = (class_indexes.view(*labels.shape) == labels).float()
+            acc_per_batch += torch.mean(results)
+
+            training_loss += loss.item()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if i % interval == 0 : 
+                print(f'(epoch/iter): {e}/{i} train-loss: {loss.item():.6f} train-acc: {acc_per_batch/trainig_batch_count:.4f} ')
+                
+        
+        # accumulate accuracies and losses per epoch
+        training_acc_losses.append( (acc_per_batch/ trainig_batch_count, training_loss/ trainig_batch_count))
+        # run validation test at every epoch! 
+        val_acc_loss = validation(model, dataloader_test, criterion, k=1, device=device)
+        val_acc_losses.append(val_acc_loss)
+        print(f'val_loss : {val_acc_loss[0]:.4f} val_acc: {val_acc_loss[1]:.4f}')
+
+    return training_acc_losses, val_acc_losses
 
 #%%
+epochs = 10
+k = 1
+batch_size = 32
+interval = 1000
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(resnet18.parameters(), lr = 0.001)
+
+transformations_train = transforms.Compose([transforms.Resize(224),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(mean=(0.485, 0.456, 0.406),
+                                                                 std=(0.229, 0.224, 0.225))
+                                            ])
+
+transformations_test = transforms.Compose([transforms.Resize(224),
+                                           transforms.ToTensor(),
+                                           transforms.Normalize(mean=(0.485, 0.456, 0.406),
+                                                                std=(0.229, 0.224, 0.225))
+                                           ])
+
+dataset_train = datasets.CIFAR10('CIFAR10', train=True, transform = transformations_train, download=True)
+dataset_test = datasets.CIFAR10('CIFAR10', train=False, transform = transformations_test, download=True)
+
+dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size = batch_size, shuffle=True, num_workers = 2)
+dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size = batch_size, shuffle=False, num_workers = 2)
+
+#%%
+train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
+
+#%%
+# now unfreeze all layers and retrain the whole network
+for param in resnet18.parameters():
+    param.requires_grad = True
+
+optimizer = torch.optim.SGD(resnet18.parameters(), lr = 0.001)
+train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
+
+# we can decrease the learning rate at some intervals and have better convergance
+# optimizer = torch.optim.SGD(resnet18.parameters(), lr = 0.0001)
+# train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
+
+# optimizer = torch.optim.SGD(resnet18.parameters(), lr = 0.00001)
+# train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
+
+#%%
+# At this rate you must be thinking this is rediculous! cant we just create a loop where we iteratively/periodiclly 
+# decrease the learning rate? I should say yes it is. a  simple form for this would be :     
+lr=0.001
+for i in range(3):
+    lr =  lr * 0.1
+    optimizer = torch.optim.SGD(resnet18.parameters(), lr = lr)
+    train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
+#%%
+# but the best method would be to use MultiStepLR from 
+# torch.optim.lr_schedule module.
+# There are other counterparts as well which you can use
+# Lets reimplement our training loop, this time in a better way! 
+# if you look back, you can see there is a lot of duplication that
+# we can get rid of! 
+def train_validation_loop(model, dataloader, optimizer, criterion, is_training,
+                          device, topk=1, interval=1000 ):
+    
+    preds = None 
+    loss = 0.0
+    loss_total = 0.0
+    accuracy_total = 0.0
+    total_batches = len(dataloader)
+    status = 'training' if is_training else 'validation' 
+    
+    for i, (imgs, labels) in enumerate(dataloader):
+        imgs = imgs.to(device)
+        labels = labels.to(device)
+        
+        if is_training:
+            model.train()
+            preds = model(imgs)
+            loss = criterion(preds, labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        else:
+            model.eval()
+            with torch.no_grad():
+                preds = model(imgs)
+                loss = criterion(preds, labels)
+
+        loss_total += loss.item()
+        _, class_idxs = preds.topk(k, dim=1)
+        results = (class_idxs.view(*labels.shape) == labels).float()
+        accuracy_total += torch.mean(results)
+
+        if i % interval == 0: 
+            _, class_idxs = preds.topk(k, dim=1)
+            results = (class_idxs.view(*labels.shape) == labels).float()
+            accuracy_per_batch = torch.mean(results)
+            print(f'{status} loss/accuracy(per batch): {loss:.6f} / {accuracy_per_batch:.4f}')
+
+    # calculate the loss/accuracy after each epoch        
+    final_loss = loss_total/total_batches 
+    final_accuracy = accuracy_total/total_batches
+    return final_loss, final_accuracy
+
+# now our main loop 
+def training_loop(model, dataloader_train, dataloader_test, optimizer,
+                  criterion, scheduler, device, epochs=10, topk=1, interval=1000):
+    for e in range(epochs):
+        train_loss, train_acc = train_validation_loop(model, dataloader_train, optimizer, criterion, True, device)
+        test_loss, test_acc   = train_validation_loop(model, dataloader_test, optimizer, criterion, False, device)
+        scheduler.step()
+        print(f'(epoch) {e}: lr: {scheduler.get_lr()[0]:.8f} \n\ttraining loss/accuracy: {train_loss:.6f} / {train_acc:.4f}\n'
+        f'\ttesting loss/accuracy: {test_loss:.6f} / {test_acc:.4f}')
+        # we can specify at which epoch or learnng rate
+        # reactivate/unfreeze all previous layers 
+        # using sth like 
+        # if e == 3:
+        #     for param in model.paramertes():
+        #         param.requires_grad = True
+        
+#%% 
+from torch import optim
+optimizer = optim.SGD(resnet18.parameters(), lr = 0.01)
+scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 3, 5, 8], gamma = 0.1)
+criterion = nn.CrossEntropyLoss()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+resnet18 = resnet18.to(device)
+print (f'initial lr: {scheduler.get_lr()}')
+
+training_loop(resnet18, dataloader_train, dataloader_test,
+              optimizer, criterion, scheduler, device, epochs)
+
+#unfreeze all layers and retrain 
+print('unfreezing all layers now!')
+[p.requires_grad_(True) for p in resnet18.parameters()]
+
+scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2, 4], gamma = 0.1)
+print (f'initial lr: {scheduler.get_lr()}')
+training_loop(resnet18, dataloader_train, dataloader_test,
+              optimizer, criterion, scheduler, device, epochs)
+
+# impressive! we could easily achieve 95.53% accuracy in several epochs with 
+# some very primitive techniques. we can get much higher accuracy if we invest in 
+# hyper parameter tuning, etc.  for now this is enough as we just wanted to demonstrate
+# how things can be done in Pytorch!
+#%%
+# Lets see couple of other architectures and how they can be finetuned! 
+# https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html is 
+# a very good resource. have a look at it now!
+# AlexNet 
+alexnet = models.alexnet()
+# lets print it firts 
+print(f'alexnet model: {alexnet}')
+# as we can see in the output, we have a features and a classifier
+# attribute which signify their roles. 
+# we know for a finetuning we should 90% of the times only replace the classifier
+# we can do this here as well and swap classifier which our new one. however
+# we can also swap the last layer which is responsible for the classification
+# lets see how we can do that? 
+alexnet.classifier[6] = nn.Linear(alexnet.classifier[6].in_features, 10)
+# as you can see, we classifier is an ordered dictionary and we can easily 
+# access any item using its key!  
+print(f'alexnet model after change: {alexnet}')
+#%% 
+# VGG ? 
+vgg16 = models.vgg16()
+print(f'vgg16 model: {vgg16}')
+# this is like alexnet, it has features, and classifier attributes we can use
+# for feature extraction or finetuning, etc
+vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, 10)
+print(f'vggnet16 model after change: {vgg16}')
+
+#%% 
+# Next is SqueezeNet, 
+# squeezenet is a very small architecture that provides alexnet level accuracy with 50x less parameters
+# there are  two versions 1_0 and 1_1 that provides a bit more accuracy! than the former one!
+squeezenet = models.squeezenet1_1()
+print(f'squeezenet model: {squeezenet}')
+# similar to all previous architectures so far, it has a features and a classifier attribute
+# it uses global average pooling to get the final scores and is fully convolutonal !
+# we can swap the whole classifier , but we can also take advantage of the fact that its
+# a fully convolutional neural network and we can accept images of an size without any issues
+# unlike the former architectures that were trained on a fixed size images and could only use fixed-size
+# images at test time. here, we change the last convoloution layer output channels and make it equal 
+# to the number of our new classes.
+in_channels = squeezenet.classifier[1].in_channels
+kernel_size = squeezenet.classifier[1].kernel_size
+stride = squeezenet.classifier[1].stride
+squeezenet.classifier[1] = nn.Conv2d(in_channels = in_channels, out_channels = 10, kernel_size = kernel_size, stride = stride) 
+print(f'squeezenet model after change: {squeezenet}')
+#%% 
+# Now lets see how we can work with inception architecture. its a bit different than the others so lets 
+# see how to treat it. 
+inceptionv3 = models.inception_v3()
+print(f'inceptionv3 model: {inceptionv3}')
+# ... Inception v3 was first described in Rethinking the Inception Architecture for Computer Vision.
+# This network is unique because it has two output layers when training.
+# The second output is known as an auxiliary output and is contained in the AuxLogits part of the network.
+# The primary output is a linear layer at the end of the network.
+# Note, when testing we only consider the primary output.
+# The auxiliary output and primary output of the loaded model are printed as:
+
+#  (AuxLogits): InceptionAux(
+#     (conv0): BasicConv2d(
+#       (conv): Conv2d(768, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+#       (bn): BatchNorm2d(128, eps=0.001, momentum=0.1, affine=True, track_running_stats=True)
+#     )
+#     (conv1): BasicConv2d(
+#       (conv): Conv2d(128, 768, kernel_size=(5, 5), stride=(1, 1), bias=False)
+#       (bn): BatchNorm2d(768, eps=0.001, momentum=0.1, affine=True, track_running_stats=True)
+#     )
+#     (fc): Linear(in_features=768, out_features=1000, bias=True)
+#   )
+# and 
+#  (fc): Linear(in_features=2048, out_features=1000, bias=True)
+# 
+
+# in order to finetune this we need to change both of these layers. 
+inceptionv3.AuxLogits.fc = nn.Linear(inceptionv3.AuxLogits.fc.in_features, 10)
+inceptionv3.fc = nn.Linear(inceptionv3.fc.in_features, 10)
+print(f'inceptionv3 model after change: {inceptionv3}')
+#%%
+# Thats pretty much it! you now should have a basic idea of how major chores can be done in Pytorch.
+# there are more than what has been said here obviously, but for the start this should get you going
+# see you in the next part!
+# God bless all of you 
