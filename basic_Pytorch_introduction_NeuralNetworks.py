@@ -1129,9 +1129,9 @@ print(acc_val)
 print(acc_train)
 
 #%%
-# now we are ready to see how finte-tuning works in Pytorch 
-# there are several models in github models repository that we can use
-# lets choose one but before lets see what we have at our disposal 
+# OK we are ready to see how fine-tuning works in Pytorch 
+# there are several models in models repository that we can use
+# lets choose one but before that lets see what we have at our disposal 
 from torchvision import models
 import torch.nn as nn 
 
@@ -1142,19 +1142,23 @@ resnet18 = models.resnet18(pretrained=True)
 # lets print the model 
 print(f'\nORIGINAL MODEL : \n{resnet18}\n')
 
-# by looking at the architecure, we notice 
+# by looking at the architecure, we notice :
 # (fc): Linear(in_features=512, out_features=1000, bias=True) 
-# this means in order to make retrain this network for our usecase
-# lets train this for cifar10 which has 10 classes. 
+# In order to retrain this network for our usecase
+# we need to alter this layer. this was trained on imagenet
+# which had 1000 classes. lets train this for cifar10 which
+# has 10 classes. all we need to do is just defining a new
+# fully connected (fc) layer and assigning it back to  
+# resnet18.fc attribute!
 resnet18.fc = nn.Linear(512, 10)
-# instead of hardcoding the 512 which we saw from the printed version of
-# our model. we can simply use the in_features attribute of the fc layer!
-# and write : 
+# instead of hardcoding the 512 which we saw by looking at the 
+# printed version of our model, we can simply use the 
+# 'in_features' attribute of the fc layer! and write : 
 # resnet18.fc = nn.Linear(resnet18.fc.in_features, 10)
 
 print(f'\nNEW MODEL(after adding the new fc layer): \n{resnet18}')
-# now before we dive in to train our net we should frst 
-# freeze all layers but this new one, and train for several epochs, 
+# now before we dive in to train our network we should first 
+# freeze all layers except this new one, and train for several epochs, 
 # so that it converges to a reasonable set of weights
 # then we unfreeze all previous layers and train the whole net
 # altogether again. 
