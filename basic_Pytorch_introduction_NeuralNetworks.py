@@ -6,10 +6,12 @@ import matplotlib.pyplot as plt
 %matplotlib inline
 
 #%%
-# here we are going to see how we can create a neural network and train and test it
-# we will see how we can augment our data, create our datasets, etc . lets go 
-# in Pytorch we can use the torchvision module, for reading existing datasets or create our own
-# we also do augmentation using this module. this module also provides several wellknown achitectures
+# Here we are going to see how we can create a neural network and train/test it in Pytorch
+# We will see how we can augment our data, create our datasets, etc and alot more.  
+# In Pytorch we can use the torchvision module, for reading existing datasets that Pytorch offers,
+# or create a dataset out of our existing folder of images. 
+# It also provides a fakedataset for images, which we can use for benchmarking, or debugging.  
+# We also do augmentation using this module. This module also provides several well known achitectures
 # such as AlexNet, VGGNet, ResNet, MobileNet, DenseNet, etc
 # enough talking lets see how to use it 
 # here lets import datasets for using the dataset capabilities
