@@ -106,6 +106,108 @@ def visualize_img(img):
 visualize_img(imgs[0])
 
 #%%
+# Before we continue with training a model, I'd like to point out a useful feature here
+# note 1 concerning new transformations. 
+# previously we just saw how to augment our data using torchvision.transforms module
+# we saw there are many transformations that we can use. what about something new? 
+# how can we add our own transformations? 
+# the transformations that we saw and used such as transforms.ToTensor(), transforms.Resize()
+# etc are called functors. you can create new functors and add them to the compose list!
+# a functor is simply a class with a __call__(self, *args) method. in Python terminalogy 
+# it is called as 'Callable'! for example, the ToTensor() funtcor can be implemented 
+# like this : 
+import torchvision.transforms.functional as F
+class ToTensor(object):
+    def __call__(self, pic):
+        return F.to_tensor(pic)
+
+# or a funcor that accepts parameters, resize can be as simple as : 
+class Resize(object):
+    def __init__(self, size, interpolation):
+        self.size = size
+        self.interpolation = interpolation
+
+    def __call__(self, input):
+        return F.resize(input, self.size, self.interpolation)
+
+# as you can see you can write as you many custom transformations as you like!
+to_tensor_f = ToTensor()
+import PIL.Image as Image
+resize_f = Resize(3, Image.BILINEAR)
+numpy_tensor = np.random.rand(3, 3, 3)
+result_tensor = to_tensor_f(numpy_tensor)
+print(result_tensor)
+result_tensor = Image.Image.
+#resize this tensor!
+x=resize_f(result_tensor)
+print(x)
+
+# I'll be covering the dataset related chores in detail in the upcomming parts, but for 
+# now lets  cover this. 
+# Suppose we dont have separate sets for our trainning (such as training set, validation set, test set)
+# and we want to create these by ourseleves, what should we do? 
+# lets take MNIST as our example. as it only has a training set and a test set but no validation set. 
+# as you will see what we describe here will be applicable to just anything.
+# in Pytorch we have something called a sampler that as the name implies, samples! 
+# basically a sampler defines the strategy to draw samples from a dataset.
+# we have different kind of samplers. what we are after is a sampler called 'SubsetRandomSampler'
+# we can access it from 'torch.utils.data' module .
+# This class samples elements randomly from a given list of indices, without replacement.
+# without replacement simply means the values are unique.
+# what this class needs is a list of indeces. lets create ourselevs a list of indeces : 
+
+dataset_train = datasets.MNIST(root='MNIST', train=True, transform=transformations, download=True)
+dataset_test = datasets.MNIST(root='MNIST', train=False, transform=transformations, download=True)
+
+train_num_samples = len(dataset_train)
+# this simply gives us a list of indexes starting from 0 - 59999
+train_indexes = list(range(train_num_samples))
+print(f'some training indexes[:5] : {train_indexes[:5]}')
+# now let us shuffle our indexes, shuffle is an inplace operation
+# so it changes the list items orders.
+np.random.shuffle(train_indexes)
+print(f'some training indexes[:5] : {train_indexes[:5]}')
+
+# now we have a list of indexes. lets specify our validation ratio from this list. 
+# here we are specifying that 20% of our data is reserved for validation, 
+val_ratio = 0.2
+val_end = int(train_num_samples * 0.2)
+validation_split_indexes = train_indexes[0:val_end]
+training_split_indexes = train_indexes[val_end:]
+# lets view the changes 
+print(f'training size before split: {train_num_samples}')
+print(f'validation size: {len(validation_split_indexes)}')
+print(f'training   size: {len(training_split_indexes)}')
+# make sure the splits are actually correctly done! 
+assert len(validation_split_indexes) + len(training_split_indexes) == train_num_samples ,'they must match!'
+
+# Now we have our list of indexes, what remains is to create a sampler that samples from 
+# these lists
+sampler_train = torch.utils.data.SubsetRandomSampler(training_split_indexes)
+sampler_val = torch.utils.data.SubsetRandomSampler(validation_split_indexes)
+
+# and the last step is just to create a dataloader.
+# note that we dont use shuffle here. as they are mutually exclusive (i.e. they can not
+# come together!) with samplers.
+dataloader_train = torch.utils.data.DataLoader(dataset_train,
+                   batch_size=32,
+                   sampler=sampler_train,
+                   num_workers=2)
+dataloader_val = torch.utils.data.DataLoader(dataset_train,
+                  batch_size=32,
+                  sampler=sampler_val,
+                  num_workers=2)
+# check some samples 
+imgs, labels = next(iter(dataloader_val))
+visualize_imgs(imgs, labels)
+
+# so if you have a folder of images, you can use datasets.ImageFolder() 
+# and then use SubsetRandomSampler() to split your data into
+# different sets. here we only created a validation set out of our train
+# -ing set. but you can do as many split as you like. 
+# we will cover ImageFolder in later sections 
+
+#%%
 # OK now that we have done  this lets  see how we train a model ! 
 # before that we need a model 
 # we can create one or use an existing one, 
@@ -123,7 +225,11 @@ model = models.AlexNet(10)
 # and then define our layers and ultimately specify the sequence of how these layers are used in 
 # forward() method. lets see how all of this can be implemented! (this is very easy!)
 import torch.nn as nn 
+# torch.nn.functional module(usually imported into the F namespace by convention)
+# is a module which contains activation functions, loss functions, etc, as well 
+# as non-stateful versions of layers such as convolutional and linear layers.
 import torch.nn.functional as F 
+
 class ourNetwork(torch.nn.Module):
     def __init__(self, num_classes=10):
         super().__init__()
@@ -1336,7 +1442,16 @@ train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epo
 lr=0.001
 for i in range(3):
     lr =  lr * 0.1
+    # change the learning rate 
+    # method 1 :create a new instance of sgd optimizer with a new lr
     optimizer = torch.optim.SGD(resnet18.parameters(), lr = lr)
+    # method 2 change an existing sgd optimizer's lr
+    # before changing the lr
+    # print([p['lr'] for p in optimizer.param_groups])
+    # for p in optimizer.param_groups:
+    #     p['lr'] = p['lr'] * 0.1
+    # # after changing the learning rate    
+    # print([p['lr'] for p in optimizer.param_groups])
     train_info, val_info = training(resnet18, dataloader_train, dataloader_test, epochs, criterion, optimizer, k, interval, device)
 #%%
 # but the best method would be to use MultiStepLR from 
@@ -1345,6 +1460,16 @@ for i in range(3):
 # Lets reimplement our training loop, this time in a better way! 
 # if you look back, you can see there is a lot of duplication that
 # we can get rid of! 
+#### IMPORTANT NOTE  ####
+# Prior to PyTorch 1.1.0, the learning rate scheduler was expected 
+# to be called before the optimizer’s update; 1.1.0 changed this 
+# behavior in a BC-breaking way. 
+# If you use the learning rate scheduler (calling scheduler.step())
+# before the optimizer’s update (calling optimizer.step()), 
+# this will skip the first value of the learning rate schedule.
+# If you are unable to reproduce results after upgrading to PyTorch 1.1.0,
+# please check if you are calling scheduler.step() at the wrong time.
+
 def train_validation_loop(model, dataloader, optimizer, criterion, is_training,
                           device, topk=1, interval=1000 ):
     
