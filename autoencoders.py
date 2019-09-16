@@ -85,19 +85,21 @@ dataset_test  = datasets.MNIST(root='MNIST',
                                train=False, 
                                transform = transforms.ToTensor(),
                                download=True)
-batch_size = 32
+batch_size = 128
 num_workers = 2
 dataloader_train = torch.utils.data.DataLoader(dataset_train,
                                                batch_size = batch_size,
                                                shuffle=True,
-                                               num_workers = num_workers)
+                                               num_workers = num_workers, 
+                                               pin_memory=True)
 
 dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                batch_size = batch_size,
-                                               num_workers = num_workers)
+                                               num_workers = num_workers,
+                                               pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 3, cols =11):
+def view_images(imgs, labels, rows = 4, cols =11):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
@@ -114,7 +116,7 @@ def view_images(imgs, labels, rows = 3, cols =11):
 
 # now lets view some 
 imgs, labels = next(iter(dataloader_train))
-view_images(imgs, labels)
+view_images(imgs, labels,13,10)
 
 ,# good! we are ready for the actual implementation
 #%% 
@@ -532,7 +534,7 @@ class SparseAutoEncoder(nn.Module):
         if self.tied_weights:
             weights = nn.Parameter(torch.randn_like(self.encoder[0].weight))
             self.encoder[0].weight.data = weights.clone()
-            self.decoder[0].weight.data = self.encoder[0].weight.data.transpose(0, 1)
+            self.decoder[0].weight.data = self.encoder[0].weight.data.t()
         
 
     def forward(self, input):
@@ -655,11 +657,23 @@ init_weights_decoder = init_weights_decoder.view(
 w_diff_encoder = init_weights_encoder - trained_W_encoder
 w_diff_decoder = init_weights_decoder - trained_W_decoder
 
+w_decoders_transposed = sae_model.decoder[0].weight.data.cpu().clone().t()
+
+# in order to see that decoders weight is infact the same as
+# encoders, lets transpose it again and reshape it.
+# here I show both the encoders, weight and our decoders weight
+# transposed! 
+print(trained_W_encoder.shape)
+print(w_decoders_transposed.shape)
+w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[0].out_features, 1, 28, 28)
+
+
 print(init_weights_encoder.shape)
 visualize_grid2(init_weights_encoder, 'Initial weights')
 visualize_grid2(trained_W_encoder, 'Trained weights(Encoder)')
 visualize_grid2(w_diff_encoder, 'weights diff (Encoder)')
 visualize_grid2(trained_W_decoder,'Trained Weights (Decoder)')
+visualize_grid2(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
 # the black shows negative values, and white show positive values
 # and the gray shows zero values.
 # we start from a high positive and high negative values in our initial
@@ -779,9 +793,10 @@ for e in range(epochs):
 #  
 # now lets define our VAE model . 
 class VAE(nn.Module):
-    def __init__(self, embedding=100):
+    def __init__(self, embedding_size=100):
         super().__init__()
 
+        self.embedding_size = embedding_size
         # our encoder will give two vectors one for μ and another for σ.
         # using these two parameter, we sample our z representation vector
         # which is used by the decoder to reconstruct the input. 
@@ -795,10 +810,11 @@ class VAE(nn.Module):
         #   density. 
         # We can sample from this distribution to get noisy values of the 
         # representations z .
-        self.fc1 = nn.Linear(28*28, 400)
-        self.fc1_mu = nn.Linear(400, embedding) # mean
+      
+        self.fc1 = nn.Linear(28*28, 512)
+        self.fc1_mu = nn.Linear(512, self.embedding_size) # mean
         # we use log since we want to prevent getting negative variance
-        self.fc1_std = nn.Linear(400, embedding) #logvariance
+        self.fc1_std = nn.Linear(512, self.embedding_size) #logvariance
 
         # our decoder will accept a randomly sampled vector using
         # our mu and std. 
@@ -820,8 +836,15 @@ class VAE(nn.Module):
         # log-likelihood logpϕ(x∣z) whose units are nats. This measure tells us how 
         # effectively the decoder has learned to reconstruct an input image x given
         # its latent representation z.
-        self.fc2 = nn.Linear(embedding, 400)
-        self.fc2_2 = nn.Linear(400, 28*28)
+        self.decoder = nn.Sequential( nn.Linear(self.embedding_size, 512), 
+                                      nn.ReLU(),
+                                      nn.Linear(512, 28*28),
+                                      # in normal situations we wouldnt use sigmoid
+                                      # but since we want our values to be in [0,1]
+                                      # we use sigmoid. for loss we will then have  
+                                      # to use, plain BCE (and specifically not BCEWithLogits)
+                                      nn.Sigmoid())
+
 
 
     # Rather than directly outputting values for the latent state as we would 
@@ -855,23 +878,41 @@ class VAE(nn.Module):
         if self.training:
             # we divide by two because we are eliminating the negative values
             # and we only care about the absolute possible deviance from standard.
-            std = logvar.mul(0.5).exp_()
+            std = torch.exp(0.5*logvar)
+
             #epsilon sampled from normal distribution with N(0,1)
-            eps = torch.tensor(std.data.new(std.size()).normal_(0,1))
+            eps = torch.randn_like(std)
+            # eps = torch.tensor(std.data.new(std.size()).normal_(0,1))
             # How to sample from a normal distribution with known mean and variance?
             # https://stats.stackexchange.com/questions/16334/ 
             # (tldr: just add the mu , multiply by the var) . why we use an epsilon, ? 
             # because without it, backprop wouldnt work.
-            return eps.mul(std).add(mu)
+            return mu + eps*std
         else:
             # During the inference, we simply return the mean of the
             # learned distribution for the current input.  We could
             # use a random sample from the distribution, but mu of
             # course has the highest probability.
             return mu
+    # 
+    def encode(self, input):
+        input = input.view(input.size(0), -1)
+        output = F.relu(self.fc1(input))
+        # we dont use activations here
+        mu = self.fc1_mu(output)
+        log_var = self.fc1_std(output)
+        # print(f'w: {self.fc1_std.weight.norm()} b: {self.fc1_std.weight.norm()}')
+
+        # In its original form, VAEs sample from a random node z which is 
+        # approximated by the parametric model q(z∣ϕ,x) of the true posterior.
+        # Backprop cannot flow through a random node. Introducing a new parameter 
+        # ϵ allows us to reparameterize z in a way that allows backprop to flow 
+        # through the deterministic nodes. this is called reparamerization trick
+        z = self.reparamtrization_trick(mu, log_var)
+        return z, mu, log_var
 
     def forward(self, input):
-        output = input.view(input.size(0), -1)
+        
         # our encoder recieves the input and produces two vectors
         # mean and std. a normal autoencoder, creates a set of atttibutes
         # in its representation vectot(e.g attributes or features describing
@@ -947,24 +988,10 @@ class VAE(nn.Module):
         # if you sample a vector from the same prior distribution of the encoded vectors, N(0, I), 
         # the decoder will successfully decode it. And if you’re interpolating, there are 
         # no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
-     
-        output = F.relu(self.fc1(output))
-        # we dont use activations here
-        output_mu = self.fc1_mu(output)
-        output_std = self.fc1_std(output)
-        # In its original form, VAEs sample from a random node z which is 
-        # approximated by the parametric model q(z∣ϕ,x) of the true posterior.
-        # Backprop cannot flow through a random node. Introducing a new parameter 
-        # ϵ allows us to reparameterize z in a way that allows backprop to flow 
-        # through the deterministic nodes. this is called reparamerization trick
-        z = self.reparamtrization_trick(output_mu, output_std)
-
+        z, mu, logvar = self.encode(input)
         # decoder 
-        output = F.relu(self.fc2(z))
-        # since we are using bce, we dont use sigmoid for numerical stability
-        # in normal situations, we would use that to make values in range [0,1]
-        output = self.fc2_2(output)
-        return output, output_mu, output_std
+        reconstructed_img = self.decoder(z)
+        return reconstructed_img, mu, logvar
 
 
 # Note :
@@ -987,18 +1014,29 @@ class VAE(nn.Module):
 # model, without changing model components and training objective.
 
 
-
+# I set this line to see the full stack-trace when a weird error occurs
+# its good practice to get accustomed to the debugging facilities provided
+# by pytorch, I might dedicate a separate section for this later on
+# torch.autograd.set_detect_anomaly(True)
+# torch.set_printoptions(profile='full')
+#%%
 # now lets train :
-epochs = 20 
+epochs = 50
+
+embeddingsize = 2
+interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-criterion = nn.BCEWithLogitsLoss()
-interval = 1000
-model = VAE().to(device)
+model = VAE(embeddingsize).to(device)
+#criterion = nn.BCELoss(reduction='mean')
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr =0.001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 50)
 
 for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
+
         # for loss we simply add the reconstruction loss +kl divergance
         loss_recons = criterion(preds, imgs.view(imgs.size(0), -1))
         # see Appendix B from VAE paper:
@@ -1007,16 +1045,181 @@ for e in range(epochs):
         # I guess 0.5 is the beta (a multiplier that specifies how large the distribution 
         # should be)
         # - D_{KL} = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        kl = 0.5 * torch.sum(1+ logvar - mu.pow(2) - logvar.exp())
+        # note the negative D_{KL} in appendix B of the paper
+        kl = -0.5 * torch.sum(1+ logvar - mu.pow(2) - logvar.exp(),-1)
         # Normalise by same number of elements as in reconstruction
-        kl/=imgs.size(0) * (28*28)
-
-        loss = loss_recons + kl 
+        # kl/=imgs.size(0) * (28*28)
+        loss_recons *= 784
+        loss = torch.mean(loss_recons + kl) 
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step() 
         if i% interval ==0:
-            print(f'epoch ({e}/{epochs}) loss: {loss.item():.6f} KL: {kl.item():.6f} recons {loss_recons.item():.6f}')
+            print(f'epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
+                  f'\tloss: {loss.item():.4f}'
+                #   f'\tKL: {kl.item():.4f} recons {loss_recons.item():.6f}'
+                  f'\tlr: {scheduler.get_lr()}')
+    scheduler.step()
+
+#%% 
+# save the model
+torch.save({"states":model.state_dict(),
+            "embedding_size":model.embedding_size,
+            "optimizer":optimizer.state_dict(),
+            "scheduler":scheduler.state_dict()},
+            f"vae_{model.embedding_size}_mean.pth")
+print('model saved!')
+#%%
+# load the model 
+states = torch.load(f"vae_10.pth")
+model.load_state_dict(state_dict=states['states'])
+print('weights loaded')
+#%%
+# generate sth
+from torchvision import utils
+interval = 1000
+embeddingsize = 2
+sample = torch.randn(size=(32, embeddingsize)).to(device)
+sample *= 0.5+ 0.5
+model.eval()
+imgs = model.decoder(sample)
+print(imgs.shape)
+imgs = imgs.view(-1, 1, 28,28)
+img = utils.make_grid(imgs,nrow=8,normalize=True).cpu().detach().numpy().transpose(1,2,0)
+plt.imshow(img, cmap='Greys_r')
+#%%
+# test
+test_set_size = len(dataloader_test.dataset)
+img_pairs = []
+losses = []
+interval = 10
+with torch.no_grad():
+    for i, (imgs, labels) in enumerate(dataloader_test):
+        imgs = imgs.to(device)
+        preds, mu, logvar = model(imgs)
+
+        loss_bce = criterion(preds, imgs.view(-1, 28*28))
+        loss_bce *= 784
+        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        # kl/=imgs.size(0) * (28*28)
+        loss = loss_bce + kl
+        loss = torch.mean(loss)
+        losses.append({'val_loss':loss.item()})
+        
+        print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
+            f'\tloss: {(loss).item():.4f}')
+
+        if i%interval==0:
+            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
+            # print(imgs.shape, reconstructeds.shape)
+            imgs = imgs[:20].cpu().detach().numpy()
+            recons = reconstructeds[:20].numpy()
+            pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
+            img_pairs.append(pairs)
+#%%
+# plot the losses using pandas! 
+# this actually is very neat and comes handy very often!
+# we can have a list of dictionaries, where each value is 
+# attributed by a key. this way, our keys will be used as
+# legends and we have a simple plot with minimum hassle
+import pandas as pd 
+pd.DataFrame(losses).plot()
+
+#%%
+# lets plot the classes in the latent space!
+batch_size = 10000
+dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
+                                               batch_size = batch_size,
+                                               num_workers = num_workers,
+                                               pin_memory=True)
+imgs, labels = next(iter(dataloader_test2))
+imgs = imgs.to(device)
+z_test,_,_ = model.encode(imgs)
+z_test = z_test.cpu().detach().numpy()
+
+plt.figure(figsize=(12,10))
+print(z_test.shape)
+plt.scatter(x=z_test[:,0],
+            y=z_test[:,1],
+            c=labels.numpy(),
+            alpha=.4,
+            s=3**2,
+            cmap='viridis')
+plt.colorbar()
+plt.xlabel('Z[0]')
+plt.ylabel('Z[1]')
+plt.show()
+#%%
+
+#%%
+# display a 2D manifold of the digits
+embeddingsize = model.embedding_size
+n = 20  # figure with 20x20 digits
+digit_size = 28
+
+z1 = torch.linspace(-2, 2, n)
+z2 = torch.linspace(-2, 2, n)
+
+z_grid = np.dstack(np.meshgrid(z1, z2))
+z_grid = torch.from_numpy(z_grid).to(device)
+z_grid = z_grid.reshape(-1, embeddingsize)
+
+x_pred_grid = model.decoder(z_grid)
+x_pred_grid= x_pred_grid.cpu().detach().view(-1, 1, 28,28)
+x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
+plt.figure(figsize=(10, 10))
+plt.xlabel('Z_1')
+plt.ylabel('Z_2')
+plt.imshow(x)
+plt.show()
+
+#%%
+from torchvision.utils import save_image, make_grid
+
+def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1, use_matplot = False):
+    img_cnt = len(img_pairs)
+    print(img_cnt)
+    fig = plt.figure(figsize=(28, 28))
+    for i in range(img_cnt):
+        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
+                            nrow=nrows,
+                            normalize=True)
+        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
+        save_image(grid_imgs, f'vae_results/imgs_{i}.jpg')
+        # if use_matplot:
+        #     imgpairs = img_pairs[i]
+        #     imgs = imgpairs
+        #     for i in range(imgs.shape[0]):
+        #         ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+        #         img1 = imgs[i].transpose(1, 2, 0)
+        #         ax.imshow(img1.squeeze(), cmap='Greys_r')
+
+display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
+#%% 
+# now lets generate new images by stepping through the latent space
+import matplotlib.animation as animation
+fig = plt.figure()
+ax = fig.add_subplot(111)
+
+plt.rcParams["animation.convert_path"] = r"C:\Program Files\ImageMagick\convert.exe"
+z = torch.randn(size = (30, model.embedding_size)).to(device)
+model.eval()
+def animate(i): 
+    imgs = model.decoder(z*(i*0.03)+0.02)
+    imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
+    new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+    ax.clear()
+    ax.imshow(new_img)
+
+anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
+anim.save('vis.gif', writer="imagemagick", extra_args="convert", fps=20)
+plt.show()
+
+
+#%%
 
 #%% 
 # Contractive Autoencoder
@@ -1046,3 +1249,4 @@ for e in range(epochs):
 #%%
 # Adversarial Autoencoder https://blog.paperspace.com/adversarial-autoencoders-with-pytorch/
 # Conditinoal VAE 
+
