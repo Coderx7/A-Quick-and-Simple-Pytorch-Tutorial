@@ -13,6 +13,7 @@ Subjcts :
 - [x] Introduction on Networks:
   - [x] training and testing (including augmentation)
   - [x] changing and finetuning architectures
+  - [x] saving and loading models
 - Autoencoders
   - [x] Autoencoder(AE)
   - [x] Deep MLP Autoencoder(MLPAE)
