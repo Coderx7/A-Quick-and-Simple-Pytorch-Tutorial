@@ -31,3 +31,8 @@ Subjcts :
 - [ ] GANs (GAN, DCGAN, CGAN, CycleGAN, StarGAN, StyleGAN, WGAN, etc) 
 - [ ] RNNs(RNN, LSTM, GRU)
 - [ ] Style transfer 
+- [ ] Adversarial Attacks (Examples)
+- [ ] Object Detection 
+- [ ] Semantic Segmentation 
+- Misc
+  - [ ] Concepts
