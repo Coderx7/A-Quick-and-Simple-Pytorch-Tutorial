@@ -34,5 +34,7 @@ Subjcts :
 - [ ] Adversarial Attacks (Examples)
 - [ ] Object Detection 
 - [ ] Semantic Segmentation 
+- [ ] Autograd introduction 
+- [ ] Datasets Introduction 
 - Misc
   - [ ] Concepts
