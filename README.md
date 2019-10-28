@@ -29,11 +29,22 @@ Subjcts :
     - Cyclical Annealing Schedule 
 - [x] MultiTask Learning 
 - [ ] GANs (GAN, DCGAN, CGAN, CycleGAN, StarGAN, StyleGAN, WGAN, etc) 
-- [ ] RNNs(RNN, LSTM, GRU)
+- [ ] RNNs(RNN, LSTM, GRU) (NLP and Vision)
+  - [ ] Text Generation
+  - [ ] Sentiment Analysis 
+  - [ ] Seq2Seq
+  - [ ] Attention Mechanism 
+  - [ ] Transformers
+  - [ ] Image Captioning 
+  - [ ] CTC Loss
+  - [ ] Word Embedding 
+  - [ ] NER(Named Entity Recognition) 
+  - [ ] Misc 
 - [ ] Style transfer 
 - [ ] Adversarial Attacks (Examples)
 - [ ] Object Detection 
 - [ ] Semantic Segmentation 
+- [ ] Siamese Networks 
 - [ ] Autograd introduction 
 - [ ] Datasets Introduction 
 - Misc
