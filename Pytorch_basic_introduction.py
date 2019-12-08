@@ -129,8 +129,9 @@ print(new_tensor_ones)
 # we have other options such as new_tensor, new_empty, new_full, new_zeros
 new_tensor_full = tensor_special.new_full(size=(2,2), fill_value=.3)
 print(new_tensor_full)
-
-
+# we create a new tensor with the same dtype and device 
+new_tensor_newtensor = tensor_special.new_tensor(np.random.uniform(-1,1,size=(2,2)))
+print(new_tensor_newtensor)
 
 #%%
 # now  that we learnt how to create a new tensor, initialize a tensor, specify different dtypes, device, etc

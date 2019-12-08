@@ -880,7 +880,7 @@ for e in range(epochs):
 # https://jaan.io/what-is-variational-autoencoder-vae-tutorial/
 # https://www.youtube.com/watch?v=uaaqyVS9-rM
 # http://blog.shakirm.com/2015/10/machine-learning-trick-of-the-day-4-reparameterisation-tricks/
-
+# https://www.reddit.com/r/MLQuestions/comments/dl7mya/a_few_more_questions_about_vaes/
 
 # we'll also have an example concerning words(in NLP domain) and see how we can 
 # leverage VAEs in that domain as well. for now lets see how we can implement this
@@ -895,7 +895,20 @@ for e in range(epochs):
 # will help you grasp one aspect very good!
 #  
 # now lets define our VAE model . 
+
+
 class VAE(nn.Module):
+    
+
+    def conv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
+        return nn.Sequential(nn.Conv2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
+                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                             nn.ReLU())
+
+    def deconv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
+        return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
+                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                             nn.ReLU())
     def __init__(self, embedding_size=100):
         super().__init__()
 
@@ -913,11 +926,26 @@ class VAE(nn.Module):
         #   density. 
         # We can sample from this distribution to get noisy values of the 
         # representations z .
-      
+
         self.fc1 = nn.Linear(28*28, 512)
-        self.fc1_mu = nn.Linear(512, self.embedding_size) # mean
+        self.encoder = nn.Sequential(self.conv(3,768),
+                                     self.conv(768,512),
+                                     self.conv(512,256),
+                                     nn.MaxPool2d(2,2),#16
+                                     self.conv(256,128),
+                                     self.conv(128,64),
+                                     nn.MaxPool2d(2,2),#8
+                                     self.conv(64, 32),
+                                     nn.MaxPool2d(2,2),#4
+                                     self.conv(32, 16),
+                                     nn.MaxPool2d(2,2),#2x2
+                                     self.conv(16, 8),
+                                     nn.MaxPool2d(2,2),#1x1
+                                     )
+
+        self.fc1_mu = nn.Linear(8, self.embedding_size) # mean
         # we use log since we want to prevent getting negative variance
-        self.fc1_std = nn.Linear(512, self.embedding_size) #logvariance
+        self.fc1_std = nn.Linear(8, self.embedding_size) #logvariance
 
         # our decoder will accept a randomly sampled vector using
         # our mu and std. 
@@ -939,14 +967,23 @@ class VAE(nn.Module):
         # log-likelihood logpϕ(x∣z) whose units are nats. This measure tells us how 
         # effectively the decoder has learned to reconstruct an input image x given
         # its latent representation z.
-        self.decoder = nn.Sequential( nn.Linear(self.embedding_size, 512), 
-                                      nn.ReLU(),
-                                      nn.Linear(512, 28*28),
-                                      # in normal situations we wouldnt use sigmoid
-                                      # but since we want our values to be in [0,1]
-                                      # we use sigmoid. for loss we will then have  
-                                      # to use, plain BCE (and specifically not BCEWithLogits)
-                                      nn.Sigmoid())
+        self.decoder = nn.Sequential(nn.Linear(self.embedding_size, 8*1*1),
+                                    deconv(8, 768,kernel_size=4,stride=2),
+                                    deconv(768,512,kernel_size=4,stride=2),
+                                    deconv(512, 256 ,kernel_size=4,stride=2),
+                                    deconv(256,128,kernel_size=4,stride=2),
+                                    deconv(128,3,kernel_size=4,stride=2),
+                                    # deconv(64,32,kernel_size=4,stride=2),
+                                    # deconv(32,3,kernel_size=4,stride=2),
+                                    nn.Sigmoid())
+        # self.decoder = nn.Sequential( nn.Linear(self.embedding_size, 512), 
+        #                               nn.ReLU(),
+        #                               nn.Linear(512, 28*28),
+        #                               # in normal situations we wouldnt use sigmoid
+        #                               # but since we want our values to be in [0,1]
+        #                               # we use sigmoid. for loss we will then have  
+        #                               # to use, plain BCE (and specifically not BCEWithLogits)
+        #                               nn.Sigmoid())
 
 
 
@@ -1029,8 +1066,9 @@ class VAE(nn.Module):
         return mu + eps*std
     # 
     def encode(self, input):
-        input = input.view(input.size(0), -1)
-        output = F.relu(self.fc1(input))
+        # input = input.view(input.size(0), -1)
+        # output = F.relu(self.fc1(input))
+        output = self.encoder(input)
         # we dont use activations here
         mu = self.fc1_mu(output)
         log_var = self.fc1_std(output)
@@ -1186,6 +1224,11 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
 #%%
 # now lets train :
 epochs = 50
+dataset_train = datasets.CIFAR10('cifar10', train=True, download=True,transform=transforms.ToTensor())
+dataset_test = datasets.CIFAR10('cifar10', train=False, download=True,transform=transforms.ToTensor())
+
+dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=128,shuffle=True)
+dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffle=False)
 
 embeddingsize = 2
 interval = 2000

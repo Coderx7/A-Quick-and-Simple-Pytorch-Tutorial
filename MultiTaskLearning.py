@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch import optim 
 from torchvision import datasets, transforms, models
 import matplotlib.pyplot as plt 
-from sklearn import metrics
+# from sklearn import metrics
 %matplotlib inline
 
 #%%
@@ -336,19 +336,22 @@ class Resnet18_multiTaskNet(nn.Module):
         return prd_color, prd_gender, prd_region, prd_fighting, prd_alingment
     
     def _set_freeze_(self, status):
-        for p in self.features:
+        for n,p in self.features.named_parameters():
             p.requires_grad = status
+        # for m in self.features.children():
+        #     for p in m.parameters():
+        #         p.requires_grad=status    
+
 
     def freeze_feature_layers(self):
-        self._set_freeze_(True)
+        self._set_freeze_(False)
 
     def unfreeze_feature_layers(self):
-        self._set_freeze_(False)
+        self._set_freeze_(True)
 
 
 model = Resnet18_multiTaskNet(True, True)
 print(model)
-
 
 #%%
 # now lets train our model 
