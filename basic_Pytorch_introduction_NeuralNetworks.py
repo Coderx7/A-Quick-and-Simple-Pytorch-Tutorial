@@ -918,6 +918,10 @@ class sequential_net5(nn.Module):
 # Note that torch.nn.ModuleDict.update with other unordered mapping types 
 # (e.g., Python's plain dict) does not preserve the order of the merged mapping.
 
+# important note: the forward pass for this wont happen!
+# becasue there is not a forwardpass implemented for moduledict
+# its just a container. Seqeuntial however, does support forward
+#
 class sequential_net6(nn.Module):
     def __init__(self):
         super().__init__()
@@ -932,7 +936,17 @@ class sequential_net6(nn.Module):
         self.model['maxpool1'] = nn.MaxPool2d(2, 2)
 
     def forward(self, inputs):
-        return self.model(inputs)
+        # simply doing : 
+        # return self.model(inputs)
+        # wont work as moduledict dosnt implemet forward()
+        # so you must manually forward all layers here. i.e do 
+        out = inputs
+        # named_children() iterates over all higherlevel blocks/modules only
+        # we dont use modules as biases and weights are also modules which dont
+        # implement forward!!
+        for n,m in self.model.named_children():
+            out =  m(out)
+        return out
 
 # as you can see, our foward function has become a one liner! 
 # whats the benifit of doing this ? 
@@ -1042,7 +1056,7 @@ print(sequentialnet4)
 
 print(sequentialnet5)
 print(sequentialnet6)
-
+print(sequentialnet6(torch.rand(2,3,24,24)))
 print(sequentialnet7)
 print(sequentialnet8)
 print(sequentialnet9)
@@ -1235,6 +1249,39 @@ print(optimizer)
 print(e)
 print(acc_val)
 print(acc_train)
+#%%
+# from torchvision import models
+# import torch.nn as nn 
+
+# print(dir(models))
+# # lets use resnet18! by setting pretrained = True, we'll also be down-
+# #loading the imagenet weights. 
+# resnet18 = models.resnet18(pretrained=False)
+# # lets print the model 
+# print(f'\nORIGINAL MODEL : \n{resnet18}\n')
+# resnet18.fc = nn.Linear(resnet18.fc.in_features,10)
+# # we can freeze all layers except the one(s) we want
+# # in one go using named_children like this: 
+# for n,m in resnet18.named_children():
+#     if n!='fc':
+#         print(n)
+#         for param in m.parameters():
+#             param.requires_grad=False
+
+# for n,m in resnet18.named_children():
+#     for param in m.parameters():
+#             print(f'{n} : {param.requires_grad}')
+
+
+# #using named parameters: 
+# for name, param in resnet18.named_parameters():
+#     param.requires_grad = False
+#     print(f'name: {name} requires_grad : {param.requires_grad}')        
+
+# print('\nUnfreezing the new FC layer')
+# for name, param in resnet18.fc.named_parameters():
+#     param.requires_grad = True      
+#     print(f'name: {name} requires_grad : {param.requires_grad}')
 
 #%%
 # OK we are ready to see how fine-tuning works in Pytorch 
