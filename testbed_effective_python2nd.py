@@ -140,9 +140,18 @@ class Vector2d:
         return tuple(self) == tuple(other)
     
     # lets add support for indexes and slices (basically, sequence)
-    # def __getitem__(self, idx):
-    #     return 
+    # since we dont have any underlying sequence datastructure, we can 
+    # simply use a tuple, list, etc of the attributes we have like x,y, 
+    # we cant use self, cuz it will result in an infinit recursion
+    # also remember that this is just for excersie, it doesnt make sense!
+    # just to excersie and build muscle memory we are doing this and implementing
+    # these protocols! now with __getitem__ and __len__ implemented, we can have 
+    # index support, slice, etc, basically sequence protocol is implemented here!
+    def __getitem__(self, idx):
+        return [self.x, self.y][idx]
     
+    def __len__(self):
+        return len([self.x, self.y])
     
 if __name__ == "__main__":
     v = Vector2d(3,4)
@@ -169,4 +178,6 @@ if __name__ == "__main__":
     print(f'v == v3: {v == v3}')
     print(f'abs(v): {abs(v)} abs(v3): {abs(v3)}')
     print(f'bytes(v3): {Vector2d.from_bytes(bytes(v3))}')
+    print(f'v[0]: {v[0]}')
+    print(f'len(v): {len(v)}')
     
