@@ -10,6 +10,7 @@
 # make this support __bytes__ and __format__
 import math
 from array import array 
+import itertools
 
 class Vector2d:
     # since we want to support bytes representation, we specify the bytetype as well
@@ -153,31 +154,87 @@ class Vector2d:
     def __len__(self):
         return len([self.x, self.y])
     
+    
+    def __add__(self, other):
+        try:
+            print(f'self is: {type(self)} other is: {type(other)}')
+            return Vector2d(self.x + other[0], self.y + other[1])
+            # return Vector2d((x+y for (x,y) in itertools.zip_longest(self, other, fillvalue=0)))
+        except TypeError: 
+            return NotImplemented
+        
+    # this is the reverse_add, this is called when on the left side we have someother objects other than 
+    # our class, that is we have (1,2) + v, when this happens we can use add as well
+    # basically python interpreter tries to see if our class implements __add__ if it does it 
+    # calls it, if our class does not, then it tries to see if theres a revers_add available
+    # if we have it, it calls it, if we dont have it, it looks at the other type and sees if that type
+    # has a compatible __radd__, if neither do, then it issues a type error. 
+    # (basically if the left operand does not support addition with the right operand, 
+    # the interpreter then checks if the right operand's class implements the __radd__ method. 
+    # If it does, the __radd__ method of the right operand is called, and the right operand is passed as an argument to the __radd__ method.
+    # In other words, __radd__ is called on the right operand, with the left operand passed as an argument. )
+    # 
+    # always makesure if you cant handle an operator, return NotImplemented value which is a singleton
+    # used for announcing the operation is not compatible, its not an exception! but a singleton() instance!
+    # so we what we can do here, is first try the add, if it fails because of type mistmatch, catch the TypeError
+    # and return the NotImplemented error! when we do that we get a meaningful error if the types are not compatible
+    # like if we tried 'a,b' which is an iterable!  and tried 'a,bc' + v, it would say 
+    # TypeError: unsupported operand type(s) for +: 'Vector2d' and 'str'
+    # since our implementation is happening in __add__ we add that there! cuz __radd__ calls __add__ 
+    def __radd__(self, other):
+        print(f'[__radd__] self is: {type(self)} other is: {type(other)}')
+        return self + other
+    
+    def __mul__(self, other):
+        try:
+            return Vector2d(self.x * other, self.y * other)
+        except TypeError:
+            return NotImplemented
+        # return Vector2d((self.x * other[0], self.y * other[1]))
+    
+    def __rmul__(self, other):
+        return self*other
+    
+    def __matmul__(self, other):
+        try:
+            return Vector2d(self.x * other[0], self.y * other[1])    
+        except TypeError:
+            return NotImplemented
+            
+    def __rmatmul__(self, other):
+        return self@other
+    
 if __name__ == "__main__":
-    v = Vector2d(3,4)
+    v1 = Vector2d(3,4)
     v2 = Vector2d(0,0)
     v3=Vector2d(4,3)
-    v_clone = eval(repr(v))
-    print(f'v = {v}')
+    v_clone = eval(repr(v1))
+    print(f'v = {v1}')
     print(f'v_clone = {v_clone}')
     print(f'v2 = {v2}')
     print(f'v3 = {v3}')
-    a,b = v 
+    a,b = v1 
     print(f'v.x={a} v.y={b}')
         
-    it = iter(v)
+    it = iter(v1)
     print(f'next(it): {next(it)}')
     print(f'next(it): {next(it)}')
     print(f'bool(v_clone): {bool(v_clone)}, bool(v2): {bool(v2)}')
-    print(f'3 is in v? :{3 in v}')
-    print(f'30 is in v? :{30 in v}')
-    bytes_rep = bytes(v)
+    print(f'3 is in v? :{3 in v1}')
+    print(f'30 is in v? :{30 in v1}')
+    bytes_rep = bytes(v1)
     print(bytes_rep, len(bytes_rep))
-    print(f'v == v_clone: {v == v_clone}')
-    print(f'v == v2: {v == v2}')
-    print(f'v == v3: {v == v3}')
-    print(f'abs(v): {abs(v)} abs(v3): {abs(v3)}')
+    print(f'v == v_clone: {v1 == v_clone}')
+    print(f'v == v2: {v1 == v2}')
+    print(f'v == v3: {v1 == v3}')
+    print(f'abs(v): {abs(v1)} abs(v3): {abs(v3)}')
     print(f'bytes(v3): {Vector2d.from_bytes(bytes(v3))}')
-    print(f'v[0]: {v[0]}')
-    print(f'len(v): {len(v)}')
-    
+    print(f'v[0]: {v1[0]}')
+    print(f'len(v): {len(v1)}')
+    print(f'v1*v1 = {v1 * 3}')
+    print(f'v1@v3 = {v1 @ v3}')
+    v1 + v2
+    v1 + (2,3)
+    [1,2] + v2
+      
+    'abcd' + v2 # generates an error, since we returned NotImplemented error, we get a much precise error message!
