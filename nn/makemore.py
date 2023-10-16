@@ -388,6 +388,50 @@ print(f'{probs_wrong[:1]=}')
 # what does is, for every column, it creates a row of the first column, whatever value is in the first column
 # it replicates it from top to the bottom of that column, creating a row of that number, then it goes
 # to the next column and repeats this and so on. as you can see this is not what we want, 
+# to recap, consider this, if you have a shape of 27x1, that 1 dimension will be filled when broadcasted
+# by what? by whatever value that exist. (imagine you have a single row of 27 numbers like below:
+# 27,1: 
+# 1 
+# 2
+# 3
+# 4
+# ...
+# , and now you need to replicate this along the columns (basically make it look like this )
+# c0    c1  c2  c..     c26
+# 1     1    1  ...     1
+# 2     2    2  ...     2
+# 3     3    3  ...     3
+# 4     4    4  ...     4
+# ...           ...
+# as you can see this single row of 27 numbers, are each coped to create 27 columns of the same values
+# so you can imagine it this way, wherever theres a dim=1, that dim needs to be created and it will 
+# be simply the copies of row[i] (row[0] will be copied for all columns, row[1] will be copied for all columns
+# basically create full row out of a single value )
+# but when we have a single dim, like [27], when it comes to broadcasting in a e.g. (27x27) x (27)
+# its infact like 
+# 27x27
+#    27
+# so the first dim here is missing, making this a column vector and treat it as 1x27! 
+# so when it comes to do (27x27) x (1x27), the first dim needs to be created and it gets
+# created by copying respective entries from the second dim. each entry, creates a full column below it
+# like this
+# 1x27:
+# row0  1     2   3   4   ....    27
+# and it will become like this :
+# r0    1     2   3   4   ...     27
+# r1    1     2   3   4   ...     27
+# r2    1     2   3   4   ...     27
+# ...
+# r26   1     2   3   4   ...     27
+# so to recap this, when 
+# we have a shape (27,1), its actually 27 rows and a single column, and we need to fill the columns
+# what happens is for each row, that single column is replicated 27 times to make up for the missing values
+# row 1 will simply be a single value replicated accros all columns.
+# but if we have a shape (27), its infact (1x27) or a column vector, with a single row. so what happens
+# is the rows need to be created and each row will simply be the replicated row0 27 times. 
+# so each row has 27 numbers (they are different column wise)
+# (row vetcors (27x1) create matrix where all columns are made of row[i] (duplicate its value))
+# (column vectors(27) or (1x27) create matrix where all rows is simply duplicated from row[0])
 # now that we sorted all of this information and got ourselves our probs 
 # we can go and sample from it. for sampling we use torch.multinomial function 
 s = torch.multinomial(probs[0], num_samples=1)
@@ -395,7 +439,9 @@ print(f'samples :{s}')
 # now lets do better and explain a bit of stuff. 
 # before going any further lets have a fixed seed so the results all comeout the same
 # each time we run this, for this we create a a random generator in torch and set it
-g = torch.Generator('cpu').manual_seed(255)
+# note that setting different seeds will result in different outputs, sometimes yielding
+# better, and sometimes yielding worse results!
+g = torch.Generator().manual_seed(255)
 # and now we feed this to our ops 
 sample = torch.multinomial(probs[0], num_samples=1, replacement=True, generator=g).item()
 print(f'{sample=},{itoa[sample]}')
@@ -424,23 +470,42 @@ while True:
         break
 print(chstr)
 # now if we want to create more names we can iterate this more 
-for i in range (20):
+print(f'Printing a few more samples: ')
+for i in range (10):
     chstr=''
     # always start from first row
     idx=0
     while True:
         prob = probs[idx]
-        print(f'{prob=}')
+        # print(f'{prob=}')
         idx = torch.multinomial(probs[idx], num_samples=1, replacement=True,generator=g).item()
         chstr += itoa[idx]
         if idx==0:
             print(chstr)
             break
+#prints
+# hel.
+# lieyn.
+# denarilie.
+# desa.
+# jaizax.
+# adegheviy.
+# kann.
+# beleavelaylirendon.
+# jele.
+# jeril.
+
 # now they dont particularly look very good! but our model did learn sth and in order to see
 # if they are really random or not, we can change the probablities learned by our model with 
 # a uniform probablity that makes the probablity for all characters the same! see how that does
 new_prob = torch.ones(27)/27.0
-print(f'{new_prob=}')
+print(f'uniform probabality: {new_prob}')
+# prints 
+# new_prob=tensor([0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370,
+#                  0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370,
+#                  0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370])
+
+print(f'Testing sampling with uniform probablity distibution:')
 for i in range (10):
     chstr=''
     # always start from first row
@@ -452,6 +517,17 @@ for i in range (10):
         if idx==0:
             print(chstr)
             break
+#prints 
+# bkfklwog.
+# ccfxqnjndljso.
+# zyekueihst.
+# pyapshpo.
+# ibmsfzh.
+# rufyxkqlxmexaiozwdqgbrdjpaacgxahnwmvtxswuq.
+# bmnpqzltgojwpsbn.
+# thyyiefgeponyacqhpuxziywniykokdlucesfzvtwogoodipu.
+# jkznrtrnmygbohmemqbywdsqfzrdjex.
+# gofvbankznqypzsxvk.
 # so we actually did learn something and thats why each character has a different probablity of showing up
 #  and it shows in our results 
 # but how can we quantify how good of a model we have here? 
@@ -694,7 +770,7 @@ for word in ["anonvs"]:
         log_likelihood += log_prob.item()
         i+=1# a simple counter!
         print(f'{ch1}, {ch2}, {prob=:.10f} {log_prob=:.4f}')
-print(f'{likelihood=}, {log_likelihood=:.4f}, log_likelihood(avg): {log_likelihood/i:.4f}')
+print(f'{likelihood=}, {log_likelihood=:.4f}, log_likelihood(avg): {-log_likelihood/i:.4f}')
 # word='anonvs'
 # ., a, prob=0.1375857741 log_prob=-1.9835
 # a, n, prob=0.1603856981 log_prob=-1.8302
@@ -713,6 +789,46 @@ print(f'{likelihood=}, {log_likelihood=:.4f}, log_likelihood(avg): {log_likeliho
 # but here, we are indeed making probabilities smoother, previously the vs had 0 probablity, but now
 # its still very unlikely but much much more probable than previously (0.0003 vs 0.0000000001)
 
+# total loss after smoothing:
+print(f'loss after smoothing')
+chstr = ''
+likelihood=1# likelihood calculated by the product of probs
+log_likelihood = 0 # specifies how good the model is at assigning the right probablity to parameters according to the underlying dataset
+i=0
+for word in names:
+    word = ['.']+list(word)+['.']
+    for ch1,ch2 in zip(word,word[1:]):
+        idx1 = atoi[ch1]
+        idx2 = atoi[ch2]
+        # lets see what probablity  our model has assigned to this pair
+        prob = probs_smoothed[idx1, idx2]
+        log_prob = prob.log()
+        likelihood *= prob.item()
+        log_likelihood += log_prob.item()
+        i+=1# a simple counter!
+        print(f'{ch1}, {ch2}, {prob=:.4f} {log_prob=:.4f}')
+print(f'{likelihood=}, {log_likelihood=:.4f}, log_likelihood(avg): {log_likelihood/i:.4f}')
+#print
+# likelihood=0.0, log_likelihood=-560001.8843, log_likelihood(avg): -2.4546
+
+print(f'sampling output of smoothed probs')
+# to test the smoothed prob :
+for i in range (3):
+    chstr=''
+    # always start from first row
+    idx=0
+    while True:
+        prob = probs[idx]
+        # print(f'{prob=}')
+        idx = torch.multinomial(probs_smoothed[idx], num_samples=1, replacement=True,generator=g).item()
+        chstr += itoa[idx]
+        if idx==0:
+            print(chstr)
+            break
+#output: 
+# manakel.
+# e.
+# su.
 
 # so to recap: 
 # we want to maximize the likelihood of the data with respect to the model parameters (statical modeling), basically make model find the most accurate underlying probablity distribution of data points in our dataset
@@ -722,7 +838,413 @@ print(f'{likelihood=}, {log_likelihood=:.4f}, log_likelihood(avg): {log_likeliho
 # so finally we quantified our model performance by a negative log likelihood loss which shows how
 # it performs, the lower the number the better the model at representing the underlying data probablity distribution
 # 
+# so in otherwords, (in statistical modeling), 
+# the likelihood is often defined as the product of probabilities for each individual sample in the dataset. 
+# This means that the likelihood represents the probability of observing the entire dataset given the model parameters.
+# To calculate the likelihood for the whole dataset, we would multiply the probabilities produced by the model for each sample.
+# Alternatively, if we want to calculate the log likelihood (for the reasons we mentioned earlier such as for numerical stability, etc),
+# you would sum the log probabilities for each sample.
+# For a single example, the likelihood is simply its probability as produced by the model. 
+# Taking the logarithm of this probability gives us the log likelihood for that particular example.
+# It is a way to transform the likelihood into a more convenient scale for calculations, 
+# as well as to simplify computations when dealing with a large number of samples.
 
 #%%
 # next we are going to implement this as a neural network! 
+# beofor we go on, lets recount what we did previously. 
+# we grabed our dataset and tried to infer some character level relationships
+# by which we could create new name like output. 
+# we say character level becasue it involves only two adjacent characters relationship only
+# at a time, and name like, becasue as you saw, they are not prefect suggesting the two character
+# relationship is not enough by itself to result in a great name generator!
+# we extracted such relationships by simply counting each observed pair's appearance in the dataset
+# and creating a table out of it so for a given character we could calculate the probablity of it
+# being used with another character. 
+# now here we are going to automate this using a nn, a very simple one, a one layer neural network
+# to be more precies, one that doesnt even have an activation function! so lets go
+# since we are dealing with neural networks, we deal with matrix multiplications, we cant use
+# characters, we cant use simple decimal integers either. 
+# we know we can map our characters to decimal integers or indexes, so thats solved. 
+# but for matrix multiplication involved, we need to code these indexes as well. so we 
+# one-hot encode them and then use them. 
+# another issue is, in a nn, we need a dataset, a data and a label. how do we create those?
+# also our neural network's weight matrix is float not integer, so how can we count!? 
+# yes our weights are floats, but we would be able to comeup with the same semantic as the bigram
+# model just fine, though using a different way. in nn, we would have log-count to achieve this
+# to create a dataset the data would be each character, and its corrosponding label would be
+# the character after it, basically we are creating the pairs this way and allow the network to
+# learn their relationship this way. 
+# lets create our dataset 
+xs = []
+ys = []
+for name in names:
+    name = ['.'] + list(name)+['.']
+    for ch1, ch2 in pairwise(name):
+        idx1 = atoi[ch1]
+        idx2 = atoi[ch2]
+        xs.append(idx1)
+        ys.append(idx2)
+# now xs has the first part of our pair, while ys, has the second part of each pair!
+# to convert these into onehot vectors, we can use torch.nn.functional one_hot function
+import torch.nn.functional as F
+# for that we need them to tensors!
+xs = torch.tensor(xs)
+ys = torch.tensor(ys)
+print(xs[:3]) # tensor([ 0,  5, 13])
+# make them as float cuz we feed them to our nn
+xs_enc = F.one_hot(xs, num_classes=27).float()
+ys_enc = F.one_hot(ys, num_classes=27).float()
+print(xs_enc.shape, f'{xs_enc[:3]=}')
+print(ys_enc.shape, f'{ys_enc[:3]=}') 
+# prints 
+# (228146, 27) 
+# xs[:3]=tensor([[1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.],
+#         [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.],
+#         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.]])
+# (228146, 27) 
+# ys[:3]=tensor([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.],
+#         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.],
+#         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.,
+#          0., 0., 0., 0., 0., 0., 0., 0., 0.]])
+# and if we visualize it, we see there are 3 rows, and each entry thats 1 is shown in bright yellow
+plt.imshow(xs_enc[:3])
+# now we need to create our neurons and for that we need a weight matrix
+# but what should be the dimensions of our weight matrix? the input is (228146, 27), so our matrix
+# must at the very leaast be 27xsth. what should we use for sth here? 
+# lets see, if we go for a xs_enc@w where xs_enc is (200kx27) and w is 27x1, we would get 200kx1 which means
+# we get a single output per each input. but remember that our input is a vector, our label is also a vector
+# a one hot vector of length 27, so when we want to predict the next character, we should also produce the same
+# vector so we can compare them. thats why we need an output size as many as input size which is 27 so 
+# our weight matrix would be 27x27
+# so infact what this means is that we are creating 27 neurons and all of these 27 neurons are looking
+# at the all the inputs and create an output. (a neuron had 1-to-many input and only 1 output)
+# here we are creating our weight matrix (in fact a column vector) and initialzing it with normal distribution
+# where the majority of values are near zero. 
+w = torch.randn(size=(27,27))
+# since python3.5 @ is a matrix multiplication operator
+preds = xs_enc@w 
+print(preds[:3])
+# tensor([[ 1.1458, -2.0494,  0.1168,  0.7858, -0.0109, -0.9591,  0.3196, -1.2274,
+#           0.8380, -1.2459, -0.4174,  0.8508,  0.0758, -0.2004,  0.8828, -0.1573,
+#           1.4613, -0.3898, -0.2099,  0.9161,  0.8053,  1.5845, -0.8689,  0.4387,
+#           1.0069,  0.1445, -0.1201],
+#         [ 1.2338, -0.7942, -0.6653,  1.6304, -0.0830,  0.5843,  0.7250, -1.5760,
+#           1.1257, -0.8882,  0.0499, -0.3004,  0.8052, -0.3012,  0.0736,  0.7548,
+#           1.2550, -0.2785, -0.6582, -0.5313,  0.8607, -0.2436,  0.2155,  0.2051,
+#           1.1669, -0.8757,  0.4197],
+#         [-0.4706,  1.4474, -0.3733, -0.2354, -0.5600,  0.6512, -0.0716, -0.7241,
+#           0.9495,  0.2969, -0.9082,  1.3144,  0.9458, -0.8236, -0.7642,  0.0828,
+#          -1.3355,  1.1673, -1.4464, -1.2507, -0.4051, -1.1882, -1.1765,  1.4431,
+#          -0.0098, -1.2935,  1.1376]])
+
+# what we want here intuitively is for our nn to produce a probablity distribution for the next character in the sequence given the input example. (we want probablities),
+# but these are negative and postive numbers that we get as the output!(because our weight is initialize by a normal distribution so it contains numbers like that) for a probbability 
+# it needs to be some positive numbers that sum up to 1. but these are not like that as you can see.
+# we want somehow these numbers to represent probablities for the next character, 
+# these numbers are not counts either, because counts are positive integer numbers tha a neural network cant produce
+# so what are these numbers? and how should we interpret them? 
+# these numbers are infact log-counts (also known as logits), so in order to get the counts, we need to exponentiate them 
+# what exp() does, is that it takes negative or positive numbers, and returns a number e^x
+# if you feed it a negative number(<0), it always returns a number <1 and if you feed it a number>0
+# it will return a number>1. 
+print(preds[:3].exp())
+print(preds[:3][0,:2])
+print(preds[:3].exp()[0,:2])
+# print 
+# tensor([[3.1450, 0.1288, 1.1239, 2.1941, 0.9892, 0.3833, 1.3766, 0.2931, 2.3117,
+#          0.2877, 0.6588, 2.3414, 1.0787, 0.8184, 2.4178, 0.8544, 4.3117, 0.6772,
+#          0.8106, 2.4994, 2.2373, 4.8768, 0.4194, 1.5507, 2.7371, 1.1555, 0.8869],
+#         [3.4342, 0.4519, 0.5141, 5.1058, 0.9203, 1.7938, 2.0648, 0.2068, 3.0825,
+#          0.4114, 1.0512, 0.7405, 2.2370, 0.7399, 1.0763, 2.1271, 3.5077, 0.7569,
+#          0.5178, 0.5878, 2.3649, 0.7838, 1.2405, 1.2276, 3.2121, 0.4166, 1.5216],
+#         [0.6246, 4.2522, 0.6885, 0.7903, 0.5712, 1.9179, 0.9309, 0.4848, 2.5845,
+#          1.3457, 0.4033, 3.7226, 2.5748, 0.4388, 0.4657, 1.0863, 0.2630, 3.2132,
+#          0.2354, 0.2863, 0.6669, 0.3048, 0.3083, 4.2339, 0.9903, 0.2743, 3.1194]])
+# tensor([ 1.1458, -2.0494])
+# tensor([3.1450, 0.1288])
+
+# now as we can see, all the negative numbers are gone, they are turned into positive numbers, and 
+# previously positive numbers have become even more positive (larger that is, like for example preds[:3][0,:2])
+# now we have access to sth that our nn can use to represent counts, the min value is 0 and it can go up
+# so it now can replicate/simulate the barray which contained the occurance counts(basically counts for the next character) of pairs here as well 
+# so now we can also calculate the probablities and do what we did previously that is :
+# exponentiate to get rid of negatives and represent each value as counts 
+log_counts = preds.exp()
+# now to calculate probability just divide all counts by their total sum!
+# this is infact how we normalize each row to get our probablities (just like before)
+probs = log_counts / log_counts.sum(dim=1, keepdim=True)
+# so if we sum a row, we know that it sums to 1 signifying its a probablity now!
+print(f'{probs[0].sum()=}')
+# which now if we print it , 
+print(f'{probs[:3]=}')
+# prints
+# probs[:3]=
+# tensor([[0.0602, 0.0074, 0.0276, 0.0302, 0.0132, 0.0338, 0.0224, 0.0045, 0.0526,
+#          0.0828, 0.0487, 0.0020, 0.0465, 0.1311, 0.0150, 0.0455, 0.0537, 0.0132,
+#          0.0120, 0.0906, 0.0093, 0.0546, 0.0211, 0.0061, 0.0360, 0.0121, 0.0677],
+#         [0.0139, 0.0069, 0.0177, 0.1227, 0.0365, 0.0060, 0.0051, 0.0573, 0.0445,
+#          0.0148, 0.0230, 0.0249, 0.0283, 0.0059, 0.0233, 0.0156, 0.0280, 0.0438,
+#          0.0296, 0.1299, 0.0311, 0.0457, 0.0355, 0.0765, 0.0920, 0.0183, 0.0232],
+#         [0.0432, 0.0027, 0.0267, 0.0288, 0.0545, 0.0068, 0.0255, 0.0270, 0.0605,
+#          0.0344, 0.0105, 0.0184, 0.0259, 0.0308, 0.0092, 0.0285, 0.1127, 0.0267,
+#          0.0261, 0.0230, 0.0516, 0.0239, 0.1957, 0.0576, 0.0167, 0.0155, 0.0171]])
+
+# we see there are 3 output for our 3 input examples, each of these rows now give us probablities
+# for the next character given that input.  
+# so to recap: 
+# when we input@w we got logits, 
+# we interpret it as logcount so used exp() to get sth that look likes count (gives us the same behavior)
+# when we got our log-count, we normalize it and got probability distribution
+# you might remember these last two line resemble sth called softmax, and thats exactly it!
+#
+# ok now lets have some observations here, to be precise, lets pick a word
+# and see what loss our current model (which is a randomly initialized weight w) gives us
+
+nll_all = 0
+i=0
+log_likelihood_all = 0
+# run this for this name only
+for name in ["emma"]:
+    name = ['.']+list(name)+['.']
+    for ch1,ch2 in pairwise(name):
+        idx1 = atoi[ch1]
+        idx2 = atoi[ch2]
+        # we have already calculated the nn prob so lets use it
+        prob = probs[idx1,idx2]
+        # lets calculate the loglikelihood and 
+        # negative loglikelihood loss for this sample as well
+        # note that we said likelihood is the product of all probablaties
+        # but here we are just taking log of one. if you remember likelihood is per sample
+        # if we were to calculate the likelihood of model on the whole dataset, we needed to
+        # multiply all the probablities the model produced for each sample, or for the log likelihood
+        # sum all of the loglikelihood, but since here we are dealing with one sample, we simply take its log
+        # negative loglikelihood is self explanetory then. 
+        log_likelihood = prob.log()
+        nll = -log_likelihood.item()
+        nll_all += nll
+        log_likelihood_all +=log_likelihood.item()
+        i+=1
+        print(f'{ch1},{ch2}, {prob=:.4f} {log_likelihood=:.4f} {nll=:.4f}')
+print(f'total nll: {nll_all/i:.4f} total loglikelihood: {log_likelihood_all/i:.4f}')
+# prints
+# .,e, prob=0.0374 log_likelihood=-3.2860 nll=3.2860
+# e,m, prob=0.1176 log_likelihood=-2.1407 nll=2.1407
+# m,m, prob=0.0058 log_likelihood=-5.1573 nll=5.1573
+# m,a, prob=0.0838 log_likelihood=-2.4798 nll=2.4798
+# a,., prob=0.0072 log_likelihood=-4.9288 nll=4.9288
+# total nll: 3.5985 total loglikelihood: -3.5985
 # 
+# so by default observe that the w matrix govern all of this, and since its randomly initialized
+# theres not much it can do so we need to optimize w so that it actually gets close to the bigram
+# model so lets do that
+# what do we need to do this? 
+# feed the input and multiply it by the weightmatrix
+# calculate the loss
+# backprop
+# use the gradients and update the weights by a small step towards the opposite direction of gradients
+# a loop that does the optimization a few times  
+# lets do this once 
+# feed the input and multiply it by weight matrix 
+# we need to convert our input to onehot encoded form
+data = F.one_hot(xs, num_classes=27).float()
+# lets do this with our labels 
+labels = F.one_hot(ys, num_classes=27)
+# lets create a weight matrix with grads enabled!
+# lets also add a generator to keep things determinestic for the sake of testing
+g = torch.Generator('cpu').manual_seed(255)
+W = torch.randn(size=(27,27), requires_grad=True, generator=g)
+# now lets do X@W since our memory is limited lets grab a few examples only
+logits = data[:5]@W
+# convert to log-count 
+counts = logits.exp()
+# normalize it and get probabality distribution
+probs = counts/counts.sum(dim=1, keepdim=True)
+# we now probs lets calculate loglikeloohd , we take the log and take its mean
+# but note that we want to see how the network predicted according to our label
+# so here we say get all rows representing all input samples, and return the corrosponding column
+# from the respective label row which is 1 (basically saying extract the same probablity from 
+# the probs where label for it says 1)
+log_likelihood = probs[:5,labels[:5]].log().mean()
+# now lets get our loss which is the negative loglikelihood
+nll_loss = -log_likelihood
+print(f'loss:{nll_loss:.4f}')
+# do a backward but before that make sure to zeroout the weights gradients
+W.grad = None
+nll_loss.backward()
+print(f"W's gradients: {W.grad=}")
+# now lets update the weights , note that we need to use w.data to update the actual data
+# otherwise we get an error! (note that we do this so this doesnt become part of the computation graph
+# that is, so this operation is not considered as a normal operation that needs to be saved in the graph 
+# to be used for gradient calculations!)
+W.data += -0.01*W.grad
+
+# so lets do this a few times to see the effect 
+for i in range(5):
+    # forward 5 samples
+    logits = data[:5]@W
+    # convert to log-count 
+    counts = logits.exp()
+    # normalize it and get probabality distribution
+    probs = counts/counts.sum(dim=1, keepdim=True)
+    # we now probs lets calculate loglikeloohd , we take the log and take its mean
+    # but note that we want to see how the network predicted according to our label
+    # so here we say get all rows representing all input samples, and return the corrosponding column
+    # from the respective label row which is 1 (basically saying extract the same probablity from 
+    # the probs where label for it says 1)
+    log_likelihood = probs[:5,labels[:5]].log().mean()
+    # now lets get our loss which is the negative loglikelihood
+    nll_loss = -log_likelihood
+    print(f'loss:{nll_loss:.4f}')
+    # do a backward but before that make sure to zeroout the weights gradients
+    W.grad = None
+    nll_loss.backward()
+    print(f"W's gradients: {W.grad[:5]=}")
+    # now lets update the weights , note that we need to use w.data to update the actual data
+    # otherwise we get an error! (note that we do this so this doesnt become part of the computation graph
+    # that is, so this operation is not considered as a normal operation that needs to be saved in the graph 
+    # to be used for gradient calculations!)
+    W.data += -0.01*W.grad
+
+# and we see that the loss increased from loss:4.1761 down to loss:4.1626 so if we keep going 
+# it should get down even more.
+# and to do it for all the data
+num_samples = xs.nelement()
+
+for i in range(150):
+    # forward 5 samples
+    logits = data@W
+    # convert to log-count 
+    counts = logits.exp()
+    # normalize it and get probabality distribution
+    probs = counts/counts.sum(dim=1, keepdim=True)
+    # we now probs lets calculate loglikeloohd , we take the log and take its mean
+    # but note that we want to see how the network predicted according to our label
+    # so here we say that lets pick a row (arange returns an iterable of numbers from 0 up to num-1),
+    # and, get the second index using label (which is an iterable itself), thats our probability
+    # and then go for the next row, use ys to get the second index and get that probability as well
+    # continue this until we have a resulting tensor, then run log on the resulting tensor followed 
+    # by a mean() to get the whole tensors mean which would be the loglikelihood of the whole samples!
+    # the difference with previous snippet is that previously we used slice indexsing so everything
+    # happened all at once (copied all into memory atonce and ran the operations) while here, it happens in steps
+    # in a loop if you will. we cant use the former way becasue it consumes alot of memory but this approach
+    # works fine!
+    log_likelihood = probs[torch.arange(num_samples), ys].log().mean()
+    # now lets get our loss which is the negative loglikelihood
+    nll_loss = -log_likelihood
+    print(f'loss:{nll_loss:.4f}')
+    # do a backward but before that make sure to zeroout the weights gradients
+    W.grad = None
+    nll_loss.backward()
+    # print(f"W's gradients: {W.grad=}")
+    # now lets update the weights , note that we need to use w.data to update the actual data
+    # otherwise we get an error! (note that we do this so this doesnt become part of the computation graph
+    # that is, so this operation is not considered as a normal operation that needs to be saved in the graph 
+    # to be used for gradient calculations!)
+    # we tested this and noticed with lr = 50!! it goes fine so lets use that instead of 0.1! to speed up the training!
+    W.data += -50*W.grad
+
+# and what do you know? we got loss of loss: 2.4658 and intrestingly its around the same loss of the 
+# bigram model which was 2.4540, so we basically got the same result with a gradient based learning
+# and the reason is the information is the same here, as we said given the character calculate the 
+# probablity of the next character!
+# so basically this means, our W must be the same(functionally see below!) as the barray previously, lets print that 
+print(f'W={W.data}')
+# but this doesnt look like counts right!? yes becasue its a log-count! and we need to exp() it
+# to see the real representation 
+print(f'W={W.data.exp()}')
+print(f'W.min={W.exp().data.min():.4f}')
+print(f'W.max={W.exp().data.max():.4f}')
+# now we see that all the values are positive and carry on the same role as the numbers in our original barray 
+# in the bigram model played. they are not the same exact values, but they have the same function
+# and this shows when we plot the weight (note the exp() as its a logcount!) note that it doesnt replicate
+# the bigram barray image, and we dont want that eiher, but here we are showing the similarity in function
+plt.figure(figsize=(16,16))
+plt.imshow(W.data.exp(), cmap='Blues')
+
+# also before we end this : 
+# recall that we had smoothing applied on our previous model, in a neural network the smoothing can
+# be achieved using 
+# in neual network, if we for example initialize all W with zeros, what happens here is that 
+# when we do data@W, the logits become zero, and when we exp() that to get count_log
+# it all become 1s. basically makes all the probablities uniform. its like adding a large number to 
+# barray in our previous bigram model. 
+# so the intuision is, if we somehow get Ws value towards zero, closer to zero, it causes a uniformity
+# in probablities, it plays a smoothing role just like our previous model and thus gives us a smoother 
+# distribution. too much of this effect and we see the same issue, model cant learn, cuz everything
+# basically has the same effect! everything is the same, thus it becomes random prediction 
+# so if we somehow incentify the W values to be zero, or close to zero, we get the smoothing effect
+# so how can we do that? we are using loss to guide the backpropagation , so if we can augment it
+# to incentify this, then we get that. 
+# what is usually done is we can square all the values of our weight matrix and sum or mean it
+# (i.e (W**2).sum() or (W**2).mean, mean may be better as sum can result in a large number)
+# by doing this all the negative numbers are gone(by squaring) and we endup with a single number 
+# after sum/mean. so this loss is only zero when W is zero, and if not the loss goes up.
+# we can then use this in the loss and assign a factor to it(to specify its effect), like this
+# loss = negative_log_likelihood_loss + 0.01*(W**2).mean()
+# now our loss is two part, and it needs to fullfill both terms to be minimized. 
+# the effect is that the first lost tries to learn the probability distribution of the underlying data
+# and the second loss tries to find a uniform distribution, therefore the result will be a smoother
+# probablity distribution that the model learns. 
+# this is what is known as regularization loss or weight decay (l2)
+# too much importance to the weight being near zero, and it will overwhelm the loss
+# and prevents the learing process altogether thats why high to too much regularization slows and
+# flat out stops training process
+# the lr in the regularization part is the same as adding numbers to our previous model's barray
+# to make it smoother, too much lr, can overwhelm the first loss and create a completely uniform
+# distribution that destroys the undelying data probability distribution
+#
+# And finally lets see how we can test our new model and create some new names:
+# for this like before, we start off with an index=0 feed it to our network 
+# and then get the probablity and use that to get the second index and go on. 
+# recall that we start from index 0 cuz it was ., . was at index ., and all names
+# started with . and ended with ., having said that lets do this
+for i in range(3):
+    idx = 0
+    chstr=''
+    while True:
+        # note the list, this makes it have the shape 1,27 otherwise it wont work in matrix multiplication
+        x_enc = F.one_hot(torch.tensor([idx]), num_classes=27).float()
+        logits = x_enc@W
+        counts = logits.exp()
+        probs = counts/counts.sum(dim=1, keepdim=True)
+        # now lets sample from it!
+        idx = torch.multinomial(probs, num_samples=1, replacement=True, generator=g).item()
+        chstr += itoa[idx]
+        if idx ==0:
+            print(f'{chstr}')
+            break
+#
+#aden.
+#atchann.
+#lapey.
+
+# 
+# (side note, The exponential function (exp()) and the natural logarithm function (log()) are inverse functions of each other. This means that applying log() to the result of exp() will return the original input, and vice versa.) 
+# (side note 2)
+# Whats a logit exactly?
+# In the context of neural networks, the term "logit" refers to the raw, unnormalized output 
+# of a neuron or a layer before it is transformed into a probability using a softmax function.
+# It represents the log-odds or log-likelihood of a certain class being the correct prediction.
+# The reason it is called a logit is because it is the logarithm of the odds ratio, similar to
+# its usage in logistic regression. By applying the softmax function to the logits, the output
+# is transformed into a valid probability distribution over the classes.
+# The logits are often used in the training phase of a neural network, where they are compared
+# with the ground truth labels to calculate a loss function. The network then adjusts its parameters
+# through backpropagation to minimize this loss and improve the accuracy of its predictions.
+# So, in summary, in the context of neural networks, logits represent the unnormalized outputs 
+# before softmax transformation, and they are used to compute the probability distribution over
+# classes.
+# 
+# outside of neural networks, the term "logit" is derived from the words "log" and "odds ratio."
+# In logistic regression, the logit function is defined as the natural logarithm of the odds ratio.
+# The odds ratio is the ratio of the probability of an event occurring to the probability of it 
+# not occurring. By taking the logarithm of this ratio, the logit function transforms the 
+# probability into a linear scale, allowing for regression analysis.
+# The logit function is also used to model the relationship between predictor variables and the
+# probability of an event, providing a useful way to estimate the probability of a binary 
+# outcome based on the values of the predictors.
