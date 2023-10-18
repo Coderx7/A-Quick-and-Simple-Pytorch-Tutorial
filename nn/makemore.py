@@ -297,7 +297,7 @@ probs = barray.float()/barray.sum(dim=1, keepdim=True)
 print(f'{probs[:1]=}')
 
 # now lets explain whats happening here, 
-# since we want to sum all the rows columnwise (that is we want all columns from left to righ to
+# since we want to sum all the rows columnwise(from left to right) (that is we want all columns from left to righ to
 # be summed into a single cell, so we tell sum to sum over the dim=1, dim=0 is the rows)
 # keepdim=True is essential here as its required for a valid broadcast 
 bsum = barray.sum(dim=1, keepdim=True)
@@ -356,7 +356,7 @@ print(f'{probs_wrong[:1]=}')
 # tensor(2398)
 # this is [27] numbers, basically when we divide 27,27 from 27 
 # the broadcaster needs to broadcast our vector into a compatible shape of 27,27 so it can carry on
-# the elementwise division. in doing so it replicates the elements how? it takes the first entry
+# the elementwise division. in doing so it replicates the elements but how? it takes the first entry
 # and copies it along the first dimension in all rows so you'll have sth like this 
 # tensor(32033)
 # tensor(32033)
@@ -377,7 +377,7 @@ print(f'{probs_wrong[:1]=}')
 # tensor(2645)  tensor(2645)  tensor(2645)  tensor(2645)  ...
 # ...
 # where for the first row, all columns are the same values becasue they all belong to that row only
-# so to recap, when doing division here we want to retain the shape of resuling sum, so 
+# so to recap, when doing division here we want to retain the shape of the resuling sum, so 
 # the broadcast can replicate each value along that dimension, for 27,1 
 # torch comes and takes the first item and replicates it to the right to fill all the columns of that row
 # for the second (row)value, it reads 33885 and replicates it along the column axis so this row only has 33885
@@ -411,10 +411,10 @@ print(f'{probs_wrong[:1]=}')
 # its infact like 
 # 27x27
 #    27
-# so the first dim here is missing, making this a column vector and treat it as 1x27! 
-# so when it comes to do (27x27) x (1x27), the first dim needs to be created and it gets
-# created by copying respective entries from the second dim. each entry, creates a full column below it
-# like this
+# so the first dim here is missing, making this a row vector and treat it as 1x27!
+# new explanation: since this is a single row, for our operation we need 26 more so it becomes 27x72
+# what is actually done is this whole row is replicated down so we would have : 
+# sth like this
 # 1x27:
 # row0  1     2   3   4   ....    27
 # and it will become like this :
@@ -424,14 +424,15 @@ print(f'{probs_wrong[:1]=}')
 # ...
 # r26   1     2   3   4   ...     27
 # so to recap this, when 
-# we have a shape (27,1), its actually 27 rows and a single column, and we need to fill the columns
+# we have a shape (27,1), its actually a single column vector(this is called a column vector!), 
+# and we need to fill the columns
+# so what happens is basically this column is replicated 26 times more so it becomes 27x27 as you can 
+# imagine, each row would consist of the same values, the previous row consits of.
 # what happens is for each row, that single column is replicated 27 times to make up for the missing values
 # row 1 will simply be a single value replicated accros all columns.
-# but if we have a shape (27), its infact (1x27) or a column vector, with a single row. so what happens
+# but if we have a shape (27), its infact (1x27) or a row vector, with a single row. so what happens
 # is the rows need to be created and each row will simply be the replicated row0 27 times. 
 # so each row has 27 numbers (they are different column wise)
-# (row vetcors (27x1) create matrix where all columns are made of row[i] (duplicate its value))
-# (column vectors(27) or (1x27) create matrix where all rows is simply duplicated from row[0])
 # now that we sorted all of this information and got ourselves our probs 
 # we can go and sample from it. for sampling we use torch.multinomial function 
 s = torch.multinomial(probs[0], num_samples=1)
