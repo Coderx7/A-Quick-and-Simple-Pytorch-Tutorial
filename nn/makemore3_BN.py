@@ -998,7 +998,7 @@ class BatchNorm1d:
         return [self.gamma, self.beta]
     
     def zero_grad(self)->None:
-        for p in parameters():
+        for p in self.parameters():
             p.grad = None
 
 class Tanh:
@@ -1061,21 +1061,35 @@ itoa = {v:k for k,v in atoi.items()}
 # print(atoi)
 # print(itoa)
 # now lets create the datasets 
-X = []
-Y = []
-block_size = 3
-context = [atoi['.']] * block_size
 
-for name in names:
-    for ch in name+'.':
-        idx = atoi[ch]
-        X.append(context)
-        Y.append(idx)
-        context = context[1:]+[idx]
+# lets create train, dev and test splits here
+import random
+def build_dataset(names):
+    X = []
+    Y = []
+    block_size = 3
+    for name in names:
+        context = [atoi['.']] * block_size
+        for ch in name+'.':
+            idx = atoi[ch]
+            X.append(context)
+            Y.append(idx)
+            context = context[1:]+[idx]
 
-X_tensor = torch.tensor(X)
-Y_tensor = torch.tensor(Y)
-print(X_tensor.shape, Y_tensor.shape)
+    X_tensor = torch.tensor(X)
+    Y_tensor = torch.tensor(Y)
+    print(X_tensor.shape, Y_tensor.shape)
+    return X_tensor, Y_tensor
+
+random.seed(42)
+# shuffle the names around
+random.shuffle(names)
+training_count = int(0.8*len(names))
+validation_count = int(0.9*len(names))
+X_tensor_tr, Y_tensor_tr = build_dataset(names[:training_count])
+X_tensor_val, Y_tensor_val = build_dataset(names[training_count:validation_count])
+X_tensor_test, Y_tensor_test = build_dataset(names[validation_count:])
+
 
 embedding_size = 10
 vocab_size = 27 # 27 characters 
@@ -1180,23 +1194,27 @@ for param in parameters:
 max_iter = 200_000
 batch_size = 32 
 losses=[]
+update_ratios=[]
 for i in range (max_iter):
     # grab a list of idx for our batch 
-    idxs = torch.randint(0, X_tensor.shape[0], size=(batch_size,))
+    idxs = torch.randint(0, X_tensor_tr.shape[0], size=(batch_size,))
     # do a forward pass
-    x = X_tensor[idxs]
+    x = X_tensor_tr[idxs]
     for layer in layers:
         x = layer(x)
     
-    loss = F.cross_entropy(x, Y_tensor[idxs])
+    loss = F.cross_entropy(x, Y_tensor_tr[idxs])
     
     # zero out the previous grads to avoid gradient accumulation
     for layer in layers:
         if isinstance(layer, Tanh) or isinstance(layer, Linear):
             layer.out.retain_grad()
-        else:
-            layer.zero_grad()
-            
+        # else:
+        #     layer.zero_grad()
+    
+    for layer in layers:
+        layer.zero_grad()
+    
     # for p in parameters:
     #     p.grad = None
 
@@ -1205,16 +1223,26 @@ for i in range (max_iter):
     
     # now optimize the weights and biases 
     lr = 0.1 if i<10000 else 0.01
-    for layer in layers:
-        for p in layer.parameters():
-            p.data *= -lr * p.grad
-            
-    print(f'{loss=:.4f}')
+    for p in parameters:
+        p.data += -lr*p.grad
     
-    if i%10_000:
+    if i%10_000:        
+        print(f'{loss=:.4f}') 
+    
+    if i%10_000==0:
         losses.append(loss.log10().item())
     
-    break
+    with torch.no_grad():
+        # basically we are comparing the update with the current values of the parameters
+        # when we use log10, we are basically trying to show the exponents here for better
+        # visualization
+        update_ratio = [(lr*p.grad.std()/p.data.std()).log10().item() for p in parameters]
+        update_ratios.append(update_ratio)
+        
+    if i>=1000:
+        break
+
+print(f'iter: {i} loss:{loss.item():.4f}') # iter: 1000 loss:2.2748
 
 legends=[]
 plt.figure(figsize=(20,4))
@@ -1235,8 +1263,8 @@ for i,layer in enumerate(layers[:-1]):
         
 plt.legend(legends)
 plt.title('activation distribution')
-
-#%% we can do the same exact thing with the gradients instead of activations 
+#%%
+# we can do the same exact thing with the gradients instead of activations 
 # what we are seeing here is that all the gradients for all the layers, roughly have 
 # the same magnitude, (the gradients are roughly the same for every layer)
 # but if we used the gain of 1, notice that the gradients of later layers are smaller
@@ -1244,6 +1272,7 @@ plt.title('activation distribution')
 # their gradient strength gets weaker and weaker (use gain of 0.5 and see the result),
 # and thus using a gain of 5/3 help us in equalizing the gradient strength for 
 # the whole network. 
+plt.figure(figsize=(20,5)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
 legends= []
 for i, layer in enumerate(layers[:-1]):
     if isinstance(layer, Tanh):
@@ -1261,3 +1290,278 @@ for i, layer in enumerate(layers[:-1]):
         legends.append(layer_name)
 plt.legend(legends)
 plt.title('gradient distribution')
+#%%
+# now let us also visualize the parameters 
+# one indicators that we can use to see if everything is ok or not is the ratio of 
+# gradients over the data, if this number is large, then we are in trouble(especially if we
+# use simple gradient descent update), why?
+# lets look at the ratios and std, and see what they mean. 
+# basically this information tells us whether all the layers are training at the same speed
+# or not. when lets say for example our last layer std is twice as large as the layers
+# before it (previous layers for example all had around 0.0002 but our last layer had
+# std=0.002), this means, our last layer is training 10 times faster than the previous layers
+# of course as we train more, the network tries to fix this issue and we infact can 
+# see this if we train our network for 1000 iterations and then break (do this now!)
+# well it happens that the gradient to data ratio is not really that important after all,
+# whats more important is the update ratio! (of course they are important and they dont need
+# to have whacky ratios otherwise that signals something is very wrong, but in general, a bit
+# of difference is fine and network can manage to sort things out, unless it doesnt and now
+# you know how to spot the issue regarding this!) 
+# anyway, lets talk about update ratios now! jump to the next section below!
+legends = []
+plt.figure(figsize=(20,4)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
+for i,p in enumerate(parameters):
+    grad = p.grad
+    shape = tuple(p.shape) # we could also write p.data.numpy().shape to get the pure shape but this is easier and less typing!
+    if shape[0] > 1: # only plot weights (ignore biases)
+        print(f'weight {shape} mean: {p.mean():.6f} std: {p.std():.6f} grad/data ratio: {grad.std()/p.std():.2f}')
+        hy,hx = torch.histogram(grad)
+        plt.plot(hx[:-1].detach(), hy.detach())
+        legends.append(f'{i} {shape}')
+plt.legend(legends)
+plt.title('parameters statistics')
+
+#%% 
+# now lets plot the update ratios !
+# first create new figure with different size! 
+# when we plot this information, we see that they evolve overtime, initially they have 
+# some values and they stablize as the network is trained,
+# and then we are plotting a line, where roughly speaking, these updateratio values should
+# be, and that value is roughly -3 here. basically what this means is that, there are some
+# values in a tensor for example, and the update ratio, must be around 1/1000ths of the 
+# the magnitude of values in that tensor (i.e. the update ratio must be 1/1000th of the data)
+# so for example if the log10() of an update ratio for a parameter was -1, it means the 
+# update ratio for that parameter is pretty high, the parameters are being updated alot
+# one thing to note is the pink like (the last layer) where its an outlier compared to others
+# and its because, the last layer has been artificially changed to stay small so softmax layer
+# doesnt produce high confidence result at the begining, if we go back we see that we are 
+# actually shrinking the last layers weight std for this reason (*= -0.1), 
+# this made the last layers values really small, so the updates are larger to compensate 
+# that but ultimately it stabalizes as you can see, but still different from others.
+# thats why the rate of change for this layer and others are different
+# so we our update ratios to be roughly -3 here, anything lower than -3 (like -3.5, -4, etc)
+# means the parameters are not training fast enough. 
+# we can test this with a smaller learning rate, (tets this with lr=0.001 now), and we notice
+# that the update ratio drop to -6,-5, etc, signifying the slow training, and updates being
+# way smaller than what they need to be (basically showing the size of updates are 10000/100000 times in 
+# in magnitude to the size of numbers in that tensor) thus a symtomp of trainingto slowly
+# and also our plot shows that we are using a bit higher learning rate, becasue we are
+# around -2.5, but overall, its a good start, as everything looks well behaved.
+# this plot allows us to see if something is not right/is miscalibrated, pretty quickly.
+# like for example try messing the inital gains and see what happens, (remove the linear layers 
+# fan_in fix, and run the test, we see that no only previous plots scream the issue
+# but also here, the uprate ratios are not in sync, they are all over the place, signifying
+# they are trained with different speeds, the earlier layers have huge update ratios, while
+# latter layers have drastically smaller updates, resulting in a complete mess!)
+# anything larger than that (-1., -1.5)
+# are very large values, indicating the layers at which this update ratio is happening is
+# training much faster compared to others. likewise, values smaller than -3, means
+# we are training slowly for that parameter/layer
+legends =[]
+plt.figure(figsize=(20,5))
+for i,p in enumerate(parameters):
+    shape = tuple(p.shape)
+    if shape[0]>1:
+        # use only weights
+        # plot!
+        plt.plot([update_ratios[j][i] for j in range(len(update_ratios))])
+        legends.append(f'param {i}')
+# draw a line from 0 to the length of update ratios, to show where the ratios should ultimately reside     
+# the ratios should be ~1e-3; indicate on plot
+plt.plot([0, len(update_ratios)],[-3,-3], 'k') 
+plt.legend(legends)
+
+#%%
+#
+# now we saw that if we have an mlp (stack of linear layers), how we can calibrate it
+# so everything looks good, however as we saw, its a tedious task, here lets use BatchNorm
+# and see all the stats and plots look fine, even if we mess up the gain they comeout fine!
+# 
+
+layers:list[Embedding|Linear|Flatten] = [
+          Embedding(vocab_size, embedding_size),  
+          # there are 3 numbers in each sample, so the output of our embedding layer
+          # would be (...,3,2) so we need to flatten the last dimension so it can be
+          # used by and fed to the next linear layer 
+          Flatten(True),
+          Linear(embedding_size * block_size, 100), BatchNorm1d(100), Tanh(), 
+          Linear(100, 100),                         BatchNorm1d(100), Tanh(), 
+          Linear(100, 100),                         BatchNorm1d(100), Tanh(),
+          Linear(100, 100),                         BatchNorm1d(100), Tanh(),
+          Linear(100, 100),                         BatchNorm1d(100), Tanh(),
+          Linear(100, vocab_size),  
+          # !see the comment below when initializing the weights
+          # BatchNorm1d(vocab_size)
+          ]
+
+parameters:torch.tensor = [p for l in layers for p in l.parameters()]
+n_parameters = sum(p.nelement() for p in parameters)
+print(f'{n_parameters=:,}')
+
+# remember this is not part of optimization so it must to take part in computational graph!
+with torch.no_grad():
+    # !now when we use batchnormalization, we can use it before softmax as well
+    # !and it shouldnt cause much issues (thoug i wouldnt do it (see last plot)), but since this time its the gamma that
+    # !specifies the std of the output distribution, we use gamma (we dont have weight
+    # !forthe last layer now, our last layer is batchnorm not linear!)
+    layers[-1].weight *= 0.1
+    # layers[-1].gamma *= 0.1
+    
+    # grab all the layers except the last one that doesnt have a tanh!
+    # and apply the corrosponding gain!
+    for layer in layers[:-1]:
+        if isinstance(layer, Linear):
+            # initialize its weight with tanh gain
+            # changing gain here does have an impact on the output eventhough we use BN now
+            # try 3 , 2 for example and see the last plot and read its comments
+            # layer.weight *= 0.5 
+            # layer.weight *= 1
+            # layer.weight *= 3
+            layer.weight *= 5/3
+
+for param in parameters:
+    param.requires_grad = True
+    
+# Now lets run a training loop
+max_iter = 200_000
+batch_size = 32 
+losses=[]
+update_ratios=[]
+for i in range (max_iter):
+    # grab a list of idx for our batch 
+    idxs = torch.randint(0, X_tensor_tr.shape[0], size=(batch_size,))
+    # do a forward pass
+    x = X_tensor_tr[idxs]
+    for layer in layers:
+        x = layer(x)
+    
+    loss = F.cross_entropy(x, Y_tensor_tr[idxs])
+    
+    # zero out the previous grads to avoid gradient accumulation
+    for layer in layers:
+        if isinstance(layer, Tanh) or isinstance(layer, Linear):
+            layer.out.retain_grad()
+    
+    for layer in layers:
+        layer.zero_grad()
+    
+    # do a backward and caculate fresh gradients wrt new batch
+    loss.backward()
+    
+    # now optimize the weights and biases 
+    lr = 0.1 if i<10000 else 0.01
+    for p in parameters:
+        p.data += -lr*p.grad
+    
+    if i%10_000:        
+        print(f'{loss=:.4f}') 
+    
+    if i%10_000==0:
+        losses.append(loss.log10().item())
+    
+    with torch.no_grad():
+        update_ratio = [(lr*p.grad.std()/p.data.std()).log10().item() for p in parameters]
+        update_ratios.append(update_ratio)
+        
+    if i>=1000:
+        break
+
+print(f'iter: {i} loss:{loss.item():.4f}') 
+# iter: 1000 loss:2.8939 
+# for gain=3 we get iter: 1000 loss:2.3039
+# for when we used batchnorm at the very end as the last layer : iter: 1000 loss:2.8343
+
+legends=[]
+plt.figure(figsize=(20,4))
+for i,layer in enumerate(layers[:-1]):
+    # tanh is used becasue it has a finite range of -1,1 and visualizing it is easy
+    if isinstance(layer, Tanh):
+    # if isinstance(layer, Linear): # we test this when tanh layers are commented out
+        output = layer.out
+        layer_name = layer.__class__.__name__
+        mean = output.mean()
+        std = output.std()
+        saturated = (output.abs()>0.97).float().mean()*100
+        print(f'layer {i} ({layer_name:10}) mean: {mean:.4f} std: {std:.4f} saturated: {saturated:.2f}%')
+        # now lets plot these , we use histogram to get the values 
+        ty,tx = torch.histogram(output, density=True)
+        plt.plot(tx[:-1].detach(), ty.detach())
+        legends.append(f'layer{i}({layer_name})')
+        
+plt.legend(legends)
+plt.title('activation distribution')
+#%%
+# we can do the same exact thing with the gradients instead of activations 
+plt.figure(figsize=(20,5)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
+legends= []
+for i, layer in enumerate(layers[:-1]):
+    if isinstance(layer, Tanh):
+    # if isinstance(layer, Linear):
+        output_grad = layer.out.grad
+        layer_name = layer.__class__.__name__
+        mean = output_grad.mean()
+        std = output_grad.std()
+        print(f'layer {i} ({layer_name:10}) mean: {mean:.4f} std: {std:.4f}')
+        # now lets draw the histogram 
+        hy,hx = torch.histogram(output_grad, density=True)
+        # plot the points! note that plt doesnt know about torch tensors, so we give them numpy()
+        # (.detach(), creates a numpy() copy of our tensor whcih matplotlib can use)
+        plt.plot(hx.detach()[:-1], hy.detach(),)
+        legends.append(layer_name)
+plt.legend(legends)
+plt.title('gradient distribution')
+#%%
+# now let us also visualize the parameters 
+legends = []
+plt.figure(figsize=(20,4)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
+for i,p in enumerate(parameters):
+    grad = p.grad
+    shape = tuple(p.shape) # we could also write p.data.numpy().shape to get the pure shape but this is easier and less typing!
+    if shape[0] > 1: # only plot weights (ignore biases)
+        print(f'weight {shape} mean: {p.mean():.6f} std: {p.std():.6f} grad/data ratio: {grad.std()/p.std():.2f}')
+        hy,hx = torch.histogram(grad)
+        plt.plot(hx[:-1].detach(), hy.detach())
+        legends.append(f'{i} {shape}')
+plt.legend(legends)
+plt.title('parameters statistics')
+
+#%% 
+# now lets plot the update ratios !
+# when we used batchnorm as the last layer, note that we kind of messed up things, 
+# our first layer(blue) starts training slower, but ultimately catches up though, 
+# and other layers, update faster(-2.25) nothing too bad,as they stabalize later on
+# but compared to when we dont use batchnorm as the last layer, these are more whacky!
+# and much more osiliation can be seen.
+# so personally I wouldnt use batchnorm at the final layer, although as we said and saw
+# it doesnt impose much problem(of course its specific to problem at hand! this maynot
+# be the case for all the cases out there!)
+#
+# also note that, we might see that, even though we are using batchnorm, changing the gain does have an effect
+# on the gradients update (and this is especially evident in this plot (try gain=2 while batchnorm is
+# the last layer))
+# this happens especially for example when batchnorm is the last layer, 
+# we see that pretty much everywhere else, everything looks well behaved nontheless, which is good
+# and in this plot especially, (when batchnorm is used as the last layer), we see the trainig speed 
+# is impeded, so we need higher learning rate to compensate that it seems. (the update ratio is 
+# around -3.6 and basically below the line, though it ultimately catches up and stabalizes
+# but its janky with lots of ossilliations ), I didnt observe this behaviro when no batchnorm
+# is used as the last layer, suggesting this doesnt happen at least as heavely when batcnorm
+# is not used at the last layer, so overall the choice of gain doesnt matter as much
+# so to recap, the -3 on logscale seems like a good value, anything higher or lower might prbably
+# be too small or too big for update magnitude (but at the end its not carved in stone, 
+# check this with your usecase, its an intuition after all and we should be able to work it out
+# for ourseleves.)
+
+legends =[]
+plt.figure(figsize=(20,5))
+for i,p in enumerate(parameters):
+    shape = tuple(p.shape)
+    if shape[0]>1:
+        # use only weights
+        # plot!
+        plt.plot([update_ratios[j][i] for j in range(len(update_ratios))])
+        legends.append(f'param {i}')
+# draw a line from 0 to the length of update ratios, to show where the ratios should ultimately reside     
+# the ratios should be ~1e-3; indicate on plot
+plt.plot([0, len(update_ratios)],[-3,-3], 'k') 
+plt.legend(legends)
