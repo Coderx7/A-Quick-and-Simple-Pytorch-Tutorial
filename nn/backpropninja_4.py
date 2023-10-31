@@ -210,11 +210,19 @@ for i in range (iter_max):
     # probs = logcounts/logcounts.sum(dim=1, keepdim=True)
     # for easier calculation of gradients, lets split the operations into separate ones
     logcountsum = logcounts.sum(dim=1, keepdim=True)
+    # note from future: 
+    # initially this was the only section, but as I later down explained during
+    # backpropagation section, I faced an issue, where the exact bit when we use division
+    # doesnt happen, basically our result has an eps difference with pytorchs output
+    # and it seems as more operations are encountered, this epsilon gets larger and larger
+    # until for some later backprop results down the road, it just becomes very large
+    # so much so that even the results are no longer approximately the same so 
+    # i had to convert the division into power and multiplication
+    # so i comment this line here now and instead write its replacements 
     # probs = logcounts /logcountsum
+    # instead of division, lets convert that into multiplication!
     logcountsum_inv = logcountsum**-1
     probs = logcounts * logcountsum_inv
-    # instead of division, lets convert that into multiplication!
-    # logcountsum_inv = logcountsum**-1
     # calculate the final negative log of likelihoods
     # side note, note that we use arange, and not 'range', torch.range is deprecated
     # becasue its behavior is different from python's range, that is it returns [start,end]
@@ -366,25 +374,115 @@ dprobs = torch.zeros_like(probs)
 dprobs[...] = (1/probs) * dlogprobs 
 # lets compare the two ... which is 100% ok!
 compare('dprobs',dprobs, probs)
-#probs = logcounts * logcountsum_inv
-# lets calculate dlogcounts
-# first shapes
-# dprobs.shape=(32, 27) previous gradient
-# logcounts.shape = (32,27)
-# logcountsum_inv.shape =(32, 1)
-dlogcounts = dprobs * logcountsum_inv
-#
-dlogcountsum_inv = (logcounts*dprobs).sum(dim=1, keepdim=True)
-# print(f'{dlogcountsum_inv.shape=}')
-#
-#logcountsum_inv = logcountsum**-1
-# now dlogcountsum, first shapes : 
-# logcountsum (32,1)
-# dprobs = (32,27)
-# so the dlogcountsum must be (32,1) so we need to sum over columns
-dlogcountsum = ((-1*logcountsum**-2)*dlogcountsum_inv).sum(dim=1,keepdim=True)
-
 # so far so good, now we reach to 
+#probs = logcounts * logcountsum_inv
+# now here we need to calculate dlogcounts and dlogcountsum_inv
+# firs lets do dlogcounts:
+# first we print the shapes: 
+# print(f'{dprobs.shape=} {logcounts.shape=} {logcountsum_inv.shape=}')
+# dprobs.shape:           (32, 27) # previous gradient
+# logcounts.shape:        (32, 27) 
+# logcountsum_inv.shape:  (32, 1)
+# so we see the shapes of logcounts and logcountsum_inv differs, this means a
+# broadcast is necessary which we need to take into consideration.
+# for now the dlogcount needs to be the same shape as of logcounts which is (32,27)
+# and its local derivative logcountsum_inv which is (32,1), it also needs to be 
+# multiplied by the previous gradient which is dprob (32,27), so lets do this
+dlogcounts = logcountsum_inv * dprobs
+# the shape is 32,27 which means all is Ok (side note, note that we did an elemenwise
+# muiltiplication here, note the * here, matrix multiplication (@) cant be used because
+# dimensions dont match! always remember this!)
+# now for dlogcountsum_inv, its shape must be the same of logcountsum_inv which is (32,1)
+# but its local gradient is logcounts which's shape is (32,27), and we also need to 
+# multiply by the previous gradient which is dprob with shape of (32,27), as you see
+# the result would be 32,27, but we need it to be (32,1). this means we need to 
+# somehow get this to become (32,1). we use sum over the columns to do this (cuz remember
+# logcountsum_inv had to be broadcasted in first place to 32,27, and it did so by
+# replicating the same column to the right until 27 identical columns are created
+# therefore, when taking the gradients, we sum all of these replicated cells as well
+# to account for their true effect in the operation).
+# also, if in doubt on which axis to chose remember that, if its a column vector, 
+# replication is done columnwise, so the addition needs to be columnwise as well
+# also this is the only way the shape becomes the same)
+# logcounts and dprobs have the same shape so we dot product them and the sum
+dlogcountsum_inv = (logcounts * dprobs).sum(dim=1, keepdim=True)
+# lets compare these two
+compare('dlogcounts-notcompleted', dlogcounts, logcounts)
+compare('dlogcountsum_inv', dlogcountsum_inv, logcountsum_inv)
+# ok we see dlogcounts is not the same! but dlogcountsum_inv is
+# why is that? if you look closely, you'll notice logcounts is also involved in another
+# operation(two operations below), so since we havent accounted for its contribution there
+# its not the same as pytorch's result. lets continue this 
+#
+# and next is logcountsum_inv = logcountsum**-1
+# first lets print the shape , we just saw above logcountsum_inv is (32,1)
+# so logcountsum shape is (32,1) as well, since its an elementwise power operation
+# the shape is the same. lets calculate its local derivative which is pow*x**(pow-1)
+# we also need to multiply this by the previous gradient which is dlogcountsum_inv
+# with the same shape
+dlogcountsum = -1*logcountsum**(-2) * dlogcountsum_inv
+# 
+# and next is logcountsum = logcounts.sum(dim=1, keepdim=True)
+# as you can see, logcounts is being used here as well, and we need to account 
+# for its role here (and route the gradient through it as well)
+# logcounts shape is (32,27), so its dlogcounts shape must be the same (32,27)
+# we need to calculate its local derivative and multiply it by the previous gradient
+# but the logcountsum shape is (32,1). 
+# now what should we do here? how should we go about this? 
+# whats the local gradient for logcounts.sum()?
+# whenever there is a sum operation, it means routing the gradient, basically
+# the local gradients of the tensor on which the sum() is being applied, is 1
+# so the local gradients for logcounts is simply a tensor of ones everywhere!
+# but we also need to multiply the local gradients with the previous gradient 
+# (becasue of chain rule and also routing the gradients in the graph as you know)
+# but the previous gradient shape is (32,1). 
+# it happens that this doesnt pose any issues, we can simply multiply them, and 
+# the previous gradient will be broadcasted, its a column vector, so what happens
+# is this column will be replicated 27 times to form a 32,27 matrix. which then
+# these will be multiplied elemntwise by 1s and get routed.
+# further explanation (i wrote for the previous version (down below)):
+# lets see what we have here, we have logcounts which is (32,27)
+# and is being summed over so that it results in logcountsum with shape (32,1)
+# or a column vector (i.e. a vector that has only 1 full column!)
+# lets see what happens here with a simple example 
+# suppose we have a 3x3 tensor a, 
+# and its being summed to a column vector b of shape 3x1, and 
+# the b vector is mean by summing all the columns in each row:
+# [a11 a12 a13] ---> [b1]   [a11 + a12 + a13]
+# [a21 a22 a23] ---> [b2] = [a21 + a22 + a23]
+# [a31 a32 a33] ---> [b3]   [a31 + a32 + a33]
+# now we have dervivate with respect to this vector b, and now we want 
+# the gradients with respect to the original tensor, 
+# the gradients, basically we want to understand how bs depend on the as 
+# whats the local deriviate of this operation,
+# from our simple matrix-schematic above, we can see that each b is 
+# dependent only on the as in the same row, so b1 depends on a11, a12, a13 only
+# and likewise, b2 only depends on a21,a22,a23, and so on. 
+# this observation, tells us, that b1 has no interaction with the a2x and a3x rows
+# so it has no effect on them. therefore the deravative of b1 with respect to 
+# all the elemenst in the rows 2 and 3 is basically zero, but its deravative with respect
+# to the first row (a1), is basically 1 for each element. 
+# so to finally calculate the gradients, we multiply the local gradients (which are 1s for each row for all columns)
+# by the gradients from previous operation, 
+# so we can create a (32,27) tensor and fill it accordingly, i.e. each row 
+# will have the gradients of the corrosponding row in dlogcountsum, replicated all the way
+# for all the columns in that row, and this repeats for all the rows. 
+# one easy way for achiving this is to create a ones_tensor like logscount which is 32x27
+# and multiply that with the dlogcountsum which is 32,1 (which would be broadcasted to
+# 32x27 itself, and each row would replicate the first column 27 times, resulting in the
+# final answer we are after.) that would be: 
+# also note that since dlogcounts was once calculated, we need to add this to 
+# the existing gradients.
+dlogcounts += torch.ones_like(logcounts) * dlogcountsum
+# now lets compare the dlogcountsum and dlogcounts now 
+compare('dlogcountsum', dlogcountsum, logcountsum)
+compare('dlogcounts', dlogcounts, logcounts)
+#
+# if we were to process this like and use / this is how its done (but for some reason
+# pytorch seems to be having a bug, if we go this way, the exact equality becomes false
+# meaning, our results would differ with a small diff and gradually until the end this
+# number would increase, so for this reason we use the first method and I leave this part
+# commented out)
 # probs = logcounts/logcounts.sum(dim=1, keepdim=True)
 # or the simplified version which is:
 # logcountsum = logcounts.sum(dim=1, keepdim=True)
@@ -429,7 +527,7 @@ dlogcountsum = ((-1*logcountsum**-2)*dlogcountsum_inv).sum(dim=1,keepdim=True)
 # note that since dprobs and logcounts had the same shape, we first multiply them and then sum the result
 # dlogcountsum = (-(logcounts*(logcountsum**-2)) * dprobs).sum(dim=1, keepdims=True)
 # now lets compare the results with pytorchs 
-compare('dlogcountsum', dlogcountsum, logcountsum)
+# compare('dlogcountsum', dlogcountsum, logcountsum)
 # and now for logcounts we still need more to do as up there we have 
 # logcountsum = logcounts.sum(dim=1, keepdim=True)
 # lets see what we have here, we have logcounts which is (32,27)
@@ -463,14 +561,16 @@ compare('dlogcountsum', dlogcountsum, logcountsum)
 # 32x27 itself, and each row would replicate the first column 27 times, resulting in the
 # final answer we are after.) that would be: 
 # also note that dlogcounts was once calculated, so this needs to be added to the previous result
-dlogcounts += torch.ones_like(logcounts) * dlogcountsum
-compare('dlogcounts', dlogcounts, logcounts)
+# dlogcounts += torch.ones_like(logcounts) * dlogcountsum
+# compare('dlogcounts', dlogcounts, logcounts)
+#
 # next we have logcounts = logitsnorm.exp()
 # the deravative of logitsnorm.exp() will be logitsnorm.exp() or in otherwords
 # the logcounts itself, so we may as well use that instead of recalculating it here again
 # and since its the chainrule, we multiply our local gradient with the previous gradient
 dlogitsnorm = logcounts * dlogcounts
 compare('dlogitsnorm', dlogitsnorm, logitsnorm)
+#
 # next line is logitsnorm = logits - logits_max
 # first lets check their shapes :
 # print(f'{logits.shape=} , {logits_max.shape=}')
@@ -490,12 +590,13 @@ compare('dlogitsnorm', dlogitsnorm, logitsnorm)
 # vector b, gets broadcasted to do the operation, so we need to do a sum for it as well
 # so we would have 
 # basically copy the dlogitsnorm
-dlogits = 1.0*dlogitsnorm
+dlogits = 1*dlogitsnorm
 # and for logits_max 
-dlogits_max = (-1.0*dlogitsnorm).sum(dim=1, keepdim=True) 
-compare('dlogits', dlogits, logits)
+dlogits_max = (-1*dlogitsnorm).sum(dim=1, keepdim=True) 
+compare('dlogits-incom', dlogits, logits)
 compare('dlogits_max', dlogits_max, logits_max)
-# side note: we said earlier that the reason we take the max and subtract the logits from it
+# side note1: that logits is involved in more operations, so its not yet complete
+# side note2: we said earlier that the reason we take the max and subtract the logits from it
 # is purely for the numerical stability, and it has no effect on the probablities, and 
 # indeed it was the case, now what this means in terms of gradients and backpropagation
 # is that the gradients for logits_max need to be zero or extremely small to not affect the probablity
@@ -535,7 +636,8 @@ compare('dlogits_max', dlogits_max, logits_max)
 #         [ 5.8790e-09],
 #         [-1.4743e-09]], grad_fn=<SumBackward1>)
 # shows very small numbers (basically zero)
-# now the next line is logits_max = logits.max(dim=1, keepdim=True).values
+#
+# now next is logits_max = logits.max(dim=1, keepdim=True).values
 # and we need to calculate dlogits with respect to max operation 
 # that is, in other words, we want to route the gradients from dlogits_max 
 # through the numbers in logits that were chosen as max, lets elaborate a bit on this
@@ -553,8 +655,13 @@ compare('dlogits_max', dlogits_max, logits_max)
 # the good news is torch.max returns a tuple, an index and a value
 # and we used the values for the maximum values. 
 # dlogits was once calculated, so here we add to the previous gradients
-dlogits += torch.zeros_like(logits)
-dlogits[range(0,len(logits_max)), logits.max(dim=1,keepdim=True).indices] += 1*dlogits_max
+# dlogits_max.shape=torch.Size([32, 1])
+# this line is not correct, we only need to add the dlogits_max gradienst to specific columns
+# and 0 otherwise. but for some reason this is so slightly different than the one_hot version
+# which explictily sets all other elements to zero and only multiplies the max indexes to dlogits_max
+# why?
+# dlogits[range(0,len(logits_max)), logits.max(dim=1).indices] += 1*dlogits_max
+dlogits += torch.nn.functional.one_hot(logits.max(dim=1).indices, num_classes=logits.shape[-1]) * dlogits_max
 compare(f'dlogits', dlogits, logits)
 # there is another way of doing this, and that would be using the one_hot_encoded method
 # basically multiplying the right indexes by the dlogits would fill the dlogits propelry
@@ -669,13 +776,27 @@ compare('dvar_sq', dvar_sq, var_sq)
 # so dvar shape should be (1,100) as well, so we transpose one to get 100x100
 # and then need to sum over rows to get 1,100
 dvar = (dvar_sq.T @ (0.5*(var+eps)**(0.5-1.0))).sum(dim=0, keepdim=True)
+# print(f'{dvar.shape=}')
 # lets compare
 compare('dvar', dvar, var)
 #and next is  out_normalized = out_preact - mean 
-#
+# lets print the shapes first: 
+# print(f'{out_preact.shape=}, {mean.shape=}')
+# out_preact.shape=(32, 100), 
+# mean.shape=(1, 100)
+# since we have subtraction, like addition, these route the gradients and their
+# local gradients is just 1(for out_preact) and -1(for -mean). 
+dout_preact = torch.ones_like(out_preact) * dout_normalized
+# and for mean (1,100), this is the same, we just need to sum over rows
+dmean = -1*(torch.ones_like(mean)*dout_normalized).sum(dim=0, keepdim=True) 
+# lets compare 
+compare('dout_preact', dout_preact, out_preact)
+compare('dmean', dmean, mean)
 #
 # next is     var = out_tanh.var(dim=0, keepdim=True)
-#
+# now var is a compound instruction which we need to account for
+# so its best to divide the initial operation into smaller parts first 
+# we do just that
 #
 # next is     mean = out_tanh.mean(dim=0, keepdim=True)
 #
