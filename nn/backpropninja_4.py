@@ -151,21 +151,25 @@ for i in range (iter_max):
     # for manual gradient calculation, lets make this a separate operation
     embdscat = embds.view(embds.shape[0],-1)
     # now lets apply the first layer 
-    out = embdscat @ W1 + b1
-    # apply tanh
-    out_tanh = torch.tanh(out)
+    out_preact = embdscat @ W1 + b1
     # now lets apply the batchnorm
     # to do this we need to calculate mean, var and output_hat 
     # and then use gamma and beta
     # calculate the mean/var for all samples individually i.e. along 0th dimension
-    mean = out_tanh.mean(dim=0, keepdim=True)
-    var = out_tanh.var(dim=0, keepdim=True)
+    mean = out_preact.mean(dim=0, keepdim=True)
+    var = out_preact.var(dim=0, keepdim=True)
     # normalize the input /add eps to prevent division by zero
-    x_hat = (out_tanh-mean)/(var+eps)**0.5
+    # x_hat = (out_preact-mean)/(var+eps)**0.5
+    # but lets divide it into more parts so calculating the gradients later on is easier
+    out_normalized = out_preact - mean 
+    var_sq = (var+eps)**0.5
+    x_hat = out_normalized/var_sq
     # finally apply the gamma_gain and bias on the x_hat
     out_bn = bn_gamma_gain * x_hat + bn_beta_bias
+    # apply tanh
+    out_tanh = torch.tanh(out_bn)
     # now lets apply the second layer
-    logits = out_bn @ W2 + b2
+    logits = out_tanh @ W2 + b2
     # lets implement the crossentropy loss
     # which is the negative log likelihood 
     # which is we must treat our output as logcounts
@@ -206,7 +210,9 @@ for i in range (iter_max):
     # probs = logcounts/logcounts.sum(dim=1, keepdim=True)
     # for easier calculation of gradients, lets split the operations into separate ones
     logcountsum = logcounts.sum(dim=1, keepdim=True)
-    probs = logcounts /logcountsum
+    # probs = logcounts /logcountsum
+    logcountsum_inv = logcountsum**-1
+    probs = logcounts * logcountsum_inv
     # instead of division, lets convert that into multiplication!
     # logcountsum_inv = logcountsum**-1
     # calculate the final negative log of likelihoods
@@ -232,8 +238,8 @@ for i in range (iter_max):
     # we retain the gradients for intermediate operations result as well 
     # to check our manual gradients
     for param in itertools.chain(parameters,[logprobs, probs, logcounts,logcountsum,logcountsum_inv,logitsnorm,
-                                             logits, logits_max, out_bn, x_hat, out_tanh,
-                                             var, mean, out, embds, embdscat]):
+                                             logits, logits_max, out_bn,out_tanh,x_hat, out_preact,
+                                             var, mean, out_preact,var_sq,out_normalized, embds, embdscat]):
         param.retain_grad()
     
     loss.backward()
@@ -260,7 +266,7 @@ def compare(str, our_grads, ptensor):
     exactly_same = torch.all(our_grads == pgrad).item()
     approximately_same = torch.allclose(our_grads, ptensor.grad)
     difference = (our_grads - pgrad).abs().max().item()
-    print(f'{str} | exact: {exactly_same} | approx: {approximately_same} | diff: {difference}')
+    print(f'{str:12} | exact: {exactly_same} | approx: {approximately_same} | diff: {difference}')
 
 # now the first operation that we have is probs
 # our first variable to get its grads is the -logprobs.mean()
@@ -360,6 +366,24 @@ dprobs = torch.zeros_like(probs)
 dprobs[...] = (1/probs) * dlogprobs 
 # lets compare the two ... which is 100% ok!
 compare('dprobs',dprobs, probs)
+#probs = logcounts * logcountsum_inv
+# lets calculate dlogcounts
+# first shapes
+# dprobs.shape=(32, 27) previous gradient
+# logcounts.shape = (32,27)
+# logcountsum_inv.shape =(32, 1)
+dlogcounts = dprobs * logcountsum_inv
+#
+dlogcountsum_inv = (logcounts*dprobs).sum(dim=1, keepdim=True)
+# print(f'{dlogcountsum_inv.shape=}')
+#
+#logcountsum_inv = logcountsum**-1
+# now dlogcountsum, first shapes : 
+# logcountsum (32,1)
+# dprobs = (32,27)
+# so the dlogcountsum must be (32,1) so we need to sum over columns
+dlogcountsum = ((-1*logcountsum**-2)*dlogcountsum_inv).sum(dim=1,keepdim=True)
+
 # so far so good, now we reach to 
 # probs = logcounts/logcounts.sum(dim=1, keepdim=True)
 # or the simplified version which is:
@@ -399,11 +423,11 @@ compare('dprobs',dprobs, probs)
 # now this was the local gradient, we need to multiply that with the previous gradient so
 # ultimately we would endup doing this :
 # in the dimension 
-print(f'{logcounts.shape=}, {logcountsum.shape=} {dprobs.shape}')
-dlogcounts = torch.zeros_like(logcounts)
-dlogcounts[...] = 1./logcountsum * dprobs
+# print(f'{logcounts.shape=}, {logcountsum.shape=} {dprobs.shape}')
+# dlogcounts = torch.zeros_like(logcounts)
+# dlogcounts[...] = 1./logcountsum * dprobs
 # note that since dprobs and logcounts had the same shape, we first multiply them and then sum the result
-dlogcountsum = (-(logcounts*(logcountsum**-2)) * dprobs).sum(dim=1, keepdims=True)
+# dlogcountsum = (-(logcounts*(logcountsum**-2)) * dprobs).sum(dim=1, keepdims=True)
 # now lets compare the results with pytorchs 
 compare('dlogcountsum', dlogcountsum, logcountsum)
 # and now for logcounts we still need more to do as up there we have 
@@ -466,9 +490,9 @@ compare('dlogitsnorm', dlogitsnorm, logitsnorm)
 # vector b, gets broadcasted to do the operation, so we need to do a sum for it as well
 # so we would have 
 # basically copy the dlogitsnorm
-dlogits = dlogitsnorm.clone()
+dlogits = 1.0*dlogitsnorm
 # and for logits_max 
-dlogits_max = (-dlogitsnorm.clone()).sum(dim=1, keepdim=True) 
+dlogits_max = (-1.0*dlogitsnorm).sum(dim=1, keepdim=True) 
 compare('dlogits', dlogits, logits)
 compare('dlogits_max', dlogits_max, logits_max)
 # side note: we said earlier that the reason we take the max and subtract the logits from it
@@ -541,5 +565,128 @@ compare(f'dlogits', dlogits, logits)
 # of max values are 1 and the rest are 0
 # import matplotlib.pyplot as plt 
 # plt.imshow(torch.nn.functional.one_hot(logits.max(dim=1).indices, num_classes=logits.shape[-1]).data)
-# next is logits = out_bn @ W2 + b2
 #
+# next is logits = out_tanh @ W2 + b2
+# first lets see the shapes 
+# out_tanh: (32,100)
+# W2 : (100,27) and
+# b2 : (1,27)
+# print(f'{out_tanh.shape=}  {W2.shape=} {b2.shape=} {dlogits.shape=}')
+# dout_tanh is W2 and dW2 is out_tanh, db2 would be 1
+# (note the + ,whenever theres + the gradient is just rounted)
+# as always we multiply our local derivative with the previous gradients
+# dout_tanh must have the same shape as out_tanh so it must be (32,100)
+# but W2.shape is (100,27) and dlogits.shape is (32,27), so what do we do? 
+# we do dlogits*W2.t()  
+# print(f'{dlogits.shape=}, {W2.t().shape=}')
+dout_tanh = dlogits@W2.T
+compare('dout_tanh',dout_tanh, out_tanh)
+#likewise, dW2 must be 100,27, out_tanh is (32,100) and dlogits is (32,27)
+# to get this to work we need to have out_tanh.T*dlogits
+dW2 = out_tanh.T@dlogits
+compare('dW2', dW2, W2)
+# again db2 shape must be (1,27) like b2, and it needs to be multiplied 
+# by dlogits of (32,27), and we see we have a row vector (b2) or ones multiplyied by 32,27
+# theres a broadcasting happening so we need to take that into account and as we know we sum
+# over rows!
+db2 = (1*dlogits).sum(dim=0,keepdim=True)
+# now lets compare
+compare('db2', db2, b2)
+# next is out_tanh = torch.tanh(out_bn)
+# first lets print the shape: 
+# print(f'{dout_tanh.shape=}, {out_bn.shape=}')
+# not surprisingly they both have the same shape which is (32,100)
+# we need to calculate dout_bn, the derivative of tanh is 1-tanh(x)**2
+# so its 1-(out_tanh)**2 * the previous gradient 
+dout_bn = (1-(out_tanh**2))* dout_tanh
+#lets compare 
+compare('dout_bn', dout_bn, out_bn)
+#
+# next line is out_bn = bn_gamma_gain * x_hat + bn_beta_bias
+# first lets print their shapes
+# print(f'{dout_bn.shape=} {bn_gamma_gain.shape=} {x_hat.shape=} {bn_beta_bias.shape=}')
+# dout_bn.shape = (32,100) # previous gradients
+# x_hat.shape=(32, 100) 
+# bn_gamma_gain.shape=(1, 100) 
+# bn_beta_bias.shape=(1, 100)
+# and now we want dbn_gamma_gain,and  its shape must be the same as bn_gamma_gain(1,100)
+# we also know that its derivative is x_hat but x_hat shape is (32,100), 
+# so a broadcast must happen to give us out_bn of shape(32,100) and we need to sum along the rows
+# so we are left with 1 row vector ultimately, lets dothis 
+# we multiply our local gradient(x_hat) by previous gradient (dout_bn) 
+# but since the shape needs to match, we instead use x_hat.T to get (100,32)*(32,100)
+# to get 100x100 and then sum over rows to get a single row of (1,100)
+dbn_gamma_gain = (x_hat.T@dout_bn).sum(dim=0,keepdim=True)
+# lets check 
+compare('dbn_gamma_gain', dbn_gamma_gain, bn_gamma_gain)
+# and likewise for x_hat we would have a dx_hat of shape (32,100)
+# it would be bn_gamma_gain but it needs to be broadcasted, since its 
+# (1,100), it will be replicated along the rows to gte (32,100)
+# we let that be handled by the multiplication by previous gradient which is dout_bn
+# which is has the shape of 32,100.
+dx_hat = dout_bn@bn_gamma_gain.T
+#lets compare 
+compare('dx_hat', dx_hat, x_hat)
+# next its bn_beta_bias, which as we know so far, + means rout the gradients
+# bn_beta_bias, local gradients would be all 1s, and since its shape is different
+# from x_hat(and out_bn), it must have been broadcasted, so we need to sum over rows!
+# also it needs to be multiplied by previous gradient, and since dout_bn is (32,100)
+# we need to sum this anyway for the shapes to workout (because again we know dbn_beta_bias
+# has the same shape as of bn_beta_bias which is 1,100)
+# dbn_beta_bias = torch.ones_like(bn_beta_bias)
+dbn_beta_bias = (1*dout_bn).sum(dim=0,keepdim=True)
+#lets compare
+compare('dbn_beta_bias', dbn_beta_bias, bn_beta_bias)
+#
+# next is x_hat = (out_tanh-mean)/(var+eps)**0.5
+# now this is multipart, it would have been much better if we separated them initially!
+# ok so we separated them and now we have 
+# x_hat = out_normalized/var_sq
+# lets see what we have, out_normalized,var_sq and we need to calculate their gradienst
+# first lets print their shapes 
+# print(f'{out_normalized.shape=}, {var_sq.shape=}, {dx_hat.shape=}')
+# their shape is :
+# out_normalized.shape=(32, 100) 
+# var_sq.shape=(1, 100)
+# dx_hat.shape=torch.Size([32, 1])
+# and we know that dout_normalzied must have the shape of (32,100)
+# but the var_sq is 1,100, and dx_hat is (32,1) so we need to do:
+dout_normalized = dx_hat@(1.0/var_sq)
+# lets compare
+compare('dout_normalized', dout_normalized, out_normalized)
+# and for dvar which should have the shape(1,100), and also needs to be multiplied by
+# the previous gradient (dx_hat) which is (32,1). the result would be 32x100, so we need
+# to sum over rows to get (1,100)
+dvar_sq = (dx_hat@(1.0/((var+eps)**0.5)**2)).sum(dim=0,keepdim=True)
+compare('dvar_sq', dvar_sq, var_sq)
+#
+# next is var_sq = (var+eps)**0.5
+# and now we need to calculate dvar 
+# first print the shapes: 
+# print(f'{var.shape=} {dvar_sq.shape=}')
+# var.shape=(1, 100) 
+# dvar_sq.shape=(1, 100)
+# so dvar shape should be (1,100) as well, so we transpose one to get 100x100
+# and then need to sum over rows to get 1,100
+dvar = (dvar_sq.T @ (0.5*(var+eps)**(0.5-1.0))).sum(dim=0, keepdim=True)
+# lets compare
+compare('dvar', dvar, var)
+#and next is  out_normalized = out_preact - mean 
+#
+#
+# next is     var = out_tanh.var(dim=0, keepdim=True)
+#
+#
+# next is     mean = out_tanh.mean(dim=0, keepdim=True)
+#
+#
+# next is     out_tanh = torch.tanh(out)
+#
+#
+# next is     out = embdscat @ W1 + b1
+#
+#
+# next is   embdscat = embds.view(embds.shape[0],-1)
+#
+#
+# next is embds = EMB[x_batch]
