@@ -7,7 +7,7 @@
 # things such as broadcasting, mean, max, etc will be worked out inshaallah.
 #%% 
 import itertools
-
+import torch
 # we start off by reading the data and implementing our simple nn with emebdings
 names = open('./names.txt').read().splitlines()
 # we need to grab all the unique characters in the dataset
@@ -49,7 +49,7 @@ itoa = {v:k for k,v in atoi.items()}
 # print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
 # now lets convert this into a function for easier use in case we decided to have 
 # different splits like training, val, test
-def build_dataset(names:list[str], context_size:int) -> tuple(list[int]):
+def build_dataset(names:list[str], context_size:int) :
     # list for holding our dataset samples
     X:list[int] = []
     # a list for the labels which contains the next characters for each sample in X
@@ -106,6 +106,8 @@ Y_tr = torch.tensor(Y_tr)
 # for our characters, so for each character we get an embedding
 import torch
 # before we go on, lets set a manual seed for deterministic outcome
+#! noticed the value used here does implact the approx and exact to be false or not
+# for example test with 256 and you'll see some of the final calculations all fail!
 torch.manual_seed(255)
 
 vocab_size = len(character_list)
@@ -157,13 +159,54 @@ for i in range (iter_max):
     # and then use gamma and beta
     # calculate the mean/var for all samples individually i.e. along 0th dimension
     mean = out_preact.mean(dim=0, keepdim=True)
-    var = out_preact.var(dim=0, keepdim=True)
+    # 
+    # since backpropagating from .var is hard becasue its multipart, 
+    # lets divide it into smaller chuncks that we can easily derive
+    #var = out_preact.var(dim=0, keepdim=True)
+    # var is basically 
+    # bn_diff = out_preact - mean
+    # bn_diff2 = diff**2 
+    # note from future: 
+    # note thathere, we are dividing by 1/n-1 rather than 1/n which is in the paper
+    # this is called an unbaised variance, infact in the BN paper, they do the biased variance
+    # during training (which uses 1/n) but during inference they use the unbiased version
+    # (that is the 1/(n-1) like what we have here) this is called the bessels correction
+    # and it happens that when we actually do this, our numerical stability gets better
+    # without this, for example db1 at the very end, would not be approximately the same
+    # as what pytorch produces, but after I made this change, it just became True!
+    # (update, it seems, while this helps, the b1 being approx True or not, is related to seed!
+    # change the seed and find out! need to figureout why this is happening and whether this is torchs bug!)
+    # var = 1/(n-1)*sum(bndiff_sqaured)
+    # (so it gives us better estimate on variance! always use this!)
+    # side note: 
+    # if we look at torch.var, we see that it also has an unbiased argument
+    # which after this seems to be True by default! (torch.var(input: Tensor, dim: _size | _int | None, unbiased: _bool = True, keepdim: _bool = False, *, out: Tensor | None = None) )
+    # side note2:
+    # Pytorchs implementation of batchnormalization, does biased variance for rtraining and
+    # uses unbiased version for test time (just like the paper), and based on karpathys view
+    # this is a bug. he himself always uses the unbiased version all the time. 
+    # also pytorch documentation at the time of writting this, doesnt show a way to
+    # specify whehther to use biased or unbiased variance in BN, so its biased during training and
+    # uses unbiased variance duing test. also this doesnt pose much of a problem when the batchsize is larger
+    # 
+    bn_diff = out_preact - mean 
+    bn_diff2 = bn_diff**2 
+    bn_diff2sum = bn_diff2.sum(dim=0, keepdim=True)
+    var = 1/(out_preact.shape[0]-1) * bn_diff2sum
+    
     # normalize the input /add eps to prevent division by zero
     # x_hat = (out_preact-mean)/(var+eps)**0.5
     # but lets divide it into more parts so calculating the gradients later on is easier
     out_normalized = out_preact - mean 
     var_sq = (var+eps)**0.5
-    x_hat = out_normalized/var_sq
+    # from future: 
+    # for some reason the division in pytorch causes our result not to be the exact same one pytorch produces
+    # they are approximately the same (the actual difference is extremely small), but nonethe less its there
+    # so we change the division into power and multiplication. I leave the backward calculation for
+    # division intact (just comment it)
+    # x_hat = out_normalized/var_sq
+    var_sq_inv = var_sq**-1 
+    x_hat = out_normalized * var_sq_inv
     # finally apply the gamma_gain and bias on the x_hat
     out_bn = bn_gamma_gain * x_hat + bn_beta_bias
     # apply tanh
@@ -245,9 +288,13 @@ for i in range (iter_max):
     # before we do a backwardpass, lets freeze the gradients for our test 
     # we retain the gradients for intermediate operations result as well 
     # to check our manual gradients
-    for param in itertools.chain(parameters,[logprobs, probs, logcounts,logcountsum,logcountsum_inv,logitsnorm,
-                                             logits, logits_max, out_bn,out_tanh,x_hat, out_preact,
-                                             var, mean, out_preact,var_sq,out_normalized, embds, embdscat]):
+    for param in itertools.chain(parameters,[logprobs, probs, logcounts,logcountsum,
+                                             logcountsum_inv,logitsnorm,
+                                             logits, logits_max, out_bn,
+                                             out_tanh,x_hat, out_preact,
+                                             var, mean, out_preact,var_sq,var_sq_inv,
+                                             bn_diff2sum,bn_diff2, bn_diff, out_normalized,
+                                             embds, embdscat]):
         param.retain_grad()
     
     loss.backward()
@@ -259,8 +306,9 @@ for i in range (iter_max):
         param.data += -lr * param.grad
     
 #%%
+print(torch.__version__)
 # lets create a function for comparing our gradients with pytorchs
-def compare(str, our_grads, ptensor):
+def compare(label, our_grads, ptensor):
     """compares our manually calculated gradients 
     against the pytorchs automatically calculated 
     gradients.
@@ -274,7 +322,7 @@ def compare(str, our_grads, ptensor):
     exactly_same = torch.all(our_grads == pgrad).item()
     approximately_same = torch.allclose(our_grads, ptensor.grad)
     difference = (our_grads - pgrad).abs().max().item()
-    print(f'{str:12} | exact: {exactly_same} | approx: {approximately_same} | diff: {difference}')
+    print(f'{label:17}| exact: {str(exactly_same):5} | approx: {str(approximately_same):5} | diff: {difference}')
 
 # now the first operation that we have is probs
 # our first variable to get its grads is the -logprobs.mean()
@@ -404,10 +452,10 @@ dlogcounts = logcountsum_inv * dprobs
 # also, if in doubt on which axis to chose remember that, if its a column vector, 
 # replication is done columnwise, so the addition needs to be columnwise as well
 # also this is the only way the shape becomes the same)
-# logcounts and dprobs have the same shape so we dot product them and the sum
+# logcounts and dprobs have the same shape so we elementwise multiply(hadamard product) them and the sum
 dlogcountsum_inv = (logcounts * dprobs).sum(dim=1, keepdim=True)
 # lets compare these two
-compare('dlogcounts-notcompleted', dlogcounts, logcounts)
+# compare('dlogcounts-incom', dlogcounts, logcounts)
 compare('dlogcountsum_inv', dlogcountsum_inv, logcountsum_inv)
 # ok we see dlogcounts is not the same! but dlogcountsum_inv is
 # why is that? if you look closely, you'll notice logcounts is also involved in another
@@ -593,7 +641,7 @@ compare('dlogitsnorm', dlogitsnorm, logitsnorm)
 dlogits = 1*dlogitsnorm
 # and for logits_max 
 dlogits_max = (-1*dlogitsnorm).sum(dim=1, keepdim=True) 
-compare('dlogits-incom', dlogits, logits)
+# compare('dlogits-incom', dlogits, logits)
 compare('dlogits_max', dlogits_max, logits_max)
 # side note1: that logits is involved in more operations, so its not yet complete
 # side note2: we said earlier that the reason we take the max and subtract the logits from it
@@ -705,7 +753,7 @@ compare('db2', db2, b2)
 # not surprisingly they both have the same shape which is (32,100)
 # we need to calculate dout_bn, the derivative of tanh is 1-tanh(x)**2
 # so its 1-(out_tanh)**2 * the previous gradient 
-dout_bn = (1-(out_tanh**2))* dout_tanh
+dout_bn = (1-out_tanh**2)* dout_tanh
 #lets compare 
 compare('dout_bn', dout_bn, out_bn)
 #
@@ -721,9 +769,15 @@ compare('dout_bn', dout_bn, out_bn)
 # so a broadcast must happen to give us out_bn of shape(32,100) and we need to sum along the rows
 # so we are left with 1 row vector ultimately, lets dothis 
 # we multiply our local gradient(x_hat) by previous gradient (dout_bn) 
-# but since the shape needs to match, we instead use x_hat.T to get (100,32)*(32,100)
-# to get 100x100 and then sum over rows to get a single row of (1,100)
-dbn_gamma_gain = (x_hat.T@dout_bn).sum(dim=0,keepdim=True)
+# note that we multiply elementwise here and not matrix multiplication that requires transpose
+# the two matrix have the same shape, so we can get their elementwise multiplication or
+# (Hadamard product. - dont confuse this with dotproduct. 
+# but since the shape needs to match, sum over rows to get a single row of (1,100)
+# side note: elementwise multiplication is called hadamard product:
+# withthe dot product, we multiply the corresponding components and add those products together. 
+# With the Hadamard product (element-wise product) we multiply the corresponding components, 
+# but do not aggregate by summation.
+dbn_gamma_gain = (x_hat*dout_bn).sum(dim=0,keepdim=True)
 # lets check 
 compare('dbn_gamma_gain', dbn_gamma_gain, bn_gamma_gain)
 # and likewise for x_hat we would have a dx_hat of shape (32,100)
@@ -731,7 +785,7 @@ compare('dbn_gamma_gain', dbn_gamma_gain, bn_gamma_gain)
 # (1,100), it will be replicated along the rows to gte (32,100)
 # we let that be handled by the multiplication by previous gradient which is dout_bn
 # which is has the shape of 32,100.
-dx_hat = dout_bn@bn_gamma_gain.T
+dx_hat = bn_gamma_gain*dout_bn
 #lets compare 
 compare('dx_hat', dx_hat, x_hat)
 # next its bn_beta_bias, which as we know so far, + means rout the gradients
@@ -748,26 +802,59 @@ compare('dbn_beta_bias', dbn_beta_bias, bn_beta_bias)
 # next is x_hat = (out_tanh-mean)/(var+eps)**0.5
 # now this is multipart, it would have been much better if we separated them initially!
 # ok so we separated them and now we have 
-# x_hat = out_normalized/var_sq
+     
+# so next in line is         x_hat = out_normalized * var_sq_inv
+# first lets print the shapes involved: 
+# print(f'{x_hat.shape=} {out_normalized.shape=} {var_sq_inv.shape=}')
+# x_hat.shape=(32, 100) 
+# out_normalized.shape=(32, 100) 
+# var_sq_inv.shape=(1, 100)
+# so we need to calculate the dout_normalized and dvar_sq_inv
+# dout_normalized is 32,100, var_sq_inv which is its local gradient is (1,100) 
+# and the previous gradient dx_hat is (32,100), so there shouldnt be a problem 
+# as var_sq_inv will be broadcasted automatically when multiplied by dx_hat and
+# the shape will come out just fine
+dout_normalized = var_sq_inv*dx_hat
+compare('dout_normalized', dout_normalized, out_normalized)
+# now lets calculate the dvar_sq_inv
+# its shape should be 1,100, its local gradient will be out_normalized which is 32,100
+# and the previous gradient which is dx_hat is 32,100 as well, so the result of multiplication
+# will be 32,100. in order to make it 1,100, we simply sum over rows.
+dvar_sq_inv = (out_normalized*dx_hat).sum(dim=0, keepdim=True)
+# now lets compare 
+compare('dvar_sq_inv', dvar_sq_inv, var_sq_inv)
+#
+# and now                var_sq_inv = var_sq**-1
+# var_sq shape is (1,100), the local gradient would be -1*var_sq**-2 and its previous
+# gradient is dvar_sq_inv which is (1,100) so theres no issue lets calculate it 
+dvar_sq = -1*var_sq**-2 * dvar_sq_inv
+# now lets compare 
+compare('dvar_sq', dvar_sq, var_sq)
+#
+# if we were to calculate the x_hat = out_normalized/var_sq
+# this is how we would have done it: (note that in pytorch this creates a small eps difference
+# between our result and pytorchs for dvar_sq beacsue its in a division!)
 # lets see what we have, out_normalized,var_sq and we need to calculate their gradienst
 # first lets print their shapes 
 # print(f'{out_normalized.shape=}, {var_sq.shape=}, {dx_hat.shape=}')
 # their shape is :
 # out_normalized.shape=(32, 100) 
 # var_sq.shape=(1, 100)
-# dx_hat.shape=torch.Size([32, 1])
+# dx_hat.shape=torch.Size([32, 100])
 # and we know that dout_normalzied must have the shape of (32,100)
-# but the var_sq is 1,100, and dx_hat is (32,1) so we need to do:
-dout_normalized = dx_hat@(1.0/var_sq)
+# but the var_sq is 1,100, and dx_hat is (32,100) so they are compatible in elementwise
+# multiplication, since var_sq (1,100) will automatically be broadcasted and all is ok
+# dout_normalized = dx_hat*(1.0/var_sq)
 # lets compare
-compare('dout_normalized', dout_normalized, out_normalized)
+# compare('dout_normalized', dout_normalized, out_normalized)
 # and for dvar which should have the shape(1,100), and also needs to be multiplied by
-# the previous gradient (dx_hat) which is (32,1). the result would be 32x100, so we need
-# to sum over rows to get (1,100)
-dvar_sq = (dx_hat@(1.0/((var+eps)**0.5)**2)).sum(dim=0,keepdim=True)
-compare('dvar_sq', dvar_sq, var_sq)
+# the previous gradient (dx_hat) which is (32,100). 
+# the result would be 32x100, so we need to sum over rows to get (1,100)
+# dvar_sq = dx_hat*(-1*(var_sq**-2)).sum(dim=0,keepdim=True)
+# compare('dvar_sq', dvar_sq, var_sq)
 #
-# next is var_sq = (var+eps)**0.5
+# next is                         var_sq = (var+eps)**0.5
+#
 # and now we need to calculate dvar 
 # first print the shapes: 
 # print(f'{var.shape=} {dvar_sq.shape=}')
@@ -775,39 +862,207 @@ compare('dvar_sq', dvar_sq, var_sq)
 # dvar_sq.shape=(1, 100)
 # so dvar shape should be (1,100) as well, so we transpose one to get 100x100
 # and then need to sum over rows to get 1,100
-dvar = (dvar_sq.T @ (0.5*(var+eps)**(0.5-1.0))).sum(dim=0, keepdim=True)
+dvar = (dvar_sq * (0.5*(var+eps)**(0.5-1.0))).sum(dim=0, keepdim=True)
 # print(f'{dvar.shape=}')
 # lets compare
 compare('dvar', dvar, var)
-#and next is  out_normalized = out_preact - mean 
+#
+# and next is             out_normalized = out_preact - mean 
+#
 # lets print the shapes first: 
 # print(f'{out_preact.shape=}, {mean.shape=}')
 # out_preact.shape=(32, 100), 
 # mean.shape=(1, 100)
+# out_normalized.shape= (32,100)
 # since we have subtraction, like addition, these route the gradients and their
 # local gradients is just 1(for out_preact) and -1(for -mean). 
+# note that dout_preact is involved in other operations as well (var and mean) 
+# so this is not its final value!
 dout_preact = torch.ones_like(out_preact) * dout_normalized
 # and for mean (1,100), this is the same, we just need to sum over rows
 dmean = -1*(torch.ones_like(mean)*dout_normalized).sum(dim=0, keepdim=True) 
 # lets compare 
-compare('dout_preact', dout_preact, out_preact)
+# compare('dout_preact-incom', dout_preact, out_preact)
 compare('dmean', dmean, mean)
 #
-# next is     var = out_tanh.var(dim=0, keepdim=True)
-# now var is a compound instruction which we need to account for
-# so its best to divide the initial operation into smaller parts first 
-# we do just that
+# next is       var = out_preact.var(dim=0, keepdim=True)
+# which was hard so we split it into the smaller parts 
+# so next is     
+#               var = 1/(out_preact.shape[0]-1) * bn_diff2sum
+# so here we needto calculate bn_diff2sum, 1/out_preact.shape[0] is simply a constant
+# and doesnt need to be derived so we leave it.
+# first print the shapes 
+# print(f'{dvar.shape=} {bn_diff2sum.shape=}')
+# they both have a shape 1,100
+# the local derivate of bn_diff2 is 1/outpreact.shape[0] so we multiply that with the 
+# previous gradient 
+dbn_diff2sum = 1/(out_preact.shape[0]-1) * dvar
+# next is            bn_diff2sum = bn_diff2.sum(dim=0, keepdim=True)
+# also note that bndiff2 is being summed over, so we need to account for this as well
+# we have a gradient, we need to see how they affect the whole bn_diff2 
+# we saw when we have sum, we just route the previous gradients, since we are dealing with
+# bn_diff2, its derivative shape is the same,(32,100) when multiplied by previous gradient
+# it will be properly broadcasted and all will be fine, 
+dbn_diff2 = torch.ones_like(bn_diff2) * dbn_diff2sum
 #
-# next is     mean = out_tanh.mean(dim=0, keepdim=True)
+# side note:
+# if we wanted to claculate the 1/(out_preact.shape[0]-1) * bn_diff2.sum(dim=0, keepdim=True)
+# without breaking it into two separate operations, we could do this. 
+# !explain how to do it 
 #
+# dbn_diff2 = 1/(out_preact.shape[0]-1)* torch.ones_like(bn_diff2) * dvar
 #
-# next is     out_tanh = torch.tanh(out)
+# next is               bn_diff2 = bn_diff**2 
+# we need to calculate dbn_diff now, so 
+# first lets print the shapes:
+# print(f'{dbn_diff2.shape=} {bn_diff.shape=}')
+# dbn_diff2.shape=(32, 100) 
+# bn_diff.shape=(32, 100)
+# so the dbn_diff needs to be 32,100. 
+# the local gradient is 2*bn_diff which is 32,100, times the previous gradient 
+# which is 32,100, the multipilcation would be fine because the shapes match.
+dbn_diff = 2*bn_diff * dbn_diff2
 #
-#
-# next is     out = embdscat @ W1 + b1
-#
-#
-# next is   embdscat = embds.view(embds.shape[0],-1)
-#
-#
-# next is embds = EMB[x_batch]
+# next is               bn_diff = out_preact - mean
+# and now we are calculating the normalization once again, so lets calculate the
+# gradients
+# first their shapes: 
+# print(f'{out_preact.shape=} {mean.shape=}')
+# out_preact.shape=(32, 100) 
+# mean.shape=(1, 100)
+# their shape is not the same, so we need to take this into consideration.
+# for dout_preact this isnot an issue, becasue dbn_diff is 32,100.
+# by the way, since they were already once calculated, 
+# we add this to existing gradients
+# also note dout_preact is not yet finished!
+dout_preact += 1.0* dbn_diff
+# but for dmean, we need to sum over rows to get the right shape
+dmean += -(dbn_diff).sum(dim=0, keepdim=True)
+# now lets compare 
+compare('dbn_diff2sum', dbn_diff2sum, bn_diff2sum)
+compare('dbn_diff2',dbn_diff2,bn_diff2)
+compare('dbn_diff',dbn_diff,bn_diff)
+# compare('dout_preact-incom',dout_preact,out_preact)
+compare('dmean',dmean,mean)
+# next is        mean = out_preact.mean(dim=0, keepdim=True)
+# now we need to calculate dout_preact here again and account for the mean operation here
+# we are going to see how the gradient affects the whole out_preact tensor, and route 
+# it properly. since out_preact is 32,100, its derivative is also 32,100. but 
+# the dmean (previous gradient) is only 1,100.  the local gradient is simply 1/n
+# this is where dout_preact is complete 
+dout_preact += 1/len(out_preact) * dmean
+# lets compare 
+compare('dout_preact',dout_preact, out_preact)
+# next is     out_preact = embdscat @ W1 + b1
+# now the dW1, db1 and dembdscat needs to be calculated 
+# first print shapes
+# print(f'{dout_preact.shape=} {embdscat.shape=} {W1.shape}')
+# dout_preact.shape= (32, 100)
+# embdscat.shape= (32, 30)
+# W1.shape = (30,100)
+# so our dW1 shape is (30,100). therefore we need to Transpose embscat to get the right shape 
+dW1 = embdscat.T @ dout_preact
+# now lets do dembdcat, it should be 32,30. so dout_preact@W1.T should do  
+dembdscat = dout_preact@W1.T
+# and now lets do the db1 which is simply all ones routing the previous gradient
+# since b1 shape is (1,100) we need to sum over rows
+db1 = (1.0*dout_preact).sum(dim=0, keepdim=True)
+# now lets compare 
+compare('dw1', dW1, W1)
+compare('dembdscat', dembdscat, embdscat)
+compare('db1', db1, b1)
+# next is           embdscat = embds.view(embds.shape[0],-1)
+# now for this lets first print the shapes
+# print(f'{embdscat.shape=} {embds.shape=}')
+# embdscat.shape=(32, 30) 
+# embds.shape=(32, 3, 10)
+# as you can see, this is a matter of concatention.
+# since we are dealing with view, it doesnt change anything, its just a matter of "view"
+# so we can easily interpret it as the shape of embdscat! 
+dembds = dembdscat.view(*embds.shape)
+# thats it! we routed the gradients accordingly now lets compare
+compare('dembds', dembds, embds)
+# next is           embds = EMB[x_batch]
+# and finally the embedding layer itself. 
+# first lets print the shapes involved: 
+# print(f'{EMB.shape=} {dembds.shape=} {x_batch.shape=}')
+# EMB.shape=(27, 10) 
+# dembds.shape=(32, 3, 10)
+# x_batch.shape=(32, 3)
+# we want dEMB, which should be 27,10, 
+# lets also print some contents of x_batch
+# print(x_batch[:5])
+# tensor([[12,  9, 14],
+#         [ 8,  5,  2],
+#         [ 0,  0,  1],
+#         [12,  9,  5],
+#         [18, 13,  1]])
+# now basically what is happening here is that we have a lookup table of 27,10
+# which is our EMB, we have batch of idx, that each shows a character, 
+# each character then gets represented as a 10 dim vector.
+# each input has 3 characters, thus 3x 10 vector for each input
+# on the other hand we have dembds which has a shape of (32,3,10)
+# signifying we have gradients for all of the inputs, 32 examples, 3 characters
+# each having the respective 10 dim vector.
+# so what we need to do is to redirect these gradients back to the input, basically
+# reversing the process in put, also note that we have repeated characters in the input
+# (0 0, 9, etc appear multiple times therefore we need to take care of their gradients properly)
+# so lets create our dEMB first
+dEMB = torch.zeros_like(EMB)
+# so we go for every input in our input batch
+# grab the index, since each character is a unique index, 
+# and also EMB is also made out of these character idxes as its index
+# we can grab the respective gradient from embds and route it back to the dEMB
+for i in range(x_batch.shape[0]):
+    for j in range(x_batch.shape[1]):
+        # get character index
+        idx = x_batch[i,j]
+        # use the index to grab the proper dembeding row for embedding, use the i,j indices
+        # to grab the respective gradient (becasue edmbs.shape[i,j] (the first two dims) is 
+        # the same as the input (x_batch, they are both (32,3)))
+        # and we use += to account for repeated characters in the input
+        dEMB[idx] += dembds[i,j]    
+
+# lets compare:
+compare('dEMB', dEMB, EMB)
+
+# now this is the vectorized version : 
+# basically whats happening is that our dembds has repeated enteries for each
+# character, and what we need to do is to sum all of these repeated enteries
+# in dembds, this way, since we have 27 unique characters, the final result
+# would be 27 unique/final vectors of 10 length, and hence the dEMB 27,10 is
+# created this way.
+# in the semi-vectoriez implementation belowe, we first enumerate all the 
+# indices (codes for our characters starting from 0-27)
+# and then check in the dembds for all the entries that corrospond to this number
+# and for that we use the x_batch, becasue it has the same shape as dembds
+# so they are compatible. 
+# we check in x_batch for the current index, and when found
+# return the index(i,j), dembds use these (i,j)s and build a temporary tensor
+# now containing all the vectors corrosponding to that character.
+#(in fact, we create a boolean mask of (32,3), which when applied on dembds
+# returns all the enteries that are set true, thus returning a list of vectors
+# that we then sum over)
+# in the next step, we simply sum all of these vectors together and 
+# save it to the dEMB matrix under the corrosponding index!
+dEMB2 = torch.zeros((27, dembds.size(2)))
+for i, index in enumerate(range(27)):
+    mask = (x_batch == index)
+    # print(f'{mask=}')
+    out = dembds[x_batch == index]
+    dEMB2[i] = torch.sum( out, dim=(0))
+
+print(f'{dEMB2.shape}')
+compare('dEMB2', dEMB2, EMB)
+
+# vectorized implementation 
+mask = x_batch.unsqueeze(2).expand(*dembds.size())
+masked_y = torch.zeros_like(dembds)
+print(f'{mask.shape=}')
+print(f'{masked_y.shape=}')
+
+print(f'{x_batch.unsqueeze(1).shape=}')
+masked_y[mask == x_batch.unsqueeze(1)] = dembds[mask == x_batch.unsqueeze(1)]
+result = torch.sum(masked_y, dim=(0, 1))
+
+# %%
