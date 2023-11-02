@@ -79,7 +79,8 @@ len_dataset = len(names)
 num1 = int(0.8*len_dataset)
 num2 = int(0.9*len_dataset)
 # shuffle our lists we use random.shuffle to shuffle our X 
-import random 
+import random
+random.seed(255)
 random.shuffle(names)
 names_tr = names[:num1]
 names_val = names[num1:num2]
@@ -108,28 +109,28 @@ import torch
 # before we go on, lets set a manual seed for deterministic outcome
 #! noticed the value used here does implact the approx and exact to be false or not
 # for example test with 256 and you'll see some of the final calculations all fail!
-torch.manual_seed(255)
-
+# torch.manual_seed(255)
+g = torch.Generator().manual_seed(255)
 vocab_size = len(character_list)
 embedding_size = 10
 
-EMB = torch.randn(size = (vocab_size, embedding_size))
+EMB = torch.randn(size = (vocab_size, embedding_size), generator=g)
 # next we should have a linear layer after our embedding layer, to work on the embeddings
 # since our input is 3 numbers, and each number has an embedding vector of size 10, our
 # linear layer needs an in_features =30
 hidden_size = 100
-W1 = torch.randn(size=(context_size * embedding_size, hidden_size))
-b1 = torch.randn(size=(1,hidden_size))
+W1 = torch.randn(size=(context_size * embedding_size, hidden_size), generator=g)
+b1 = torch.randn(size=(1,hidden_size), generator=g)
 # we need a second layer to give us the final probablities for the next character
-W2 = torch.randn(size=(hidden_size, vocab_size))
-b2 = torch.randn(size=(1,vocab_size))
+W2 = torch.randn(size=(hidden_size, vocab_size), generator=g)
+b2 = torch.randn(size=(1,vocab_size), generator=g)
 # we want to add a batchnorm layer, so we need to create the parameters for it as well
 # batchnorm needs a gamma, a beta as the only two learnable parameters
 # we usually start gamma_gain as ones, and beta_bias as zeros so the start off with 
 # an initial guassian distribution, but here for unsmasking our possible errors we use
 # randn
-bn_gamma_gain = torch.randn(size=(1,hidden_size))
-bn_beta_bias = torch.randn(size=(1,hidden_size))
+bn_gamma_gain = torch.randn(size=(1,hidden_size), generator=g)
+bn_beta_bias = torch.randn(size=(1,hidden_size), generator=g)
 
 # now lets create a parameters list to hold all the parameters for optimization
 parameters = [EMB, W1, b1, W2, b2, bn_gamma_gain, bn_beta_bias]
@@ -141,9 +142,10 @@ for param in parameters:
 iter_max = 200_000
 batch_size = 32
 eps= 1e-6
+losses=[]
 for i in range (iter_max):
     # lets create a random batch of the input
-    batch_idxs = torch.randint(0, len(X_tr), size=(batch_size,))# shape: [32]
+    batch_idxs = torch.randint(0, len(X_tr), size=(batch_size,), generator=g)# shape: [32]
     # print(X_tr.shape) # X_tr.shape: (182535,3)
     # get the mini-batch
     x_batch = X_tr[batch_idxs]
@@ -288,6 +290,7 @@ for i in range (iter_max):
     # before we do a backwardpass, lets freeze the gradients for our test 
     # we retain the gradients for intermediate operations result as well 
     # to check our manual gradients
+    # disable for full training of course!
     for param in itertools.chain(parameters,[logprobs, probs, logcounts,logcountsum,
                                              logcountsum_inv,logitsnorm,
                                              logits, logits_max, out_bn,
@@ -298,13 +301,18 @@ for i in range (iter_max):
         param.retain_grad()
     
     loss.backward()
+    losses.append(loss.item())
     # break to be able to calculate the backward pass ourselves
     break
 
-    lr = 0.1
+    if i%10000==0:
+        print(f'{loss}')
+        
+    lr = 0.1 if i<=100_000 else 0.01
     for param in parameters:
         param.data += -lr * param.grad
-    
+print(f'loss: ',sum(losses)/len(losses))
+# prints a full training results in  loss:  2.322884672728181
 #%%
 print(torch.__version__)
 # lets create a function for comparing our gradients with pytorchs
@@ -1049,20 +1057,272 @@ dEMB2 = torch.zeros((27, dembds.size(2)))
 for i, index in enumerate(range(27)):
     mask = (x_batch == index)
     # print(f'{mask=}')
-    out = dembds[x_batch == index]
-    dEMB2[i] = torch.sum( out, dim=(0))
+    out = dembds[mask]
+    dEMB2[i] = torch.sum( out, dim=0)
 
-print(f'{dEMB2.shape}')
+# print(f'{dEMB2.shape}')
 compare('dEMB2', dEMB2, EMB)
+import torch.nn.functional as F
 
-# vectorized implementation 
-mask = x_batch.unsqueeze(2).expand(*dembds.size())
-masked_y = torch.zeros_like(dembds)
-print(f'{mask.shape=}')
-print(f'{masked_y.shape=}')
+# now the full vectorized version
+dEMB3=torch.vstack([torch.sum(dembds[x_batch == i], dim=0) for i in range(27)])
+# vectorized version 2 (a better version)
+dEMB4=(F.one_hot(x_batch).transpose(1, 2).float() @ dembds).sum(0)
+# another version taken from 
+dEMB5 = F.one_hot(x_batch).float().view(-1, EMB.shape[0]).T @ dembds.view(-1, EMB.shape[1])
+# another version
+dEMB6 = torch.zeros_like(EMB).scatter_add_(0, x_batch.view(-1,1).repeat(1,dembds.shape[-1]),dembds.view(-1, dembds.shape[-1]))
+#another version
+dEMB7 = torch.zeros_like(EMB)
+dEMB7.index_add_(0, x_batch.view(-1), dembds.view(-1, 10))
+# print(dEMB3.shape)
+# print(dEMB4.shape)
+compare('dEMB3', dEMB3, EMB)
+compare('dEMB4', dEMB4, EMB)
+compare('dEMB5', dEMB5, EMB)
+compare('dEMB6', dEMB6, EMB)
+compare('dEMB7', dEMB7, EMB)
 
-print(f'{x_batch.unsqueeze(1).shape=}')
-masked_y[mask == x_batch.unsqueeze(1)] = dembds[mask == x_batch.unsqueeze(1)]
-result = torch.sum(masked_y, dim=(0, 1))
 
 # %%
+# now we should be able to run optimization lets tidy things up and place them here
+# to make a loop
+
+import itertools
+import random
+import torch
+import torch.nn.functional as F
+
+# set the seed for determinstic output
+random.seed(255)
+g = torch.Generator().manual_seed(255)
+
+names = open('./names.txt').read().splitlines()
+character_list = sorted(set(''.join(names)))
+print(f'{character_list=}')
+character_list = ['.']+character_list
+atoi={ch:i for i,ch in enumerate(character_list)}
+# now lets create the itoa for getting back the characters from numerical codes
+itoa = {v:k for k,v in atoi.items()}
+
+def build_dataset(names:list[str], context_size:int) :
+    # list for holding our dataset samples
+    X:list[int] = []
+    # a list for the labels which contains the next characters for each sample in X
+    Y:list[int] = []
+    for name in names: 
+        # we build the initial sample, and remember we need numbers, not characters
+        sample = [atoi['.']]*context_size
+        # we append an ending symbol at the end of each name to signify where it ends
+        # since our initial sample contains the initial empty symbol, we dont readd any here
+        for ch in name+'.':
+            idx = atoi[ch]
+            X.append(sample)
+            Y.append(idx)
+            # update sample with the new character, move one character forward
+            sample = sample[1:] + [idx]
+    return X, Y
+
+context_size = 3
+X,Y = build_dataset(names, context_size)
+# now lets check X and Y
+print(X[:5], ''.join([itoa[c] for p in X[:5] for c in p]))
+print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
+# 80% for training and 10% for val and test resspectively
+len_dataset = len(names)
+num1 = int(0.8*len_dataset)
+num2 = int(0.9*len_dataset)
+# shuffle our lists we use random.shuffle to shuffle our X 
+random.shuffle(names)
+names_tr = names[:num1]
+names_val = names[num1:num2]
+names_test = names[num2:]
+# now lets create our dataset using names_tr
+#
+X_tr, Y_tr = build_dataset(names_tr, context_size)
+# now lets check X and Y
+print(X[:5], ''.join([itoa[c] for p in X[:5] for c in p]))
+print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
+# now lets convert them to tensor
+X_tr = torch.tensor(X_tr)
+Y_tr = torch.tensor(Y_tr)
+
+vocab_size = len(character_list)
+embedding_size = 10
+
+EMB = torch.randn(size = (vocab_size, embedding_size), generator=g)
+hidden_size = 100
+W1 = torch.randn(size=(context_size * embedding_size, hidden_size), generator=g)
+b1 = torch.randn(size=(1,hidden_size), generator=g)
+W2 = torch.randn(size=(hidden_size, vocab_size), generator=g)
+b2 = torch.randn(size=(1,vocab_size), generator=g)
+bn_gamma_gain = torch.randn(size=(1,hidden_size), generator=g)
+bn_beta_bias = torch.randn(size=(1,hidden_size), generator=g)
+
+# now lets create a parameters list to hold all the parameters for optimization
+parameters = [EMB, W1, b1, W2, b2, bn_gamma_gain, bn_beta_bias]
+    
+# OK now lets do a forward pass 
+iter_max = 200_000
+batch_size = 32
+eps= 1e-6
+running_mean = torch.zeros_like(b1)
+running_var = torch.ones_like(b1)
+momentum = 0.1
+losses = []
+for i in range (iter_max):
+    batch_idxs = torch.randint(0, len(X_tr), size=(batch_size,), generator=g)# shape: [32]
+    x_batch = X_tr[batch_idxs]
+    embds = EMB[x_batch]
+    embdscat = embds.view(embds.shape[0],-1)
+    out_preact = embdscat @ W1 + b1
+    mean = out_preact.mean(dim=0, keepdim=True)
+    bn_diff = out_preact - mean 
+    bn_diff2 = bn_diff**2 
+    bn_diff2sum = bn_diff2.sum(dim=0, keepdim=True)
+    var = 1/(out_preact.shape[0]-1) * bn_diff2sum
+    out_normalized = out_preact - mean 
+    
+    # calculating running mean and var for test time
+    running_mean = (1-momentum)*running_mean + momentum*mean
+    running_var = (1-momentum)*running_var + momentum*var
+    
+    var_sq = (var+eps)**0.5
+    var_sq_inv = var_sq**-1 
+    x_hat = out_normalized * var_sq_inv
+    out_bn = bn_gamma_gain * x_hat + bn_beta_bias
+    out_tanh = torch.tanh(out_bn)
+    logits = out_tanh @ W2 + b2
+    logits_max = logits.max(dim=1, keepdim=True).values
+    logitsnorm = logits - logits_max
+    logcounts = logitsnorm.exp()
+    logcountsum = logcounts.sum(dim=1, keepdim=True)
+    logcountsum_inv = logcountsum**-1
+    probs = logcounts * logcountsum_inv
+    logprobs = probs.log()
+    loss = -logprobs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]].mean()
+
+    # calculate the gradients manually 
+    
+    dlogprobs = torch.zeros_like(logprobs)
+    dlogprobs[range(0,len(batch_idxs)), Y_tr[batch_idxs]] = -1/len(batch_idxs)
+    dprobs = torch.zeros_like(probs)
+    dprobs[...] = (1/probs) * dlogprobs 
+    dlogcounts = logcountsum_inv * dprobs
+    dlogcountsum_inv = (logcounts * dprobs).sum(dim=1, keepdim=True)
+    dlogcountsum = -1*logcountsum**(-2) * dlogcountsum_inv
+    dlogcounts += torch.ones_like(logcounts) * dlogcountsum
+    dlogitsnorm = logcounts * dlogcounts
+    dlogits = 1*dlogitsnorm
+    dlogits_max = (-1*dlogitsnorm).sum(dim=1, keepdim=True) 
+    dlogits += torch.nn.functional.one_hot(logits.max(dim=1).indices, num_classes=logits.shape[-1]) * dlogits_max
+    dout_tanh = dlogits@W2.T
+    dW2 = out_tanh.T@dlogits
+    db2 = (1*dlogits).sum(dim=0,keepdim=True)
+    dout_bn = (1-out_tanh**2)* dout_tanh
+    dbn_gamma_gain = (x_hat*dout_bn).sum(dim=0,keepdim=True)
+    dx_hat = bn_gamma_gain*dout_bn
+    dbn_beta_bias = (1*dout_bn).sum(dim=0,keepdim=True)
+    dout_normalized = var_sq_inv*dx_hat
+    dvar_sq_inv = (out_normalized*dx_hat).sum(dim=0, keepdim=True)
+    dvar_sq = -1*var_sq**-2 * dvar_sq_inv
+    dvar = (dvar_sq * (0.5*(var+eps)**(0.5-1.0))).sum(dim=0, keepdim=True)
+    dout_preact = torch.ones_like(out_preact) * dout_normalized
+    dmean = -1*(torch.ones_like(mean)*dout_normalized).sum(dim=0, keepdim=True) 
+    dbn_diff2sum = 1/(out_preact.shape[0]-1) * dvar
+    dbn_diff2 = torch.ones_like(bn_diff2) * dbn_diff2sum
+    dbn_diff = 2*bn_diff * dbn_diff2
+    dout_preact += 1.0* dbn_diff
+    dmean += -(dbn_diff).sum(dim=0, keepdim=True)
+    dout_preact += 1/len(out_preact) * dmean
+    dW1 = embdscat.T @ dout_preact
+    dembdscat = dout_preact@W1.T
+    db1 = (1.0*dout_preact).sum(dim=0, keepdim=True)
+    dembds = dembdscat.view(*embds.shape)
+    dEMB=torch.vstack([torch.sum(dembds[x_batch == i], dim=0) for i in range(27)])
+    # gradients calculation
+
+    # parameters = [EMB, W1, b1, W2, b2, bn_gamma_gain, bn_beta_bias]
+    dparameters=[dEMB, dW1, db1, dW2, db2, dbn_gamma_gain, dbn_beta_bias]
+
+    lr = 0.1 if i<=100_000 else 0.01
+    for param,grad in zip(parameters, dparameters):
+        param.data += -lr * grad
+    
+    losses.append(loss.item())
+    if i%10000==0:
+        print(f'{loss.item()}')
+        
+print(f'loss:', sum(losses)/len(losses))
+# which prints 
+# 11.806575775146484
+# 2.535858154296875
+# 2.4068679809570312
+# 2.406609535217285
+# 2.328763246536255
+# 2.667058229446411
+# 2.191136598587036
+# 2.2679288387298584
+# 2.591965913772583
+# 1.9428260326385498
+# 2.1402201652526855
+# 2.166907548904419
+# 2.3032281398773193
+# 2.2943642139434814
+# 2.177385091781616
+# 2.4250869750976562
+# 2.1525397300720215
+# 2.0469741821289062
+# 2.3654978275299072
+# 2.33795428276062
+# loss: 2.322884666481614
+# which if we compare with the pytorch loss : 2.322884672728181 we see 
+# they are nearly identical (the difference is 0.0000000062 or 6.246566819356758e-09
+# which is basically zero)
+#%%
+# now lets sample from it 
+# for sampling we would feed the '...' as input and keep creating 
+# before going on, we need to calculate the datasetmean/var as well
+for i in range (10):
+    input = [0]*3
+    input_tensor = torch.tensor(input).reshape(1,-1)
+    # print(f'{input_tensor.shape=}')
+    chsr = ''
+    while True:
+        embd = EMB[input_tensor].reshape(input_tensor.shape[0],-1)
+        # print(f'{embd.shape=}')
+        out_preact = embd @ W1 + b1
+        # print(f'{out_preact.shape=}')
+        # ############## batchnorm ##############
+        # for test time, we need to calculate the mean/var of the the whole
+        # dataset to use here 
+        # mean = out_preact.mean(dim=0, keepdim=True)
+        # bn_diff = out_preact - mean 
+        # bn_diff2 = bn_diff**2
+        # bn_diff2sum = bn_diff2.sum(dim=0, keepdim=True)
+        # var = 1/(out_preact.shape[0]-1) * bn_diff2sum
+        mean = running_mean
+        var = running_var
+        out_normalized = out_preact - mean 
+        var_sq = (var+eps) ** 0.5
+        var_sq_inv = var_sq ** -1 
+        x_hat = out_normalized * var_sq_inv
+        out_bn = bn_gamma_gain * x_hat + bn_beta_bias
+        ########################################
+        out_tanh = torch.tanh(out_bn)
+        logits = out_tanh @ W2 + b2
+        
+        # get probablities 
+        probs = logits.softmax(dim=1)
+        # print(f'{probs.shape=}')
+        idx = torch.multinomial(probs.squeeze(0), num_samples=1, replacement=True, generator=g).item()
+        # print(f'{idx=}')
+        chsr += itoa[idx]
+        input = input[1:]+[idx]
+        input_tensor = torch.tensor(input).reshape(1,-1)
+        
+        if idx == 0:
+            print(chsr)
+            chsr=''
+            break
+            
