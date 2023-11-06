@@ -981,7 +981,7 @@ class BatchNorm1d:
             var = X.var(dim=0, keepdim=True)
         else: 
             mean = self.running_mean
-            var = self.running_std
+            var = self.running_var
 
         # calculate the running mean/var outside of computation graph
         if self.track_running_stats:
