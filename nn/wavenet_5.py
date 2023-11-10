@@ -32,9 +32,9 @@ import torch
 import torch.nn.functional as F 
 
 
-# lets set seeds for determinstic output
+# lets set seeds for determinstic output,
 torch.manual_seed(255)
-np.random.seed(255)
+# np.random.seed(255)
 random.seed(255)
 
 # now lets read the dataset and build our dataset
