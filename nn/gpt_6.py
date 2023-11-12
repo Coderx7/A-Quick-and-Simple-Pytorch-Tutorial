@@ -16,7 +16,7 @@
 # first lets import the basic stuff 
 
 # for type hints
-from collections.abc import Iterable
+from collections.abc import Any, Iterable
 
 import random 
 import numpy as np
@@ -647,6 +647,8 @@ print(''.join(decode(output.squeeze(0).tolist())))
 # PUSa VI aken 
 # 
 # which looks much better than the initial random output we got earlier.
+#%% 
+torch.manual_seed(255)
 # now lets add attention mechanism to our base model. 
 # attention mechanism at its core tries to take advantage of the rich information embedded
 # in the sequence. for our work, this is specifically about the past history but in general 
@@ -656,4 +658,452 @@ print(''.join(decode(output.squeeze(0).tolist())))
 # before we venture any further into the crux of the matter, let us learn about a technique
 # thats used to efficiently implement attention mechanism.
 # for this purpose,lets imagine we have a simple input like the following: 
- 
+# lets create and input of the following shape
+B,T,C = (4,8,2)
+# to make it more intuitive lets make a tensor with known numbers andthen reshape it
+x = torch.arange(0,64,dtype=torch.float).view(B,T,C)
+# imagine we have an input like what we encountered previously in our examples. in this sample 
+# input, we have a batch of 4 samples, each having 8 sequences with each sequence having a vector of 2 values
+# what we are planning to do is to provide a way by which each token can communicate with other 
+# tokens. we have 8 tokens in our sequence. so we want our tokens to be able to communicate with
+# all previous tokens that came before it. the reason we are only looking in the past token is 
+# simply becasue the we are trying to perdict the future, so it only makes sense to look at the
+# past and current timestamp and infer on what to do for the future.  
+# so the easiest way to implement a kind of communication between tokens could be to sum or average the
+# values of all previous tokens plus the current one as a way of taking into account their contribution
+# to the final answer.
+# that is, lets say if we are currently at token 5, we take the average of 
+# the current token and all previous tokens before it, effectively making a feature vector that
+# reflects our current status of the sequence so far, having taken all previous tokens/steps up to now.
+# note that as you may also have thought, summing or averaging arent the best way to model such interations.
+# in fact they are an extremely weak form of interaction between tokens,
+# this kind of communicating is extremely lossy so to speak, that is we lose a great deal of information 
+# concerning the underlying relationships between tokens, their arrangements,their implicit interactions,
+# semantics, etc. but for now this is ok. we will later on see how to bring back such information.
+# so now what we want to do, is to calculate the sum or average of all tokens up to the current token in 
+# all batches at the same time.
+# a naive way would be to do sth like this using a for loop:
+results = torch.zeros(size=(B,T,C))
+for b in range(B):
+    for t in range(T):
+        results[b,t] = x[b,:t+1].mean(0)
+print(f'{results=}')
+# which prints 
+# results=tensor(
+#        [[[ 0.,  1.],
+#          [ 1.,  2.],
+#          [ 2.,  3.],
+#          [ 3.,  4.],
+#          [ 4.,  5.],
+#          [ 5.,  6.],
+#          [ 6.,  7.],
+#          [ 7.,  8.]],
+
+#         [[16., 17.],
+#          [17., 18.],
+#          [18., 19.],
+#          [19., 20.],
+#          [20., 21.],
+#          [21., 22.],
+#          [22., 23.],
+#          [23., 24.]],
+
+#         [[32., 33.],
+#          [33., 34.],
+#          [34., 35.],
+#          [35., 36.],
+#          [36., 37.],
+#          [37., 38.],
+#          [38., 39.],
+#          [39., 40.]],
+
+#         [[48., 49.],
+#          [49., 50.],
+#          [50., 51.],
+#          [51., 52.],
+#          [52., 53.],
+#          [53., 54.],
+#          [54., 55.],
+#          [55., 56.]]])
+#
+# You may find out that, some researchers refer to this operation here as BoW, or bag of words. 
+# We are effectively averaging embeddings here and averaging embeddings can be considered a form of 
+# Bag of Words (BoW) representation. In BoW, the focus is on the occurrence and frequency of words, 
+# rather than their order or structure. By averaging embeddings, we are essentially treating each word 
+# as an independent feature and capturing its representation in the form of a numerical vector.
+#
+# While averaging embeddings does not capture the exact frequency of each word, it does capture the 
+# overall distribution and semantic information present in the text. Similar to BoW, this approach 
+# disregards word order and focuses on the presence and representation of words. However, it should be
+# noted that averaging embeddings may preserve some semantic relationships between words, which BoW 
+# representations might not capture as effectively.
+# 
+# Side note: 
+# Bag of Words (BoW) is a commonly used technique in natural language processing (NLP) for representing text
+# as a numerical feature vector. It disregards the order and structure of words in a document and focuses only
+# on their occurrence and frequency.
+# In the BoW model, a document or a piece of text is represented as a "bag" (unordered set) of words, where 
+# each word is treated as an independent feature. The presence or absence of words in the document is encoded
+# as a binary value (0 or 1), and the frequency of each word is often used as the value in the feature vector.
+# 
+# Here's a step-by-step overview of the BoW process:
+# 1. Tokenization: The text is split into individual words or tokens. Punctuation marks, whitespace, and other
+#    special characters are usually removed or treated as separate tokens.
+# 2. Vocabulary Creation: A vocabulary is created by taking all unique words from the entire corpus 
+#    (collection of documents). Each unique word is assigned a unique index or position in the vocabulary.
+# 3. Vectorization: Each document is represented as a feature vector, typically a one-hot encoding or a count
+#    vector. In a one-hot encoding, each word in the vocabulary corresponds to a binary feature, and the vector
+#    contains 1s in the positions where the word occurs and 0s elsewhere. In a count vector, the value at each 
+#    position represents the frequency of the corresponding word in the document.
+# 4. Classification or Analysis: The resulting feature vectors can be used as input to machine learning models
+#    for tasks such as text classification, sentiment analysis, document clustering, or information retrieval.
+# Needless to say, BoW has some limitations. It does not capture the semantic meaning or context of words, as
+# it treats each word independently. It also ignores the grammar and word order. However, BoW is simple, 
+# efficient, and can be a useful baseline representation for various NLP tasks.
+# 
+# so to recap one more time, we are basiaclly treating each timestep/sequence dimension, as a word, so we have
+# 8 tokens/words, and we are averaging them (we are infact averaging their embeddings, but thats obvious!)
+# so we got ourselves bow representation!
+# now back to our discussion, if we  try to visualize the results we get 
+print(x[0])
+print(results[0])
+# prints:
+# x[0]=
+# tensor([[ 0.,  1.],
+#         [ 2.,  3.],
+#         [ 4.,  5.],
+#         [ 6.,  7.],
+#         [ 8.,  9.],
+#         [10., 11.],
+#         [12., 13.],
+#         [14., 15.]])
+# results[0]=
+# tensor([[0., 1.],
+#         [1., 2.],
+#         [2., 3.],
+#         [3., 4.],
+#         [4., 5.],
+#         [5., 6.],
+#         [6., 7.],
+#         [7., 8.]])
+# if you look closely, you'll notice that each row, contains the mean of all the rows before it
+# consider the first 3 rows in x[0], 
+# tensor([[ 0.,  1.],
+#         [ 2.,  3.],
+#         [ 4.,  5.],
+# now refer to the 3rd row in results[0] which is :
+#         [2., 3.],
+# likewise, consider the last row in results which contains the average for all the rows in x:
+# 0+2+4+6+8+10+12+14 = 56 which when divided by their count, 8, results in 7, 
+# and this is the same for the second column, thus we get:
+# results[0,7] = [7., 8.]])
+# this all good but the problem is using for loops to calculate this is very inefficient, it
+# happens that this operation can be efficiently calculated using matrix multiplication.
+# lets learn this trick using an example: 
+# suppose we have the following as the input: 
+a = torch.ones(size=(3,3))
+b = torch.randint(0,10,size=(3,2)).float()
+c = a@b
+print(f'{a=}')
+print(f'{b=}')
+print(f'{c=}\n----')
+# prints
+# a=tensor(
+#        [[1., 1., 1.],
+#         [1., 1., 1.],
+#         [1., 1., 1.]])
+# b=tensor(
+#        [[9., 3.],
+#         [5., 5.],
+#         [6., 5.]])
+# c=tensor(
+#        [[20., 13.],
+#         [20., 13.],
+#         [20., 13.]])
+# nothing fancy here, we have matrix multiplication, the first row of 'a' is dot-producted by first col
+# of 'b', then sumed, it makes up the first col of first row in c. likewise the first row of 'a' dot 
+# the second col of 'b', then summed the results, makes up the second col of first row in c. and this goes on for the rest of the matrixes. this is
+# what we learned back in higheschool, so what is it exactly that we are learning exactly?
+# if you look closely, you'll notice that, the c cols are actually the sum of all the rows in b!
+#        [9]
+# b[:,0]=[5] 
+#        [6]
+# 9+5+6 is 20! likewise, 
+#        [3]
+# b[:,1]=[5] 
+#        [5]
+# 3+5+5 is 13!
+# hence c = [20., 13.] which is repeated obviously because the second and third rows of a are all 1s as well.
+#           [20., 13.]  
+#           [20., 13.] 
+# I guess you are now starting to get where we are going with this, if we can some how alter the 'a' matrix,
+# we may very well be able to achieve our goal! how you may ask? the answer is using torch.tril!
+# torch.tril() is a function that returns a matrix from a given tensor, so that half of it set to zero,
+# basially it creates a triangular tensor, where the right half is just zeros! lets see how it works, 
+# lets apply it on 'a'
+a_tril = torch.tril(a)
+print(f'a_tril:\n{a_tril}')
+# it prints
+# a_tril=tensor(
+#        [[1., 0., 0.],
+#         [1., 1., 0.],
+#         [1., 1., 1.]])
+# as you can see the the right half is set to zero and we are left with a triangle shape of 1s! on the left side
+# now if we do a@b this time we get:
+c = a_tril@b 
+print(f'b:\n{b}')
+print(f'c:\n{c}')
+# a_tril:
+# tensor([[1., 0., 0.],
+#         [1., 1., 0.],
+#         [1., 1., 1.]])
+# b:
+# tensor([[9., 3.],
+#         [5., 5.],
+#         [6., 5.]])
+# c:
+# tensor([[ 9.,  3.],
+#         [14.,  8.],
+#         [20., 13.]])
+# now if you look closely, you'll notice that, this time, each row in c, is effectively the sum of the previous
+# rows in b, like the first row of 'a' is only 1 in the 0ths column, so the first row of b is copied in c intact
+# (workout the math and see why). 
+# the second row in 'a', now has two 1s in col 0 and 1 respectively, which effectively translates to summing the first
+# two rows in b. (9+5 =14, 3+5=8). likewise, the third row in 'a' is all 1s, signfigying all rows in b will
+# be summed which gives us (9+5+5=20, 3+5+5=13). 
+# so basically we are doing sums here, becasue our tensor a is all ones. so if we want to somehow calculate the
+# average, instead of sum, we can easily change 'a' by normalizing it so that the each row sums to 1 (i.e. all cols
+# sum to 1), this way the end result will be the average (becasue the 'b' is multiplied by a fraction/scale and then summed)
+# so if we scale 'a' by the sum of all its columns, we should get average instead
+a = torch.ones(size=(3,3))
+a = torch.tril(a)
+a = a/a.sum(dim=1, keepdim=True)
+print(f'a:\n{a}')
+# a:
+# tensor([[1.0000, 0.0000, 0.0000],
+#         [0.5000, 0.5000, 0.0000],
+#         [0.3333, 0.3333, 0.3333]])
+#
+# note that, now each row, sums to 1. the first row, the first element is 1, because the rest are 0s
+# but in the second row, as there are two 1s, the probabality is divided between the two, each being 0.5
+# likewise, in the third row, as there are 3 1s, the probablity is divided between all of them, making each
+# to have the value 0.33
+# and now if we try to multiply them, we get average as the result:
+c = a@b 
+print(f'calculating average:')
+print(f'b:\n{b}')
+print(f'c:\n{c}')
+# we get 
+# calculating average:
+# b:
+# tensor([[9., 3.],
+#         [5., 5.],
+#         [6., 5.]])
+# c:
+# tensor([[9.0000, 3.0000],
+#         [7.0000, 4.0000],
+#         [6.6667, 4.3333]])
+# we see that, each row in c, is the average of all the rows before it. 
+#
+# so using this trick, we can take the incremental average of any matrix we like. 
+# now that we learned the trick, lets go back and implement the bows for loops using this techique !
+# prevbiously we had : 
+# results = torch.zeros(size=(B,T,C))
+# for b in range(B):
+#     for t in range(T):
+#         results[b,t] = x[b,:t+1].mean(0)
+# which calculated the average for sequence dimensions (tokens) incrimentally
+# lets do this now 
+# we want a TxT weight becasue we want to average T timestep/tokens
+weight =  torch.tril(torch.ones(size=(T,T)))
+# remember to set keepdim=True, or otherwise, as we sum along dim=1, we lose that dim
+# (it collapses, and then the broadcast will be wrong, it will infact make each column 
+# have one probablity instead of each row, which is the exact opposite of what we want)
+weight = weight/weight.sum(dim=1, keepdim=True)
+print(f'weight:\n{weight}')
+# and now we need to multiply this by x! 
+bow_results= weight@x
+print(f'bow_results:\n{bow_results}') 
+# which prints 
+# bow_results:
+# shape: torch.Size([4, 8, 2])
+# tensor([[[ 0.0000,  1.0000],
+#          [ 1.0000,  2.0000],
+#          [ 2.0000,  3.0000],
+#          [ 3.0000,  4.0000],
+#          [ 4.0000,  5.0000],
+#          [ 5.0000,  6.0000],
+#          [ 6.0000,  7.0000],
+#          [ 7.0000,  8.0000]],
+
+#         [[16.0000, 17.0000],
+#          [17.0000, 18.0000],
+#          [18.0000, 19.0000],
+#          [19.0000, 20.0000],
+#          [20.0000, 21.0000],
+#          [21.0000, 22.0000],
+#          [22.0000, 23.0000],
+#          [23.0000, 24.0000]],
+
+#         [[32.0000, 33.0000],
+#          [33.0000, 34.0000],
+#          [34.0000, 35.0000],
+#          [35.0000, 36.0000],
+#          [36.0000, 37.0000],
+#          [37.0000, 38.0000],
+#          [38.0000, 39.0000],
+#          [39.0000, 40.0000]],
+
+#         [[48.0000, 49.0000],
+#          [49.0000, 50.0000],
+#          [50.0000, 51.0000],
+#          [51.0000, 52.0000],
+#          [52.0000, 53.0000],
+#          [53.0000, 54.0000],
+#          [54.0000, 55.0000],
+#          [55.0000, 56.0000]]])
+# which gives us the same results as we expected.
+# one more thing before we continue on, note that the weight matrix is TxT while 
+# the input is (BxTxC). (T,T) and (B,T,C) are not compatible, so what happens is
+# that (T,T) is reshaped and a batch dimension is added to (T,T),making it (1,T,T)
+# and then this is broadcasted along the batch dimension (replicated) to become 
+# (B,T,T), then this will be multiplied by the (B,T,C)( note that at this stage
+# a@b will be a batch multiplication operation, if you set the batch dimension aside, youll
+# see that the rest of the dimensions match up, we have (T,T) and (T,C) which will
+# result in (T,C). now if we add the batches back in, we will endup with (B,T,C)
+# so in practice, the multiplication is done B times and then results are stacked.
+# the first batches will multiply each other (T,T)x(T,C) = (T,C)
+# the second batches will then multiply each other as well, getting another (T,C)
+# and this goes on until we get (B,T,C))
+#
+a = torch.arange(0,9).view(3,3)
+# a = torch.ones((3,3)).long()
+b = torch.arange(0,30).view(2,3,5)
+print(f'a:\n{a}')
+print(f'b:\n{b}')
+c = a@b 
+print(f'c=a@b:\n{c}')
+# is equivalent to 
+# add a batch dimension to a
+a = a.view(1,*a.shape) # or a.unsqueeze(0)
+print(f'a with batch dim:\n{a.shape=}')
+# replicate along the batch dimension
+a = torch.cat(tuple(a.clone() for i in range(len(b))), dim=0)
+print(f'{a.shape=}')
+print(f'a(after replication along dim=0):\n{a}')
+print(f'b:\n{b}')
+# and now we have a case of batch-multiplication, the batch is the same 
+# and sub tensors also are compatible, we have (T,T) and (T,C) so we now
+# individually multiply each sub-tensor
+c2 = torch.zeros_like(b)
+for i in range(b.shape[0]):
+    c2[i,...] = a[i]@b[i] # (T,T) x (T,C) -> (T,C)
+# and ultimatley the result will have the shape (B,T,C)
+print((c==c2).all())
+# so to recap this 
+# When performing the matrix multiplication `c = a @ b` with the given tensors, 
+# several broadcasting steps occur to align the dimensions properly. 
+# Here's a how it happens:
+# 1. Tensor a has the (shape: 3, 3):
+# 2. Tensor b has the (shape: 2, 3, 5):
+
+# 3. They are not compatible so we broadcast tensor a to match the shape of b. 
+# tensor a is expanded to (1, 3, 3) to have a batch dimension, and replicated 
+# along dim 0 to result in (2, 3, 3). now both tensors have a batch of 2, and 
+# if we put aside the batch dimension for a second, we'll notice that the rest
+# of the shapes are compatible (3,3) and (3,5). so when we bring back the batch 
+# dimension, we see we have a case of batch multiplication, that is we have 2
+# sets of compatible tensors that need to be multiplied together. so we use a 
+# simple for loop, to do multiplication, and stack the results and we are done!
+#
+# now back to our discussion. as we just saw, the traingualr shape in our weighted
+# sum matrix, allows that each token at t dimension, can only interact with the tokens
+# before it.
+# there is another way of implementing the same thing but a bit differently
+# if you look closely you can see that, we are dealing with probablities, so
+# we may verywell use softmax to simplify this further.
+# first lets create our triangular weight matrix
+tril_tensor = torch.tril(torch.ones(size=(T,T)))
+# now lets create a mask
+weight = torch.zeros_like(tril_tensor)
+# now lets mask all the zeros to -inf, so when we do softmax, all those -infs
+# become 0. (recall that exp^-inf is 0! while exp^inf is inf! so its important to 
+# set -inf (and also exp^0 is 1))
+# so effectively what happens here is that, we setting each entery in trail_tensor
+# with zero to -inf, and leave the rest as zeros. when this tensor goes through softmax
+# the 0s will be 1s and -infs will be 0s before they are normalized, when they are normalized
+# the probablity of 1 will be split between all the enteries with the value of 1.
+# so the first row has a single 1, so it will be 1.0, the second row has two 1s, so
+# each one will take 0.5, the third will have 3 1s, so they each will become 0.333
+# and so on.
+weight=weight.masked_fill(tril_tensor==0, -torch.inf)
+# now calculate the probs for each row, treating all cols as probs so their sum is 1
+weight = weight.softmax(dim=1)
+bow_results2 = weight@x
+print(f'{torch.all(bow_results==bow_results2)}')
+# so you might ask, why would we want to make things more complex like this to only
+# achieve what we already achieved pretyy efficiently before?
+# the answer is, this approach provides us with a flexibility that the previous ones
+# wouldnt provide us withs. if you think about it for a moment, you'll notice that
+# the 'weight' matrix can essentially be anything and not just zeros! 
+# we have decoupled it from tril, which's job is to set the right half of the tensor
+# to zero, so we actually get the expected behavior later on. 
+# if you havent yet figured it out, the 'wieght' matrix, can be truly a weight matrix
+# which can show different strengths for each token, basically it can learn the interations
+# between tokens and manifest them. currently it is us who sets it to all zeros, but
+# what if we can learn the values from data itself! that would make sense, and make it
+# so that each token, can have a different connection to any other tokens now, and use
+# it to their advantage.
+# also note that the tril part, infact is a hard-constrain here that prevents tokens from
+# the past from interacting with the tokens from the future.
+# so to recap here, basically the idea is, this triangular form, allows us to have 
+# weighted aggregations of past elements. each element in the lower triangular part, 
+# specifies, the degree by which it plays a rule in the said outcome. 
+# that is how much of each element gets to fuse into this position.
+# so now lets incorporate attention into our model
+# 
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, embd_size) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        # unlike the previous model, lets decouple the final logits from 
+        # the number of embeddings, because we are using attentions, and
+        # we want to have multiple operations inbetween obviously.
+        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+        # in order to get the final logits, we need a linea layer at end
+        self.fc = torch.nn.Linear(embd_size, vocab_size)
+        
+    def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+        out = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
+        logits = self.fc(out)         # has the shape (B,T,C) c is vocabsize
+        loss = None
+        if labels is not None:
+            # recall that crossentropy likes its input to be B,C,T and we are B,T,C
+            # so lets permute and make it happy!
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss
+    
+    def generate(self, idx, max_token_count)-> list[torch.Tensor]:
+        # lets generate an output as long as num_max_token
+        for i in range(max_token_count):
+            # make sure idx is 2d
+            assert len(idx) >1, f"idx.shape '({tuple(idx.shape)})' is invalid. it must have the form (B,T)"
+            # now lets feed it to the model and sample from the probablities it produces
+            preds,_ = self(idx)
+            # convert to probs 
+            probs = preds.softmax(dim=1)
+            # since we are bigram still, lets only get the last token as the next token predicted!
+            probs = probs[:,-1,:]
+            # now lets sample from it 
+            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+            # now concatenate the new token to the previous one and feed it back to the model
+            # for the next round of prediction
+            # also remember that we are creating a sequence, so we concat them at dim=1 to get 
+            # a longer sequence (we are gradually increasing the sequence length from 1 up to
+            # max_token_count)
+            idx = torch.cat((idx,new_idx), dim=1)
+            
+        return idx.tolist()
+    
+    
