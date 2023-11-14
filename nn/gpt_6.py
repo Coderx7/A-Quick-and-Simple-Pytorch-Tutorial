@@ -16,7 +16,7 @@
 # first lets import the basic stuff 
 
 # for type hints
-from collections.abc import Any, Iterable
+from collections.abc import Iterable
 
 import random 
 import numpy as np
@@ -1038,30 +1038,427 @@ weight = torch.zeros_like(tril_tensor)
 # and so on.
 weight=weight.masked_fill(tril_tensor==0, -torch.inf)
 # now calculate the probs for each row, treating all cols as probs so their sum is 1
-weight = weight.softmax(dim=1)
+weight = weight.softmax(dim=-1)
 bow_results2 = weight@x
 print(f'{torch.all(bow_results==bow_results2)}')
-# so you might ask, why would we want to make things more complex like this to only
+# so you might ask, why would we want to make things more complicated like this to only
 # achieve what we already achieved pretyy efficiently before?
 # the answer is, this approach provides us with a flexibility that the previous ones
 # wouldnt provide us withs. if you think about it for a moment, you'll notice that
 # the 'weight' matrix can essentially be anything and not just zeros! 
 # we have decoupled it from tril, which's job is to set the right half of the tensor
-# to zero, so we actually get the expected behavior later on. 
+# to zero, so we actually get the expected behavior later on.(which is setting a constrain really (more layer on))
 # if you havent yet figured it out, the 'wieght' matrix, can be truly a weight matrix
 # which can show different strengths for each token, basically it can learn the interations
-# between tokens and manifest them. currently it is us who sets it to all zeros, but
-# what if we can learn the values from data itself! that would make sense, and make it
-# so that each token, can have a different connection to any other tokens now, and use
-# it to their advantage.
-# also note that the tril part, infact is a hard-constrain here that prevents tokens from
-# the past from interacting with the tokens from the future.
+# between tokens and manifest them. currently it is us who sets it to all zeros, so we get
+# uniform probablities, which inturn manifest itself as an average. but what if instead of 
+# all zeros, we actually learn the values from the data itself? that would make sense, and 
+# make it so that each token, can have a different connection(strength) to any other tokens
+# now, and thus build semantic/meaningful relation. this is inafct what we are after. we want
+# for tokens to learn associations and relations with other tokens based on the data present
+# in the dataset, having uniform weight like what we initially did really is a far cry from
+# what we intend, and therefore, we opt in to use this new approach that allows us to actually
+# exploit this new capability. 
+# This is infact the problem that attention solves, that is gathering
+# information from the past but in a data driven manner.(side note, we are not limited to 'past' 
+# information only per say, in this example, this is the case however, we will explain this 
+# in more detail)), we will see how attention does this exactly in a moment. 
+#
+# but before we jump into attention implementation also note that the tril part, infact is a hard-constrain here that prevents tokens from
+# the past from interacting with the tokens from the future. 
 # so to recap here, basically the idea is, this triangular form, allows us to have 
 # weighted aggregations of past elements. each element in the lower triangular part, 
 # specifies, the degree by which it plays a rule in the said outcome. 
-# that is how much of each element gets to fuse into this position.
+# that is how much of each element gets to fuse into this specific position(i.e. current token's)
 # so now lets incorporate attention into our model
+# Attention does its job by using two vectors called, key and query.
+# basically every single token, emits two vectors called key and query, the query verctor
+# as the name suggests, implies, what we are looking for, and the key vetcor, again as the
+# name suggets, implies, the contents, what it contains. 
+# the way we get our 'weights' for these tokens is we simply dotproduct them together, 
+# the ones that yield a high output/value, signify they are related positively.
+# so our query is dotproducted with all the token's(keys) and the outputs reveal their 
+# closeness/relevancy/similarity so to speak(if they align so to speak, they result in larger number)
+# so effectively, the ones with higher number, are more similar to the query, the highest, 
+# obviously having the most relavancy/similarity to the query.s
+# so lets implemenet this
+# #%%
+# we want to implement a single attention head, we can later use this to create 
+# multi-attention-head which is basically several single attention heads working in 
+# parallel. so how do we implement one! 
+# first lets create some random input 
+torch.manual_seed(255)
+# lets specify the batch, context_size and vocab_size
+B,T,C = 4,8,32
+# lets create an input 
+x = torch.randn(size=(B,T,C))
+# we said that attention works with two vectors, key and query, lets implement them
+# we can use nn.Linear to implement them but beore that, what are the dims of such vectors,
+# we are dealing with text and thus our inputs are tokens/vocabs, so the first dim would be 
+# our vocab_size to account for all tokens, the next dim, is sth called a head_sizes, which 
+# specifies the size of the key/query output usually 16 is used a lot for head size so we 
+# use that as well
+head_size = 16
+# lets not forget to set bias=False, so what it does is exactly dotproduct 
+key = torch.nn.Linear(C, head_size, bias=False)
+query = torch.nn.Linear(C, head_size, bias=False)
+# now lets get the output
+k = key(x)      # shape : 4,8,16 or (B,T, head_size)
+q = query(x)    # shape : 4,8,16 or (B,T, head_size)
+ # so the dims arent compatible for batch-multiplication, so we need a transpose
+ # k.T wouldnt work becasue we have a batch-dim, so instead we use .transpose and
+ # explictily specify the dims we want to be transposed. 
+ # this will result in 4,8,16 by 4,16,8 which would give us 4,8,8 which is (B,T,T)
+ # really as the result
+ #! check transpose result is it okto use 2,1 or -2,-1 or 1,2
+weight_raw = q@k.transpose(2,1)
+# now lets for a moment think about what is happening here, the key and query are applied
+# on the input and each return an output of (B,T,head_size), they are in fact, processing
+# all the tokens in the input, individually, simultaneously, all the same time. so each 
+# token is both a query, and a key, and when we do a dotproduct, we are basically telling 
+# it to reveal the relation/similarity/relevance of every token with every other tokens.
+# and as we explained earlier, this is infact our weight matrix (which was initially zeros)
+# but is now learned from the data!
+# print(f'weight_raw\n{weight_raw}')
+# now we can apply constrain on it so that tokens can only communicate with the past so 
+# we use the tril trick now!
+tril_constrain = torch.tril(torch.ones(size=(T,T)))
+raw_wieghts_masked = weight_raw.masked_fill(tril_constrain==0, float('-inf'))
+# apply sotmax to get probablity for each token
+weight = raw_wieghts_masked.softmax(dim=2) # remember weight is (B,T,T)
+# and finally we can apply our weight on the input (we called it raw for a reason, read on)
+# (by the way this is also called self-attention!)
+bow_raw = weight@x 
+# lets print raw_weights and weights and have some intuitive observations 
+print(f'weight_raw\n{weight_raw}')
+print(f'raw_weights_masked: {raw_wieghts_masked}')
+print(f'weight\n{weight}')
+# prints
+# raw_weights(unconstrained)
+#weight_raw
+# tensor([[[ 1.0082e+00,  6.7622e-01, -6.4624e-02,  6.1701e-01, -2.7026e-01,  5.0988e-01,  1.6494e-01,  3.3523e-02],
+#          [ 1.3140e+00, -1.1289e-01,  3.8299e-01, -1.1825e+00, -1.5816e+00,  3.9671e-01, -4.1703e-01,  7.0794e-02],
+#          [-1.9066e+00,  7.9071e-01, -7.3821e-01,  8.2834e-01,  6.7349e-01,  1.3126e+00, -3.1857e-01, -5.0728e-01],
+#          [ 3.0213e+00,  1.9722e+00,  2.0852e-01, -1.2651e+00,  7.8265e-01, -9.2628e-01,  1.1426e+00, -3.1167e-01],
+#          [-2.5292e+00, -7.1544e-01,  9.2379e-01,  3.6982e-03,  9.7670e-01, -2.1753e-02, -5.0537e-01, -6.1707e-02],
+#          [ 9.9968e-01,  2.9016e+00,  1.2989e+00, -7.0930e-01, -8.8080e-01, -2.6495e-01,  5.8941e-01, -1.2738e+00],
+#          [-7.1386e-01,  1.0064e+00, -5.4975e-01, -2.6423e-01, -1.8767e+00,  1.2148e+00, -8.6248e-01,  1.7111e-01],
+#          [-5.8812e-01, -1.1953e+00,  5.5418e-01, -2.3265e+00,  8.7663e-01, -9.5643e-01,  3.2523e-01, -4.3643e-01]],
+
+#         [[ 1.0570e+00, -1.7903e+00,  1.4650e-01, -1.4147e+00, -1.7452e+00, -4.5249e+00, -1.9763e+00,  1.8833e+00],
+#          [-1.3490e+00,  9.4076e-01, -6.9690e-01,  7.9933e-01,  4.7634e-01,  4.1861e-01,  2.3663e-01,  4.5217e-01],
+#          [-4.1173e-01,  7.0261e-01, -4.0204e-01,  9.0092e-01,  1.4083e+00,  2.5488e+00,  1.6350e+00,  1.0048e+00],
+#          [-2.8030e+00, -1.9162e+00,  4.6460e-01,  9.0675e-01, -1.1213e+00,  2.7562e+00,  7.0136e-02, -2.0337e+00],
+#          [ 4.6742e-01, -2.6938e+00,  2.9156e+00,  2.5135e+00,  7.9011e-01,  4.9236e+00,  3.9545e+00, -2.2600e-01],
+#          [ 1.0721e+00,  1.0566e+00,  1.4205e+00, -8.5941e-01,  7.1559e-01,  9.4798e-01, -1.5979e+00,  8.4627e-01],
+#          [ 1.7478e-01, -1.3748e+00, -1.6473e+00, -1.9683e+00, -2.7323e-01, -6.0714e+00, -2.3567e+00,  2.2338e+00],
+#          [ 5.0234e-01,  2.5284e+00, -2.0990e+00, -9.8971e-01,  1.9566e+00, -4.6640e+00, -1.0950e+00,  7.8260e-01]],
+
+#         [[ 1.2140e+00, -2.1323e+00, -1.3948e+00, -5.6973e-01, -2.7986e-01,  4.3579e+00,  4.8477e-01, -9.7559e-01],
+#          [ 8.7786e-01, -2.3352e+00, -2.2988e+00,  1.0322e+00, -1.4231e-01,  5.5233e+00,  1.0819e+00, -2.4722e-01],
+#          [-1.0629e+00, -6.2475e-01, -3.5850e-01,  2.9387e-02, -5.6397e-01, -2.4025e-01, -4.2512e-02, -8.4302e-01],
+#          [-4.1248e-01,  2.9397e+00,  1.9516e+00,  8.3461e-01, -4.0429e+00, -1.0676e+00, -3.0694e+00, -1.6156e+00],
+#          [-2.7064e-01,  2.5970e+00,  4.7168e-01, -2.2572e+00,  1.5132e+00, -4.5593e+00, -3.1755e-01, -1.0504e+00],
+#          [ 1.2678e+00, -7.5552e-01, -5.5975e-01,  1.1335e+00, -7.4317e-01,  2.8864e+00, -3.5616e-01, -2.6951e+00],
+#          [ 5.6708e-01, -1.3799e+00, -1.1335e+00, -1.7761e+00,  1.7449e+00,  5.7658e-01,  2.0551e+00,  4.9077e-02],
+#          [-1.0118e+00, -5.8753e-01,  3.9512e-01,  9.0220e-01, -1.7156e+00,  9.8603e-01, -4.4348e-01,  1.9781e+00]],
+
+#         [[-3.6428e-01, -4.7902e-01,  6.7590e-01, -2.3153e-02,  1.9763e-01,  4.4385e-01,  7.2986e-01, -3.8846e-01],
+#          [-6.2810e-01, -8.3713e-01,  1.3468e-01, -5.1328e-01, -2.6653e-02,  3.4325e-01, -1.0015e+00, -1.0334e+00],
+#          [-2.3925e-01,  1.6580e+00,  6.6220e-01, -1.9702e+00, -1.0641e+00,  1.7792e-01,  8.0194e-01, -1.5265e-01],
+#          [-1.2114e-01, -8.1565e-01, -5.0441e-01,  1.0567e+00,  3.6759e-01,  1.0552e+00, -5.2949e-01, -1.7715e+00],
+#          [ 3.3470e-01, -5.7964e-01, -1.1165e+00,  7.8448e-01,  7.9756e-01, -3.0057e+00,  1.3784e+00, -1.2091e+00],
+#          [-4.0079e-01, -5.7271e-01,  4.4317e-01,  4.7532e-01,  5.2594e-01,  2.2570e-02, -1.4040e+00,  2.3786e+00],
+#          [ 1.3713e-01,  5.4308e-01,  1.6898e+00, -1.6946e+00, -6.3463e-01,  5.4102e-01,  1.3484e+00, -1.6068e+00],
+#          [ 1.9584e-01,  4.7083e-01,  3.8171e-01, -3.8883e-01,  2.3697e-01,  8.6615e-01, -3.8587e-01,  2.5004e+00]]],
+#        grad_fn=<UnsafeViewBackward0>)
+#
+# raw_masked_wieghts(constrained):
+# tensor([[[ 1.0082e+00,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [ 1.3140e+00, -1.1289e-01,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-1.9066e+00,  7.9071e-01, -7.3821e-01,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [ 3.0213e+00,  1.9722e+00,  2.0852e-01, -1.2651e+00,        -inf,        -inf,        -inf,        -inf],
+#          [-2.5292e+00, -7.1544e-01,  9.2379e-01,  3.6982e-03,  9.7670e-01,        -inf,        -inf,        -inf],
+#          [ 9.9968e-01,  2.9016e+00,  1.2989e+00, -7.0930e-01, -8.8080e-01, -2.6495e-01,        -inf,        -inf],
+#          [-7.1386e-01,  1.0064e+00, -5.4975e-01, -2.6423e-01, -1.8767e+00,  1.2148e+00, -8.6248e-01,        -inf],
+#          [-5.8812e-01, -1.1953e+00,  5.5418e-01, -2.3265e+00,  8.7663e-01, -9.5643e-01,  3.2523e-01, -4.3643e-01]],
+
+#         [[ 1.0570e+00,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-1.3490e+00,  9.4076e-01,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-4.1173e-01,  7.0261e-01, -4.0204e-01,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-2.8030e+00, -1.9162e+00,  4.6460e-01,  9.0675e-01,        -inf,        -inf,        -inf,        -inf],
+#          [ 4.6742e-01, -2.6938e+00,  2.9156e+00,  2.5135e+00,  7.9011e-01,        -inf,        -inf,        -inf],
+#          [ 1.0721e+00,  1.0566e+00,  1.4205e+00, -8.5941e-01,  7.1559e-01,  9.4798e-01,        -inf,        -inf],
+#          [ 1.7478e-01, -1.3748e+00, -1.6473e+00, -1.9683e+00, -2.7323e-01, -6.0714e+00, -2.3567e+00,        -inf],
+#          [ 5.0234e-01,  2.5284e+00, -2.0990e+00, -9.8971e-01,  1.9566e+00, -4.6640e+00, -1.0950e+00,  7.8260e-01]],
+
+#         [[ 1.2140e+00,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [ 8.7786e-01, -2.3352e+00,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-1.0629e+00, -6.2475e-01, -3.5850e-01,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-4.1248e-01,  2.9397e+00,  1.9516e+00,  8.3461e-01,        -inf,        -inf,        -inf,        -inf],
+#          [-2.7064e-01,  2.5970e+00,  4.7168e-01, -2.2572e+00,  1.5132e+00,        -inf,        -inf,        -inf],
+#          [ 1.2678e+00, -7.5552e-01, -5.5975e-01,  1.1335e+00, -7.4317e-01,  2.8864e+00,        -inf,        -inf],
+#          [ 5.6708e-01, -1.3799e+00, -1.1335e+00, -1.7761e+00,  1.7449e+00,  5.7658e-01,  2.0551e+00,        -inf],
+#          [-1.0118e+00, -5.8753e-01,  3.9512e-01,  9.0220e-01, -1.7156e+00,  9.8603e-01, -4.4348e-01,  1.9781e+00]],
+
+#         [[-3.6428e-01,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-6.2810e-01, -8.3713e-01,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-2.3925e-01,  1.6580e+00,  6.6220e-01,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-1.2114e-01, -8.1565e-01, -5.0441e-01,  1.0567e+00,        -inf,        -inf,        -inf,        -inf],
+#          [ 3.3470e-01, -5.7964e-01, -1.1165e+00,  7.8448e-01,  7.9756e-01,        -inf,        -inf,        -inf],
+#          [-4.0079e-01, -5.7271e-01,  4.4317e-01,  4.7532e-01,  5.2594e-01,  2.2570e-02,        -inf,        -inf],
+#          [ 1.3713e-01,  5.4308e-01,  1.6898e+00, -1.6946e+00, -6.3463e-01,  5.4102e-01,  1.3484e+00,        -inf],
+#          [ 1.9584e-01,  4.7083e-01,  3.8171e-01, -3.8883e-01,  2.3697e-01,  8.6615e-01, -3.8587e-01,  2.5004e+00]]],
+#        grad_fn=<MaskedFillBackward0>)
 # 
+# weight (final- normalized)
+# tensor([[[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [8.0641e-01, 1.9359e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [5.2476e-02, 7.7872e-01, 1.6880e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [7.0222e-01, 2.4596e-01, 4.2162e-02, 9.6594e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.1816e-02, 7.2474e-02, 3.7333e-01, 1.4877e-01, 3.9362e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.0348e-01, 6.9321e-01, 1.3957e-01, 1.8735e-02, 1.5783e-02, 2.9217e-02, 0.0000e+00, 0.0000e+00],
+#          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
+#          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
+#
+#         [[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [9.1976e-02, 9.0802e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.9773e-01, 6.0261e-01, 1.9966e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.4181e-02, 3.4422e-02, 3.7221e-01, 5.7918e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [4.6023e-02, 1.9501e-03, 5.3236e-01, 3.5612e-01, 6.3550e-02, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.9494e-01, 1.9195e-01, 2.7619e-01, 2.8253e-02, 1.3648e-01, 1.7219e-01, 0.0000e+00, 0.0000e+00],
+#          [4.5214e-01, 9.6007e-02, 7.3108e-02, 5.3035e-02, 2.8887e-01, 8.7621e-04, 3.5963e-02, 0.0000e+00],
+#          [6.8046e-02, 5.1605e-01, 5.0474e-03, 1.5304e-02, 2.9133e-01, 3.8823e-04, 1.3775e-02, 9.0057e-02]],
+#
+#         [[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [9.6132e-01, 3.8675e-02, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [2.1870e-01, 3.3895e-01, 4.4235e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [2.2894e-02, 6.5398e-01, 2.4345e-01, 7.9674e-02, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [3.7332e-02, 6.5690e-01, 7.8427e-02, 5.1206e-03, 2.2222e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.3611e-01, 1.7995e-02, 2.1887e-02, 1.1900e-01, 1.8219e-02, 6.8680e-01, 0.0000e+00, 0.0000e+00],
+#          [9.8946e-02, 1.4120e-02, 1.8065e-02, 9.5010e-03, 3.2130e-01, 9.9891e-02, 4.3817e-01, 0.0000e+00],
+#          [2.3306e-02, 3.5621e-02, 9.5163e-02, 1.5801e-01, 1.1530e-02, 1.7183e-01, 4.1141e-02, 4.6340e-01]],
+#
+#         [[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [5.5207e-01, 4.4793e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [9.8708e-02, 6.5816e-01, 2.4313e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.8422e-01, 9.1987e-02, 1.2557e-01, 5.9822e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [2.0870e-01, 8.3642e-02, 4.8896e-02, 3.2723e-01, 3.3154e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [9.4141e-02, 7.9271e-02, 2.1893e-01, 2.2608e-01, 2.3782e-01, 1.4376e-01, 0.0000e+00, 0.0000e+00],
+#          [7.8726e-02, 1.1815e-01, 3.7190e-01, 1.2607e-02, 3.6387e-02, 1.1790e-01, 2.6434e-01, 0.0000e+00],
+#          [5.6646e-02, 7.4575e-02, 6.8217e-02, 3.1568e-02, 5.9024e-02, 1.1073e-01, 3.1662e-02, 5.6757e-01]]], grad_fn=<SoftmaxBackward0>)
+#
+# as you can see, our weight is initialized for each batch based on the input data, and each token has its own
+# weight, that is they are not uniform!, to get a better understanding lets consider the first batch of 
+# raw-weights[0], raw_masked_wieghts[0] and weight[0]:
+#
+# raw_weights[0]
+# tensor([[[ 1.0082e+00,  6.7622e-01, -6.4624e-02,  6.1701e-01, -2.7026e-01,  5.0988e-01,  1.6494e-01,  3.3523e-02],
+#          [ 1.3140e+00, -1.1289e-01,  3.8299e-01, -1.1825e+00, -1.5816e+00,  3.9671e-01, -4.1703e-01,  7.0794e-02],
+#          [-1.9066e+00,  7.9071e-01, -7.3821e-01,  8.2834e-01,  6.7349e-01,  1.3126e+00, -3.1857e-01, -5.0728e-01],
+#          [ 3.0213e+00,  1.9722e+00,  2.0852e-01, -1.2651e+00,  7.8265e-01, -9.2628e-01,  1.1426e+00, -3.1167e-01],
+#          [-2.5292e+00, -7.1544e-01,  9.2379e-01,  3.6982e-03,  9.7670e-01, -2.1753e-02, -5.0537e-01, -6.1707e-02],
+#          [ 9.9968e-01,  2.9016e+00,  1.2989e+00, -7.0930e-01, -8.8080e-01, -2.6495e-01,  5.8941e-01, -1.2738e+00],
+#          [-7.1386e-01,  1.0064e+00, -5.4975e-01, -2.6423e-01, -1.8767e+00,  1.2148e+00, -8.6248e-01,  1.7111e-01],
+#          [-5.8812e-01, -1.1953e+00,  5.5418e-01, -2.3265e+00,  8.7663e-01, -9.5643e-01,  3.2523e-01, -4.3643e-01]],
+#
+#
+# raw_masked_wieghts[0]
+# tensor([[[ 1.0082e+00,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [ 1.3140e+00, -1.1289e-01,        -inf,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [-1.9066e+00,  7.9071e-01, -7.3821e-01,        -inf,        -inf,        -inf,        -inf,        -inf],
+#          [ 3.0213e+00,  1.9722e+00,  2.0852e-01, -1.2651e+00,        -inf,        -inf,        -inf,        -inf],
+#          [-2.5292e+00, -7.1544e-01,  9.2379e-01,  3.6982e-03,  9.7670e-01,        -inf,        -inf,        -inf],
+#          [ 9.9968e-01,  2.9016e+00,  1.2989e+00, -7.0930e-01, -8.8080e-01, -2.6495e-01,        -inf,        -inf],
+#          [-7.1386e-01,  1.0064e+00, -5.4975e-01, -2.6423e-01, -1.8767e+00,  1.2148e+00, -8.6248e-01,        -inf],
+#          [-5.8812e-01, -1.1953e+00,  5.5418e-01, -2.3265e+00,  8.7663e-01, -9.5643e-01,  3.2523e-01, -4.3643e-01]],
+# 
+# weight[0]
+# tensor([[[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [8.0641e-01, 1.9359e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [5.2476e-02, 7.7872e-01, 1.6880e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [7.0222e-01, 2.4596e-01, 4.2162e-02, 9.6594e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.1816e-02, 7.2474e-02, 3.7333e-01, 1.4877e-01, 3.9362e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#          [1.0348e-01, 6.9321e-01, 1.3957e-01, 1.8735e-02, 1.5783e-02, 2.9217e-02, 0.0000e+00, 0.0000e+00],
+#          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
+#          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
+#
+# take the last token, which 8.6020e-02, notice this token, not only knows its content and own position in 
+# the sequence(its the 8th token after all) but also knows which tokens comes before it and how much its 
+# related to any of them.(basically when it knows which token comes before it, it creates its own query so
+# to speak, and talks to every single previous token to find about which ones are more or less relavent to
+# it and to what extend.) 
+# For example,lets say, (since we are dealing with character level text generation!), the last token is a 
+# vowel and says hey im a vowel and im looking for everyone else thats a vowel! and uses query to talk to 
+# other tokens(keys). and intrestingly another token (lets say number 4) says im a vowel as well, and the 
+# response is thus generate a larger number.(this is not a good example, words in sentence would make more sense
+# !give a better example!)
+# in our example, For the last token, it seems the 5th and 3rd token are particularly intresting/relavent/important,
+# followed by the 7th token.
+# likewise, this happens for every token, i.e. token number 4, says the same thing and searches in its past toekns
+# so on and so forth! 
+# so what happens next is that when we get a high relevancy scale /response in the weights, like we just described
+# when we do a softmax it will assign a large probablity to them, and this instructs the network that, we need more
+# information from them, effectively allowing for aggregating a lot of their information into our position(lets say e.g. 8th token. 
+# and we happen to learn more about them this way.
+# now in practice, we are not intrested in aggregating the x raw values per say, rather we want their information, 
+# so instead of just using the raw values of x, we instead use a representation of them, so to speak. 
+# this is achieved using a third vector known as, 'value' and is the last vector we use. 
+# !explain when we say vector, note that, we are talking from the prespective of a token, (every token has some vector 
+# !of information and it gets to aggregate information via a weighted sum from all the tokens that point to it, and it
+# )# !in practice we use a matrix, and hence the linear module to implement this to run the operation for all tokens in parallell. 
+# just like the key and query, we set its bias to False, so we only get a simple vector, and a dotproduct output
+value = torch.nn.Linear(C,head_size, bias=False) # produces (B,T,head_size) just like the other two key,query vectors
+x_processed = value(x)
+# this is not yet final final, we still need to do one more thing (read on!)
+bow_final = weight@x_processed
+#
+#!check also note that, as we previously once pointed out, attention is a communication mechanism between tokens, and 
+# by default there is nothing in this mechanism that provides a notion of space/position for tokens involved, i.e.
+# by default these tokens/nodes/points, dont have any idea about where they are or how they are positioned (with resepect
+# to others) etc, so we need to encode this information as well.(to better visualizing it, consider each token as 
+# a node in a directed graph, each node has a connection to another node, (for example each node has a connection to
+# itself, and another connection to other nodes,etc) and as you can see there is no notion of space here,the attention
+# simply acts on a set of vectors in this graph, and thats why we need to encode them positionally as well, so they 
+# have information about their position with regards to other tokens. 
+# !check (compare this to the convolution case and images
+# or even text where the spatial aspect of data is preserved, but in attention, as we just stated, there is no notion
+# of position, its just a set of individual vectors being operated on)-note that the connection between nodes, do give
+# us a sense of structure, but it may not be enough to infer the underlying semantic, imagine a case, where a word
+# for example has several meaning, and may very well have high relevancy to some tokens at the same time, but without
+# additional positional information, an ambiguous semantic can be infered between the tokens involved, however when
+# positional information is also present, such ambiguity can be avoided)
+# also note that, in attention, samples do not interact with each other at all. when we have a batch of 4, each sample
+# is processed in isolation, but in parallell to other samples, based on our graph example earlier, we would have 4 
+# graphs of 8 nodes for example for each input sample. 
+#
+# we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
+# is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
+# self attention.
+# also note that, in our specific case, tokens/nodes are can not communicate with the future nodes, but in general
+# this constraint can be removed (and infact is removed/not implemented for some applications) where its benificial
+# to be able to communicate with all the tokens. one example is sentiment analysis, where you want all the tokens to
+# able to communicate with eachother so you can get an accurate analysis. and for this case, we would use an encoder
+# block, which is basically what we have here, minus the constraint section(tril/mask part), what we have implemented
+# here is called a decoder block, where we are decoding bunch of tokens, and it makes sense that the previous tokens
+# do not comunicate with the future ones(becasue they would give the answer! and it defeats the whole purpose here!),
+# becasue its a given that only the previous tokens must be used to predict the future/next token, hence the filtering/constraint part to prevent tokens from 
+# comunicating with the future nodes/tokens.
+# !so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
+# and value use the same source. the attention mechanism as we briefly pointed out, is much more general and can be
+# used in different ways. one of such ways, is what is used to create sth called cross-attention. 
+# cross-attention basically refers to the case where we have an encoder/decoder blocks, in which the queries come from x
+# but the key and value come from an external source and sometimes from the encoder block. so cross-attention is used
+# when theres a separate source of information we would like to pool from and use it as well.
+#
+# so far we implemented the attention based on the original paper(there are some differences we get to later on)
+# except the part where we need to divide by the sqrt of the head_size. that is called scaled-attention
+# so lets talk about this, and see why its needed. 
+# the reason we add this so called 'scale' to our computation, is that, without it, the probablities will be saturated
+# and when we add this term to the mix, it will make the 'weight' matrix to be 'unit variance', when Q and K are unit variance
+# and this allows softamx to stay diffuse and not saturate too much.
+# in other words, if we simply multiply key and query like that, the variance of the resulting weight matrix will be
+# around the head_size instead of 1 which is bad and makes optimization really hard.
+# to see this effect consider the following example
+k = torch.randn(size=(B,T,head_size))
+q = torch.randn(size=(B,T,head_size))
+w_unscaled = q@k.transpose(-2, -1) 
+print(f'{k.var()=}')
+print(f'{q.var()=}')
+print(f'{w_unscaled.var()=}')
+# now add the 1/sqrt(head_size)
+w_scaled = q@k.transpose(-2, -1) * head_size**-0.5 
+print(f'after applying 1/sqrt(head_size)')
+# makes the weight variance 1!
+print(f'{w_scaled.var()=}')
+# why is it important? if you recall, the weight matrix is fed into softmax, so its really important, especially during
+# initialization that weight matrix be fairly diffuse, if we look at weight matrix here, we'll notice that they are now
+# fairly diffuse 
+print(f'weight_scaled[0]:\n{w_scaled[0]}')
+# prints 
+# weight_scaled[0]:
+# tensor([[ 0.3972, -2.0957, -0.5396, -1.4860, -0.8393,  0.6273, -0.0157,  0.6284],
+#         [ 1.3588, -0.0440,  2.1040, -0.2796,  1.7797,  1.4362,  1.3843,  0.0368],
+#         [ 0.8109,  1.7400,  1.3579,  0.2097,  1.7152, -1.1242, -0.4349, -0.5690],
+#         [ 0.0513,  2.8303,  0.7332,  0.0041,  0.9688, -1.6174, -1.4255,  0.2869],
+#         [-0.7819, -0.6691, -1.4017, -0.4155, -0.8568, -0.2704, -0.9453,  0.3763],
+#         [ 0.4092, -0.3079,  0.8472, -1.1753, -0.7699,  0.5091,  0.6385,  0.9677],
+#         [ 0.3043, -2.1402, -2.2582, -0.3573, -1.2838, -0.0260, -0.0513,  0.9151],
+#         [ 0.4180, -2.8353, -0.6435,  0.4842, -3.0202,  1.7690,  1.8837, -0.4393]])
+#
+# when softmax is applied:
+print(w_scaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0])
+# tensor([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+#         [0.8026, 0.1974, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+#         [0.1901, 0.4814, 0.3285, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
+#         [0.0499, 0.8038, 0.0987, 0.0476, 0.0000, 0.0000, 0.0000, 0.0000],
+#         [0.1989, 0.2226, 0.1070, 0.2869, 0.1845, 0.0000, 0.0000, 0.0000],
+#         [0.2148, 0.1049, 0.3329, 0.0440, 0.0661, 0.2374, 0.0000, 0.0000],
+#         [0.3027, 0.0263, 0.0233, 0.1562, 0.0618, 0.2176, 0.2121, 0.0000],
+#         [0.0901, 0.0035, 0.0312, 0.0962, 0.0029, 0.3478, 0.3901, 0.0382]])
+#
+# 
+# now compare it with the unscaled weight : 
+print(f'weight_unscaled[0]:\n{w_unscaled[0]}')
+# weight_unscaled[0]:
+# tensor([[  1.5889,  -8.3829,  -2.1583,  -5.9440,  -3.3573,   2.5092,  -0.0629,  2.5135],
+#         [  5.4350,  -0.1759,   8.4159,  -1.1183,   7.1189,   5.7446,   5.5373,  0.1472],
+#         [  3.2435,   6.9600,   5.4317,   0.8388,   6.8607,  -4.4969,  -1.7396, -2.2761],
+#         [  0.2051,  11.3214,   2.9327,   0.0165,   3.8754,  -6.4696,  -5.7019,  1.1475],
+#         [ -3.1278,  -2.6763,  -5.6069,  -1.6621,  -3.4272,  -1.0816,  -3.7811,  1.5053],
+#         [  1.6368,  -1.2317,   3.3888,  -4.7012,  -3.0795,   2.0364,   2.5541,  3.8710],
+#         [  1.2171,  -8.5610,  -9.0327,  -1.4293,  -5.1353,  -0.1038,  -0.2053,  3.6603],
+#         [  1.6719, -11.3411,  -2.5740,   1.9369, -12.0810,   7.0760,   7.5347, -1.7573]])
+#
+# when softmax is applied:
+print(w_unscaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0])
+# tensor([[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#         [9.9636e-01, 3.6442e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#         [1.9592e-02, 8.0566e-01, 1.7475e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#         [1.4865e-05, 9.9975e-01, 2.2738e-04, 1.2309e-05, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#         [1.2943e-01, 2.0328e-01, 1.0848e-02, 5.6050e-01, 9.5940e-02, 0.0000e+00, 0.0000e+00, 0.0000e+00],
+#         [1.2012e-01, 6.8207e-03, 6.9264e-01, 2.1236e-04, 1.0748e-03, 1.7913e-01, 0.0000e+00, 0.0000e+00],
+#         [6.3261e-01, 3.5856e-05, 2.2371e-05, 4.4856e-02, 1.1023e-03, 1.6883e-01, 1.5254e-01, 0.0000e+00],
+#         [1.7351e-03, 3.8710e-09, 2.4850e-05, 2.2616e-03, 1.8472e-09, 3.8572e-01, 6.1020e-01, 5.6236e-05]])
+#
+# as you can see, some values are very negative, while others are very positive, for example, we have both 11 and -11
+# and this is a recipe for disaster! the reason it is a problem is that, with softamx, when numbers take very positive
+# and nagative values, softmax actually converges towards one-hot-vector. basically the values shrink towards the max.
+# this can be seen the above, but the example below should demonstrate it more clearly.
+# lets apply softmax on a list of numbers that are close to each other, we see the probablities are difuse and normal
+print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2]),dim=-1)}')
+# we get a diffused probablity out of softmax
+# tensor([0.2562, 0.3822, 0.1717, 0.1898])
+# however if we increase the magnitude of the numbers(sharpen them) (and thus the difference between them) by like multiplying by 
+# a number like 8 (just to simulate the effect here and so we can compare it with the previous case)
+print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8,dim=-1)}')
+# we see that the softmax, starts to sharpen towards the max, shrinking others except the 
+# largest number, and effectively
+# converging toward a one-hot-encoded vector.
+# tensor([0.0390, 0.9559, 0.0016, 0.0035])
+# so we dont want these values to be extreme, especially during initialization or otherwise, softmax will be way too picky!
+# and we are basically aggregating the information from a single node instead of multiple ones (becasue one has the largest
+# nvalue, its as if our sequence length is 1! and we lose access to the wealth of information the past history offers)
+# so we want the probablities to be diffuse and not peaked like the second example here.
+# so this scaling is used to retain the variance at a good value especially at initialization.
+# so now that we are finally finished the self attention head, lets implement it as a module and incorporate everything
+# we just discussed here.
+class Head(nn.Module):
+    def __init__(self, vocab_size, embed_size) -> None:
+        super().__init__()
+
+
+# so to recap, we first calculated the relavancy between all tokens against eachother, then constrained them so that 
+# each token can only use the information from/interact with its past tokens. then since we needed probablity distribution so
+# we then normalized it and then used that to pickout which tokens information(in the past) to aggregate/use with the inputs to 
+# achieve our goal.(which is to predict the next character based on everything seen so far!)
+# we dont want to aggregate inputs value (with respect to the weight matrix), we instead would like to use their representation
+# so we use a new layer to do this, its called value, and we instead use its output instead of inputs raw value.
+#
+# 
+
+#%%
+
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, embd_size) -> None:
         super().__init__()
@@ -1084,13 +1481,13 @@ class BigramModelWithAttention(nn.Module):
             loss = F.cross_entropy(logits.permute(0,2,1), labels)
         return logits, loss
     
-    def generate(self, idx, max_token_count)-> list[torch.Tensor]:
+    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
         # lets generate an output as long as num_max_token
         for i in range(max_token_count):
             # make sure idx is 2d
-            assert len(idx) >1, f"idx.shape '({tuple(idx.shape)})' is invalid. it must have the form (B,T)"
+            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
             # now lets feed it to the model and sample from the probablities it produces
-            preds,_ = self(idx)
+            preds,_ = self(idxs)
             # convert to probs 
             probs = preds.softmax(dim=1)
             # since we are bigram still, lets only get the last token as the next token predicted!
@@ -1102,8 +1499,77 @@ class BigramModelWithAttention(nn.Module):
             # also remember that we are creating a sequence, so we concat them at dim=1 to get 
             # a longer sequence (we are gradually increasing the sequence length from 1 up to
             # max_token_count)
-            idx = torch.cat((idx,new_idx), dim=1)
+            idxs = torch.cat((idxs,new_idx), dim=1)
             
-        return idx.tolist()
+        return idxs
+
+# this works fine, however, we can do better. here we just encoded the tokens, but
+# we can also encode their position as well. lets do this as well
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, embd_size,device) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        # for gpu/cpu acceleration during training
+        self.device = device
+        # unlike the previous model, lets decouple the final logits from 
+        # the number of embeddings, because we are using attentions, and
+        # we want to have multiple operations inbetween obviously.
+        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+        # lets now add the positional embedding as well 
+        # using this, we try to retain the position embedding for our tokens
+        # up to the current token in context_size
+        self.position_embd = torch.nn.Embedding(context_size, embd_size)
+        
+        # in order to get the final logits, we need a linea layer at end
+        self.fc = torch.nn.Linear(embd_size, vocab_size)
+        
+    def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+        # lets grab the shapes, since we will be using them 
+        B,T,_ = inputs.shape
+        token_embeddings = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
+        # since we have a position_embedding lets use that as well
+        # and notice that we didnt use the inputs, but rather torch.arange(T)
+        # this means, for each input, as we process it, we also get embeddings up to
+        # the current token count as well, if the inputs has 3 tokens currently, we
+        # will creeate position embeddings for 0,1 and 2, and for the next input
+        # this continues likewise. this results in (T,E)
+        position_embeddings = self.position_embd(torch.arange(T,device=self.device))
+        
+        # and lets add the two embeddings together
+        # this effectively gives us, not only the token embeddings(identity)
+        # but also its position in the sequence. note that this doesnt really
+        # help in a bigram model, but when it comes to attention it really does!
+        embeddings = token_embeddings + position_embeddings
+        
+        # lets feed this embedding to our fc at the end instead
+        logits = self.fc(embeddings)         # has the shape (B,T,C) c is vocabsize
+        loss = None
+        if labels is not None:
+            # recall that crossentropy likes its input to be B,C,T and we are B,T,C
+            # so lets permute and make it happy!
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss
     
+    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
+        # lets generate an output as long as num_max_token
+        for i in range(max_token_count):
+            # make sure idx is 2d
+            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
+            # now lets feed it to the model and sample from the probablities it produces
+            preds,_ = self(idxs)
+            # convert to probs 
+            probs = preds.softmax(dim=1)
+            # since we are bigram still, lets only get the last token as the next token predicted!
+            probs = probs[:,-1,:]
+            # now lets sample from it 
+            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+            # now concatenate the new token to the previous one and feed it back to the model
+            # for the next round of prediction
+            # also remember that we are creating a sequence, so we concat them at dim=1 to get 
+            # a longer sequence (we are gradually increasing the sequence length from 1 up to
+            # max_token_count)
+            idxs = torch.cat((idxs,new_idx), dim=1)
+            
+        return idxs
     
