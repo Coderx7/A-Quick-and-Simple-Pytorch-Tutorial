@@ -16,7 +16,7 @@
 # first lets import the basic stuff 
 
 # for type hints
-from collections.abc import Iterable
+from collections.abc import Any, Iterable
 
 import random 
 import numpy as np
@@ -1100,6 +1100,8 @@ x = torch.randn(size=(B,T,C))
 # use that as well
 head_size = 16
 # lets not forget to set bias=False, so what it does is exactly dotproduct 
+# (actually, some people still leave the bias enabled! 
+# so we will test both cases later and see if it actually matters! and if so to what extend! ) 
 key = torch.nn.Linear(C, head_size, bias=False)
 query = torch.nn.Linear(C, head_size, bias=False)
 # now lets get the output
@@ -1307,7 +1309,9 @@ print(f'weight\n{weight}')
 # !explain when we say vector, note that, we are talking from the prespective of a token, (every token has some vector 
 # !of information and it gets to aggregate information via a weighted sum from all the tokens that point to it, and it
 # )# !in practice we use a matrix, and hence the linear module to implement this to run the operation for all tokens in parallell. 
-# just like the key and query, we set its bias to False, so we only get a simple vector, and a dotproduct output
+# just like the key and query, we set its bias to False, so we only get a simple vector,
+# and a dotproduct output (again this is the intuition, but how much adding a bias would
+# affect this we will see later, for now we stick to the default no bias version)
 value = torch.nn.Linear(C,head_size, bias=False) # produces (B,T,head_size) just like the other two key,query vectors
 x_processed = value(x)
 # this is not yet final final, we still need to do one more thing (read on!)
@@ -1443,11 +1447,58 @@ print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8,dim=-1)}')
 # so this scaling is used to retain the variance at a good value especially at initialization.
 # so now that we are finally finished the self attention head, lets implement it as a module and incorporate everything
 # we just discussed here.
-class Head(nn.Module):
-    def __init__(self, vocab_size, embed_size) -> None:
+class AttentionHead(nn.Module):
+    def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
         super().__init__()
+        # we need context_size or block_size for creating the tril constrain
+        self.context_size = context_size
+        # we want this as the input dim for our key,query and value, this is 
+        # infact the input_dim, since we plan on using the embeddings, we named
+        # it embd_size
+        self.embd_size = embd_size
+        # head_size is the output dimension of our attnetion
+        self.head_size = head_size
+        self.key = nn.Linear(embd_size, head_size, bias=use_bias)
+        self.query = nn.Linear(embd_size, head_size, bias=use_bias)
+        self.value = nn.Linear(embd_size, head_size, bias=use_bias)
 
+        # use buffer for trail, since this is a buffer, we can use the self.register_buffer which is
+        # inherited from nn.Module class, to add it as buffer to the module, so it can be saved in the
+        # state_dict when we save the model.  tril doesnt change, and is not updated(its required_grad is false),
+        # so it being saved in state_dict doesnt matter to us, but to demonstrate this feature of pytorch, 
+        # we are using it, and its a good practice, since pytorch knows how to deal with it and wont include it
+        # in the computaion graph anyway!
+        # 
+        # This is typically used to register a buffer that should not to be considered a model parameter. 
+        # For example, BatchNorm's running_mean is not a parameter, but is part of the module's state. 
+        # Buffers, by default, are persistent and will be saved alongside parameters. This
+        # behavior can be changed by setting persistent to False. The only difference between a persistent
+        # buffer and a non-persistent buffer is that the latter will not be a part of this module's state_dict.
+        # tril allows us to impose constrain by creating a lower traingualr matrix and setting
+        # the rest entries to zero, effectively preventing tokens of the future from communicating with the past
+        # each token can only communicate with the previous tokens that came before it.
+        self.register_buffer('tril', torch.tril(torch.ones(context_size,context_size)))
 
+    def __call__(self, inputs:torch.Tensor) -> torch.Tensor:
+        #! check the shapes!! 
+        B,T,C = inputs.shape
+        # create the weight by using k,q,v
+        k = self.key(inputs)    #! (B,T,C) or (B,E,16)?
+        q = self.query(inputs)  #! (B,T,C) or (B,E,16)?
+        v = self.value(inputs)  #! (B,T,C) or (B,E,16)?
+        # create the weight matrix and scale it by 1/sqrt(head_size) to keep weight unit variance 
+        weight = q@k.transpose(-2,-1)* self.head_size**-0.5 # !(B,E,E)
+        # apply the tril constrain - (this makes this a decoder block!)
+        weight = weight.masked_fill(self.tril==0,float('-inf'))
+        # note that we are using batch, so instead of hardcodin 2,
+        # we use -1 to refer to the last dim
+        weight = weight.softmax(dim=-1)
+        # finally apply the weight on the v
+        bow = weight@v  # !(B,E,16)
+        return bow        
+
+# now lets add this to our model 
+        
 # so to recap, we first calculated the relavancy between all tokens against eachother, then constrained them so that 
 # each token can only use the information from/interact with its past tokens. then since we needed probablity distribution so
 # we then normalized it and then used that to pickout which tokens information(in the past) to aggregate/use with the inputs to 
@@ -1456,8 +1507,6 @@ class Head(nn.Module):
 # so we use a new layer to do this, its called value, and we instead use its output instead of inputs raw value.
 #
 # 
-
-#%%
 
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, embd_size) -> None:
@@ -1573,3 +1622,81 @@ class BigramModelWithAttention(nn.Module):
             
         return idxs
     
+# ok now lets add the attention now  
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        # for gpu/cpu acceleration during training
+        self.device = device
+        # unlike the previous model, lets decouple the final logits from 
+        # the number of embeddings, because we are using attentions, and
+        # we want to have multiple operations inbetween obviously.
+        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+        # lets now add the positional embedding as well 
+        # using this, we try to retain the position embedding for our tokens
+        # up to the current token in context_size
+        self.position_embd = torch.nn.Embedding(context_size, embd_size)
+        # add a self-attention head
+        self.head = AttentionHead(context_size, embd_size, head_size, use_bias=use_bias_att)
+        
+        # in order to get the final logits, we need a linea layer at end
+        self.fc = torch.nn.Linear(embd_size, vocab_size)
+        
+    def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+        # lets grab the shapes, since we will be using them 
+        B,T,_ = inputs.shape
+        token_embeddings = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
+        # since we have a position_embedding lets use that as well
+        # and notice that we didnt use the inputs, but rather torch.arange(T)
+        # this means, for each input, as we process it, we also get embeddings up to
+        # the current token count as well, if the inputs has 3 tokens currently, we
+        # will creeate position embeddings for 0,1 and 2, and for the next input
+        # this continues likewise. this results in (T,E)
+        position_embeddings = self.position_embd(torch.arange(T,device=self.device))
+        
+        # and lets add the two embeddings together
+        # this effectively gives us, not only the token embeddings(identity)
+        # but also its position in the sequence. note that this doesnt really
+        # help in a bigram model, but when it comes to attention it really does!
+        embeddings = token_embeddings + position_embeddings
+        # now lets feed this to attention head
+        out_attention = self.head(embeddings)
+        # lets feed this embedding to our fc at the end instead
+        logits = self.fc(out_attention)         # has the shape (B,T,C) c is vocabsize
+        loss = None
+        if labels is not None:
+            # recall that crossentropy likes its input to be B,C,T and we are B,T,C
+            # so lets permute and make it happy!
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss
+    
+    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
+        # lets generate an output as long as num_max_token
+        for i in range(max_token_count):
+            # make sure idx is 2d
+            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
+            # now lets feed it to the model and sample from the probablities it produces
+            # but since, we now have postional embeddings as well, we can no longer have 
+            # more than block_size/contex_size in, becasue if our idx is more than context_size
+            # our positional embedding will go out of scope and error out
+            # so here we are basically getting as much as context_size
+            idxs = idxs[:, -self.context_size:]
+            preds,_ = self(idxs)
+            # convert to probs 
+            probs = preds.softmax(dim=1)
+            # since we are bigram still, lets only get the last token as the next token predicted!
+            probs = probs[:,-1,:]
+            # now lets sample from it 
+            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+            # now concatenate the new token to the previous one and feed it back to the model
+            # for the next round of prediction
+            # also remember that we are creating a sequence, so we concat them at dim=1 to get 
+            # a longer sequence (we are gradually increasing the sequence length from 1 up to
+            # max_token_count)
+            idxs = torch.cat((idxs,new_idx), dim=1)
+            
+        return idxs
+    
+# and now we can train this : 
