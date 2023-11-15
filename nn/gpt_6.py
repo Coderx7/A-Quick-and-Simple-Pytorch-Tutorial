@@ -16,7 +16,7 @@
 # first lets import the basic stuff 
 
 # for type hints
-from collections.abc import Any, Iterable
+from collections.abc import Iterable
 
 import random 
 import numpy as np
@@ -491,7 +491,7 @@ print(''.join(decode(output.squeeze(0).tolist())))
 # which is expected since our model is not trained yet! 
 # lets train the model now and see how it works
 
-batch_size = 64
+batch_size = 32
 context_size = 8
 vocab_size = len(vocab_list)
 max_iter = 20000
@@ -1481,15 +1481,36 @@ class AttentionHead(nn.Module):
 
     def __call__(self, inputs:torch.Tensor) -> torch.Tensor:
         #! check the shapes!! 
-        B,T,C = inputs.shape
+        B,T,C = inputs.shape # 4,8,16
+        # print(f'{inputs.shape=}')
         # create the weight by using k,q,v
-        k = self.key(inputs)    #! (B,T,C) or (B,E,16)?
-        q = self.query(inputs)  #! (B,T,C) or (B,E,16)?
-        v = self.value(inputs)  #! (B,T,C) or (B,E,16)?
+        k = self.key(inputs)    #! (B,T,C) or (B,E,16)? (4,8,16)
+        q = self.query(inputs)  #! (B,T,C) or (B,E,16)? (4,8,16)
+        v = self.value(inputs)  #! (B,T,C) or (B,E,16)? (4,8,16)
         # create the weight matrix and scale it by 1/sqrt(head_size) to keep weight unit variance 
         weight = q@k.transpose(-2,-1)* self.head_size**-0.5 # !(B,E,E)
+        # weight_C = q@k.transpose(-2,-1)* C**-0.5 # !(B,E,E)
+        # print(f'weight.var: {weight.var().item():.4f}')
+        # print(f'weight_C.var: {weight_C.var().item():.4f}')
+        # print(f'x:{tuple(inputs.shape)} k:{tuple(k.shape)} q:{tuple(q.shape)} v:{tuple(v.shape)} w:{tuple(weight.shape)} hs:{self.head_size}')
         # apply the tril constrain - (this makes this a decoder block!)
-        weight = weight.masked_fill(self.tril==0,float('-inf'))
+        # important note: notice we used tril[:T,:T] and not simply tril
+        # this is because, when the input has a small context_size < self.context_size
+        # like when we wantto generate inputs with sth like zeros((1,1)) which says
+        # there is a single token (context_size 1) of 0 as the begining of the sequence
+        # when this is input, the tril by default makes a context_size,context_size matrix
+        # which will be different than the input context_size which is 1 e.g. or 2 e.g.
+        # and it will fail becasue our weight would be 1,1,1 or 1,2,2, but trail is 1,8,8
+        # and clearly this will cause an error. for this reason, we always create the 
+        # tril check dynamcally by explicitly specifying the context_size based on the 
+        # current input context_size so in case the context_size is smaller, tril is resized
+        # dynamically accordingly. 
+        # print(f'tril[:T,:T]==0: {(self.tril[:T,:T]==0).shape}')
+        # print(f'tril==0: {(self.tril==0).shape}')
+        weight = weight.masked_fill(self.tril[:T,:T]==0,float('-inf'))
+        # weight2 = weight.masked_fill(self.tril==0,float('-inf'))
+        # print(f'{weight.shape=}')
+        # print(f'{weight2.shape=}')
         # note that we are using batch, so instead of hardcodin 2,
         # we use -1 to refer to the last dim
         weight = weight.softmax(dim=-1)
@@ -1507,127 +1528,63 @@ class AttentionHead(nn.Module):
 # so we use a new layer to do this, its called value, and we instead use its output instead of inputs raw value.
 #
 # 
-
-class BigramModelWithAttention(nn.Module):
-    def __init__(self, vocab_size, embd_size) -> None:
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.embd_size = embd_size
-        # unlike the previous model, lets decouple the final logits from 
-        # the number of embeddings, because we are using attentions, and
-        # we want to have multiple operations inbetween obviously.
-        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
-        # in order to get the final logits, we need a linea layer at end
-        self.fc = torch.nn.Linear(embd_size, vocab_size)
-        
-    def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
-        out = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
-        logits = self.fc(out)         # has the shape (B,T,C) c is vocabsize
-        loss = None
-        if labels is not None:
-            # recall that crossentropy likes its input to be B,C,T and we are B,T,C
-            # so lets permute and make it happy!
-            loss = F.cross_entropy(logits.permute(0,2,1), labels)
-        return logits, loss
-    
-    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
-        # lets generate an output as long as num_max_token
-        for i in range(max_token_count):
-            # make sure idx is 2d
-            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
-            # now lets feed it to the model and sample from the probablities it produces
-            preds,_ = self(idxs)
-            # convert to probs 
-            probs = preds.softmax(dim=1)
-            # since we are bigram still, lets only get the last token as the next token predicted!
-            probs = probs[:,-1,:]
-            # now lets sample from it 
-            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
-            # now concatenate the new token to the previous one and feed it back to the model
-            # for the next round of prediction
-            # also remember that we are creating a sequence, so we concat them at dim=1 to get 
-            # a longer sequence (we are gradually increasing the sequence length from 1 up to
-            # max_token_count)
-            idxs = torch.cat((idxs,new_idx), dim=1)
-            
-        return idxs
+#
+# before we jump in and add the attention module, lets review our base model and see how we can 
+# improve/prepare it before we incorporate the attention. 
+# class BigramModelWithAttention(nn.Module):
+#     def __init__(self, vocab_size, embd_size) -> None:
+#         super().__init__()
+#         self.vocab_size = vocab_size
+#         self.embd_size = embd_size
+#         # unlike the previous model, lets decouple the final logits from 
+#         # the number of embeddings, because we are using attentions, and
+#         # we want to have multiple operations inbetween obviously.
+#         self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+#         # in order to get the final logits, we need a linea layer at end
+#         self.fc = torch.nn.Linear(embd_size, vocab_size)
+#        
+#     def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+#         out = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
+#         logits = self.fc(out)         # has the shape (B,T,C) c is vocabsize
+#         loss = None
+#         if labels is not None:
+#             # recall that crossentropy likes its input to be B,C,T and we are B,T,C
+#             # so lets permute and make it happy!
+#             loss = F.cross_entropy(logits.permute(0,2,1), labels)
+#         return logits, loss
+#    
+#     def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
+#         # lets generate an output as long as num_max_token
+#         for i in range(max_token_count):
+#             # make sure idx is 2d
+#             assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
+#             # now lets feed it to the model and sample from the probablities it produces
+#             preds,_ = self(idxs)
+#             # convert to probs 
+#             probs = preds.softmax(dim=1)
+#             # since we are bigram still, lets only get the last token as the next token predicted!
+#             probs = probs[:,-1,:]
+#             # now lets sample from it 
+#             new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+#             # now concatenate the new token to the previous one and feed it back to the model
+#             # for the next round of prediction
+#             # also remember that we are creating a sequence, so we concat them at dim=1 to get 
+#             # a longer sequence (we are gradually increasing the sequence length from 1 up to
+#             # max_token_count)
+#             idxs = torch.cat((idxs,new_idx), dim=1)
+#            
+#         return idxs
 
 # this works fine, however, we can do better. here we just encoded the tokens, but
-# we can also encode their position as well. lets do this as well
-class BigramModelWithAttention(nn.Module):
-    def __init__(self, vocab_size, embd_size,device) -> None:
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.embd_size = embd_size
-        # for gpu/cpu acceleration during training
-        self.device = device
-        # unlike the previous model, lets decouple the final logits from 
-        # the number of embeddings, because we are using attentions, and
-        # we want to have multiple operations inbetween obviously.
-        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
-        # lets now add the positional embedding as well 
-        # using this, we try to retain the position embedding for our tokens
-        # up to the current token in context_size
-        self.position_embd = torch.nn.Embedding(context_size, embd_size)
-        
-        # in order to get the final logits, we need a linea layer at end
-        self.fc = torch.nn.Linear(embd_size, vocab_size)
-        
-    def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
-        # lets grab the shapes, since we will be using them 
-        B,T,_ = inputs.shape
-        token_embeddings = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
-        # since we have a position_embedding lets use that as well
-        # and notice that we didnt use the inputs, but rather torch.arange(T)
-        # this means, for each input, as we process it, we also get embeddings up to
-        # the current token count as well, if the inputs has 3 tokens currently, we
-        # will creeate position embeddings for 0,1 and 2, and for the next input
-        # this continues likewise. this results in (T,E)
-        position_embeddings = self.position_embd(torch.arange(T,device=self.device))
-        
-        # and lets add the two embeddings together
-        # this effectively gives us, not only the token embeddings(identity)
-        # but also its position in the sequence. note that this doesnt really
-        # help in a bigram model, but when it comes to attention it really does!
-        embeddings = token_embeddings + position_embeddings
-        
-        # lets feed this embedding to our fc at the end instead
-        logits = self.fc(embeddings)         # has the shape (B,T,C) c is vocabsize
-        loss = None
-        if labels is not None:
-            # recall that crossentropy likes its input to be B,C,T and we are B,T,C
-            # so lets permute and make it happy!
-            loss = F.cross_entropy(logits.permute(0,2,1), labels)
-        return logits, loss
-    
-    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
-        # lets generate an output as long as num_max_token
-        for i in range(max_token_count):
-            # make sure idx is 2d
-            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
-            # now lets feed it to the model and sample from the probablities it produces
-            preds,_ = self(idxs)
-            # convert to probs 
-            probs = preds.softmax(dim=1)
-            # since we are bigram still, lets only get the last token as the next token predicted!
-            probs = probs[:,-1,:]
-            # now lets sample from it 
-            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
-            # now concatenate the new token to the previous one and feed it back to the model
-            # for the next round of prediction
-            # also remember that we are creating a sequence, so we concat them at dim=1 to get 
-            # a longer sequence (we are gradually increasing the sequence length from 1 up to
-            # max_token_count)
-            idxs = torch.cat((idxs,new_idx), dim=1)
-            
-        return idxs
-    
-# ok now lets add the attention now  
+# as we already explained, attention has no notion of position or spatial structure like conv e.g.
+# so we need to also incorporate the position information for each token as well
+# since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.embd_size = embd_size
+        self.context_size = context_size
         # for gpu/cpu acceleration during training
         self.device = device
         # unlike the previous model, lets decouple the final logits from 
@@ -1642,11 +1599,13 @@ class BigramModelWithAttention(nn.Module):
         self.head = AttentionHead(context_size, embd_size, head_size, use_bias=use_bias_att)
         
         # in order to get the final logits, we need a linea layer at end
-        self.fc = torch.nn.Linear(embd_size, vocab_size)
+        # since we now have attention before this layer, the output dim of attention which is
+        # head_size will be used here
+        self.fc = torch.nn.Linear(head_size, vocab_size)
         
     def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
         # lets grab the shapes, since we will be using them 
-        B,T,_ = inputs.shape
+        B,T = inputs.shape
         token_embeddings = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
         # since we have a position_embedding lets use that as well
         # and notice that we didnt use the inputs, but rather torch.arange(T)
@@ -1655,7 +1614,7 @@ class BigramModelWithAttention(nn.Module):
         # will creeate position embeddings for 0,1 and 2, and for the next input
         # this continues likewise. this results in (T,E)
         position_embeddings = self.position_embd(torch.arange(T,device=self.device))
-        
+        # print(f'pos_embd:{position_embeddings.shape}')
         # and lets add the two embeddings together
         # this effectively gives us, not only the token embeddings(identity)
         # but also its position in the sequence. note that this doesnt really
@@ -1675,19 +1634,25 @@ class BigramModelWithAttention(nn.Module):
     def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
         # lets generate an output as long as num_max_token
         for i in range(max_token_count):
+            # print(f'{i}/{max_token_count}) idxs: {tuple(idxs.shape)}')
             # make sure idx is 2d
-            assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
+            assert idxs.ndim >1, f"idx.shape '({tuple(idxs.shape)})' is invalid({idxs.ndim}). it must have the form (B,T)"
             # now lets feed it to the model and sample from the probablities it produces
             # but since, we now have postional embeddings as well, we can no longer have 
             # more than block_size/contex_size in, becasue if our idx is more than context_size
             # our positional embedding will go out of scope and error out
-            # so here we are basically getting as much as context_size
-            idxs = idxs[:, -self.context_size:]
-            preds,_ = self(idxs)
-            # convert to probs 
-            probs = preds.softmax(dim=1)
+            # so here we are basically getting as many as context_size
+            # note that we dont destroy the idxs! each time we get the last context_size tokens
+            # from it and feed it to the model to generate the next token, and keep going
+            # if we replace the idxs by sth like idx=idx[:,-self.context_size:], we would
+            # only create a sequence of only self.context_size, no matter how many iterations
+            # we do, we just repeat the same sequence again and again!
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
             # since we are bigram still, lets only get the last token as the next token predicted!
-            probs = probs[:,-1,:]
+            logits = logits[:,-1,:]
+            # convert to probs 
+            probs = logits.softmax(dim=-1)
             # now lets sample from it 
             new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
             # now concatenate the new token to the previous one and feed it back to the model
@@ -1695,8 +1660,109 @@ class BigramModelWithAttention(nn.Module):
             # also remember that we are creating a sequence, so we concat them at dim=1 to get 
             # a longer sequence (we are gradually increasing the sequence length from 1 up to
             # max_token_count)
-            idxs = torch.cat((idxs,new_idx), dim=1)
+            idxs = torch.cat((idxs,new_idx), dim=-1)
+            
             
         return idxs
     
+# now lets test this and see if it works 
+x,y = get_batch('train',4)
+model = BigramModelWithAttention(vocab_size, 
+                                 context_size, 
+                                 embd_size=10,
+                                 head_size=16,
+                                 device='cpu',
+                                 use_bias_att=False)
+# model.cuda()
+# x,y = (t.cuda() for t in zip(x,y))
+logits,loss = model(x,y)
+print(f'{logits.shape=} {loss=:.4f}')
 # and now we can train this : 
+device='cpu'
+batch_size = 64
+head_size = 16
+embd_size = 16 
+context_size = 32 
+vocab_size = len(vocab_list)
+max_iter = 5000
+# only to test the effect of bias in k,q,v calculations
+use_bias_attn=False
+# attention requires much lower lr compared to plain bigram model
+lr = 1e-3
+model = BigramModelWithAttention(vocab_size=vocab_size,
+                                 context_size=context_size,
+                                 embd_size=embd_size,
+                                 head_size=head_size,
+                                 device=device,
+                                 use_bias_att=use_bias_attn)
+
+param_count = sum([p.nelement() for p in model.parameters()])
+print(f'model parameters: {param_count:,}')
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+model = model.to(device)
+# set model to train mode explicitly
+model.train()
+for i in range(max_iter):
+    # get the batch
+    x,y = get_batch('train', batch_size=batch_size)
+    # feed the model and get the logits
+    logits, loss = model(x,y)
+    # evaluate the model
+    if i%1000==0:
+        losses=evaluate_loss(100, device)
+        print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
+    # zeroout_grads
+    model.zero_grad(True)
+    loss.backward() 
+    optimizer.step()
+print(f'done!')
+
+# now lets try its output
+input = torch.zeros(size=(1,1)).int()
+output = model.generate(input, 500).squeeze(0).tolist()
+print(f'{output}')
+print(f"{''.join(decode(output))}")
+# prints
+# model parameters: 3,425
+# train: 4.1845  val: 4.1876
+# train: 2.6514  val: 2.6593
+# train: 2.5606  val: 2.5623
+# train: 2.4903  val: 2.4970
+# train: 2.4525  val: 2.4620
+#
+# Ocons f?
+
+# Han yo ave
+# Th he thanvotre,
+# Hele thivee sproad sthom yout sche
+# Weasp, hon's theriorus oj-inou; stt rcI ist; ordor, beat myen gus owhours thars?
+
+# S:
+# Tou, dd, orfuts
+# He.
+
+# O ILf o hin that cho es, a treare, akacer rom.
+#  I tas itow Fill, whe whirer wigod.
+# We RJIFih yorwin,
+# Whe wiayie bithe
+# IOnor wot samiceay kray
+# ILAk,
+# NAngrnind te
+# Wen yhighe homiu.
+
+# DO:
+# IN
+# CNI fous,
+# Whaut ee sit st, sefe bithin;
+# Ne-t samil honstuk!
+#  ssee dthoiee
+# Pifo thpru ciesosere st fey I thile breme hou, pheary he moe
+#
+# which looks depressing not gonna lie! but can we improve it? certainly! 
+# for example we could use dropout on our attention! we could use normalization layers
+# and we could use multiple heads instead of just one! which takes us to the next
+# subject which is multi-head attention! which is  really nothing except several normal!
+# attention blocks run in parallell! 
+# so lets implement these and see how much we can improve upon this
+# 
+# 
