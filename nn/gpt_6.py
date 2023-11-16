@@ -1457,6 +1457,7 @@ class AttentionHead(nn.Module):
         # it embd_size
         self.embd_size = embd_size
         # head_size is the output dimension of our attnetion
+        # !note that usually the head_size is equal to embd_size
         self.head_size = head_size
         self.key = nn.Linear(embd_size, head_size, bias=use_bias)
         self.query = nn.Linear(embd_size, head_size, bias=use_bias)
@@ -1669,7 +1670,7 @@ class BigramModelWithAttention(nn.Module):
 x,y = get_batch('train',4)
 model = BigramModelWithAttention(vocab_size, 
                                  context_size, 
-                                 embd_size=10,
+                                 embd_size=16,
                                  head_size=16,
                                  device='cpu',
                                  use_bias_att=False)
@@ -1679,10 +1680,10 @@ logits,loss = model(x,y)
 print(f'{logits.shape=} {loss=:.4f}')
 # and now we can train this : 
 device='cpu'
-batch_size = 64
+batch_size = 32
 head_size = 16
 embd_size = 16 
-context_size = 32 
+context_size = 8
 vocab_size = len(vocab_list)
 max_iter = 5000
 # only to test the effect of bias in k,q,v calculations
@@ -1697,7 +1698,11 @@ model = BigramModelWithAttention(vocab_size=vocab_size,
                                  use_bias_att=use_bias_attn)
 
 param_count = sum([p.nelement() for p in model.parameters()])
-print(f'model parameters: {param_count:,}')
+print(f'param count:  {param_count:,}')
+print(f'head size:    {head_size}')
+print(f'embd size:    {embd_size}')
+print(f'context size: {context_size}')
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 model = model.to(device)
 # set model to train mode explicitly
@@ -1720,49 +1725,1260 @@ print(f'done!')
 # now lets try its output
 input = torch.zeros(size=(1,1)).int()
 output = model.generate(input, 500).squeeze(0).tolist()
-print(f'{output}')
 print(f"{''.join(decode(output))}")
 # prints
-# model parameters: 3,425
-# train: 4.1845  val: 4.1876
-# train: 2.6514  val: 2.6593
-# train: 2.5606  val: 2.5623
-# train: 2.4903  val: 2.4970
-# train: 2.4525  val: 2.4620
-#
-# Ocons f?
+#here are a few tries:
+# param count:  3,041
+# head size:    16
+# embd size:    16
+# context size: 8
+# train: 4.2551  val: 4.2533
+# train: 2.7175  val: 2.7354
+# train: 2.5917  val: 2.5681
+# train: 2.5299  val: 2.5265
+# train: 2.4684  val: 2.4759
+# done!
 
-# Han yo ave
-# Th he thanvotre,
-# Hele thivee sproad sthom yout sche
-# Weasp, hon's theriorus oj-inou; stt rcI ist; ordor, beat myen gus owhours thars?
+# Wonedimy
+# Y:
+# ARUS:
+# LAnouver; pof th, sthe the mae,
+# Wor ut barrioreche savarduncou?
 
+# hiler bathakm,
+# I O:
+# AK:
+# Acat ED:
+# et alliro dow wowilou ttherss; whest owur, garsacwe Ie hithaceyidous sou f'ze iwot ry tohien fm.
+# h.
+
+# Ar'm-ore tr Fofhou
+# Mr ojous omerrastheasncy yous Wowuce whor tu I I:
+# Hbeotth spat fel woro bel, aneicudidy ktiferrd thout ngord. th Iid aral, be'nd.
+
+# Pal tels Ms eimu Me myo on I teasthe del,
+# AChinout,
+# Wowure. pu tcher muss-renon; wingh ocet im
+# r Ddr,
+# Do ne thu,
+# LI ir't
+# Operst ry wu
+
+# param count:  5,745
+# head size:    16
+# embd size:    32
+# context size: 32
+# train: 4.1374  val: 4.1414
+# train: 2.6264  val: 2.6210
+# train: 2.5100  val: 2.5092
+# train: 2.4434  val: 2.4578
+# train: 2.4140  val: 2.4252
+# done!
+
+# Thee to an tal my,
+# Thake ced arce chart bre le be bizoresf thak des garg
+# Lur Wentescaln
+# Hooco beins pord sth ds hom span gr; ther. My Why ort thallils ofrof not tos gas hyine ind hand
+# Thid One the shond nd,
+# AFenosee omn st hy no fe.
+# GEwank, iand!
+# The sbe qurss yod hem snel.
+# CLerle,
+# Whow Vou bem!
+# Theewourtoave, shougen t:
+# Ber hangn toutince mor ed,
+# AD Scheapy thatho ABEN:
+# AD:
+# SUEDithy nde ndel mmy Tongusate hfolit, gintoher, hat gwe tiet what whingimst hpoourde wowopal,
+# The by br des qO: I no os,
+
+# try2: decreasing context size
+# param count:  4,977
+# head size:    16
+# embd size:    32
+# context size: 8
+# train: 4.2156  val: 4.2269
+# train: 2.5848  val: 2.6063
+# train: 2.4926  val: 2.4850
+# train: 2.4587  val: 2.4601
+# train: 2.4199  val: 2.4242
+# done!
+
+#try 3: decreasing embd_size, but keeping context_size 32
+# param count:  2,265
+# head size:    16
+# embd size:    8
+# context size: 32
+# train: 4.2202  val: 4.2158
+# train: 2.9840  val: 3.0093
+# train: 2.7667  val: 2.7621
+# train: 2.6355  val: 2.6411
+# train: 2.6070  val: 2.6077
+# done!
+
+# o
+# TI:
+# BOGot be
+# DOus ssh.
+# Bea hashren v:
+# ANULINII feso sid izeis by tofuso te I be fnowe?
+# Wledu ha m, thope w,
+# ARUTI land med cu
+# SI bve fme
+# ARIThilaserothan omyhee
+# Oina c;
+# UCAngose.
+# Terve t thirre my tthunulpthemaf wof.
+
+#  corlur yoNE:
+# NHy w te hen cod, tonos vengo veschete tors t ithaimeqlutreqRoosoye chin y h thuasafaous.
+# ANCathelo-
+# The?
+# Shen br uyh sbe ans I:
+# Gouthyykey m Authirou ae tovas ber ut lnt:,
+
+# TAMENI sf rousinthsin h'howenthor sg.
+# hidandhe waresd!
+
+# I f
+# Se loner mrdin gsvette n thest?
+
+# try 4: decreasing head_size, keeping embd_size and context_size the same
+# param count:  4,457
+# head size:    8
+# embd size:    32
+# context size: 32
+# train: 4.3416  val: 4.3409
+# train: 2.7354  val: 2.7333
+# train: 2.6400  val: 2.6309
+# train: 2.5716  val: 2.5692
+# train: 2.5217  val: 2.5182
+# done!
+
+# IF
 # S:
-# Tou, dd, orfuts
-# He.
+# To ofldickeens we fofane for o warus
+# Herdliion bis, te,
+# The ta, d ounor;
+# Ad h ank; sor Cito-'d turses tierlllle,
+# Whe pen, tint yt Ging sino leles fes hesr sst.
+# Than hinean.
 
-# O ILf o hin that cho es, a treare, akacer rom.
-#  I tas itow Fill, whe whirer wigod.
-# We RJIFih yorwin,
-# Whe wiayie bithe
-# IOnor wot samiceay kray
-# ILAk,
-# NAngrnind te
-# Wen yhighe homiu.
 
-# DO:
-# IN
-# CNI fous,
-# Whaut ee sit st, sefe bithin;
-# Ne-t samil honstuk!
-#  ssee dthoiee
-# Pifo thpru ciesosere st fey I thile breme hou, pheary he moe
+# Nofl an udn f hak,
+# Wh stharovernes;
+# And meno scerr tth Gbl y hy I t stit pand sy, pefif.
+# US dik thith be tagag, harlovenppsh!
+#  cegshil,
+# Wheanst thiges eprine sy wabat tha.
+
+# Wheas
+# Wit:
+# I
+# Thouw'arsangort,
+# Giseal?
+
+# Wh; mo tands t's.
+
+# NRNULECADSAxave!
+
+# ANNDIEI Fh Fod meveeas pee be,
+# Bes arner,
+
+# Woo t'le.
+
+
+# VIPORLEOG
+# CAOO:
+
+# try 5:
+# param count:  4,977
+# head size:    16
+# embd size:    32
+# context size: 8
+# train: 4.2156  val: 4.2269
+# train: 2.5848  val: 2.6063
+# train: 2.4926  val: 2.4850
+# train: 2.4587  val: 2.4601
+# train: 2.4199  val: 2.4242
+# done!
+
+# DANGUTTA:
+# Bert hatire on the wo A? sewas ker haywins wet.
+
+# mousill akerd fous sther Le fke sth,, bepeere gn ssst I oun amand serewos, cobear song.
+
+
+# AMEfediengg yit othesshint.
+
+# Anc:
+# A must shan ghety ak is, shet.
+
+# MEO:
+# Tom yot stths!
+# NCIBus hand akt imy berdr,
+# Thulll id mere thassut,
+# Moureleray, fous mante. QBO decencepous ariveed hart;
+# I; bifo wthen chant tht tho hy youn,
+# Grolomy, ucel.
+
+# BRIINE ERIYht I arum arw t; odeat ngher bly wehe foru thas sot our:
+# Bn; sshiutithemowith her fourpler thant
+
 #
-# which looks depressing not gonna lie! but can we improve it? certainly! 
+# which looks depressing not gonna lie! but its better than the simple bigram model we 
+# built earlier, anyway, can we improve it? certainly! 
 # for example we could use dropout on our attention! we could use normalization layers
 # and we could use multiple heads instead of just one! which takes us to the next
 # subject which is multi-head attention! which is  really nothing except several normal!
 # attention blocks run in parallell! 
 # so lets implement these and see how much we can improve upon this
+#%%
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_head, head_size, embd_size, context_size,bias_attn=False) -> None:
+        super().__init__()
+        self.num_head = num_head
+        self.head_size = head_size
+        # we assume the head_size is already split between the num_heads and thus we dont split
+        # it again
+        # assert head_size//num_head == 0, f'head_size({head_size}) must be divisable by head_num({num_head})'
+        # we need to create n heads so lets do it 
+        # self.heads = [AttentionHead(context_size, 
+        #                             embd_size, 
+        #                             head_size, 
+        #                             bias_attn) for _ in range(num_head)]
+        # but we can also use pytorch's nn.ModuleList which is a better equivalent than list
+        # note that, nn.Sequential cant be used, becasue it runs the modules in succesion
+        # i.e. serially, one after the other (feeds the output of the previous module to 
+        # the next module, etc) which is not what we want. we want to calculate each head
+        # independetly and aggregate their outputs so, either a python list or torch moudle list
+        # can be used
+        # sidenote: this module that we are building, is also known as, masked multi-attention-head
+        # becasue we are using the single-head self-attention which uses a constrain we imposed
+        # by masking if you recall that!
+        self.heads = torch.nn.ModuleList(AttentionHead(context_size, 
+                                         embd_size, 
+                                         head_size,
+                                         bias_attn) for _ in range(num_head))
+      
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # note that head_size is usually the embd_size, so it covers the whole 
+        # embeddings obviously, and note that each head will work on a portion
+        # of the given head_size, if e.g. we have head_size/embd_size = 16
+        # if we had 1 head, the head_size would be 16. however if we had 2 heads
+        # we had to split the head_size in half for each head, and later on
+        # we had to concat them to get the full-size head_size/embd_size.
+        # therefore here, we need to concat their results along the cols
+        # so multi-head-attention is akin to group convolution, and thus the head_size
+        # and num_head must align properly.
+        outputs = torch.cat([head(inputs) for head in self.heads], dim=-1)
+        return outputs
+# lets test 
+# note that we set the split value for head_size based on our num_head
+m = MultiHeadAttention(num_head=4, head_size=16//4, embd_size=16, context_size=8, bias_attn=False)
+logits = m(torch.randn(size=(1,8,16)))
+print(f'{logits.shape=}')
 # 
+# now lets use this in our model
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, device='cpu', bias_attn=False) -> None:
+        super().__init__()
+        self.vocab_size=  vocab_size
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.num_head = num_head
+        self.head_size = head_size
+        self.device = device
+        # token/character embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, embd_size)
+        # position embeddings
+        self.position_embeddings = nn.Embedding(context_size, embd_size)
+        # multihead attention instead of a single head attention block
+        # note that the head_size is going to be divided between the 
+        # heads, so ultimately we have the same number for head_size
+        # globally (basically each head gets its share of head_size
+        # which is head_size//num_head, but at the end since we have
+        # num_head heads, their output makes us the whole head_size) 
+        # ! check -> usually head_size == embd_size so each head works on the 
+        # ! whole embedding 
+        self.multi_head_attention = MultiHeadAttention(num_head, head_size//num_head, embd_size, context_size,bias_attn)
+        # finally the output fc layer 
+        self.fc = nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels:torch.Tensor=None)->torch.Tensor:
+        B,T = inputs.shape
+        # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
+        token_embds = self.token_embeddings(inputs)
+        # dont forget, our positional embd only involves the token position information
+        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        embds_combilned = token_embds + position_embds
+        # now lets feed them to our multihead attention block 
+        out = self.multi_head_attention(embds_combilned)
+        # and finally the logits 
+        logits = self.fc(out)
+        loss = None
+        if labels is not None:
+            # remember the cross entropy wanted its input in B,C,T while ours is in (B,T,C)
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss 
+
+    def generate(self, idxs, max_token_count):
+        assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
+        for i in range (max_token_count):
+            # we keep feeding the input to the model and get the next character
+            # but since we use positional embeddings, we are limited to context_size
+            # of tokens at anygiven time to feed the network or we face an error 
+            # so we always tke the last T tokens from our input. we use negative
+            # slicing, so if we have less than context_size, we only grab that many
+            # otherwise, we get an error, becasue obviously at the begining we may 
+            # start from a single token, denoting context_size of 1, while our model
+            # expects like full context_size (e.g. 8 or more)
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            # since we are after the next character only and we have to choose among 
+            # context_size number of tokens, we get the last one and treat it as the next
+            # character to calculate its probablity to sample from 
+            logits = logits[:,-1,:] 
+            # calulate the probs
+            probs = logits.softmax(dim=-1)
+            # sample the next character/token 
+            idx_token_next = torch.multinomial(probs, num_samples=1, replacement=True)
+            # add this to our existing tokens in idxs 
+            idxs = torch.cat((idxs, idx_token_next), dim=-1)
+            
+        return idxs 
+# now lets train this model and see how it performs this time
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 4
+head_size = 32
+embd_size = 32
+context_size = 8 
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.001
+batch_size = 32
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size, 
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+# outputs : 
+# param_count  =  3,041
+# head_num     =  4
+# head_size    =  16
+# embd_size    =  16
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.2041  val: 4.204
+# train: 2.6895  val: 2.685
+# train: 2.5449  val: 2.528
+# train: 2.4570  val: 2.477
+# train: 2.4238  val: 2.433
+# done!
+
+# I'd In mame
+# Ast owu hapland.
+
+# Mayl thew youres?
+# IRisire dis lhend gitim whorder, sphorgunct Beye skek boutrig!
+
+# I, sho sciltr not bpreathl harr'd doess elowt cof or iny poovigre.
+# Thalrit?
+
+# HThary?
+
+# Lerim he bamat:
+# Thiet hey, krepably bose bour cave grosr benemece wleir hon'g.
+
+# MADIUMI but th Mond im's veoo tit. IDf met Cerve's wue rrer hiftren'tr'd:
+# Anoks:
+# HOt
+# We I phess chi bouine mares yon ther; tlotirtlinl therot:
+# Io
+# Wh per,
+# Fous thayigso ceany pate.
+
+# Annd wosh fong uat
+# Now ICUSo CCgodertiove
+#
+# trying with larger embedding size seems to improve the results: 
+# param_count  =  7,553
+# head_num     =  4
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.1828  val: 4.186
+# train: 2.4703  val: 2.472
+# train: 2.3649  val: 2.367
+# train: 2.3009  val: 2.32
+# train: 2.2713  val: 2.288
+# done!
+
+# Cly Toste?
+# IOK:
+# Whan his me' tis it I ond ber'thse?
+
+# PO:
+# Theray delling, dothoinerk an to the, or
+# E VINGON: rocO:
+# Thes win now thatin knir:
+# Wigh fy, bund werar is wet my;
+# I ene:
+# JUu'd sow prut hat amver'd ENDUE VUF E VO?
+
+# Se gings nom and.
+# CArwak mandesplay beesire brit mand.
+
+# MED:
+# Thou ased ith is whis wentemprt hits this in ther.
+# Whis are mald thanle wive itis the menjuth weat dert, nen you vimt siomB ighichtr
+# LUT: am le the wids my thousecarto my haty wind WLIERME:
+# Wher a and
+# Whesh to wyt wir
+
+# compared to single head attention, with the same hyper parameters, train: 2.4684  val: 2.4759
+# and now we got train: 2.4238  val: 2.433 which is better(we also got train: 2.2713  val: 2.288 
+# with just increasing the embedding_size, so playing with parameters even blindly making model bigger
+# seems to give us a boost), so we had improvements, but we still need a long way ahead of us!
 # 
+# Ok, to improve upon our results, there are couple of more things we need to add to our attention 
+# block. if you look at the paper, we'll see a few concepts that we havent talked about or implemented
+# yet, including the feed-forward(position-wise feedforward network) and layernorm, so lets talk about 
+# them.
+# feed-forward network or as its called in the paper,'position-wise feedforward network', is simply
+# a "fully connected network which is applied to each position separately and identically", this 
+# consists of two linear layer with a relu activation function inbetween. 
+# so its a linear layer with a relu activation function followed by another linear layer basically. 
+# you may also hear this network be refered to as 'computation after communication' so to speak!
+# signifying the fact that it runs a computation after the attention module.
+# the idea behind this extra addition is simple, to provide a higher representation out of attention work
+# this network, causes every single token to have a nonlinear transformation and achieve a higher abstraction
+# possibly yielding new information benficial to the task. to put it in casual way, it can be seen as though
+# the attention gatheres some stats/information, and this step is akin to looking into it and thinking about it
+# comming up with some new findings, that is , if attention part is refered to as communication part, this is
+# the computation part/ or thinking part for the lack of a better word.
+# lets implement this network in our bigram model and see if this seemingly simple change, affects us at all
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, device='cpu', bias_attn=False) -> None:
+        super().__init__()
+        self.vocab_size=  vocab_size
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.num_head = num_head
+        self.head_size = head_size
+        self.device = device
+        # token/character embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, embd_size)
+        # position embeddings
+        self.position_embeddings = nn.Embedding(context_size, embd_size)
+        # multihead attention instead of a single head attention block
+        # note that the head_size is going to be divided between the 
+        # heads, so ultimately we have the same number for head_size
+        # globally (basically each head gets its share of head_size
+        # which is head_size//num_head, but at the end since we have
+        # num_head heads, their output makes us the whole head_size) 
+        # ! check -> usually head_size == embd_size so each head works on the 
+        # ! whole embedding 
+        self.multi_head_attention = MultiHeadAttention(num_head, head_size//num_head, embd_size, context_size,bias_attn)
+        # now let us create the feedforward network, which basically is a linear layer with relu
+        # followed by another linear layer! for this so called network, the in_features and out_features
+        # are simply the same, and is embd_size, because its a sandwich layer between our attention output
+        # and the last layer. this layer usually is (embedsize,embed_size) if you recall head_size is usally
+        # equal to embed_size. also note that in the paper the feedforward network is two linear layers with
+        # a relu (one linear layer with a relu plus another linear layer).if you look closely you'll notice 
+        # we already have a last layer after the attention, so we dont need to put a nother linear layer
+        # afterward, becasue that one linear layer suffices (multiple linear layers, dont provide
+        # any higher abstraction anyway, so its prefectly fine)
+        # but on the other hand the paper's implementation has another change, it states 
+        # the inner layers dim are increased by 4x, so to be faithful to the paper we also 
+        # add the second linear layer, with the suggested change, this wont change the output 
+        # shape, so we are fine. we just added an extra linear projection layer. 
+        # this additional projection operation actually improves the result,however if we simply 
+        # use the same dim linear layer (i.e. have sth like linear(head_size, head_size)) adds nothing
+        # to the representational power of the network and you wont see anything substantial vs if you
+        # completely remove this layer and only use linear/relu only.
+        # why this works is becasue, we increase the nonlinear output neurons of the first layer by 4,
+        # increasing its representational capacity, and then use the second linear layer to get the output
+        # size compatible for the next layer (doing a linear projection), and hence our improvements lie
+        # in the nonlinearity this addition provides. 
+        self.feedforwardnet = nn.Sequential(nn.Linear(embd_size, head_size*4), nn.ReLU(),
+                                            nn.Linear(head_size*4, head_size))
+        # finally the output fc layer 
+        self.fc = nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels:torch.Tensor=None)->torch.Tensor:
+        B,T = inputs.shape
+        # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
+        token_embds = self.token_embeddings(inputs)
+        # dont forget, our positional embd only involves the token position information
+        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        embds_combilned = token_embds + position_embds
+        # now lets feed them to our multihead attention block 
+        out = self.multi_head_attention(embds_combilned)
+        # add our new addition, feedforwardnet
+        out = self.feedforwardnet(out)
+        # and finally the logits 
+        logits = self.fc(out)
+        loss = None
+        if labels is not None:
+            # remember the cross entropy wanted its input in B,C,T while ours is in (B,T,C)
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss 
+
+    def generate(self, idxs, max_token_count):
+        assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
+        for i in range (max_token_count):
+            # we keep feeding the input to the model and get the next character
+            # but since we use positional embeddings, we are limited to context_size
+            # of tokens at anygiven time to feed the network or we face an error 
+            # so we always tke the last T tokens from our input. we use negative
+            # slicing, so if we have less than context_size, we only grab that many
+            # otherwise, we get an error, becasue obviously at the begining we may 
+            # start from a single token, denoting context_size of 1, while our model
+            # expects like full context_size (e.g. 8 or more)
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            # since we are after the next character only and we have to choose among 
+            # context_size number of tokens, we get the last one and treat it as the next
+            # character to calculate its probablity to sample from 
+            logits = logits[:,-1,:] 
+            # calulate the probs
+            probs = logits.softmax(dim=-1)
+            # sample the next character/token 
+            idx_token_next = torch.multinomial(probs, num_samples=1, replacement=True)
+            # add this to our existing tokens in idxs 
+            idxs = torch.cat((idxs, idx_token_next), dim=-1)
+            
+        return idxs 
+
+# and now lets train with the new change and see how it performs:
+print(f'using feedforwardnet added')
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 4
+head_size = 32
+embd_size = 32
+context_size = 8 
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.001
+batch_size = 32
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size, 
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+# which prints : 
+# using feedforwardnet added
+# param_count  =  5,169
+# head_num     =  4
+# head_size    =  16
+# embd_size    =  16
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.1975  val: 4.198
+# train: 2.6222  val: 2.634
+# train: 2.4919  val: 2.481
+# train: 2.4320  val: 2.435
+# train: 2.3979  val: 2.392
+# done!
+
+# Selwils iur.
+
+# AnNdt
+# By thak, yue, nein ende vat Rout'w haler,
+# The hot hes? is, whas bles. Yig,
+# ROm
+# QUS:
+# Ay Whigice rea:
+# Therer a youst um mith dins I dorseancer by gou:
+# I sot the, aserer tom sne arobfs-Rid,
+# This sas whe ou,
+# Acet Yark no.
+
+# OT:
+# Fely ip you pel hivet seatly. hial pand,
+# Thand repwat,
+# I tarve ther se this ten thio drord dot tho,
+# Rulee res le, il fet!
+# Nord Wotiilet homom for my woue cuve wid.
+
+# Angilene.
+
+# Fhivy, ih:
+# Boumlke uthereaerf
+# Whe ithe hares.
+
+# Whos sthik thenth
+# Tait:
+# She tove w
+
+# the loss didnt get better! but maybe if we increase the context_size, and embedding_size, it 
+# perorm better?
+# using a larger embedding_size and thus larger model did improve the result, 
+#
+# using feedforwardnet added
+# param_count  =  15,905
+# head_num     =  4
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.1569  val: 4.159
+# train: 2.3885  val: 2.396
+# train: 2.2789  val: 2.312
+# train: 2.2064  val: 2.249
+# train: 2.1599  val: 2.198
+# done!
+
+# To get fer arast deve lad, I' fale are you up this riany;
+# Weareien,
+# Tho Guser, me ter is! Do lothe, to ling wo whe Pist to deave mat not, in and- air besface, y to fron; use ler weet herefalf thop an der pretrier
+# nesly toide
+# Thats ous.
+
+# RENT:
+# I for the haw to, to noss teave ler shat earelss ater, want Heanct herry deeter erry, heave masere dacke; nochat onsemy ning Meib,--?
+
+# LUCLUER:
+# If Feropeake mo shat onsivoole washy the well beWarquent;
+# I on well he ome it you lare to lo to kit youser,
+# Weves
+
+# the larger network, seems to be doing much better than its counter part from before
+# the one without the ffnet, we got train-loss: 2.1599  val-loss: 2.198 here whereas 
+# previously we got train-loss: 2.2713  val-loss: 2.288. so we have improvements despite the 
+# text still not being that good(but still better than before). so we need more enhancements)
+#%%
+# the next improvement, would be to use more of these, as its shown in the paper, if one block
+# works, then adding more should work better right? we had single head, it improved our condition, 
+# so we used more heads, and now lets more multi-attention heads! to make things easier, lets
+# make a module out of it the same way we created previous modules. 
+
+# first lets create our ffnet as a seprate block, so we use it after the attention
+class FeedForward(nn.Module):
+    def __init__(self, n_features, bias=True) -> None:
+        super().__init__()
+        # since this is only used with attention, the in/out features are the same
+        # and usually the embedding size in our case but the paper states that the
+        # inner layer dims are increased 4 times, so lets also reflect this change here.
+        # as we saw earlier, this improves our results.
+        self.n_features = n_features
+        self.block = nn.Sequential(nn.Linear(in_features=n_features, out_features=n_features*4, bias=bias),
+                                   nn.ReLU(inplace=True),
+                                   nn.Linear(in_features=n_features*4, out_features=n_features, bias=bias))
+    def forward(self, inputs):
+        return self.block(inputs)
+    
+class AttentionwithFFNetBlock(nn.Module):
+    def __init__(self, context_size, embd_size, num_head, head_size, bias_attn=False ) -> None:
+        super().__init__()
+        self.head_size = head_size
+        self.context_size = context_size
+        self.num_head = num_head
+        self.embd_size = embd_size
+        self.bias_attn = bias_attn
+        
+        self.attn = MultiHeadAttention(num_head=num_head,
+                                       head_size=head_size//num_head,
+                                       embd_size=embd_size, 
+                                       context_size=context_size,
+                                       bias_attn=bias_attn)
+        # note as a reminder, this is being applied
+        # after an attention module, and attention module's input is embd_size, while its 
+        # output-dim is head_size (we know they are usually the same, but to be flexible
+        # we always use head_size to be on the safe side))
+        self.ffnet = FeedForward(embd_size, head_size)
+
+    def forward(self, inputs:torch.Tensor) -> torch.Tensor:
+        return self.ffnet(self.attn(inputs))
+
+# now lets add this to our base model and see how it performs this time: 
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, num_blocks, device='cpu', bias_attn=False) -> None:
+        super().__init__()
+        self.vocab_size=  vocab_size
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.num_head = num_head
+        self.head_size = head_size
+        # now lets add the number of blocks 
+        self.num_blocks = num_blocks
+        self.device = device
+        # token/character embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, embd_size)
+        # position embeddings
+        self.position_embeddings = nn.Embedding(context_size, embd_size)
+        # now lets use attention blocks instead of a multi-head-attention and ffnet
+        # note that for this to work properly serialy, the output of this needs to be
+        # the same as its input (which is embd_size) which by default for our case should
+        # be ok.
+        self.blocks = nn.Sequential(*[AttentionwithFFNetBlock(context_size=context_size, 
+                                              embd_size=embd_size,
+                                              num_head=num_head,
+                                              head_size=head_size,
+                                              bias_attn=bias_attn)
+                                     for _ in range(num_blocks)])
+        # finally the output fc layer 
+        self.fc = nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels:torch.Tensor=None)->torch.Tensor:
+        B,T = inputs.shape
+        # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
+        token_embds = self.token_embeddings(inputs)
+        # dont forget, our positional embd only involves the token position information
+        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        embds_combilned = token_embds + position_embds
+        # now lets have several multi-head-attentions instead of 1, one after the other
+        out = self.blocks (embds_combilned)
+        # and finally the logits 
+        logits = self.fc(out)
+        loss = None
+        if labels is not None:
+            # remember the cross entropy wanted its input in B,C,T while ours is in (B,T,C)
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss 
+
+    def generate(self, idxs, max_token_count):
+        assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
+        for i in range (max_token_count):
+            # we keep feeding the input to the model and get the next character
+            # but since we use positional embeddings, we are limited to context_size
+            # of tokens at anygiven time to feed the network or we face an error 
+            # so we always tke the last T tokens from our input. we use negative
+            # slicing, so if we have less than context_size, we only grab that many
+            # otherwise, we get an error, becasue obviously at the begining we may 
+            # start from a single token, denoting context_size of 1, while our model
+            # expects like full context_size (e.g. 8 or more)
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            # since we are after the next character only and we have to choose among 
+            # context_size number of tokens, we get the last one and treat it as the next
+            # character to calculate its probablity to sample from 
+            logits = logits[:,-1,:] 
+            # calulate the probs
+            probs = logits.softmax(dim=-1)
+            # sample the next character/token 
+            idx_token_next = torch.multinomial(probs, num_samples=1, replacement=True)
+            # add this to our existing tokens in idxs 
+            idxs = torch.cat((idxs, idx_token_next), dim=-1)
+            
+        return idxs 
+
+# and now lets train with the new change and see how it performs:
+print(f'using more blocks!')
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 4
+block_num = 3
+head_size = 32
+embd_size = 32
+context_size = 8 
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.001
+batch_size = 32
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size,
+                                 num_blocks=block_num,
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'block_num    =  {block_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+# prints 
+# using more blocks!
+# param_count  =  38,753
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.2087  val: 4.211
+# train: 2.6084  val: 2.606
+# train: 2.3737  val: 2.39
+# train: 2.2865  val: 2.307
+# train: 2.2087  val: 2.237
+# done!
+
+# FAUKIN YRE:
+# Dato':
+# wis.
+
+# BERDEWEE:
+
+# Piwit ancon; awt
+# Emuke this his fred not pe,
+# Har,
+# And him my bird-wray sluf. Ile:
+# With tulel wik, antegatorg.
+
+# EREN VELV:
+# Whath a meane, ones
+# sheirss,
+# Bose til
+# Ilf bodtund ba,
+# Aripce nerod is the blilshil hit hit mef?
+
+# GESINCE:
+# Sard, with the deoorrnsicominle thid: as.
+
+# ANRE:
+# Hy prall anges what micciths delre
+# To tike comf hon ebat'd mur. Kin'sa, Fharth:
+# Af'?
+
+# ROASA:
+# Ect mily fledd.
+# SHricest.
+# At dey bompe novor where lisg.
+
+# KETILNINCE:
+# There gay his my nefonk
+#
+# as you can see, we got wrose results than before! despite making the network larger, our loss
+# really didnt improve as we expected. 
+# is our initial hypothesis that having more blocks and higher nonlinearity/representation is benificial
+# wrong? or is there something else thats causing the issue? 
+# as you might have guessed, its the latter. we are basically creating more layers, and with
+# more layers, we face training issues that we discussed earlier. 
+# so how should we tackle this, we cant use BN, becasue BatchNOrm, accumulates the statistics
+# from different samples, this is a no no for us. we dont want other samples to interfer with 
+# our sample (or basically each other!) in anyway, so what should we do? 
+# the paper utilizes two mechanisms or operations to tackle this issue. one being skip-connections
+# (also known as residual connction) and the other, layer-normalization. 
+# you should be familiar with skip-connections as they are the founding factor or resenets
+# and have been extremely influential. so to cut a long story short, skip connections are simply
+# connections from input skipping the operations involved in the block they reside and directly 
+# being added to the output and then returned the result.(basically F(x) + x)
+# as we know, the gradients are distributed equally when they reach addition, so input gets the gradients
+# without being weakened due to large depth of the network. 
+# so before we implement the layer normalization part, lets see howmuch of a change adding skip-connection
+# causes and whether it proves our initial hypothesis about depth and gradient signal weakening or not
+# we add this to our AttentionBlock (but we could add this to any submodule)
+#%%
+class FeedForward(nn.Module):
+    def __init__(self, n_features, bias=True) -> None:
+        super().__init__()
+        # since this is only used with attention, the in/out features are the same
+        # and usually the embedding size in our case but the paper states that the
+        # inner layer dims are increased 4 times, so lets also reflect this change here.
+        # as we saw earlier, this improves our results.
+        self.n_features = n_features
+        self.block = nn.Sequential(nn.Linear(in_features=n_features, out_features=n_features*4, bias=bias),
+                                   nn.ReLU(inplace=True),
+                                   nn.Linear(in_features=n_features*4, out_features=n_features, bias=bias))
+    def forward(self, inputs):
+        return self.block(inputs)
+    
+# lets add a skip-connection to this block
+class AttentionwithFFNetBlock(nn.Module):
+    def __init__(self, context_size, embd_size, num_head, head_size, bias_attn=False ) -> None:
+        super().__init__()
+        self.head_size = head_size
+        self.context_size = context_size
+        self.num_head = num_head
+        self.embd_size = embd_size
+        self.bias_attn = bias_attn
+        
+        self.attn = MultiHeadAttention(num_head=num_head,
+                                       head_size=head_size//num_head,
+                                       embd_size=embd_size, 
+                                       context_size=context_size,
+                                       bias_attn=bias_attn)
+        # note as a reminder, this is being applied
+        # after an attention module, and attention module's input is embd_size, while its 
+        # output-dim is head_size (we know they are usually the same, but to be flexible
+        # we always use head_size to be on the safe side))
+        self.ffnet = FeedForward(embd_size, head_size)
+
+    def forward(self, inputs:torch.Tensor) -> torch.Tensor:
+        # since we have two blocks, we add skip-connection to both of them here
+        # we could aggerate them as one and a add the skip connection to their output
+        # but this is less benificial than creating seprate skip-connections for each block
+        # to see this in action, uncomment this and comment the latter part and run the test
+        # out = self.attn(inputs)
+        # out =  self.ffnet(out)
+        # return out + inputs 
+        out = self.attn(inputs) + inputs
+        out =  self.ffnet(out)  + inputs
+        return out
+
+# now lets add this to our base model and see how it performs this time: 
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, num_blocks, device='cpu', bias_attn=False) -> None:
+        super().__init__()
+        self.vocab_size=  vocab_size
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.num_head = num_head
+        self.head_size = head_size
+        # now lets add the number of blocks 
+        self.num_blocks = num_blocks
+        self.device = device
+        # token/character embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, embd_size)
+        # position embeddings
+        self.position_embeddings = nn.Embedding(context_size, embd_size)
+        # now lets use attention blocks instead of a multi-head-attention and ffnet
+        # note that for this to work properly serialy, the output of this needs to be
+        # the same as its input (which is embd_size) which by default for our case should
+        # be ok.
+        self.blocks = nn.Sequential(*[AttentionwithFFNetBlock(context_size=context_size, 
+                                              embd_size=embd_size,
+                                              num_head=num_head,
+                                              head_size=head_size,
+                                              bias_attn=bias_attn)
+                                     for _ in range(num_blocks)])
+        # finally the output fc layer 
+        self.fc = nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels:torch.Tensor=None)->torch.Tensor:
+        B,T = inputs.shape
+        # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
+        token_embds = self.token_embeddings(inputs)
+        # dont forget, our positional embd only involves the token position information
+        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        embds_combilned = token_embds + position_embds
+        # now lets have several multi-head-attentions instead of 1, one after the other
+        out = self.blocks (embds_combilned)
+        # and finally the logits 
+        logits = self.fc(out)
+        loss = None
+        if labels is not None:
+            # remember the cross entropy wanted its input in B,C,T while ours is in (B,T,C)
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss 
+
+    def generate(self, idxs, max_token_count):
+        assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
+        for i in range (max_token_count):
+            # we keep feeding the input to the model and get the next character
+            # but since we use positional embeddings, we are limited to context_size
+            # of tokens at anygiven time to feed the network or we face an error 
+            # so we always tke the last T tokens from our input. we use negative
+            # slicing, so if we have less than context_size, we only grab that many
+            # otherwise, we get an error, becasue obviously at the begining we may 
+            # start from a single token, denoting context_size of 1, while our model
+            # expects like full context_size (e.g. 8 or more)
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            # since we are after the next character only and we have to choose among 
+            # context_size number of tokens, we get the last one and treat it as the next
+            # character to calculate its probablity to sample from 
+            logits = logits[:,-1,:] 
+            # calulate the probs
+            probs = logits.softmax(dim=-1)
+            # sample the next character/token 
+            idx_token_next = torch.multinomial(probs, num_samples=1, replacement=True)
+            # add this to our existing tokens in idxs 
+            idxs = torch.cat((idxs, idx_token_next), dim=-1)
+            
+        return idxs 
+
+# and now lets train with the new change and see how it performs:
+print(f'using more blocks with skip-connection')
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 4
+block_num = 3
+head_size = 32
+embd_size = 32
+context_size = 8 
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.001
+batch_size = 32
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size,
+                                 num_blocks=block_num,
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'block_num    =  {block_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+# prints 
+# using more blocks with skip-connection
+# param_count  =  38,753
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.5636  val: 4.553
+# train: 2.2666  val: 2.281
+# train: 2.1330  val: 2.183
+# train: 2.0708  val: 2.14
+# train: 2.0204  val: 2.109
+# done!
+
+# Zunt will jucked's whreef onst's so
+# wippplalct, sawter.
+
+# Firfor have deal pere,
+# Shal,
+# thich many.
+# Frig.
+
+# Thall have.
+
+# WANWHAM:
+# Sad king theave,
+# Cnomlen nare, near was?
+
+
+# CKINGlLOROMBOENGBETH:
+# Dich loverd und by, may;
+# ''Kh
+# Godie the bline plock's minstell the denelsbad, with think
+# What
+# sicond lead this undrut, too, the but me my se ming'ld;
+# Shing
+# To tiot comford, engelan this it's heare: hear them the vinclamil.
+# Is done, the stronced,
+# Lion?
+# Hartow where lisg.
+
+# DOLILINA:
+# Lord ISe and
+# Lud'd nef hel
+
+# and test with one skip-connection on the 'output only' to prove or assumption on skip-connections
+# using more blocks with skip-connection
+# param_count  =  38,753
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.5616  val: 4.552
+# train: 2.3196  val: 2.322
+# train: 2.1862  val: 2.221
+# train: 2.1175  val: 2.163
+# train: 2.0640  val: 2.137
+# done!
+
+# FARY VI:
+# A-bame 'tries.
+
+# BERGEWES:
+
+# PABLLO:
+# Yon; aws
+# Then ath-pmate for, not pe,
+# PARILA:
+# So man.
+
+# FORY.
+
+# TAsUS:
+# I cenpine nou, lad king theak,
+# Anny, In nartine-'
+
+# An yeant, of ladie ust, good ting lover that by, may;
+# And hordie the
+# llils plove ond sofful and heave
+# Take with the deo,
+# And mort leath and usir the dom the but me my crombasill;
+# Shim are, con comlmork engeland your, trabe,
+# Beth:
+# Yor?
+
+# CORIAR EFt mily fle--spoles, strence'd ono do now, will?
+# Mursice,
+# Ntormorest
+# The juge ernus'd neforki
+
+# as you can see, it greatly improved our results, and the text also got much better!
+# as we already pointed out, having skip-connections per modules, help much more than a single 
+# per module output only, nevertheless, we notice, using skip-connection really improved our results.
+# now lets add the second operation, layernorm. layernorm is a normalization layer, just like batchnormalization
+# came a year later than batchnormalization paper, but the difference between them is that, unline batchnormalization
+# it works on a per sample basis and does not involve using othersamples to normalize a specific sample (basically
+# samples dont affect eachother)
+# the implementation is similar to the batchnormalization, and it does not require calculating running_mean/var
+# lets implement layer norm here 
+class LayerNorm1d(nn.Module):
+    def __init__(self, in_features, eps=1e-6, momentum=0.1) -> None:
+        super().__init__()
+        self.in_features = in_features
+        self.eps = eps
+        self.momentum = momentum
+        
+        self.mean = torch.zeros(size=(1, in_features))
+        self.var = torch.ones(size=(1, in_features))
+        # alpha_ln_gain
+        self.alpha_ln_gain = torch.ones_like(self.var) 
+        # beta_ln_bias
+        self.beta_ln_bias = torch.zeros_like(self.mean)
+        
