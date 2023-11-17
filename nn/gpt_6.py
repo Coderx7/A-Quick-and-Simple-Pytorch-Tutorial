@@ -2962,7 +2962,7 @@ print(f"{''.join(decode(output))}")
 # as you can see, it greatly improved our results, and the text also got much better!
 # as we already pointed out, having skip-connections per modules, help much more than a single 
 # per module output only, nevertheless, we notice, using skip-connection really improved our results.
-# now lets add the second operation, layernorm. layernorm is a normalization layer, just like batchnormalization
+# now lets add the second operation, layernorm. layernorm(https://arxiv.org/abs/1607.06450) is a normalization layer, just like batchnormalization
 # came a year later than batchnormalization paper, but the difference between them is that, unline batchnormalization
 # it works on a per sample basis and does not involve using othersamples to normalize a specific sample (basically
 # samples dont affect eachother)
@@ -2970,6 +2970,25 @@ print(f"{''.join(decode(output))}")
 # "Unlike Batch Normalization and Instance Normalization, 
 #  which applies scalar scale and bias for each entire channel/plane with the affine option,
 #  Layer Normalization applies per-element scale and bias with elementwise_affine"
+#! check and expand
+# Layer normalization (LayerNorm) and batch normalization (BatchNorm) are both normalization techniques commonly used in deep learning models. While they aim to normalize the input data, they differ in their operation, goal, and outcome. Here's a detailed comparison:
+# 1. Operation:
+#    - LayerNorm: LayerNorm normalizes the input tensor across the feature dimension (last dimension) independently for each example in the batch. It calculates the mean and variance along the feature dimension and applies a normalization operation.
+#    - BatchNorm: BatchNorm normalizes the input tensor across the batch dimension (first dimension) as well as the feature dimension. It calculates the mean and variance along the batch dimension and applies a normalization operation.
+# 2. Goal:
+#    - LayerNorm: The goal of LayerNorm is to normalize the activations of each individual example in the batch. It aims to reduce the internal covariate shift, helping the network converge faster and generalize better.
+#    - BatchNorm: The goal of BatchNorm is to normalize the activations across the batch dimension. It aims to reduce the effects of internal covariate shift, stabilize the network during training, and improve generalization by reducing overfitting.
+# 3. Outcome:
+#    - LayerNorm: LayerNorm ensures that the mean of each feature across each example is zero and the standard deviation is one. It preserves the relative relationships between the features within each example.
+#    - BatchNorm: BatchNorm ensures that the mean of each feature across the entire batch is zero and the standard deviation is one. It introduces dependencies between examples in the batch during training but can be disabled during inference to allow independent predictions.
+# 4. Applicability:
+#    - LayerNorm: LayerNorm is commonly used in recurrent neural networks (RNNs), such as LSTMs and GRUs, where the normalization is applied along the time steps (sequence length) dimension.
+#    - BatchNorm: BatchNorm is typically used in convolutional neural networks (CNNs) and fully connected layers, where the normalization is applied across the batch dimension.
+# 5. Training vs. Inference:
+#    - LayerNorm: LayerNorm behaves the same during training and inference. It normalizes each example independently, making it suitable for both training and inference.
+#    - BatchNorm: BatchNorm behaves differently during training and inference. During training, it normalizes the activations across the batch dimension. During inference, the statistics (mean and variance) are usually calculated using a running average from the training phase, and normalization is applied based on these fixed statistics.
+# In summary, LayerNorm and BatchNorm are both normalization techniques, but they differ in terms of the dimension over which normalization is applied, the goal of normalization, and the outcome. LayerNorm normalizes each example independently along the feature dimension, while BatchNorm normalizes across the batch dimension as well. They serve different purposes and are commonly used in different types of neural networks.
+
 # the implementation is similar to the batchnormalization, and it does not require calculating running_mean/var
 # we can use the pytorch module just fine, but since its really similar to BN, lets implement it here 
 # 
@@ -3148,7 +3167,15 @@ class BigramModelWithAttention(nn.Module):
         # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
         token_embds = self.token_embeddings(inputs)
         # dont forget, our positional embd only involves the token position information
-        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        # if we didnt have self.device we coulds use model's parameters device to dynamically
+        # set the proper device here which would be:
+        # device = next(self.parameters()).device
+        # and this way, setting model.cuda() or model.cpu() would do the trick here, but
+        # currently, we have to explictily set model.device in order to update this snippets
+        # device or otherwise it will fail becasue of mistamtching devices (if we train on 
+        # gpu and intend on running on cpu imediately! of course we can always save states
+        # and load a cpu only model, but we need to be consistent in our code)
+        position_embds = self.position_embeddings(torch.arange(T,device=device))
         embds_combilned = token_embds + position_embds
         # now lets have several multi-head-attentions instead of 1, one after the other
         out = self.blocks (embds_combilned)
@@ -3187,7 +3214,7 @@ class BigramModelWithAttention(nn.Module):
             idxs = torch.cat((idxs, idx_token_next), dim=-1)
             
         return idxs 
-
+#%%
 # and now lets train with the new change and see how it performs:
 print(f'using more blocks with skip-connection-layernorm')
 torch.manual_seed(255)
@@ -3381,25 +3408,45 @@ print(f"{''.join(decode(output))}")
 # and the second reason was, we were aggregating the last two dims like BN, whereas we should have only used the
 # last dim, as we should not involve other samples in normalization. (I explained this thoroughly in the LayerNorm class)
 # 
-# now how can we improve more? we implemented the paper, and what remains is to test with hyperparameters
+# now how can we improve more? we implemented the paper, basically we implemented transormer from scratch
+# and what remains is to test with different hyperparameters to see how well it can generate texts similar 
+# to our dataset. (we implemented the decore version, but the encoder as we explained earlier is the same
+# without the constrains! well talk about this in a moment )
 # so lets increase the model size now and see how much improvement we can get 
 # 
 # %%
-print(f'using more blocks with skip-connection-layernorm')
+print(f'using more blocks with skip-connection-layernorm-beefed up!')
+import time
+import torch
 torch.manual_seed(255)
 random.seed(255)
 
-head_num = 6
-block_num = 6
-head_size = 384
-embd_size = 384
-context_size = 256
+torch.cuda.memory.reset_max_memory_allocated(0)
+
+#%%
+torch.cuda.memory.empty_cache()
+# head_num < block_num , increase block_num over head_num
+# context_size doesnt afffect loss much than embd/block num
+# between embd/bluck_num, increase block_num to achieve better result with less param
+# with the same embd_size.(6 blocks of 144 embd_size > 4 blocks of 288 embd_size) or not!
+# more embd_size with same block_num, performs much better at the cost of twice param count
+# but if lower param count is required, then block_num with same embd_size is better(some times
+# higher block_num achives comparable result with fewerr param counts)
+# head_num doesnt impose much overhead, and no param increase, when all params are sorted out
+# try increasing head_hum, you'll notice when it stops benifiting or is not just worth it,
+# so start with 1, adjust other params, and then play with head_num.
+start = time.time()
+head_num = 2        #2 #4  #6
+block_num = 6 # aka layers!# 1 # 2# 4# 6s
+head_size = 288     #18 #36 #72 #144 #288 #396 #384
+embd_size = 288     #18 #36 #72 #144 #288 #396 #384
+context_size = 64  #8  #16 #32 #64*  #128 #256
 vocab_size = len(vocab_list)
-device = 'cpu'
+device = 'cuda'
 use_bias_attn = False
 
 lr = 0.0001
-batch_size = 256
+batch_size = 128
 max_iter = 5000
 eval_period = 1000
 model = BigramModelWithAttention(vocab_size=vocab_size, 
@@ -3426,6 +3473,7 @@ print(f'use_bias_attn=  {use_bias_attn}')
 for i in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
+    x,y= tuple(t.to(device) for t in (x,y))
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
@@ -3440,7 +3488,139 @@ for i in range(max_iter):
     optimizer.step()
 
 print(f'done!')
+print(f'elapsed: {time.time() - start} ')
+
 # lets see how this model fairs now and what it generates 
-initial_token = torch.zeros(size=(1,1)).int()
-output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+model.cuda()
+#model.device ='cuda'
+initial_token = torch.zeros(size=(1,1)).int().cuda()
+output = model.generate(initial_token, max_token_count=1000).squeeze().tolist()
 print(f"{''.join(decode(output))}")
+# which prints 
+# using more blocks with skip-connection-layernorm-beefed up!
+# param_count  =  9,901,889
+# head_num     =  6
+# block_num    =  6
+# head_size    =  384
+# embd_size    =  384
+# context_size =  256
+# device       =  cuda
+# use_bias_attn=  False
+# train: 4.3845  val: 4.388
+# train: 1.9630  val: 2.045
+# train: 1.5727  val: 1.755
+# train: 1.4054  val: 1.632
+# train: 1.3029  val: 1.57
+# done!
+#
+#
+# What, my Lady of Angelo?
+#
+# BUCKINGHAM:
+# At at the untimely of doth bed, much,
+# I'll be a kind his worth sea of the
+# live mone conclaim my sorrow and amblitude
+# Dut jot the watching of goos, Caius York,
+# Whom hath power tire mild, I will leave you tell the
+# is it subjects.
+
+# GLOUCESTER:
+# So rass, swing play his manner great his love
+# Death is cloid of his fine.
+
+# POLIXENES:
+# No.
+
+# Ghost offence, sea, when we he is name
+# Where it were become me one years.
+
+# TLBONA:
+# Who, is he can you for the horse,
+# That he clave upon him. Grim to't her.
+
+# BRUTUS:
+# It be more fair climits night rest thinke I
+# not, and what all worse this.
+
+# SAETER:
+# Sir you are you must you wed?
+# Doth mendles when you have once descries them,
+# The harm of cullent you cursue for this:
+# Resole he must be abused you.
+
+# Clown:
+# Kill, by my your highne, and that all bitter thee.
+
+# JULIET:
+# Gaunt, I'll make thee.
+# Untired my brother birisment buriest!
+# I pray, minister in my eight; it is it he
+# not fastic that that fant for let thou
+# of thine, or sleepter.
+#
+# second try
+# param_count  =  9,901,889
+# head_num     =  6
+# block_num    =  6
+# head_size    =  384
+# embd_size    =  384
+# context_size =  256
+# device       =  cuda
+# use_bias_attn=  False
+# train: 4.3845  val: 4.388
+# train: 1.9630  val: 2.045
+# train: 1.5727  val: 1.755
+# train: 1.4054  val: 1.632
+# train: 1.3029  val: 1.57
+# done!
+#
+# DUKE VINCENTIO:
+# Scent the Faulia.
+
+# KING EDWARD:
+# Sweet, good conceive these are to be.
+
+# CAPULET:
+# Not gentle Menenius, here well they pend lives and I
+# Rengeath one much buried.
+
+# HARCID:
+# O, God I'll: Bidish, Brobet, not--
+# Hath said, quotest me, is a done.
+
+# CORIOLANUS:
+# Then, no proud heret! what sat withile: woen so,
+# ha, wary thou comest, why thought that art thou nelsest;
+# yet fights on his dearth-hoad yoking hered.
+
+# KING EGBRY:
+# Very Grey, my lord?
+
+# CORIOLANUS:
+# The people.
+# Why let, sir, who have been sweet, Let to thee.
+
+# BARBIUNCENA:
+# In to the rest, my blood; Warwick's house.
+# Take you in his worth train'd then he mone.
+
+# ROMEO:
+# Those wasted damnable, Eauton,
+# Like, and brisothe comes do I nay,
+# and that you know I were, and you lead us
+# I tept brail, if such enemi: knack'd love from
+# Unsuing person, and never. O, you should woman joys;
+# But in this seven strem one of mine honestes
+# Their woman to die: nay, sir, and were back
+# if the imploteful of late, our chante faults
+# He that wretche with this.
+#----------------------------------
+# which is remarkably better than all of our previous outputs. so as we increased our model capacity
+# we witnessed much better results. 
+# side note:note that our positinal emebdding's need to be placed on the cpu or gpu explicitly 
+# after model instantiation, or otherwise, as its set separately as the model, simply doing model.cpu()
+# or model.cuda() wouldnt do it. so here I simply used cuda. (or we have to set the device in forward
+# dynamically sth like device = next(model.parameters()).device)
+# this was gpt! lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
+# document completer vs chatgptetc 
+
