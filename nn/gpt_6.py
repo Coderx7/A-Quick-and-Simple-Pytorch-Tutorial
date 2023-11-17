@@ -2975,11 +2975,10 @@ print(f"{''.join(decode(output))}")
 # 
 #%%
 class LayerNorm(nn.Module):
-    def __init__(self, in_features, eps=1e-5, unbiased=True) -> None:
+    def __init__(self, in_features, eps=1e-5) -> None:
         super().__init__()
         self.in_features = in_features
         self.eps = eps
-        self.unbiased = unbiased
         # alpha_ln_gain
         # note that since we are inheriting from nn.Module, and are in pytorch teritory
         # we need to use nn.Parameter to mark our parameters trainable! otherwise 
@@ -2997,25 +2996,47 @@ class LayerNorm(nn.Module):
         # dims = tuple(i for i in range(inputs.ndim-1,0,-1)) which didnt cause any errors, and infact
         # resulted in a very low loss, however the text generation seemed kind of random, and differed
         # from the pytorch's Layernorm version(0.60 vs 1.90 of pytorch's which is a huge diference). 
-        # Further investigation revealed the issue which was the 0ths dim was not included (dims was
-        # (2,1), whereas it should have been (2,1,0) (this is the Pytorch's default behavior) and basically
-        # makes this into an elemntwise mean/var normalization (i.e. there will be 1 mean/var for everything!) 
-        # and heres the correct dims, which produces the same output as Pytorch's with a slight difference
-        # in loss (1.99 vs 1.98 of pytorch's)
-        # note that the difference between LayerNorm and BatchNorm, is not about that Layrnorm does not include the batch dim
-        # rather, the gamma/beta were only applied to each channels, and were affected by other samples. 
-        # here gamma/beta apply elementwise to the input, so each element has a gamma/beta component thats
-        # specific to it. and also we can choose how many dims to consider as feature dims and to use in mean/var
-        # calculation. so this is the the way to go
-        # !(note that if we dont include this case, our sample works)
-        #! seems my initial thought is correct, we dont use batch dim, 
-        # !but what about elemntwise=True/False, unbiased=True/False?
-        dims = tuple(i for i in range(inputs.ndim-1,0,-1)) 
+        # Further investigation revealed the issue which was caused by the dims involved. basically 
+        # We needed to only use the last column which would be (-1) in our specific case. basicallys
+        # what we want is to calculate mean/var for the dims that belong to features, e.g. in a 2d case like
+        # (B,C), we want to mean/var on dim=1. Having worked with BN, we might also assume the same here 
+        # that is if we have sth like (B,T,C) we would want to treat, B,T as batch and aggregate the mean/var
+        # along dim=(1,2). however, as we learned earlier, LayerNorm does not involve other samples at all, 
+        # and infact if we do this, we'll see despite the loss decreasing rapidly, our text generation are not
+        # good at all! so when it comes to LayerNorm we always normalize the feature dimensions, and in our case
+        # its just the last diminsion. 
+        # what was causing the issue here was this exact issue, since we were calculating the dims dynamically
+        # based on the inputs shape, for 2d inputs(ignoring batch) this would work as expected, but for 3d+, 
+        # it would aggregate other samples stats and therefore creating the discrepency in the output between 
+        # ours and pytorch's.s 
+        # (we were calculating the mean/var for dims=(1,2) while Pytorch was only calculating it on the last dim, 
+        # and hence the difference. (the output  shows that involving other samples adversly affect our output
+        # and hence  why BN is not used and instead LN is used.) 
+        # this happened becasue we dynamically tried to infer the dims by looking at the input shape
+        # the behavior for 2d shapes will be the same, however, for the 3d shapes, our results differ.
+        # we can define the aggregation along feature dims in Pytorch, so if we wanted to get the same 
+        # behavior in pytorch we had to write sth like this: 
+        # self.ln1 = nn.LayerNorm((context_size,head_size)) 
+        # that is instead of useing a single number denoting the dimension's size, we specify the dim's size
+        # explicticly. 
+        # obviously since we are coding this for our usecase, we dont bother getting the input shape here
+        # and use -1 to get the job done, otherwise, we would be getting the dim's size as input just like
+        # pytorch and based on the dim's size, decide how to do mean/var. 
+        # side note: note that if we use sth self.ln1 = nn.LayerNorm((context_size,head_size))  in our code, 
+        # during text generation, we no longer can start with context_size of 1, we must always start with
+        # sth like initial_token = torch.zeros(size=(1,8)).int() to get it working otherwise it'd complain
+        # about shape mismatch which is expected because unlike our method, its static (while ours dynamically
+        # would calculate the mean/var based on the inputsize) anyway, this shouldnt be an issue, becasue we
+        # dont need to do this as not only it doesnt benifit us but also creates more hassle!.
+        # side note2: aggregation in LN, may be benificial in other domains, as BN was, but for us, now it isnt
+        # so we only make the one that works with the last dim! 
+        # here's the wrong snipped that would create the wrong result for 3d inputs.
+        #dims = tuple(i for i in range(inputs.ndim-1,0,-1)) 
         # print(f'{dims=}')
+        dims = -1
         mean = inputs.mean(dim=dims, keepdim=True)
-        var = inputs.var(dim=dims,keepdim=True,unbiased=False)
-        # print(f'{mean.shape=}')
-        # print(f'{var.shape=}')
+        # to get the same outputas pytorch's, we use the biased version as well
+        var = inputs.var(dim=dims, keepdim=True, unbiased=False)
         # ​ (x−E[x])​
         # ----------    ∗ γ + β
         # sqrt(Var[x]+ϵ)
@@ -3026,15 +3047,15 @@ class LayerNorm(nn.Module):
 
 # lets test it 
 x = torch.randn(size = (3,8,300))
-ln = LayerNorm(300,False)
-ln_torch = nn.LayerNorm(300,elementwise_affine=True)
+ln = LayerNorm(300)
+ln_torch = nn.LayerNorm(300)
 out = ln(x)
 out_torch = ln_torch(x)
-# now we expect that each sample/row now to have mean 0 and var 1
+# now we expect that each sample/row now to have mean=0 and var=1
 # (peviously for batchnorm this was the opposite, the mean/var 
 # were computed for the whole samples,for each columns so that
-# out[:,0] would be mean0var1, like wise out[:,1] and etc )
-# for layernorm however, we need out[0,:] to be mean0 var1
+# out[:,0] would be mean=0 var=1, likewise out[:,1] and etc )
+# for layernorm however, we need out[0,:] to be mean=0 var=1 now
 print(f"our's: {out[0,:].mean().item(), out[0,:].var().item()}")
 print(f"torch: {out_torch[0,:].mean().item(), out_torch[0,:].var().item()}")
 # ok now lets add this to our AttentionwithFFNetBlock and test it 
@@ -3061,10 +3082,10 @@ class AttentionwithFFNetBlock(nn.Module):
         self.ffnet = FeedForward(embd_size, head_size)
         # lets add the layernorm and to be sure our implementation works lets also test 
         # with pytorch's layernorm
-        self.ln1 = nn.LayerNorm(head_size)
-        self.ln2 = nn.LayerNorm(head_size)
-        # self.ln1 = LayerNorm(head_size)
-        # self.ln2 = LayerNorm(head_size)
+        # self.ln1 = nn.LayerNorm(head_size)
+        # self.ln2 = nn.LayerNorm(head_size)
+        self.ln1 = LayerNorm(head_size)
+        self.ln2 = LayerNorm(head_size)
 
     def forward(self, inputs:torch.Tensor) -> torch.Tensor:
         # since we have two blocks, we add skip-connection to both of them here
@@ -3116,8 +3137,8 @@ class BigramModelWithAttention(nn.Module):
                                               bias_attn=bias_attn)
                                      for _ in range(num_blocks)])
         # lets test both layers
-        self.ln1 = nn.LayerNorm(head_size)
-        # self.ln1 = LayerNorm(head_size)
+        # self.ln1 = nn.LayerNorm(head_size)
+        self.ln1 = LayerNorm(head_size)
         
         # finally the output fc layer 
         self.fc = nn.Linear(head_size, vocab_size)
@@ -3320,46 +3341,45 @@ print(f"{''.join(decode(output))}")
 # context_size =  8
 # device       =  cpu
 # use_bias_attn=  False
-# train: 4.3914  val: 4.385
-# train: 2.2519  val: 2.262
-# train: 2.1234  val: 2.169
-# train: 2.0534  val: 2.113
-# train: 1.9963  val: 2.079
+# train: 4.3906  val: 4.385
+# train: 2.2373  val: 2.244
+# train: 2.1070  val: 2.155
+# train: 2.0339  val: 2.102
+# train: 1.9812  val: 2.069
 # done!
+
+# For the that mad'
+# With of on tith, luidie anct, saws
+# Eule at botht if thou
+# Wlefted' you windian.
+
+# FLO-wike sluke slen:
+# I have, ladik, anteraves,
+# norl wink
+# the bard a yeane, of lady. Whe, goshot I
+# thy brath his what:
+# Nown hondin the
+# blinsh, shat this the pandself livadet brives nefors.
+# ISIUS:
+# Aren that usir the of me
+# he hange wicHe mirs,
+# Behat!
+
+
+# TOLAT:
+# But ford, engelan this it'sabhanke hear rend these this in usse,--
+# Lord, strence'er thy?
+# In woes. IDandry,
+# Soset frongs neved
+# With haul'd nefonk 
 #
 #
-# And will juck o'
-#
-# KING RIVARDWIE, lurdit ance, wawtder; them pitter: But pereed.
-#
-# HABUCKINKE:
-# Whysbin.
-# Buts up. I dime the us lad king theath,
-# Mitil wink
-# tinne'
-#
-# Fary,
-#
-# KINGBULUTOFTHEN, kis, that loverd
-# Thaish,
-# A spost him dis the
-# blinshilsh to mine flome love youraderue conting
-# Wairn's oft lead thy kind not thy, prer hathe my Hermicciudshall say fack
-# But froly conclan this it'sa, Frarth:
-# A re.
-# It we ste, mile flead.
-#
-# HARCUCK:
-# At dea boy Hand of where lise.
-#
-# KIt from stor, I'll deanus'den frike
 #
 # for some reason, our layernorm achieves a much lower loss, much quicker, however the text seems to be worse
 # than pytorch's for some reason and I have no idea what is causing this! 
-# for now i'll be using pytorch's layernorm until I figure out whats wrong with mycode!
 # ok there were two issues, 1.our gamma and beta werent trained! becasue we forgot to wrap them in nn.Parameter
-# and the second reason was, we didnt include the 0ths dimension like pytorch's and when we included
-# that the result got similar. 
+# and the second reason was, we were aggregating the last two dims like BN, whereas we should have only used the
+# last dim, as we should not involve other samples in normalization. (I explained this thoroughly in the LayerNorm class)
 # 
 # now how can we improve more? we implemented the paper, and what remains is to test with hyperparameters
 # so lets increase the model size now and see how much improvement we can get 
