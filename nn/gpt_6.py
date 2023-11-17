@@ -2966,19 +2966,461 @@ print(f"{''.join(decode(output))}")
 # came a year later than batchnormalization paper, but the difference between them is that, unline batchnormalization
 # it works on a per sample basis and does not involve using othersamples to normalize a specific sample (basically
 # samples dont affect eachother)
+# As pytorch docs puts it:
+# "Unlike Batch Normalization and Instance Normalization, 
+#  which applies scalar scale and bias for each entire channel/plane with the affine option,
+#  Layer Normalization applies per-element scale and bias with elementwise_affine"
 # the implementation is similar to the batchnormalization, and it does not require calculating running_mean/var
-# lets implement layer norm here 
-class LayerNorm1d(nn.Module):
-    def __init__(self, in_features, eps=1e-6, momentum=0.1) -> None:
+# we can use the pytorch module just fine, but since its really similar to BN, lets implement it here 
+# 
+#%%
+class LayerNorm(nn.Module):
+    def __init__(self, in_features, eps=1e-5, unbiased=True) -> None:
         super().__init__()
         self.in_features = in_features
         self.eps = eps
-        self.momentum = momentum
-        
-        self.mean = torch.zeros(size=(1, in_features))
-        self.var = torch.ones(size=(1, in_features))
+        self.unbiased = unbiased
         # alpha_ln_gain
-        self.alpha_ln_gain = torch.ones_like(self.var) 
+        # note that since we are inheriting from nn.Module, and are in pytorch teritory
+        # we need to use nn.Parameter to mark our parameters trainable! otherwise 
+        # pytorch will ignore them, even if we set the requires_grad as true!
+        self.alpha_ln_gain = torch.nn.Parameter(torch.ones(size=(1,in_features)))
         # beta_ln_bias
-        self.beta_ln_bias = torch.zeros_like(self.mean)
+        self.beta_ln_bias = torch.nn.Parameter(torch.zeros(size=(1,in_features)))
+    
+    def forward(self, inputs):
+        # calculate the mean and var
+        # we calculate the mean for the last dims, that is feature dims (we are trying to normalize the features)
+        # so we specify what we consider feature dims.
+        #
+        # note: initially I wrote 
+        # dims = tuple(i for i in range(inputs.ndim-1,0,-1)) which didnt cause any errors, and infact
+        # resulted in a very low loss, however the text generation seemed kind of random, and differed
+        # from the pytorch's Layernorm version(0.60 vs 1.90 of pytorch's which is a huge diference). 
+        # Further investigation revealed the issue which was the 0ths dim was not included (dims was
+        # (2,1), whereas it should have been (2,1,0) (this is the Pytorch's default behavior) and basically
+        # makes this into an elemntwise mean/var normalization (i.e. there will be 1 mean/var for everything!) 
+        # and heres the correct dims, which produces the same output as Pytorch's with a slight difference
+        # in loss (1.99 vs 1.98 of pytorch's)
+        # note that the difference between LayerNorm and BatchNorm, is not about that Layrnorm does not include the batch dim
+        # rather, the gamma/beta were only applied to each channels, and were affected by other samples. 
+        # here gamma/beta apply elementwise to the input, so each element has a gamma/beta component thats
+        # specific to it. and also we can choose how many dims to consider as feature dims and to use in mean/var
+        # calculation. so this is the the way to go
+        # !(note that if we dont include this case, our sample works)
+        #! seems my initial thought is correct, we dont use batch dim, 
+        # !but what about elemntwise=True/False, unbiased=True/False?
+        dims = tuple(i for i in range(inputs.ndim-1,0,-1)) 
+        # print(f'{dims=}')
+        mean = inputs.mean(dim=dims, keepdim=True)
+        var = inputs.var(dim=dims,keepdim=True,unbiased=False)
+        # print(f'{mean.shape=}')
+        # print(f'{var.shape=}')
+        # ​ (x−E[x])​
+        # ----------    ∗ γ + β
+        # sqrt(Var[x]+ϵ)
+        # 
+        xhat = (inputs - mean)/torch.sqrt(var+self.eps)  
+        out = xhat * self.alpha_ln_gain + self.beta_ln_bias
+        return out
+
+# lets test it 
+x = torch.randn(size = (3,8,300))
+ln = LayerNorm(300,False)
+ln_torch = nn.LayerNorm(300,elementwise_affine=True)
+out = ln(x)
+out_torch = ln_torch(x)
+# now we expect that each sample/row now to have mean 0 and var 1
+# (peviously for batchnorm this was the opposite, the mean/var 
+# were computed for the whole samples,for each columns so that
+# out[:,0] would be mean0var1, like wise out[:,1] and etc )
+# for layernorm however, we need out[0,:] to be mean0 var1
+print(f"our's: {out[0,:].mean().item(), out[0,:].var().item()}")
+print(f"torch: {out_torch[0,:].mean().item(), out_torch[0,:].var().item()}")
+# ok now lets add this to our AttentionwithFFNetBlock and test it 
+#
+#%%
+class AttentionwithFFNetBlock(nn.Module):
+    def __init__(self, context_size, embd_size, num_head, head_size, bias_attn=False ) -> None:
+        super().__init__()
+        self.head_size = head_size
+        self.context_size = context_size
+        self.num_head = num_head
+        self.embd_size = embd_size
+        self.bias_attn = bias_attn
         
+        self.attn = MultiHeadAttention(num_head=num_head,
+                                       head_size=head_size//num_head,
+                                       embd_size=embd_size, 
+                                       context_size=context_size,
+                                       bias_attn=bias_attn)
+        # note as a reminder, this is being applied
+        # after an attention module, and attention module's input is embd_size, while its 
+        # output-dim is head_size (we know they are usually the same, but to be flexible
+        # we always use head_size to be on the safe side))
+        self.ffnet = FeedForward(embd_size, head_size)
+        # lets add the layernorm and to be sure our implementation works lets also test 
+        # with pytorch's layernorm
+        self.ln1 = nn.LayerNorm(head_size)
+        self.ln2 = nn.LayerNorm(head_size)
+        # self.ln1 = LayerNorm(head_size)
+        # self.ln2 = LayerNorm(head_size)
+
+    def forward(self, inputs:torch.Tensor) -> torch.Tensor:
+        # since we have two blocks, we add skip-connection to both of them here
+        # we could aggerate them as one and a add the skip connection to their output
+        # but this is less benificial than creating seprate skip-connections for each block
+        # to see this in action, uncomment this and comment the latter part and run the test
+        # out = self.attn(inputs)
+        # out =  self.ffnet(out)
+        # return out + inputs 
+        # note that when it comes to applying normalization, there are two ways of going about it
+        # 1.normalize the outputs of the attention block
+        # 2.normalize the inputs before going to the attention block
+        # the first one is the one the paper initially used, but later on it was shown that actually
+        # normalzing the input yields better result, so we test both cases here
+        # so check and see how it affects it! (personally,however, I found the first approach yielding midly
+        # better loss, but I only tested it on small scale, so we will test this more)
+        # method 1:
+        # out = self.ln1(self.attn(inputs)) + inputs
+        # out = self.ln2(self.ffnet(out))  + inputs
+        # method 2:
+        out = self.attn(self.ln1(inputs)) + inputs
+        out =  self.ffnet(self.ln2(out))  + inputs
+        return out
+
+# we also need to add layernorm at the end of the block before feeding it to the nextlayer
+class BigramModelWithAttention(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, num_blocks, device='cpu', bias_attn=False) -> None:
+        super().__init__()
+        self.vocab_size=  vocab_size
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.num_head = num_head
+        self.head_size = head_size
+        # now lets add the number of blocks 
+        self.num_blocks = num_blocks
+        self.device = device
+        # token/character embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, embd_size)
+        # position embeddings
+        self.position_embeddings = nn.Embedding(context_size, embd_size)
+        # now lets use attention blocks instead of a multi-head-attention and ffnet
+        # note that for this to work properly serialy, the output of this needs to be
+        # the same as its input (which is embd_size) which by default for our case should
+        # be ok.
+        self.blocks = nn.Sequential(*[AttentionwithFFNetBlock(context_size=context_size, 
+                                              embd_size=embd_size,
+                                              num_head=num_head,
+                                              head_size=head_size,
+                                              bias_attn=bias_attn)
+                                     for _ in range(num_blocks)])
+        # lets test both layers
+        self.ln1 = nn.LayerNorm(head_size)
+        # self.ln1 = LayerNorm(head_size)
+        
+        # finally the output fc layer 
+        self.fc = nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels:torch.Tensor=None)->torch.Tensor:
+        B,T = inputs.shape
+        # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
+        token_embds = self.token_embeddings(inputs)
+        # dont forget, our positional embd only involves the token position information
+        position_embds = self.position_embeddings(torch.arange(T,device=self.device))
+        embds_combilned = token_embds + position_embds
+        # now lets have several multi-head-attentions instead of 1, one after the other
+        out = self.blocks (embds_combilned)
+        # normalize by layernorm 
+        out = self.ln1(out)
+        # and finally the logits 
+        logits = self.fc(out)
+        loss = None
+        if labels is not None:
+            # remember the cross entropy wanted its input in B,C,T while ours is in (B,T,C)
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss 
+
+    def generate(self, idxs, max_token_count):
+        assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
+        for i in range (max_token_count):
+            # we keep feeding the input to the model and get the next character
+            # but since we use positional embeddings, we are limited to context_size
+            # of tokens at anygiven time to feed the network or we face an error 
+            # so we always tke the last T tokens from our input. we use negative
+            # slicing, so if we have less than context_size, we only grab that many
+            # otherwise, we get an error, becasue obviously at the begining we may 
+            # start from a single token, denoting context_size of 1, while our model
+            # expects like full context_size (e.g. 8 or more)
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            # since we are after the next character only and we have to choose among 
+            # context_size number of tokens, we get the last one and treat it as the next
+            # character to calculate its probablity to sample from 
+            logits = logits[:,-1,:] 
+            # calulate the probs
+            probs = logits.softmax(dim=-1)
+            # sample the next character/token 
+            idx_token_next = torch.multinomial(probs, num_samples=1, replacement=True)
+            # add this to our existing tokens in idxs 
+            idxs = torch.cat((idxs, idx_token_next), dim=-1)
+            
+        return idxs 
+
+# and now lets train with the new change and see how it performs:
+print(f'using more blocks with skip-connection-layernorm')
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 4
+block_num = 3
+head_size = 32
+embd_size = 32
+context_size = 8 
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.001
+batch_size = 32
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size,
+                                 num_blocks=block_num,
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'block_num    =  {block_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+# prints
+# ----------------
+#using more blocks with skip-connection-layernorm(using ours!-the wrong layernorm implementation)
+# see the note at the end.
+# param_count  =  38,753
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.3881  val: 4.381
+# train: 1.5804  val: 1.594
+# train: 1.0614  val: 1.102
+# train: 0.8326  val: 0.8784
+# train: 0.7059  val: 0.7436
+# done!
+#
+#
+#
+# VNIUKIVUTADES:'Kow seof on tith, owiw that thasawtde us athly hakef Bot pele,
+# I al,
+# I windis,
+# And i-wradtsl! u slenerugh talelad kied togange,
+# norl wink
+# Tint ar in yoroqusendsld elust, gh hote woll brath hiss,
+# A yoce nerdd verelLe I'lampl hat thisseflled
+# Shell wharderw by in belourrns mominle thid;
+# Aulir,
+# Antoor plall'aege myane momo'thead bust ofting cow mol, esth'ang s. mit'sa, arak h:
+# I thouge;
+# Shat tam
+# BONose,
+# Low she storncexey an pot owoe whe?
+# My sted-s't foot song
+# qoulixe?
+# Lur'deae:
+# fol
+#
+#--------------
+#
+# using more blocks with skip-connection-layernorm(using pytorch's)
+# param_count  =  39,201
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.3906  val: 4.385
+# train: 2.2358  val: 2.242
+# train: 2.1059  val: 2.154
+# train: 2.0323  val: 2.098
+# train: 1.9834  val: 2.068
+# done!
+#
+# Fontive that mad's wise:
+# But tith, luidien:
+# Yord awto-must this have deat perefed al,
+# thing is this is.
+#
+# PARUABE:
+# O.
+#
+# WANWHAR:
+# Yow king, what wirny.
+# No nare, near in yeane, of lady. Whe, ghue tinst of this him,
+# Murspose him dis the
+# thine plock, this the pandse:
+# Which will contend
+# Whiresim thele this:
+# Wutire
+# A too, the but me wicHe micciodsh him are ting comf honamble's mur. Kin'sabhanke hear rend the thy the
+# But seades, the strenced,
+# Liven. How earse?
+# Mursin.
+#
+# Nt from sing, I'll be
+# Lur'd neforri
+#
+# --------------
+# our layernorm fixed: 
+# using more blocks with skip-connection-layernorm
+# param_count  =  39,201
+# head_num     =  4
+# block_num    =  3
+# head_size    =  32
+# embd_size    =  32
+# context_size =  8
+# device       =  cpu
+# use_bias_attn=  False
+# train: 4.3914  val: 4.385
+# train: 2.2519  val: 2.262
+# train: 2.1234  val: 2.169
+# train: 2.0534  val: 2.113
+# train: 1.9963  val: 2.079
+# done!
+#
+#
+# And will juck o'
+#
+# KING RIVARDWIE, lurdit ance, wawtder; them pitter: But pereed.
+#
+# HABUCKINKE:
+# Whysbin.
+# Buts up. I dime the us lad king theath,
+# Mitil wink
+# tinne'
+#
+# Fary,
+#
+# KINGBULUTOFTHEN, kis, that loverd
+# Thaish,
+# A spost him dis the
+# blinshilsh to mine flome love youraderue conting
+# Wairn's oft lead thy kind not thy, prer hathe my Hermicciudshall say fack
+# But froly conclan this it'sa, Frarth:
+# A re.
+# It we ste, mile flead.
+#
+# HARCUCK:
+# At dea boy Hand of where lise.
+#
+# KIt from stor, I'll deanus'den frike
+#
+# for some reason, our layernorm achieves a much lower loss, much quicker, however the text seems to be worse
+# than pytorch's for some reason and I have no idea what is causing this! 
+# for now i'll be using pytorch's layernorm until I figure out whats wrong with mycode!
+# ok there were two issues, 1.our gamma and beta werent trained! becasue we forgot to wrap them in nn.Parameter
+# and the second reason was, we didnt include the 0ths dimension like pytorch's and when we included
+# that the result got similar. 
+# 
+# now how can we improve more? we implemented the paper, and what remains is to test with hyperparameters
+# so lets increase the model size now and see how much improvement we can get 
+# 
+# %%
+print(f'using more blocks with skip-connection-layernorm')
+torch.manual_seed(255)
+random.seed(255)
+
+head_num = 6
+block_num = 6
+head_size = 384
+embd_size = 384
+context_size = 256
+vocab_size = len(vocab_list)
+device = 'cpu'
+use_bias_attn = False
+
+lr = 0.0001
+batch_size = 256
+max_iter = 5000
+eval_period = 1000
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size,
+                                 num_blocks=block_num,
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'block_num    =  {block_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+
+for i in range(max_iter):
+    # read a batch 
+    x, y = get_batch('train', batch_size=batch_size)
+    logits, loss = model(x,y)
+    
+    # calculate the smoother loss on multiple batches on train/val splits
+    if i%eval_period == 0:
+        losses = evaluate_loss(200, device)
+        print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+    # zero-out gradients 
+    model.zero_grad()
+    # do a backward pass 
+    loss.backward()
+    # do a single optimization step 
+    optimizer.step()
+
+print(f'done!')
+# lets see how this model fairs now and what it generates 
+initial_token = torch.zeros(size=(1,1)).int()
+output = model.generate(initial_token, max_token_count=500).squeeze().tolist()
+print(f"{''.join(decode(output))}")
