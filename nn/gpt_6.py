@@ -1718,6 +1718,11 @@ for i in range(max_iter):
         print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
     # zeroout_grads
     model.zero_grad(True)
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+    
     loss.backward() 
     optimizer.step()
 print(f'done!')
@@ -2093,6 +2098,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+    
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -2342,6 +2352,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah
+    
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -2601,6 +2616,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+    
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -2853,6 +2873,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+    
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -3265,6 +3290,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+    
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -3467,6 +3497,7 @@ print(f'block_num    =  {block_num}')
 print(f'head_size    =  {head_size}')
 print(f'embd_size    =  {embd_size}')
 print(f'context_size =  {context_size}')
+print(f'batch_size   =  {batch_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
@@ -3482,6 +3513,11 @@ for i in range(max_iter):
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
     model.zero_grad()
+    # we ccould also do 
+    # optimizers.zero_grad() 
+    # but since our optimizer 'only' uses our models parameters, they are basically the same
+    # note we talk about this in more details later which one to use and where later on inshaalah.
+        
     # do a backward pass 
     loss.backward()
     # do a single optimization step 
@@ -3615,12 +3651,192 @@ print(f"{''.join(decode(output))}")
 # if the imploteful of late, our chante faults
 # He that wretche with this.
 #----------------------------------
+#
 # which is remarkably better than all of our previous outputs. so as we increased our model capacity
 # we witnessed much better results. 
 # side note:note that our positinal emebdding's need to be placed on the cpu or gpu explicitly 
 # after model instantiation, or otherwise, as its set separately as the model, simply doing model.cpu()
 # or model.cuda() wouldnt do it. so here I simply used cuda. (or we have to set the device in forward
 # dynamically sth like device = next(model.parameters()).device)
+#
+#%%
+# training this with large batchsize was really hard as it consumed a lot of vram, can we somehow
+# do sth about it maybe? yes, pytorch supports half-precision training/and quantization for inference
+# we use half-precision training(or as some refer to by mixed precision becasue for specific ops fp32 is 
+# used to not hinder the optimization process) to train in fp16 rather than full precision or fp32 and it should 
+# boost our training speed and decrease our vram consumption. we look at quantization in its respective 
+# section in the future. 
+# https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/
+# https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
+# cuzwe are in an ipython environment lets free the vram cache manually
+# Best Practices
+# We strongly recommend using mixed precision with torch.amp or the TF32 mode (on Ampere and later CUDA devices) whenever possible when training a network. If one of those approaches doesn’t work, however, we recommend the following:
+#     High Performance Computing (HPC) applications, regression tasks, and generative networks may simply require full float32 IEEE precision to converge as expected.
+#     Try selectively applying torch.amp. In particular we recommend first disabling it on regions performing operations from the torch.linalg module or when doing pre- or post-processing. These operations are often especially sensitive. Note that TF32 mode is a global switch and can’t be used selectively on regions of a network. Enable TF32 first to check if a network’s operators are sensitive to the mode, otherwise disable it.
+#     If you encounter type mismatches while using torch.amp we don’t suggest inserting manual casts to start. This error is indicative of something being off with the network, and it’s usually worth investigating first.
+#     Figure out by experimentation if your network is sensitive to range and/or precision of a format. For example fine-tuning bfloat16-pretrained models in float16 can easily run into range issues in float16 because of the potentially large range from training in bfloat16, so users should stick with bfloat16 fine-tuning if the model was trained in bfloat16.
+#     The performance gain of mixed precision training can depend on multiple factors (e.g. compute-bound vs memory-bound problems) and users should use the tuning guide to remove other bottlenecks in their training scripts. Although having similar theoretical performance benefits, BF16 and FP16 can have different speeds in practice. It’s recommended to try the mentioned formats and use the one with best speed while maintaining the desired numeric behavior.
+# https://nvlabs.github.io/eccv2020-mixed-precision-tutorial/
+
+torch.cuda.memory.empty_cache()
+#%%
+start = time.time()
+head_num = 2        #2 #4  #6
+block_num = 6 # aka layers!# 1 # 2# 4# 6s
+head_size = 288     #18 #36 #72 #144 #288 #396 #384
+embd_size = 288     #18 #36 #72 #144 #288 #396 #384
+context_size = 64  #8  #16 #32 #64*  #128 #256
+vocab_size = len(vocab_list)
+device = 'cuda'
+use_bias_attn = False
+
+lr = 0.0001
+batch_size = 128
+max_iter = 5000
+eval_period = 1000
+# enable mixed-precision 
+# enabling it can boost our training speed and depending on the model lower the memory
+# usgae drastically. it may also even improve our results to some extend!
+use_mix_precision = True
+
+model = BigramModelWithAttention(vocab_size=vocab_size, 
+                                 context_size=context_size, 
+                                 embd_size=embd_size,
+                                 num_head=head_num, 
+                                 head_size=head_size,
+                                 num_blocks=block_num,
+                                 device=device,
+                                 bias_attn=use_bias_attn)
+model = model.to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr)
+param_count = sum(p.nelement() for p in model.parameters())
+
+
+print(f'param_count  =  {param_count:,}')
+print(f'head_num     =  {head_num}')
+print(f'block_num    =  {block_num}')
+print(f'head_size    =  {head_size}')
+print(f'embd_size    =  {embd_size}')
+print(f'context_size =  {context_size}')
+print(f'batch_size   =  {batch_size}')
+print(f'device       =  {device}')
+print(f'use_bias_attn=  {use_bias_attn}')
+print(f"mixed-precision {'Enabled' if use_mix_precision else 'Disabled'}")
+
+# before we start the training loop, we create a scaler 
+# using the enabled argument we can easily enable/disable autocast
+scaler = torch.cuda.amp.grad_scaler.GradScaler(enabled=use_mix_precision)
+
+
+for i in range(max_iter):
+    # this context manager will take care of the dtype conversions for us
+    # when we set enabled=False, the scaler and autocast basically become no op!
+    # and we can seemlessly switch between them without any code changes at all!
+    with torch.cuda.amp.autocast(enabled=use_mix_precision):
+     # read a batch 
+        x, y = get_batch('train', batch_size=batch_size)
+        x,y= tuple(t.to(device) for t in (x,y))
+        logits, loss = model(x,y)
+        
+        # calculate the smoother loss on multiple batches on train/val splits
+        if i%eval_period == 0:
+            losses = evaluate_loss(200, device)
+            print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
+        # zero-out gradients 
+        model.zero_grad()
+        # we ccould also do 
+        # optimizers.zero_grad() 
+        # but since our optimizer 'only' uses our models parameters, they are basically the same
+        # note we talk about this in more details later which one to use and where later on inshaalah.
+        
+        # scale the loss and then do a backward pass 
+        scaler.scale(loss).backward()
+        # do a single optimization step - but making sure we take into account the mixed dtypes now!
+        # so we instead use scaler.step and pass the optimzier so it takes care of everything for us.
+        #  also note that if for whateevr reason we wanted to check the gradients, or clip them, etc
+        # we have to first unscale them. 
+        # basically all gradients produced by scaler.scale(loss).backward() are scaled. 
+        # so if we wish to modify or inspect the parameters .grad attributes between backward()
+        # and scaler.step(optimizer), we need to unscale them first using scaler.unscale_(optimizer)
+        # and then carry on whith whatever it is that we intend on doing!(we will come back to this later on inshaallah)
+        scaler.step(optimizer)
+        # and finally update the scaler for the next iteration 
+        scaler.update()
+        # save model params 
+        if i%5000==0:
+            # When saving, save the scaler state dict alongside the usual model and optimizer state dicts. 
+            # we either  do this at the beginning of an iteration before any forward passes, 
+            # or at the end of an iteration after scaler.update()
+            # read more here https://pytorch.org/tutorials/recipes/recipes/amp_recipe.html
+            checkpoint = {"model": model.state_dict(),
+                         "optimizer": optimizer.state_dict(),
+                         "scaler": scaler.state_dict()}
+
+torch.save(checkpoint, 'checkpoint_model_mx.pth')
+print(f'done!')
+print(f'elapsed: {time.time() - start} ')
+
+# lets see how this model fairs now and what it generates 
+model.cuda()
+#model.device ='cuda'
+initial_token = torch.zeros(size=(1,1)).int().cuda()
+output = model.generate(initial_token, max_token_count=1000).squeeze().tolist()
+print(f"{''.join(decode(output))}")
+#prints
+# param_count  =  5,546,369
+# head_num     =  2
+# block_num    =  6
+# head_size    =  288
+# embd_size    =  288
+# context_size =  64
+# device       =  cuda
+# use_bias_attn=  False
+# train: 4.3098  val: 4.309
+# train: 1.7753  val: 1.891
+# train: 1.5260  val: 1.706
+# train: 1.4175  val: 1.622
+# train: 1.3548  val: 1.582
+# done!
+# elapsed: 174.44584369659424 
+
+# And never be why tears do counsel the beared?
+# By all whish no hours of thy enemest, and what
+# are would cries lack is thine are fiving:
+# Oved did your commit i'
+# since, you have of the town to tear thee I
+# he was-larded their sight? and to what have me deserve;
+# Had no kind hath handsbury'd thou noble,
+# That I so? 'Tis found too against stand
+# Hererated endured with her souls.
+
+# queen:
+# No honoured thee to bear it.
+
+# Third Messenger:
+# Our hap an happy death?
+# O, they no follow losom
+# To cure take, noble womb
+# I nobly well every divince was it enough.
+
+# NORTHUMBERLAND:
+# I let him not with your grace.
+# Curses not murderer, of a vow the acces from a bird,
+# Which all seem her charbised herest ignorance
+# From that kishes this sound, as your honour.
+
+# ProfanedOH:
+# I do haste no deputy?
+
+# ROMEO:
+# Reled by your now could save your false to you:
+# Learer hope wast not Comtanding and will my son
+# To murde his lands are your counterlands
+# May sworehe for a doubted pawnicless. Alason, though I again:
+# But ha! Farwarrand, gen
+
+
+
+#%%
 # this was gpt! lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
 # document completer vs chatgptetc 
 
@@ -3726,47 +3942,28 @@ print(f"{''.join(decode(output))}")
 
 # about vision transormers 
 # Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, the different versions, and the importance of libraries like Hugging Face:
-
 # 1. Underlying Idea:
 #    Vision transformers are a variant of transformers that have been adapted for computer vision tasks. While convolutional neural networks (CNNs) have traditionally been the dominant architecture for image processing, vision transformers aim to explore the effectiveness of transformers in visual tasks. The underlying idea is to apply self-attention mechanisms to capture global dependencies in images and enable parallel processing of the entire image.
-
 #    The key intuition behind vision transformers is that images can be reshaped into sequences of patches, similar to sentences in natural language processing. These patches are then fed into the transformer model, allowing it to capture relationships between patches and learn meaningful representations.
-
 # 2. How Vision Transformers Work:
 #    Vision transformers consist of an encoder, similar to the original transformer architecture. Let's explain their functioning:
-
 #    - Patch Extraction: The input image is divided into a set of smaller patches. Each patch represents a local region of the image and is typically represented as a vector.
-
 #    - Positional Embedding: Similar to transformers in NLP, vision transformers require positional information to capture spatial relationships between patches. Positional embeddings are added to each patch vector to encode its relative position within the image.
-
 #    - Encoder: The encoder processes the sequence of patch embeddings and performs self-attention operations to model the dependencies between patches. The self-attention mechanism allows each patch to attend to other patches, capturing global relationships in the image. The encoder stack typically consists of multiple layers, each containing self-attention mechanisms and feed-forward neural networks.
-
 #    - Classification Head: At the end of the encoder, a classification head is added to produce the final output. This head can be a simple linear layer that maps the transformer's output to the desired number of classes for classification tasks.
-
 #    By leveraging self-attention mechanisms, vision transformers can capture long-range dependencies and global context in images, allowing them to achieve competitive performance on various computer vision tasks.
-
 # 3. Versions of Vision Transformers:
 #    Vision transformers are a relatively new development, and several versions and variations have emerged to explore their effectiveness in different settings. Here are a few notable versions:
-
 #    - ViT (Vision Transformer): The Vision Transformer introduced in the paper "An Image Is Worth 16x16 Words" is the foundational work in this field. It demonstrated that transformers can achieve competitive performance on image classification tasks when applied to image patches.
-
 #    - DeiT (Data-efficient Image Transformers): The Data-efficient Image Transformers introduced in the paper "Training ViT Models on Noisy Datasets Improves ImageNet Classification" focused on improving the data efficiency of vision transformers. It introduced techniques such as distillation and noisy student training to achieve state-of-the-art performance even with limited labeled data.
-
 #    - TNT (Transformer in Transformer): The Transformer in Transformer introduced in the paper "Transformer in Transformer" explores an architecture with multiple layers of transformers. It applies a second-level self-attention mechanism within each transformer layer, allowing for more fine-grained modeling of local and global dependencies.
-
 #    These versions highlight the ongoing research and exploration in the field of vision transformers, aiming to improve performance, efficiency, and applicability in various computer vision tasks.
-
 # 4. Importance of Libraries like Hugging Face:
 #    Hugging Face, as mentioned in the previous response, is an essential library in the context of vision transformers. It provides tools and resources that facilitate working with vision transformers and accelerate research and development in computer vision. Here's how it relates to vision transformers:
-
 #    - Pre-trained Models: Hugging Face's Model Hub includes pre-trained vision transformer models like ViT and DeiT. These pre-trained models can be readily used for various computer vision tasks, such as image classification and object detection.
-
 #    - Transformers Library: Hugging Face's Transformers library, originally focused on NLP, has expanded to include vision transformers as well. It provides a consistent and user-friendly API for working with transformers, including vision transformers. This allows developers and researchers to leverage existing methodologies and tools to work with vision transformer models seamlessly.
-
 #    - Data Processing and Augmentation: Hugging Face's library also includes utilities for data processing and augmentation specific to computer vision tasks. These tools help prepare and preprocess image data, enabling efficient training and evaluation of vision transformer models.
-
 #    - Community and Documentation: Hugging Face has a thriving community of researchers, developers, and enthusiasts working in the field of computer vision and transformers. The community actively contributes to the library, shares their experiences, and provides support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, allowing users to quickly understand and utilize vision transformer models.
-
 #    The availability of pre-trained models, consistent APIs, data processing tools, and a supportive community makes Hugging Face an essential resource for researchers and practitioners working with vision transformers. It simplifies the development and deployment of vision transformer models, fostering rapid progress and advancements in the field of computer vision.
-
 # In summary, vision transformers adapt the transformer architecture for computervision tasks by dividing images into patches, applying self-attention mechanisms, and capturing global relationships. They have several versions such as ViT, DeiT, and TNT, each exploring different aspects of vision transformer architectures. Libraries like Hugging Face provide pre-trained models, tools for data processing, and a supportive community to facilitate working with vision transformers and accelerate research in computer vision.
+#
