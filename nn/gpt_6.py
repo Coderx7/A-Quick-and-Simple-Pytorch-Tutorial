@@ -1632,6 +1632,10 @@ class BigramModelWithAttention(nn.Module):
         # the current token count as well, if the inputs has 3 tokens currently, we
         # will creeate position embeddings for 0,1 and 2, and for the next input
         # this continues likewise. this results in (T,E)
+        #! explain positional embeddings 
+        # this is called absolute position embedding itsl ike sinusodal position embedding that was
+        # introduced in the original paper! explain more https://www.youtube.com/watch?v=o29P0Kpobz0
+        #!
         position_embeddings = self.position_embd(torch.arange(T,device=self.device))
         # print(f'pos_embd:{position_embeddings.shape}')
         # and lets add the two embeddings together
