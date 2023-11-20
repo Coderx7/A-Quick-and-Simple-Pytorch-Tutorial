@@ -1,16 +1,22 @@
 #%%
 # in the name of God the most compassionate the most merciful
-# in this section we will have a look at how a GPT model works
-# in this section we will implement attention module, and see 
-# how it works and lean more about its (sel-attention, cross
+# in this section we will have a look at how a GPT(which is 
+# short for Generative Pretrained Transformer) model works,
+# in this section we will implement the attention mechanism
+# which is the foundation of transformers, and see 
+# how it works and lean more about it (sel-attention, cross
 # attention, multi-head attention, etc)
+# 
+# beore  we delve into the implementation details, we have to take a detour
+# and discuss some underlying concepts and techniques involved.
 # 
 # so how are we going about this. we need to create a language model
 # and then progressively imporve it with attention mechanism.
 # we will basically be creating a kind of chatgpt (minus its chat capability and
 # its obviously great perormance :)) 
-# to keep this as simple as possible and not lose track of the important concepts involved,
-# we can use our initial bigram model as the base model and work on improving that with attention.
+# to keep this as simple as possible and not lose track of the 
+# important concepts involved, we can use our initial bigram model
+# as the base model and work on improving that with attention.
 # so lets start
 #
 # first lets import the basic stuff 
@@ -1529,6 +1535,18 @@ class AttentionHead(nn.Module):
 # so we use a new layer to do this, its called value, and we instead use its output instead of inputs raw value.
 #
 # 
+#%%
+# TODO:  add the efficient/fused version 
+# this works, but its not really that efficient. usually when we have multiple operations, its much better
+# to create 1 larger operation than several smaller one, and when it comes to multiplication, we can do better
+# for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs, and then split
+# the result! lets see how its done and then do a simple benchmark to see if it actually is any better!
+class AttentionHead(nn.Module):
+    def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
+        super().__init__()
+        
+
+#%%
 #
 # before we jump in and add the attention module, lets review our base model and see how we can 
 # improve/prepare it before we incorporate the attention. 
@@ -1952,7 +1970,10 @@ class MultiHeadAttention(nn.Module):
         #                             embd_size, 
         #                             head_size, 
         #                             bias_attn) for _ in range(num_head)]
-        # but we can also use pytorch's nn.ModuleList which is a better equivalent than list
+        # but we can also use pytorch's nn.ModuleList which is a better equivalent than python list
+        # becasue all the modules it contains are properly registered, and will be visible by all 
+        # Module methods. which is not the case for python lists (i.e. .parameters() .children(), 
+        # .zero_grad, etc, e.g.) and therefore its best to use modulelist instead of pure python lists.
         # note that, nn.Sequential cant be used, becasue it runs the modules in succesion
         # i.e. serially, one after the other (feeds the output of the previous module to 
         # the next module, etc) which is not what we want. we want to calculate each head
@@ -1965,7 +1986,7 @@ class MultiHeadAttention(nn.Module):
                                          embd_size, 
                                          head_size,
                                          bias_attn) for _ in range(num_head))
-      
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         # note that head_size is usually the embd_size, so it covers the whole 
         # embeddings obviously, and note that each head will work on a portion
@@ -3477,7 +3498,7 @@ use_bias_attn = False
 
 lr = 0.0001
 batch_size = 128
-max_iter = 5000
+max_iter = 10000
 eval_period = 1000
 model = BigramModelWithAttention(vocab_size=vocab_size, 
                                  context_size=context_size, 
@@ -3677,7 +3698,7 @@ print(f"{''.join(decode(output))}")
 #     Figure out by experimentation if your network is sensitive to range and/or precision of a format. For example fine-tuning bfloat16-pretrained models in float16 can easily run into range issues in float16 because of the potentially large range from training in bfloat16, so users should stick with bfloat16 fine-tuning if the model was trained in bfloat16.
 #     The performance gain of mixed precision training can depend on multiple factors (e.g. compute-bound vs memory-bound problems) and users should use the tuning guide to remove other bottlenecks in their training scripts. Although having similar theoretical performance benefits, BF16 and FP16 can have different speeds in practice. It’s recommended to try the mentioned formats and use the one with best speed while maintaining the desired numeric behavior.
 # https://nvlabs.github.io/eccv2020-mixed-precision-tutorial/
-
+# https://blog.paperspace.com/automatic-mixed-precision-using-pytorch/
 torch.cuda.memory.empty_cache()
 #%%
 start = time.time()
@@ -3691,8 +3712,8 @@ device = 'cuda'
 use_bias_attn = False
 
 lr = 0.0001
-batch_size = 128
-max_iter = 5000
+batch_size = 256
+max_iter = 10000
 eval_period = 1000
 # enable mixed-precision 
 # enabling it can boost our training speed and depending on the model lower the memory
@@ -3842,6 +3863,35 @@ print(f"{''.join(decode(output))}")
 
 #ask chatgpt to write an introduction for each section (and explain someparts as if im 5!)
 
+# explain what an autoregressive mean and whats an autoregressive model and how its related to transformers, rnns or sequences, in depth
+# An autoregressive model is a type of statistical model where the current value in a sequence depends on the previous values in the same sequence. It assumes that the output is a function of the previous outputs, making it suitable for modeling sequential data.
+# In an autoregressive model, the prediction at each time step is conditioned on the previous values. This can be represented mathematically as:
+# y_t = f(y_{t-1}, y_{t-2}, ..., y_{t-n})
+# where y_t is the predicted value at time step t, f is the function that maps the previous values to the current prediction, and n is the order of the autoregressive model (i.e., the number of previous values considered).
+# Autoregressive models have been extensively used in various domains, including time series analysis, speech recognition, natural language processing, and image generation. They are particularly effective for modeling sequential data with temporal dependencies.
+# Now, let's discuss the relationship between autoregressive models and transformers, recurrent neural networks (RNNs), and sequences:
+# 1. Transformers:
+#    Transformers are a type of neural network architecture that have revolutionized various natural language processing tasks. They are based on the self-attention mechanism, which allows them to model dependencies between different positions in the input sequence. Transformers do not have an inherent autoregressive structure, as they can process all positions of the input sequence in parallel. However, they can be trained in an autoregressive manner using a technique called "masked language modeling" (e.g., in the case of the Transformer-based language model GPT).
+# 2. Recurrent Neural Networks (RNNs):
+#    RNNs are a class of neural networks that are widely used for modeling sequential data. They have a natural autoregressive structure, where the hidden state at each time step depends on the previous hidden states. RNNs can capture temporal dependencies in sequences by propagating information through time. However, RNNs suffer from vanishing or exploding gradients, limiting their ability to capture long-term dependencies effectively.
+# 3. Sequences:
+#    Autoregressive models are commonly used to model sequences, where the prediction at each time step depends on the previous values. This can be applied to various types of sequences, such as time series data, text, audio, or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions or generate new samples.
+# In summary, autoregressive models capture dependencies between previous and current values in a sequence. Transformers, RNNs, and other models can be designed with autoregressive components to model sequences effectively. Transformers, while not inherently autoregressive, can be trained in an autoregressive manner. RNNs have a natural autoregressive structure, allowing them to model sequential data. Autoregressive models are commonly used for modeling various types of sequences, enabling tasks such as prediction, generation, or sequence completion.
+
+# more exlpanation  for each point : 
+# Certainly! Let's delve deeper into each point:
+# 1. Transformers:
+#    Transformers are a type of neural network architecture that has gained significant attention in natural language processing tasks. Unlike traditional sequential models such as RNNs, transformers are based on the self-attention mechanism. This mechanism allows transformers to capture dependencies between different positions in the input sequence without relying on sequential processing. Thus, transformers do not have an inherent autoregressive structure as they can process all positions of the input sequence in parallel.
+#    However, transformers can be trained in an autoregressive manner using a technique called "masked language modeling." In this approach, during training, the model is fed with the input sequence where some positions are masked out. The model is then trained to predict the original values at the masked positions based on the unmasked context. This autoregressive training allows the model to learn the conditional dependencies between the previous and current positions in the sequence.
+# 2. Recurrent Neural Networks (RNNs):
+#    RNNs are a class of neural networks designed to model sequential data. They have a natural autoregressive structure due to their recurrent nature. At each time step, an RNN takes the current input and the previous hidden state as input and produces an output and a new hidden state. The hidden state at each time step encapsulates the information from previous time steps, allowing the model to capture the temporal dependencies within the sequence.
+#    RNNs are effective at modeling sequences with long-term dependencies, as they can propagate information through time. However, RNNs suffer from vanishing or exploding gradients, which can make it challenging for them to capture long-term dependencies effectively. This limitation led to the development of more advanced architectures like LSTMs and GRUs, which are variants of RNNs that address the gradient-related issues.
+# 3. Sequences:
+#    Autoregressive models are commonly used to model various types of sequences, including time series data, text, audio, or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions or generate new samples.
+#    For example, in time series analysis, autoregressive models such as ARIMA (AutoRegressive Integrated Moving Average) are widely used to predict future values based on past observations. In text generation, autoregressive language models like GPT (Generative Pre-trained Transformer) use the previously generated tokens to predict the next token, allowing for the generation of coherent and contextually relevant text.
+#    Autoregressive models are also employed in image generation tasks, such as PixelCNN, where each pixel is generated based on the previously generated pixels in a row-major or column-major order. This autoregressive approach ensures that the generated image is coherent and structurally meaningful.
+# In summary, while transformers do not have an inherent autoregressive structure, they can be trained in an autoregressive manner using techniques like masked language modeling. RNNs have a natural autoregressive structure, making them suitable for modeling sequential data. Autoregressive models can be applied to various types of sequences and are effective in capturing dependencies and generating coherent predictions or samples.
+
 
 # A transformer is a deep learning model architecture introduced in the paper "Attention Is All You Need" by Vaswani et al. in 2017. It was designed as an alternative to recurrent neural networks (RNNs) for tasks like machine translation but has since found applications in various natural language processing (NLP) and computer vision tasks.
 # The key idea behind the transformer architecture is the use of self-attention mechanisms. Instead of relying on recurrent connections, transformers utilize self-attention to capture dependencies between different positions in the input sequence. This allows the model to focus on relevant parts of the input sequence, improving parallelization and reducing the dependency on the sequence length.
@@ -3939,6 +3989,29 @@ print(f"{''.join(decode(output))}")
 # 5. Fine-tuning Framework: Hugging Face provides a fine-tuning framework that allows users to adapt pre-trained transformer models to specific downstream tasks. Fine-tuning involves training the pre-trained models on task-specific data to improve their performance on specific NLP tasks. Hugging Face's framework simplifies the fine-tuning process by providing utilities and APIs for efficient model adaptation.
 # 6. Community and Documentation: Hugging Face has a vibrant community of developers, researchers, and NLP enthusiasts. They actively contribute to the library, share their experiences, and provide support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, making it easy for newcomers to get started with transformers and the library.
 # Overall, Hugging Face plays a pivotal role in making transformers more accessible and user-friendly. It provides a platform for sharing, exploring, and utilizing pre-trained models, tokenization tools, model pipelines, and fine-tuning frameworks. The library has become a go-to resource for researchers, developers, and practitioners working with transformers, enabling rapid progress and advancements in the field of NLP.
+
+
+# lash attention latest improvements https://arxiv.org/pdf/2205.14135.pdf
+# linformer, sparseattention(openai), Performer, Reformer, etc
+# https://www.youtube.com/watch?v=1RaIS98jj1Q  
+# Transformers are slow and memory-hungry on long sequences, since the time and memory complexity
+# of self-attention are quadratic in sequence length. Approximate attention methods have attempted
+# to address this problem by trading off model quality to reduce the compute complexity, but often do
+# not achieve wall-clock speedup. We argue that a missing principle is making attention algorithms IO-
+# aware—accounting for reads and writes between levels of GPU memory. We propose FlashAttention,
+# an IO-aware exact attention algorithm that uses tiling to reduce the number of memory reads/writes
+# between GPU high bandwidth memory (HBM) and GPU on-chip SRAM. We analyze the IO complexity
+# of FlashAttention, showing that it requires fewer HBM accesses than standard attention, and is
+# optimal for a range of SRAM sizes. We also extend FlashAttention to block-sparse attention, yielding
+# an approximate attention algorithm that is faster than any existing approximate attention method.
+# FlashAttention trains Transformers faster than existing baselines: 15% end-to-end wall-clock speedup
+# on BERT-large (seq. length 512) compared to the MLPerf 1.1 training speed record, 3 speedup on
+# GPT-2 (seq. length 1K), and 2.4 speedup on long-range arena (seq. length 1K-4K). FlashAttention
+# and block-sparse FlashAttention enable longer context in Transformers, yielding higher quality models
+# (0.7 better perplexity on GPT-2 and 6.4 points of lift on long-document classification) and entirely new
+# capabilities: the first Transformers to achieve better-than-chance performance on the Path-X challenge
+# (seq. length 16K, 61.4% accuracy) and Path-256 (seq. length 64K, 63.1% accuracy).
+
 
 # about vision transormers 
 # Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, the different versions, and the importance of libraries like Hugging Face:
