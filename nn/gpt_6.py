@@ -23,7 +23,7 @@
 
 # for type hints
 from collections.abc import Iterable
-
+import math
 import random 
 import numpy as np
 
@@ -1537,14 +1537,134 @@ class AttentionHead(nn.Module):
 # 
 #%%
 # TODO:  add the efficient/fused version 
+# lets check  to see if  fusing kqv can improve our speed!
 # this works, but its not really that efficient. usually when we have multiple operations, its much better
 # to create 1 larger operation than several smaller one, and when it comes to multiplication, we can do better
 # for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs, and then split
 # the result! lets see how its done and then do a simple benchmark to see if it actually is any better!
-class AttentionHead(nn.Module):
-    def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
+# to give you an intuitive undrestanding try the following example ,
+# suppose we have our k,q,v layers
+# key = nn.Linear(5,5,bias=False)
+# query = nn.Linear(5,5,bias=False)
+# value = nn.Linear(5,5,bias=False)
+# x = torch.randn(size = (3,2,5))
+# and we want to calculatetheir outputs,before we do the multiplication, lets make sure their weights
+# are the something fixed so we can easily see it for ourselves whats going on. 
+# since the key,query and values's weights are 5,5, we initilize them with 0-25!
+# key.weight.data   =  torch.arange(0,25).view(5,5).float()
+# query.weight.data =  torch.arange(0,25).view(5,5).float()
+# value.weight.data =  torch.arange(0,25).view(5,5).float()
+# now lets calculte their outputs :
+# k,q,v = [m(x) for m in (key, query, value)]
+# now we said that we can do a single multiplication instead of 3 by merging the weights of key,query and
+# value how do we do that? we simply create a linear layer with 3 times the output size of the initial size
+# used for k,q,v layers. 
+# kqv = nn.Linear(5,15, bias=False)
+# now if we calculate the output of kqv, we should see the outputs match
+# kqv_output = kqv(x)
+# but the shape is (3,2,15)! no problem we split the last dimension into 3 seprate tensors!
+# k2,q2,v2 = torch.split(kqv_output, 5, dim=-1)
+# and now if we do 
+# (k==k2).all(), (q==q2).all(), (v==v2).all()
+# we get True,True,True
+# and its faster aswell, 
+
+class AttentionHead2(nn.Module):
+    def __init__(self, context_size, embd_size, head_size, use_bias=False) -> None:
         super().__init__()
+        self.context_size = context_size
+        self.embd_size = embd_size
+        # headsize is not needed as its value is the same as embd!
+        self.head_size = head_size
+        self.use_bias = use_bias
+        # now instead of having 3 separate linear layers for key,query and value with the same shape
+        # we create 1 large linear layer to do all the ops in one go instead of 3
+        self.kqv = nn.Linear(embd_size, head_size*3,bias=False)
+        # since we are in an autoregressive model we need to impose a constrain so that a token
+        # can only interact with the previous tokens. we use torch.tril to create a lower triangle
+        # that contains the numbers, will the upper triangle is all zeros.
+        # since this wont be optimized, we mark it as a buffer and register accordingly 
+        self.register_buffer('tril',torch.tril(torch.ones(context_size,context_size)))
         
+    
+    def forward(self, inputs):
+        kqv_out = self.kqv(inputs)
+        # since we need some info about the inputs shape such as sequence length 
+        # we extract them here for ease of use
+        B,T,C  = inputs.shape
+        k,q,v = kqv_out.split(self.head_size, dim=-1)
+        # now lets calculate our weight matrix from the data
+        weight = q@k.transpose(-2,-1) * self.head_size**-0.5
+        # we mask the weights based on tril, and set all enetries that are 0 to -inf
+        # so when doing softmax, -infs become 0 and everything comes to place!
+        # note that our input sequence may be as small as 1 up to context_size
+        # so we need to account for this as well (the case of sequence length of 1
+        # is when at test time we decide to generate some text using the starting token
+        # which can be of any length, 1 or more. this way we dont face errors when token
+        # size in input is 1!)
+        weight = weight.masked_fill(self.tril[:T, :T]== 0, float('-inf'))
+        # and now do a softmax so we get probablities 
+        weight = weight.softmax(dim=-1)
+        # now we have weights lets apply it on our values (representation of inputs)
+        bow = weight@v
+        return bow 
+    
+cs = 128
+es = 128
+hs  = 128
+torch.backends.cudnn.benchmark = True
+at  = AttentionHead(cs,es,hs).cuda()
+at2 = AttentionHead2(cs,es,hs).cuda()
+x = torch.randn(size=(128,cs,es)).cuda()
+# import timeit
+%timeit -n 100 at(x) 
+%timeit -n 100 at2(x) 
+
+print(f"Number of parameters in original layers: {sum(p.numel() for p in at.key.parameters()) +sum(p.numel() for p in at.query.parameters()) +sum(p.numel() for p in at.value.parameters()):,}")
+print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.parameters()):,}")
+
+# cs=es=hs=64 - cuda
+# 71.3 µs ± 1.9 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# 57.9 µs ± 1.5 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# larger size., cs=ds=es=3096 batch:2
+# 36.7 ms ± 10.5 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# 33.8 ms ± 2.96 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# larger size., cs=ds=es=3096 batch:8
+# 136 ms ± 50.9 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# 140 ms ± 4.04 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# larger size., cs=ds=es=3096 batch:4
+# 69.1 ms ± 25.9 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# 76.7 ms ± 4.69 ms per loop (mean ± std. dev. of 7 runs, 100 loops each)
+# Number of parameters in original layers: 28,755,648
+# Number of parameters in fused layer: 28,755,648
+
+# # as you can see we get contradictory results. and its expected. 
+
+# In general, fusing operations into a single operation can potentially improve performance by 
+# reducing memory access and overhead associated with separate operations. However, it's important
+# to consider the trade-off between fusion and memory usage. 
+# Fusing all the operations into a single linear layer (kqv) and then splitting the output may reduce
+# memory access and overhead, but it may also lead to increased memory consumption due to the larger 
+# output tensor.
+# The efficiency of fusion and splitting depends on factors like the size of the input, the dimensions of
+# the layers, and the available hardware resources. 
+# Thereore It's always recommended to benchmark and compare the performance of different approaches on our
+# specific hardware and input size to determine the most efficient solution.
+# In some cases, hardware optimizations like tensor cores on certain GPUs or specialized operations can 
+# further impact the performance. Therefore, it's beneficial to consider hardware-specific optimizations
+# and consult the hardware documentation or performance guides for guidance on optimizing specific 
+# operations.
+# In summary, whether fusion provides better performance and if it's more efficient to use a single linear
+# layer and split the output can depend on various factors, including the specific operations, input size,
+# layer dimensions, and hardware being used. It's recommended to benchmark and compare different approaches 
+# to determine the most efficient solution for your specific scenario.
+
+# We then compare the number of parameters in the original layers and the fused layer.
+# In general, fusing layers can be beneficial when the input size is large, and the number 
+# of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
+# This is because the fused layer requires fewer memory accesses and computations than the original 
+# layers.
+
 
 #%%
 #
@@ -1635,6 +1755,8 @@ class BigramModelWithAttention(nn.Module):
         #! explain positional embeddings 
         # this is called absolute position embedding itsl ike sinusodal position embedding that was
         # introduced in the original paper! explain more https://www.youtube.com/watch?v=o29P0Kpobz0
+        # https://www.youtube.com/watch?v=JERXX2Byr90
+        # https://www.youtube.com/watch?v=M2ToEXF6Olw
         #!
         position_embeddings = self.position_embd(torch.arange(T,device=self.device))
         # print(f'pos_embd:{position_embeddings.shape}')
