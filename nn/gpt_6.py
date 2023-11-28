@@ -1754,6 +1754,71 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # representations, are invariant to the total sequence length. Residual connections help propagate position information to higher layers.
 
 # so this is not the case here as we are using attention mechanism as well,
+#
+# some attributes concerning positional encodings : https://www.youtube.com/watch?v=1biZfFLPRSY
+# 1.every position should have the same identifier regardless of the sequence length or what the input is
+#  (so when the input changes, the position embedding remains the same)
+# 2. since these positinal embeddings push the token/embedding towards a 'first token club' the should not 
+#  (be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
+#   or dismilarity overshadows/overtunes the semantic similarity ) 
+# the paper used something called sinosodal positional encoding, but why? what if we use simple numbers to 
+# index the positions since we can treat text as words coming sequentially? so why not count the tokens as
+# we go like 0,1,2,3,etc? 
+# we dont use that becasue it violates the second requirement of the positional encoding, where we said
+# shifts need be small! or in other words, bounded. thats why the paper's author opted out to use sin/cos
+# for their functions of choice for positional encoding, as they are both bounded to -1,1 and they are 
+# inifite(periodically result in [-1,1])! that is can support any sequence length up to inifity (as we can
+# have values between -1 and 1 for infinity)! you might think about something like sogmoid which also is
+# bounded to [0,1], but sigmoid is a saturating function and the actual range of numbers is pretty limited 
+# especially for larger numbers(test it with 1-10 e.g. and larger numbers!) unlike the sin/cos that has a lot of variability for large numbers,
+# the sin/cos function has its own problem, the problem is they are periodic! that is, the same number
+# repeats for different positions! and this violates the first requirement of identifiers being unique for each position!
+# the problem stems from its 'frequency'! if we lower the frequency it means it takes longer to repeat a number twice
+# the higher the frequency the shorter the range of numbers. In other words, The low-frequency sine wave (sin(x))
+# has fewer oscillations within a given range of x, while the high-frequency sine wave (sin(10x) e.g.) has more 
+# rapid oscillations within the same range.
+# look at the following example to see this better.
+# %%
+import matplotlib.pyplot as plt 
+import matplotlib.colors as mcolors
+import numpy as np 
+
+# lets create 1000 points in the span of (0,4pi), 
+# for refresher see https://www.mathsisfun.com/algebra/trig-sin-cos-tan-graphs.html and 
+# https://www.math.net/sinusoidal
+# we use pi, instead of degrees (0,360) here becasue np.sin() uses radian instead of degrees
+x = np.linspace(0, 4*np.pi, 1000)
+# low_frequency_c = np.sin(x)
+# high_frequency_c = np.sin(10*x)
+# instead lets draw both for sin and cos
+freqs = [f(x) for x in [x, 10*x] for f in [np.sin, np.cos]]
+
+plt.style.use('seaborn')
+plt.figure(figsize=(8, 4))
+fig, axs  = plt.subplots(2)
+fig.suptitle('Low Frequency vs High Frequency')
+
+for i,freq in enumerate(freqs):
+    label = 'sin-' if i%2==0 else 'cos-'
+    label += 'Low Frequency' if i<2 else 'High Frequency'    
+    
+    axs[i%2].plot(x, freq, label=label)
+    axs[i%2].set(xlabel="x", ylabel="Amplitude")
+    axs[i%2].legend(loc='upper right')
+plt.show()
+#%%
+# now if we manage to lower the frequency low enough to the point where it gives us a huge preferably inifinit
+# numbers, that would be like our previous suggetsion, linear range of numbers, but bounded this time!
+# but the second issue still exists, that is, these numbers still, when added to the embeddings, will push them
+# into specific subregions in the manifold in the feature space(really this means, they club up together!)
+# and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
+# by this position and not the semantic between the two adjacent tokens. we also dont want the difference between two tokens
+# be too little, as this would cause the semantic distance to overwhelm the positional distance/information, 
+# basically render it useless! so what should we do? 
+# we can say, if one value in a dimension is small, then we need to make our intent clear, and make others small too
+# 
+# 
+#
 # The following notes were taken from The Stanford XCS224U: NLU I Contextual Word Representations, Part 3: Positional Encoding I Spring 2023
 # --The role of positional encoding: 
 # transformers/attention mechanism has a very limited capacity to keep track of word order
@@ -1943,7 +2008,7 @@ plt.plot(pos_enc(5,100))
 # https://www.youtube.com/watch?v=JERXX2Byr90
 # https://www.youtube.com/watch?v=M2ToEXF6Olw
 #!https://www.youtube.com/watch?v=4AzsiCMw_-s
-# 
+# https://www.youtube.com/watch?v=IWmpRaJ9Dz0
 # 
 # since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
