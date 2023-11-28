@@ -1715,8 +1715,236 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #         return idxs
 
 # this works fine, however, we can do better. here we just encoded the tokens, but
-# as we already explained, attention has no notion of position or spatial structure like conv e.g.
-# so we need to also incorporate the position information for each token as well
+# as we already explained, attention mechansimhas no notion of position or spatial structure like convs,
+# or rnns e.g. 
+# when dealing with rnns the sequential nature of the input would be preserved, as each word/token would be
+# processed one after another, so the order would be preserved. 
+# from shaw etal 2018: 
+# Recurrent neural networks (RNNs) typically compute a hidden state ht, as a function of their
+# input at time t and a previous hidden state ht−1, capturing relative and absolute positions along the
+# time dimension directly through their sequential
+# structure. Non-recurrent models do not necessar-ily consider input elements sequentially and may
+# hence require explicitly encoding position infor-mation to be able to use sequence order.
+# One common approach is to use position encodings which are combined with input elements to
+# expose position information to the model. These position encodings can be a deterministic func-
+# tion of position (Sukhbaatar et al., 2015; Vaswaniet al., 2017) or learned representations. 
+# 
+# Convolutional neural networks inherently capture relative positions within the kernel size of each 
+# convolution. They have been shown to still benefit from position encodings (Gehring et al., 2017), however.
+#
+# For the Transformer, which employs neither convolution nor recurrence, incorporating explicit
+# representations of position information is an especially important consideration since the model is
+# otherwise entirely invariant to sequence ordering. Attention-based models have therefore used posi-
+# tion encodings or biased attention weights based on distance(Parikh et al., 2016).
+# 
+# Side note: (also from shaw etal 2018) 
+# The Transformer (Vaswani et al., 2017) employs an encoder-decoder structure, consisting of
+# stacked encoder and decoder layers. Encoder layers consist of two sublayers: self-attention
+# followed by a position-wise feed-forward layer.
+# Decoder layers consist of three sublayers: selfattention followed by encoder-decoder attention,
+# followed by a position-wise feed-forward layer. It uses residual connections around each of the
+# sublayers, followed by layer normalization (Baet al., 2016). The decoder uses masking in its self-
+# attention to prevent a given output position from incorporating information about future output po-
+# sitions during training.
+# Position encodings based on sinusoids of varying frequency are added to encoder and decoder
+# input elements prior to the first layer. In contrast to learned, absolute position representations, the
+# authors hypothesized that sinusoidal position encodings would help the model to generalize to se-
+# quence lengths unseen during training by allowing it to learn to attend also by relative position. This
+# property is shared by our relative position representations which, in contrast to absolute position
+# representations, are invariant to the total sequence length. Residual connections help propagate position information to higher layers.
+
+# so this is not the case here as we are using attention mechanism as well,
+# The following notes were taken from The Stanford XCS224U: NLU I Contextual Word Representations, Part 3: Positional Encoding I Spring 2023
+# --The role of positional encoding: 
+# transformers/attention mechanism has a very limited capacity to keep track of word order
+# the attention connections are not directional, they are just bunch of dot products and there are no interactions between the columns, 
+# and becasue of this we need to ensure theres a difference between sequence A,B,C  and C,B,A (i.e. 
+# its is different thatn C,A,B, or C,B,A ,etc cuz we are not keeping track of token order in attention)
+# positional encoding therefore, makes sure that these sequences are different, regardless of what we do with 
+# the representattions that come out of the model. theres another role they fill in, they have been used to
+# to keep track of the hierarchial notions of position (premise/hypothesis in natural language inference which is
+# one of the important features of BERT model we later on will discuss)
+# --Evaluating positional encoding schemes: 
+# there are a lot of prespective we can take on postional encoding, but two major questions that can be asked
+# are : 
+# 1. does the set of positions need to be decided ahead of time? 
+# 2. does the positional encoding scheme hinder generalization to new positions?
+# as we know, models tend to impose a max length on the sequences they can process, for reasons relating to
+# their learned weights(training, optimization, etc). we will ask whether different positional embedding schemes are imposing anything
+# about length generalization separate from this. so we are asking if we set this fact aside for a moment, 
+# does the positional encoding scheme itself, is imposing anytihng about sequence length generalization?
+# 
+# so lets start with absolute positional encoding 
+# in this scheme, (we can have different ways of implementing it but this is one of them) we have a separate position
+# embedding(which we learn!) alongsize our token embedding which we add together. this scheme obviouly suffers
+# from the fixed sequence length issue, as we need to, ahead of time, decide on the length of the embedding vector
+# and if for example we decided on sth like embd=512, we cant use larger sequences (we dont have position inofrmation
+# after 512, we wouldnot have positional representation for those positions) also note that the emebddings here 
+# will be different, for example consider the phrase, 'the rock' at the begining of a sentence which would be sth like this: 
+# input: 'the rock was big' we would have sth like : embd(the)+em_pos(the), embd(rock)+em_pos(rock),...
+# will be diferent than if ' the rock' came at a diferent position, the representation for the same tokens will be different!
+# so to recap: 
+# the limitations we face in this scheme are: 
+# 1.set of position needs to be decided ahead of time
+# 2. may hinder generalization to new positions, even for similar phanamena ([the]+[1] [rock]+[2] 
+# has a different representation than [the]+[15] [rock]+[16]) 
+# there will be some similarity between them as we have the same wordvectors involved(for the and rock)
+# but since we add position embedding, the result will be very heavy handed, when it comes to learning representation
+# tht are heavily position dependent, and this could make it harder for the model to see Rock forexample
+# is the same phrase whether its used in the begining of the sequence or middle or end of it.
+# --Frequency based positional encoding scheme: 
+# another scheme we can use is the frequency based positional encoding scheme, which there are a lot of ways
+# for setting this up! but the essential idea is that we define a mathamatical function that given a position
+# will give us back a vector that encodes information about that position, semantically and in structure. 
+# this is infact what the attention is all you need paper, opted to use and presents in the paper. 
+# basically they use the fe frequency oscillation of sin and cos functions for this. 
+# basically higher frequency oscilate more frequently and they use that information in the position vector
+# that we create. the following codesnippet shows how their encoding function looks like
+#%%
+import matplotlib.pyplot as plt 
+import numpy as np 
+def pos_enc(pos, embd_size):
+    div_term = np.exp(np.arange(0, embd_size, 2 )) * -(np.log(10_000.0)/embd_size)
+    rep = np.zeros(embd_size)
+    rep[0::2] = np.sin(pos * div_term)
+    rep[1::2] = np.cos(pos * div_term)
+    return rep    
+plt.plot(pos_enc(5,100))
+# the good thing about this function is, if you give it pos =1 it will give us back a vector, if we 
+# give pos=1000, it will give us back a vector, if we give pos=1000_000 it will give us back the vector
+# you get the idea, we are no more bound to the embedding length. and all of those vectors, manifestly do
+# is to encode information about relative position of that input. so we have definitely overcome the first
+# limitation (i.e. the 'set of positions need to be decided ahead of time' is overcome now!)
+# so we can fire up a vector for any position given to us.
+# the second question/limitation however still exists and remains pressing! like before this scheme can 
+# hinder generalization to new positions even for familiar phenamona, in virtue of the fact that we are
+# taking those word representations and adding them with positional vectors. as we explained before, this
+# makes it harder for te model to see that the same phrase can occure at different positions,
+# 
+# -- The relative positional encoding (shaw etal 2018- self attention with relative position represenation)
+# https://arxiv.org/pdf/1803.02155.pdf
+# https://www.youtube.com/watch?v=DwaBQbqh5aE
+# this scheme may be the most promissing one, as the position information is added to the input inside attention
+# module as apposed to the embeddings themselevs. more importantly, the concept of a window is used here
+# that actually encodes this information. basically using a sliding window of size d, we use a fixed number
+# of weights on all input to convey relative positions for each token. for example, if we set window-size 
+# to d=2, and have an input like the following :
+#  1    2    3    4   5   6
+# 'the rock fell from the sky' 
+# where the numbers signify each token's position and the line after, shows our sequence.
+# now in an absolute positional encoding scheme, each token 'emebedding' would have its own 'position embedding
+# which are added together forming the final embedding with the positional information. 
+# however, for a relative positional encoding case, the relative distane between (adjacent) tokens are taken into
+# account. the extend to which this relative distance is calculated is determinted using a window size k.
+# this in effect, creates 'k' weights that are used to encode the relative positions of the tokens in a sequence.
+# suppose we have a window-size of k=2, in the given example, the weights would be used like this
+# suppose we want to calculate relative distance/position for the 'rock' token.
+#  1    2     3   4     5   6   7
+# 'the red  rock fell from the sky' 
+#  w-2  w-1  w0   w1   w2   w2  w2
+#  w-1  w0   w1   w2   -    -   - (clipped!)
+# w0 refers to the relative distance to self, w1 refers to the next token in the sequence, and w-1 refers to
+# the previous token in the sequence, since we have windows size of 2, we have 5 weights in total.
+# note that the very same weights are used for each token entery. when its 'rock', the w0 is used to reflect
+# the self(rock), but for the 'red' token, w0 refers to that token as self, and likewise, w-1 refers to its
+# previous token which is 'the' and so on and so forth. 
+# in other words, w0 means we are 0 hops away from the source token/node(in a graph), w1 means 1 hop away from
+# the next token/(outgoing connection to next node) while w-1 refers to 1 hops away to the left of the token/node
+# also note that after certain legnth (windows-size), tokens get the same value, and this doesnt provide much useful
+# information, so in the paper they are clipped!(second row shows this where I didnt write anything for the remaining tokens)
+# also note that with small ds (or ks as used in the paper), we lose long term relations/dependencies, and 
+# long windowsize may grab noise and doesnt result in better performance (this is shown after some size k the 
+# performance stops improving so the window size is an important parameter here. (https://www.youtube.com/watch?v=DwaBQbqh5aE)
+# As you saw, we use the same set of positional weights
+# for all tokens and this happens to all tokens at once. The input is added with this information and fed to 
+# !rest of the attention pipeline(this information is added to both key and value embeddings). explain more! 
+# so this way we learn a small set of position vectors and slide around and encode relative position
+# information for each set of tokens and this gives us a lot of ability to generalize to new positions based
+# on 'combinations' that we've seen before, possibly in other parts of these inputs.  
+# 
+# the concept of absolute positional encodings doesnt make sense for graphs for example, however, relative
+# positions make sense for them, so the paper pf shaw etal 2018 from google brain, proposes that since the
+# attention mechanism unlike rnns and cnns, doesnot explicitly model the relative or absolute position information
+# in its structure, they propose one that does! and they introduce attention with relative positional information.
+# they argue that the absolute order of tokens is not that important(ideal), rather the relation of them, or their relative distance/position 
+# between sequence elements in a sequence matters more and infact results in improved performance. 
+# Furthermore, they also add that, combining relative and absolute position representations yields no further improvement in
+# translation quality. they then go and describe an efficient implementation of their method and cast it as an 
+# instance of relation-aware self-attention mechanisms that can generalize to arbitrary graphlabeled inputs
+# they basically said: 
+# "Our approach can be cast as a special case of extending the self-attention mechanism of the Trans-
+# former to considering arbitrary relations between any two elements of the input, a direction we plan
+# to explore in future work on modeling labeled, directed graphs"
+# side note: 
+# note that in their paper, they model the input as a labeled, directed, fully-connected graph.
+# For linear sequences, edges can capture information about the relative position differences between 
+# input elements. The maximum relative position we consider is clipped to a maximum absolute value of k. 
+# We hypothesized that precise relative position information is not useful beyond a certain distance. 
+# Clipping the maximum distance also enables the model to generalize to sequence lengths not seen during
+# training. Therefore, we consider 2k + 1 unique edge labels.
+# this in practice hasnt been used much! (especially in text sequences)
+# transfomer relative position : https://www.youtube.com/watch?v=Ws2RAh_VDyU
+#
+# 00:00 Permutation Equivariance
+# 01:12 Absolute Position Embedding
+# 02:42 Limitation of absolute positions
+# 03:56 Relative Position Bias intuition
+# 07:57 Relative Position Bias in theory
+# 12:53 PyTorch Implementation
+# 
+#%%
+# !all entries interact with all other entries at the same time, and the order of words/tokens is lost
+# 'how are you' would be the same as 'are how you', 'you how are', 'you are how', 'how you are', etc
+# since we are using this in a autoregressive model, given a character, we want the next one, its obvious
+# that we want the order of words/tokens to be preserved, so we get the output that makes sense!, otherwise,
+# this would create the same output for all of these input, which is not what we want!.(theres nothing in
+# the input to specify the order, that is we treat it as if theres none!). in other
+# usecases, such as translation from one language to another, we dont have this issue, as we want to grab
+# one paragraph in one language completely and then produce a translation later, the first part doesnt
+# need this as we arent after producing the next word/token, but the second part does, we talk about this in more
+# details later, but for now, we know we want to preserve the order as well. so what do we do?  
+# so we need to also incorporate the position information for each token as well.
+# there are several ways we can add this inormation, each with its own set of merits and drawbacks
+# for one, we can add a number for to each token, like 0 for how, 1 for are, and 2 for you, and so on and so forth
+# but this has several issues, and doesnt work as expected, becasue, suppose we have large number of tokens
+# doing so can create a bias for later tokens, it puts more value/attention on tokens with larger numbers
+# also if the length of a sentences is increased, we get different value, for the positions, 
+# moreover, if an input has two sentences, this way of positional embedding makes the model think, these 
+# sentences always come together, because thier positions indicate so (after all they are numbered consecutively!)
+# we might think, normalizing these values to be 1 would solve the issue, but it creates another issue which is
+# if the length of the sentence is different, we would get a different value for each same token. (imagine 
+# one sentence was 'how are you' and the other 'how are you bob' they are nearly the same except the last word
+# but since the length is now different, each word, would get a different value becasue we normalzied them on
+# the sequence length! p3 = 3/3 = 1 vs p3 =3/4=0.75) so we dont want any dependency on the length of the sequence.
+# so what should we do? the values shouldnt be too large so they create a bias towards later tokens!
+# what we know that each value must be unique and it must not depend on the length of the sequence!
+# and finally this value must be within a range! and vary nonlinearily. one option is to use sinocidal embedding
+# and this is infact what the original paper came up with, (a hand crafted positional embedding), with an 
+# embedding vector of length d, they used
+# they used sin, but simply using sin function isnt enought as it violates our first point of uniqueness,
+# sin(0) is always zero, we dont want our 0th token to always be 0! so sin(pos) is not enough. 
+# the paper uses cos as well, and alternates between them, sin(pos) followd by cos(pos+1) this way
+# the even positions are handled by sin and the odd positions in our embedding vector are handled by cos
+# becaue the frequency of sin and cos changes, therefore each vector gets a different value, thats how we
+# satisfy our first point of uniqueness for each position regardless of sequence length. 
+#  
+# absolute positional embedding:
+# relative positional embedding:
+# frequency based positional embedding - sinosodal positioning 
+# rotary positional embedding -rope
+# concatenated vs added positional embedding 
+# learned positional embedding
+#
+#
+# this is called absolute position embedding itsl ike sinusodal position embedding that was
+# introduced in the original paper! explain more 
+# https://www.youtube.com/watch?v=3mTsYm9qQFA
+# https://www.youtube.com/watch?v=o29P0Kpobz0
+# https://www.youtube.com/watch?v=JERXX2Byr90
+# https://www.youtube.com/watch?v=M2ToEXF6Olw
+#!https://www.youtube.com/watch?v=4AzsiCMw_-s
+# 
+# 
 # since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
@@ -1754,10 +1982,13 @@ class BigramModelWithAttention(nn.Module):
         # this continues likewise. this results in (T,E)
         #! explain positional embeddings 
         # this is called absolute position embedding itsl ike sinusodal position embedding that was
-        # introduced in the original paper! explain more https://www.youtube.com/watch?v=o29P0Kpobz0
+        # introduced in the original paper! explain more 
+        # https://www.youtube.com/watch?v=3mTsYm9qQFA
+        # https://www.youtube.com/watch?v=o29P0Kpobz0
         # https://www.youtube.com/watch?v=JERXX2Byr90
         # https://www.youtube.com/watch?v=M2ToEXF6Olw
-        #!
+        #!https://www.youtube.com/watch?v=4AzsiCMw_-s
+        #
         position_embeddings = self.position_embd(torch.arange(T,device=self.device))
         # print(f'pos_embd:{position_embeddings.shape}')
         # and lets add the two embeddings together
@@ -4166,3 +4397,9 @@ print(f"{''.join(decode(output))}")
 #    The availability of pre-trained models, consistent APIs, data processing tools, and a supportive community makes Hugging Face an essential resource for researchers and practitioners working with vision transformers. It simplifies the development and deployment of vision transformer models, fostering rapid progress and advancements in the field of computer vision.
 # In summary, vision transformers adapt the transformer architecture for computervision tasks by dividing images into patches, applying self-attention mechanisms, and capturing global relationships. They have several versions such as ViT, DeiT, and TNT, each exploring different aspects of vision transformer architectures. Libraries like Hugging Face provide pre-trained models, tools for data processing, and a supportive community to facilitate working with vision transformers and accelerate research in computer vision.
 #
+#
+# https://www.youtube.com/watch?v=2ih6BHD4v3I
+# https://www.youtube.com/watch?v=VoRQiKQcdcI
+# https://www.youtube.com/watch?v=3B6q4xnuFUE
+# https://www.youtube.com/watch?v=HobIo2oT0xY
+# https://www.youtube.com/watch?v=tFYxJZBAbE8
