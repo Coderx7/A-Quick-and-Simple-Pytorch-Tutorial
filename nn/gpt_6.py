@@ -1840,6 +1840,8 @@ plt.show()
 # we create a single positional vector by alternating sin/cos for every feature/dimension of the vector, so if we have d=100,
 # we fill the even indexes using sin() and the odd ones with cos(), this way, we get a unique value for each position
 # !and by increasing the frequency as we go, we make sure .... continue explanation
+# 
+# !fact check these answers
 # question : why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
 #
 # The reason for interleaving sine and cosine functions in sinusoidal positional encoding is to capture different frequencies and phases in a systematic manner. This interleaving pattern ensures that each dimension in the encoding captures unique positional information.
@@ -1917,7 +1919,7 @@ plt.show()
 # 3. Differentiate Positions with Same Frequency: When using sine functions alone, different positions can have the same frequency but different phases. By incorporating the phase component, each position obtains a unique encoding value, even if they share the same frequency. This ensures that the model can distinguish between positions that have similar frequency-based changes but occur at different points within the sequence.
 # 4. Capture Temporal or Spatial Patterns: Phase information can capture temporal or spatial patterns in the data. For example, in time series analysis, the phase component can help capture the seasonality or periodic patterns in the data. In spatial data analysis, it can capture the spatial arrangement or layout of objects within an image or a graph. By considering the phase, the model can learn to recognize and utilize these patterns effectively.
 # Incorporating the phase or timing of the position within the sequence in positional encoding provides the model with crucial information about sequential dependencies, positional relationships, and patterns in the data. It enhances the model's ability to understand and exploit the temporal or spatial characteristics of the sequence, leading to improved performance in various tasks.
-
+# 
 #
 # %%
 #
@@ -1983,7 +1985,58 @@ plt.legend()
 plt.show()
 
 #%%
-#
+import numpy as np
+import matplotlib.pyplot as plt
+
+def pos_enc(pos, embd_size):
+    div_term = np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)
+    rep = np.zeros(embd_size)
+    rep[0::2] = np.sin(pos * div_term)
+    rep[1::2] = np.cos(pos * div_term)
+    return rep
+
+sequence_length = 10
+embedding_dim = 16
+
+positions = np.arange(sequence_length)
+embeddings = np.zeros((sequence_length, embedding_dim))
+
+# Calculate positional encodings using pos_enc function
+for pos in positions:
+    embeddings[pos] = pos_enc(pos, embedding_dim)
+
+# Plot the positional encodings
+for dim in range(embedding_dim):
+    plt.plot(positions, embeddings[:, dim], label=f"Dimension {dim+1}")
+
+plt.xlabel("Position")
+plt.ylabel("Encoding Value")
+plt.title("Sinusoidal Positional Encoding (pos_enc)")
+plt.legend()
+plt.show()
+#%%
+
+#%%
+import math
+import torch
+import numpy as np
+def pos_enc(embd_size, max_seq_length=10000):
+    # Compute the positional encodings once in log space.
+    position_embd = np.zeros(shape=(max_seq_length, embd_size))
+    position = np.arange(0, max_seq_length)[:, np.newaxis]
+    div_term = np.exp(np.arange(0, embd_size, 2) * -(math.log(10000.0) / embd_size))
+    position_embd[:, 0::2] = np.sin(position * div_term)
+    position_embd[:, 1::2] = np.cos(position * div_term)
+    return position_embd
+    
+plt.figure(figsize=(15, 5))
+y = pos_enc(embd_size=20)
+# lets plot 4 embd values for 100 positions, (we used 4:8 becasue they demonstrate pretty graphs! 
+# use other numbers and see the outcome) 
+dims = (4,8)
+plt.plot(range(100), y[0:100, slice(*dims)])
+# plt.plot(np.arange(100), y[:100, 8:12])
+plt.legend(["dim %d"%p for p in range(*dims)])
 # %%
 # # Generate x values
 # x = np.linspace(0, 4 * np.pi, 100)
@@ -2058,7 +2111,11 @@ def pos_enc(pos, embd_size):
     rep[1::2] = np.cos(pos * div_term)
     return rep 
 plt.figure(figsize=(8,6))
-plt.plot(pos_enc(1,100))
+embd_size = 100 
+pos = 50
+pos_vec = pos_enc(pos,embd_size)
+plt.plot(pos_vec)
+
 # the good thing about this function is, if you give it pos =1 it will give us back a vector, if we 
 # give pos=1000, it will give us back a vector, if we give pos=1000_000 it will give us back the vector
 # you get the idea, we are no more bound to the embedding length. and all of those vectors, manifestly do
