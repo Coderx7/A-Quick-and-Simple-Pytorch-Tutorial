@@ -1757,10 +1757,22 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #
 # some attributes concerning positional encodings : https://www.youtube.com/watch?v=1biZfFLPRSY
 # 1.every position should have the same identifier regardless of the sequence length or what the input is
-#  (so when the input changes, the position embedding remains the same)
-# 2. since these positinal embeddings push the token/embedding towards a 'first token club' the should not 
-#  (be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
-#   or dismilarity overshadows/overtunes the semantic similarity ) 
+#  so when the input changes, the position embedding remains the same)
+# 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
+#  be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
+#   or dismilarity overshadows/overtunes the semantic similarity. lets expand on this a little bit and make it more
+#   intuitive, when we plot the token embeddings (after they are learned), you'll notice that tokens/words with similar
+#   context are clustered together, you find queen and king to be next to eachother, car, tire, steering wheel to cluster
+#   together, etc, when we add the positional embedding which really is another vectors with number, what happens is
+#   during trainig, the network does the same thing with these new information as well, that is, the queen/king token
+#   in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers, imagine, king
+#   is the first token, so it gets closer to the first token's clustre, the network creates other clusters for other positions
+#   likewise, and as you can see, if the positional embedding is too large, it can disrupt the semantic clustering of tokens
+#   it will create new clusters based on the position information only (clusters of first, seconds, third tokens, etc) at the
+#   expense of destroying the semantic clustered created due to similar contexts, thus degrading the performance altogether
+#   as you can imagine, having a too little impact from positional info or lack of any, we are only left with semantic clusters
+#   and lose any kind of incentive for the model to use to make a disntinction between two sequence of the same tokens (becasue
+#   theres no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
 # the paper used something called sinosodal positional encoding, but why? what if we use simple numbers to 
 # index the positions since we can treat text as words coming sequentially? so why not count the tokens as
 # we go like 0,1,2,3,etc? 
@@ -1788,11 +1800,10 @@ import numpy as np
 # https://www.math.net/sinusoidal
 # we use pi, instead of degrees (0,360) here becasue np.sin() uses radian instead of degrees
 x = np.linspace(0, 4*np.pi, 1000)
-# low_frequency_c = np.sin(x)
-# high_frequency_c = np.sin(10*x)
+# low_frequency_s = np.sin(x)
+# high_frequency_s = np.sin(10*x)
 # instead lets draw both for sin and cos
 freqs = [f(x) for x in [x, 10*x] for f in [np.sin, np.cos]]
-
 plt.style.use('seaborn')
 plt.figure(figsize=(8, 4))
 fig, axs  = plt.subplots(2)
@@ -1810,13 +1821,36 @@ plt.show()
 # now if we manage to lower the frequency low enough to the point where it gives us a huge preferably inifinit
 # numbers, that would be like our previous suggetsion, linear range of numbers, but bounded this time!
 # but the second issue still exists, that is, these numbers still, when added to the embeddings, will push them
-# into specific subregions in the manifold in the feature space(really this means, they club up together!)
+# into specific subregions in the manifold in the feature space(really this means, they cluster up together!)
 # and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
 # by this position and not the semantic between the two adjacent tokens. we also dont want the difference between two tokens
 # be too little, as this would cause the semantic distance to overwhelm the positional distance/information, 
 # basically render it useless! so what should we do? 
-# we can say, if one value in a dimension is small, then we need to make our intent clear, and make others small too
-# 
+# if we go and use sin only, the adjacent numbers would be close to each other, we need to somehow create a bit 
+# of contrast that shows theres some kind of distance between the two tokens (and by extension others in the sequence)
+# so what do we do? if you look at the plots, you'll notice that, intrestingly we can utilize cos() for this
+# and alternate between them. if we use a low frequency sin for the first token, we can use a higher frequency cos for
+# for the next token, and for the third token, we can use sin again, followed by a cos for the forth and so on 
+# and so forth! the more we increase the frequency of cosine, the more different the values we get between two
+# tokens
+#
+#
+# %%
+# # Generate x values
+# x = np.linspace(0, 4 * np.pi, 100)
+# # Generate intermediary variable for frequency transition
+# freq = np.linspace(5, 5.5, len(x))
+# # Generate sine waves with varying frequency
+# sine_waves = np.sin(freq * x[:, np.newaxis])
+# # Plotting
+# plt.figure(figsize=(16, 8))
+# for i in range(len(x)):
+#     plt.plot(x, sine_waves[:, i], color='blue', alpha=0.6)
+# plt.xlabel('x')
+# plt.ylabel('Amplitude')
+# plt.title('Transition from Low Frequency to High Frequency - Sine Waves')
+# plt.show()
+#%%%
 # 
 #
 # The following notes were taken from The Stanford XCS224U: NLU I Contextual Word Representations, Part 3: Positional Encoding I Spring 2023
@@ -1874,7 +1908,7 @@ def pos_enc(pos, embd_size):
     rep[0::2] = np.sin(pos * div_term)
     rep[1::2] = np.cos(pos * div_term)
     return rep    
-plt.plot(pos_enc(5,100))
+plt.plot(pos_enc(50,100))
 # the good thing about this function is, if you give it pos =1 it will give us back a vector, if we 
 # give pos=1000, it will give us back a vector, if we give pos=1000_000 it will give us back the vector
 # you get the idea, we are no more bound to the embedding length. and all of those vectors, manifestly do
