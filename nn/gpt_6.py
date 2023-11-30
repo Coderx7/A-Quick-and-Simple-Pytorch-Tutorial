@@ -1957,33 +1957,8 @@ plt.show()
 #
 #
 #%%
-import numpy as np
-import matplotlib.pyplot as plt
-
-def positional_encoding(position, d_model):
-    encoding = np.zeros((position, d_model))
-    angles = np.arange(d_model) / np.power(10000, (2 * (np.arange(d_model) // 2)) / d_model)
-    encoding[:, 0::2] = np.sin(angles[0::2])
-    encoding[:, 1::2] = np.cos(angles[1::2])
-    return encoding
-
-# Parameters
-position = 100
-d_model = 16
-
-# Generate positional encoding
-encoding = positional_encoding(position, d_model)
-
-# Plotting
-plt.figure(figsize=(8, 6))
-for i in range(d_model):
-    plt.plot(encoding[:, i], label=f'Dimension {i+1}')
-plt.xlabel('Position')
-plt.ylabel('Encoding Value')
-plt.title('Sinusoidal Positional Encoding')
-plt.legend()
-plt.show()
-
+#
+#
 #%%
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1995,7 +1970,7 @@ def pos_enc(pos, embd_size):
     rep[1::2] = np.cos(pos * div_term)
     return rep
 
-sequence_length = 10
+sequence_length = 100
 embedding_dim = 16
 
 positions = np.arange(sequence_length)
@@ -2086,7 +2061,7 @@ def plot_positional_encoding(positional_encoding):
     # that are perceptually uniform in both color and black-and-white. 
     # They are also designed to be perceived by viewers with common forms of color blindness 
     cmap = 'viridis'
-    plt.pcolormesh(positional_encoding, cmap=cmap)
+    plt.pcolormesh(positional_encoding[:], cmap=cmap)
     plt.xlabel('Embedding Dimensions')
     plt.ylabel('Position')
     plt.colorbar(label=f'Value({cmap})')
@@ -2226,7 +2201,7 @@ def pos_enc(pos, embd_size):
     rep = np.zeros(embd_size)
     rep[0::2] = np.sin(pos * div_term)
     rep[1::2] = np.cos(pos * div_term)
-    return rep 
+    return rep
 plt.figure(figsize=(8,6))
 embd_size = 100 
 pos = 50
