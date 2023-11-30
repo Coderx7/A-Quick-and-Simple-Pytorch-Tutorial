@@ -2038,6 +2038,123 @@ plt.plot(range(100), y[0:100, slice(*dims)])
 # plt.plot(np.arange(100), y[:100, 8:12])
 plt.legend(["dim %d"%p for p in range(*dims)])
 # %%
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+# write a function to plot this, what pecularities are evident when plotting this?
+# https://www.tensorflow.org/text/tutorials/transformer
+# https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
+
+def sinusoidal_positional_encoding(max_position, d_model):
+    position = np.arange(0, max_position)[:, np.newaxis]
+    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+    
+    # Calculate sinusoidal embeddings
+    pos_enc = np.zeros((max_position, d_model))
+    pos_enc[:, 0::2] = np.sin(position * div_term)
+    pos_enc[:, 1::2] = np.cos(position * div_term)
+    
+    return pos_enc
+print(f'{plt.colormaps()=}')
+def plot_positional_encoding(positional_encoding):
+    plt.figure(figsize=(12, 6))
+    # concerning colormaps read this first : https://matplotlib.org/stable/users/explain/colors/colormaps.html#colormaps 
+    # https://matplotlib.org/stable/gallery/color/colormap_reference.html
+    # side note for why we chose viridis : https://sjmgarnier.github.io/viridis/articles/intro-to-viridis.html 
+    # what other colormaps we have? simply check plt.colormaps() to see your other options
+    # uncomment the following line instead of the next line and see the effect of different colormaps.
+    # of course not all colormaps suit all usecases, read the first link if you havent. 
+    # basically viridis belongs to a so called 'Perceptually Uniform Sequential' colormap group. 'magma', 'inferno', 
+    # 'plasma', 'cividis' and turbo are other examples of what we call a preceptually uniform sequential colormap.
+    # Perceptually uniform, means values close to each other have similar-appearing colors and values
+    # far away from each other have more different-appearing colors, consistently across the range of values.
+    # and sequential simply refers to the fact that the lightness value increases monotonically through the colormap.
+    # we have other types such as Diverging, Cyclic and Qualitative, which each has its own specific usecase
+    # for example Qualitive colormaps which are usually miscellaneous colors, are used to represent information
+    # that does not have ordering or relationships. 
+    # The Cyclic colormaps on the otherhand as the name suggest, refer to change in lightness of two different colors that 
+    # meet in the middle and beginning/end at an unsaturated color; 
+    # are used for values that wrap around at the endpoints, such as phase angle, wind direction, or time of day.
+    # The Diverging ones, refer to change in lightness and possibly saturation of two different colors that meet in the 
+    # middle at an unsaturated color. 
+    # They are used when the information being plotted has a critical middle value, such as topography or when the data 
+    # deviates around zero. 
+    # cmap = random.choice(plt.colormaps())
+    # As for the ‘viridis’ colormap, it is a perceptually uniform colormap that is designed to be bright, 
+    # attractive, and colorblind-friendly. It provides a smooth, monotonically increasing color range that 
+    # significantly improves the readability of data visualizations. The viridis scales provide color maps 
+    # that are perceptually uniform in both color and black-and-white. 
+    # They are also designed to be perceived by viewers with common forms of color blindness 
+    cmap = 'viridis'
+    plt.pcolormesh(positional_encoding, cmap=cmap)
+    plt.xlabel('Embedding Dimensions')
+    plt.ylabel('Position')
+    plt.colorbar(label=f'Value({cmap})')
+    plt.title('Sinusoidal Positional Encoding')
+    plt.show()
+
+# Example usage
+max_position = 100
+d_model = 512
+pos_enc = sinusoidal_positional_encoding(max_position, d_model)
+plot_positional_encoding(pos_enc)
+
+# heres how this function is doing its job: 
+# 1. **Figure Initialization**:
+#    ```python
+#    plt.figure(figsize=(12, 6))
+#    ```
+#    This line initializes a new figure for the plot with a specific size. The `figsize=(12, 6)` parameter 
+#    specifies the width and height of the figure in inches.
+# 2. **Heatmap Generation**:
+#    ```python
+#    plt.pcolormesh(positional_encoding, cmap='viridis')
+#    ```
+#    - `plt.pcolormesh()` creates a pseudocolor plot (heatmap) from a 2D array, which in this case is the 
+#    `positional_encoding` matrix.
+#    - `positional_encoding` is the matrix containing the sinusoidal positional encoding values. It represents
+#    the embeddings for different positions along the sequence and their respective dimensions.
+#    - `cmap='viridis'` specifies the colormap to use for the heatmap. In this case, the 'viridis' colormap 
+#    ranges from yellow to blue, providing good perceptual uniformity for different values.
+# 3. **Axis Labels**:
+#    ```python
+#    plt.xlabel('Embedding Dimensions')
+#    plt.ylabel('Position')
+#    ```
+#    - `plt.xlabel()` and `plt.ylabel()` set labels for the x-axis and y-axis, respectively. 
+#    'Embedding Dimensions' represents the different dimensions of the embeddings, and 'Position' 
+#    denotes the positions along the sequence.
+# 4. **Colorbar**:
+#    ```python
+#    plt.colorbar(label='Value')
+#    ```
+#    - `plt.colorbar()` adds a colorbar to the plot, indicating the mapping of colors to values in the heatmap.
+#    The 'Value' label describes the quantity represented by the colors in the heatmap.
+# 5. **Title**:
+#    ```python
+#    plt.title('Sinusoidal Positional Encoding')
+#    ```
+#    - `plt.title()` sets the title of the plot as 'Sinusoidal Positional Encoding'. This title provides 
+#    context for what the heatmap represents.
+# 6. **Displaying the Plot**:
+#    ```python
+#    plt.show()
+#    ```
+#    - `plt.show()` displays the generated plot. 
+# It's necessary to view the heatmap within the Jupyter Notebook, Python script, or any interactive environment.
+# In summary, the `plot_positional_encoding()` function utilizes `matplotlib` to create a heatmap representation 
+# of the sinusoidal positional encoding matrix. 
+# This visualization helps in understanding how positions along a sequence are encoded in a neural network model,
+# especially in scenarios like attention mechanisms or positional embeddings within transformers.
+#
+# Now, regarding peculiarities when plotting sinusoidal positional encoding:
+# Wave Patterns: You'll observe clear wave patterns in the plot, reflecting the sinusoidal nature of the encoding. These waves indicate how different positions along the sequence are represented in the embedding space.
+# Frequency Variation: The frequency of the waves varies across different dimensions of the embedding. Lower dimensions may capture longer-range dependencies, while higher dimensions may focus on shorter-range dependencies.
+# Alternating Colors: Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
+# Positional Diversity: The heatmap will illustrate how each position in the sequence has a unique representation in the embedding space. This is crucial for the model to distinguish between tokens based on their absolute or relative positions.
+
+
+#%%
 # # Generate x values
 # x = np.linspace(0, 4 * np.pi, 100)
 # # Generate intermediary variable for frequency transition
@@ -2052,7 +2169,7 @@ plt.legend(["dim %d"%p for p in range(*dims)])
 # plt.ylabel('Amplitude')
 # plt.title('Transition from Low Frequency to High Frequency - Sine Waves')
 # plt.show()
-#%%%
+#%%
 # 
 #
 # The following notes were taken from The Stanford XCS224U: NLU I Contextual Word Representations, Part 3: Positional Encoding I Spring 2023
