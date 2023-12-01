@@ -2090,7 +2090,18 @@ plt.show()
 # they will have the same value at certain points like (sin(45)=cos(45)) so we use a different frequency for each
 # as you can imagine, up to a point it works, and atfer that we basically endup with constant values 
 # this is visible in our plot below.
-# %%
+#
+# sidenote 2: 
+# Q: are sin and cos orthogonal ?
+# Yes, the sine and cosine functions are orthogonal to each other. Two functions are said to be orthogonal if their inner product is zero. The inner product of two functions is defined as the integral of the product of the two functions over a given interval. In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 1
+# Q: but sin(45)==cos(45), how can they be orthogonal with respect to each other when they both produce the same value ?
+# You are correct that the sine and cosine functions have the same value at 45 degrees or pi/4 radians. However, orthogonality of two functions is defined as their inner product being zero. The inner product of two functions is defined as the integral of the product of the two functions over a given interval. In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 
+# 
+# 
+# 
+# 
+# 
+# # %%
 # #  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
 import numpy as np
 import matplotlib.pyplot as plt
