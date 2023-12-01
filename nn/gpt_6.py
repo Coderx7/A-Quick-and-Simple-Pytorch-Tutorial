@@ -2052,11 +2052,44 @@ plt.show()
 # In summary, weight orthogonality in neural networks is a multifaceted concept that goes beyond its geometric roots. It plays a crucial role in shaping the learning dynamics, stability, and generalization capabilities of deep learning models, contributing to the ongoing refinement of training techniques in the field.
 # 
 # 
+# Q: how do you change frequency for a sin/cos? 
+# In the context of sine and cosine functions used for positional encoding or signal processing, changing the frequency involves modifying the rate at which these functions oscillate or complete cycles within a given interval. The frequency of a sine or cosine function determines how rapidly it repeats its pattern over time.
+# Changing Frequency in Sinusoidal Functions:
+#     Frequency Parameter: The formula for a sinusoidal function ( f(x) = A \cdot \sin(Bx + C) ) consists of several components:
+#         ( A ) represents the amplitude (the peak value of the function).
+#         ( B ) corresponds to the frequency, determining how quickly the function oscillates.
+#         ( C ) represents the phase shift (a horizontal shift of the function).
+#     Modifying Frequency: To change the frequency of a sinusoidal function, adjust the ( B ) parameter:
+#         Increasing ( B ) will accelerate the oscillation, compressing the function horizontally. This effectively increases the frequency.
+#         Decreasing ( B ) will decelerate the oscillation, stretching the function horizontally. This effectively decreases the frequency.
+#     Relationship with Period: The frequency and the period of a sinusoidal function are inversely related. Frequency ( f ) and period ( T ) are related by the equation ( f = \frac{1}{T} ), where ( T ) represents the period (the length of one complete cycle).
+# Changing Frequency in Cosine Functions:
+# Similar to sinusoidal functions, cosine functions follow a similar formula ( g(x) = A \cdot \cos(Bx + C) ), with ( A ) as the amplitude, ( B ) as the frequency, and ( C ) as the phase shift.
+#     Frequency Modification: Adjusting the ( B ) parameter in a cosine function will also change its frequency:
+#         Increasing ( B ) will speed up the oscillation, effectively increasing the frequency.
+#         Decreasing ( B ) will slow down the oscillation, effectively decreasing the frequency.
+#     Correlation with Sine Function: Cosine functions are related to sine functions, typically having the same frequency but with a phase shift of ( \frac{\pi}{2} ) radians or ( 90^\circ ).
+# Application in Positional Encoding:
+# In positional encoding, altering the frequency of sine and cosine functions helps represent different positional information within a sequence. By adjusting the frequency parameters for sine and cosine functions, distinct patterns at various scales or positions can be encoded, allowing models to differentiate between different positions in a sequence.
+# Overall, changing the frequency parameter in sine and cosine functions involves adjusting the rate of oscillation, thereby affecting the speed at which these functions repeat their patterns. This adjustment is fundamental in encoding different positional information in sequence-related tasks within neural networks or signal processing applications.
 # 
-# 
-# 
-# 
-
+# imagine sin(1), sin(1/2), sin(1/100), ..., sin(1/100^2), sin(1/100^3),... 
+# The frequency of sin(1/100^n) as n increases is inversely proportional to the period of the function. 
+# The period of sin(1/100^n) is 2π/(1/100^n) = 2π100^n. Therefore, the frequency of sin(1/100^n) is 1/(2π100^n) 1.
+# As n increases, the frequency of sin(1/100^n) decreases exponentially. This means that the function oscillates 
+# more slowly as n increases, and the time between each oscillation increases.
+# side note: 
+# The 2π in the formula for the period of the sine function comes from the fact that the sine function
+# is periodic with a period of 2π radians. 
+# This means that the sine function repeats itself every 2π radians. 
+# The period of sin(1/100^n) is 2π/(1/100^n) = 2π*100^n 
+# siden ote2:
+# the reason we use increasing value for frequency fraction(lowering it for sin/cos as we go) for sin/cos
+# is to comeup with unique values for each dimension. note that its is true that cos has a phase shift of 90 degress
+# so you may think using the same freq with both of them would give different values (like sin(0)=0/cos(0)=1) but
+# they will have the same value at certain points like (sin(45)=cos(45)) so we use a different frequency for each
+# as you can imagine, up to a point it works, and atfer that we basically endup with constant values 
+# this is visible in our plot below.
 # %%
 # #  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
 import numpy as np
@@ -2158,7 +2191,7 @@ import matplotlib.pyplot as plt
 
 def sinusoidal_positional_encoding(max_position, d_model):
     position = np.arange(0, max_position)[:, np.newaxis]
-    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10_000) / d_model))
     
     # Calculate sinusoidal embeddings
     pos_enc = np.zeros((max_position, d_model))
