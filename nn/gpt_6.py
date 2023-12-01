@@ -1795,6 +1795,7 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # rapid oscillations within the same range.
 # look at the following example to see this better.
 # %%
+#
 import matplotlib.pyplot as plt 
 import matplotlib.colors as mcolors
 import numpy as np 
@@ -1921,11 +1922,145 @@ plt.show()
 # Incorporating the phase or timing of the position within the sequence in positional encoding provides the model with crucial information about sequential dependencies, positional relationships, and patterns in the data. It enhances the model's ability to understand and exploit the temporal or spatial characteristics of the sequence, leading to improved performance in various tasks.
 # 
 #
-# %%
+# Part2:why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
+# While the sine function is effective at capturing position-dependent information due to its periodic nature, incorporating the cosine function to capture position-independent changes provides additional flexibility and ensures a more comprehensive representation. Here are a few reasons why both components, sine and cosine, are beneficial:
+#     Versatility and Generalization:
+#         Sine for Periodic Patterns: Sine is well-suited for encoding positions with periodic patterns, such as sequences where certain positions exhibit recurring behaviors or variations.
+#         Cosine for Constant Features: Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. This helps in capturing position-independent characteristics that may not follow a periodic trend.
+#     Robustness to Shifts:
+#         Shift Invariance: The combination of sine and cosine allows the positional encoding to exhibit a form of shift invariance. When a sequence is shifted, the phase relationships between sine and cosine components change accordingly, preserving the relative positional information.
+#     Handling Different Time Scales:
+#         Sine for Short-Term Changes: Sine can capture short-term variations or changes that occur with a certain periodicity.
+#         Cosine for Long-Term Stability: Cosine, being constant over time, is suitable for encoding long-term stability or features that remain consistent irrespective of position changes.
+#     Reducing Redundancy:
+#         Orthogonality: The orthogonal nature of sine and cosine functions ensures that the information captured by each component is independent and non-redundant. This enhances the model's ability to distinguish between different positional characteristics.
+#     Adaptability to Varied Sequences:
+#         Handling Diverse Patterns: Many sequences exhibit a mix of periodic and non-periodic changes. The combination of sine and cosine allows the model to adapt to diverse patterns of positional information.
+# In summary, incorporating both sine and cosine components in positional encoding provides a more versatile and adaptable representation of positional information. This approach enables the model to capture a wide range of patterns, both periodic and non-periodic, enhancing its ability to understand and generalize across different sequences and tasks.
+# Let's illustrate the points mentioned using a unified example in the context of time series data representing temperature variations throughout the year:
+# Consider a dataset that records daily temperature readings over a year. Each day's temperature can be seen as a position in the sequence. Here's how sine and cosine functions are beneficial in this scenario:
+# Versatility and Generalization:
+#     Sine for Periodic Patterns:
+#         Example: Sine captures the seasonal periodicity in temperature, such as warmer temperatures during summer and colder temperatures during winter.
+#     Cosine for Constant Features:
+#         Example: Cosine represents features that remain constant, like the average temperature across different seasons, providing a position-independent encoding.
+# Robustness to Shifts:
+#     Shift Invariance:
+#         Example: Shifting the entire temperature sequence (e.g., moving the start of the year) changes the phase relationship between sine and cosine, preserving the relative information despite the shift.
+# Handling Different Time Scales:
+#     Sine for Short-Term Changes:
+#         Example: Sine captures short-term variations like daily temperature fluctuations, exhibiting a periodic pattern.
+#     Cosine for Long-Term Stability:
+#         Example: Cosine represents long-term stability, such as the overall trend of temperature changes over the entire year.
+# Reducing Redundancy:
+#     Orthogonality:
+#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall trends is independent, reducing redundancy in the positional encoding.
+# Adaptability to Varied Sequences:
+#     Handling Diverse Patterns:
+#         Example: Temperature data often involves a mix of periodic patterns (seasonal changes) and non-periodic variations (unpredictable weather events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
+# In summary, by incorporating both sine and cosine components in the positional encoding of temperature data, the model becomes more versatile. It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of various temperature sequences and tasks.
+# Example 2: 
+# Let's adapt the example to use text/word data, making it more intuitive:
+# Versatility and Generalization:
+#     Sine for Periodic Patterns:
+#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, such as weekly trends in news coverage.
+#     Cosine for Constant Features:
+#         Example: Cosine represents features that are constant across different positions, like the consistent presence of certain keywords, providing a position-independent encoding.
+# Robustness to Shifts:
+#     Shift Invariance:
+#         Example: Shifting the entire sequence of news headlines (e.g., moving the start of the dataset) changes the phase relationship between sine and cosine, preserving the relative information despite the shift.
+# Handling Different Time Scales:
+#     Sine for Short-Term Changes:
+#         Example: Sine captures short-term variations like daily fluctuations in the frequency of specific words or topics in the news.
+#     Cosine for Long-Term Stability:
+#         Example: Cosine represents long-term stability, such as the overall trend of changes in the prevalence of certain themes over the entire dataset.
+# Reducing Redundancy:
+#     Orthogonality:
+#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall trends in news coverage is independent, reducing redundancy in the positional encoding.
+# Adaptability to Varied Sequences:
+#     Handling Diverse Patterns:
+#         Example: News headlines often exhibit a mix of periodic patterns (coverage of recurring events) and non-periodic variations (unpredictable news events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
+# In summary, by incorporating both sine and cosine components in the positional encoding of daily news headlines, the model becomes more versatile. It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of various text sequences and tasks.
+# 
+# Q: what does Orthogonality refers to and how is it relavent or intuitive here? 
+# Orthogonality in the Context of Positional Encoding:
+# In mathematics, orthogonality refers to the relationship between two vectors being perpendicular to each other. In the context of the positional encoding using sine and cosine functions, orthogonality is a crucial concept that enhances the effectiveness of the encoding.
+# Let's break down how orthogonality is relevant and intuitive in this scenario:
+#     Independence of Components:
+#         The sine and cosine functions are orthogonal to each other. This means that the information encoded by the sine component is independent of the information encoded by the cosine component, and vice versa.
+#     Reducing Redundancy:
+#         In positional encoding, the goal is to represent various aspects of the sequence in a way that minimizes redundancy. If the sine and cosine components were not orthogonal, there might be overlapping information between them, diminishing the effectiveness of the encoding.
+#     Distinct Encoding of Features:
+#         The orthogonal nature ensures that each component is responsible for encoding different aspects of the sequence. Sine may capture periodic patterns, while cosine encodes constant features. Their orthogonality guarantees that the information captured by one does not overlap or interfere with the information captured by the other.
+#     Enhanced Discrimination:
+#         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes in the other. This separation of information contributes to a more nuanced understanding of the sequence.
+#     Mathematical Simplicity:
+#         The orthogonal relationship simplifies mathematical operations involving these components. When combining sine and cosine components, their orthogonality ensures that their interactions are well-defined and do not introduce complex dependencies.
+# Example:
+# Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) and persistent themes (captured by cosine) without confusion.
+# In summary, orthogonality in the context of sine and cosine functions used in positional encoding ensures independence between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional encoding scheme in various sequence-related tasks.
+# 
+# Q: is orthogonality in neural networks different or does it refer to the same thing? explain in depth
 #
+# Orthogonality in Neural Networks:
+# In the context of neural networks, orthogonality takes on a slightly different meaning compared to its traditional mathematical definition, but the fundamental idea remains rooted in independence and lack of correlation.
+# Weight Orthogonality:
+# In neural networks, weight orthogonality refers to the orthogonal relationships between weight vectors in the weight space. Specifically, it involves ensuring that weight vectors are as orthogonal as possible to each other during training. This concept is particularly relevant in deep learning architectures.
+# Relevance and Intuition:
+#     Reducing Redundancy and Overfitting:
+#         When weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information. This can help in reducing overfitting, where a model may learn noise or specific training examples rather than general patterns.
+#     Facilitating Training:
+#         Orthogonality can aid in a more stable and efficient training process. When weight vectors are orthogonal, updates to one weight vector do not strongly influence others, promoting more independent learning.
+#     Enhancing Representational Capacity:
+#         Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. Each weight vector can capture unique features or aspects of the data without interference from others.
+#     Generalization and Adaptability:
+#         Similar to the positional encoding example, orthogonality in neural networks enhances the model's ability to generalize and adapt to different patterns in the data. Independent weight vectors allow the model to learn a wide range of features without being overly constrained by correlations.
+#     Mitigating Vanishing or Exploding Gradients:
+#         Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation. This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
+# Example:
+# Consider a deep neural network processing images. If the weight vectors corresponding to different convolutional filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of the image, whether it's edges, textures, or higher-level features. This diversity contributes to a more robust and generalizable representation of the input data.
+# Summary:
+# While the term "orthogonality" may have a different application in neural networks compared to its traditional mathematical context, the core idea remains centered around independence, lack of correlation, and promoting diverse and efficient learning. In neural networks, weight orthogonality specifically addresses the relationships between weight vectors, contributing to improved generalization, reduced redundancy, and more effective training.
+# 
+# More Explanation : 
+#Orthogonality in Neural Networks: A Deeper Dive
+# In neural networks, orthogonality extends beyond its traditional geometric interpretation and takes on a specialized meaning within the context of weight matrices. Let's delve deeper into the nuances of weight orthogonality and its implications in the realm of deep learning.
+# 1. Geometric Perspective:
+#     Traditional Orthogonality: In mathematics, orthogonality between vectors implies a right-angle relationship. In the context of neural networks, this concept is adapted to the weight space. Weight vectors are considered orthogonal if their dot product is close to zero, signifying independence.
+# 2. Weight Orthogonality:
+#     Defining Weight Orthogonality: In neural networks, weight orthogonality refers to the idea that weight matrices (collections of weight vectors) are as orthogonal as possible. This concept is often applied to weight initialization or regularization techniques.
+# 3. Reducing Redundancy and Overfitting:
+#     Overfitting Mitigation: When weight vectors are orthogonal, they are less likely to redundantly encode similar patterns. This property can mitigate overfitting by encouraging the model to learn distinctive features, reducing reliance on specific training examples.
+# 4. Facilitating Training Stability:
+#     Independent Learning: Orthogonal weight vectors contribute to stable training. Updates to one weight vector have less impact on others, promoting more independent learning. This is particularly important in deep networks where instability in training can be a challenge.
+# 5. Enhancing Representational Capacity:
+#     Diverse Representations: Orthogonal weight matrices enhance the network's representational capacity. Each weight vector can specialize in capturing unique features or patterns, allowing the model to learn a rich and diverse set of representations.
+# 6. Generalization and Adaptability:
+#     Improved Generalization: Orthogonality fosters better generalization by ensuring that the model can adapt to a wide range of patterns. The independence between weight vectors allows the network to handle diverse input data effectively.
+# 7. Mitigating Gradient Issues:
+#     Addressing Gradient Challenges: Orthogonal weight matrices can help mitigate issues like vanishing or exploding gradients during backpropagation. This is critical for maintaining a stable gradient flow, especially in deep networks.
+# 8. Example: Image Processing in Convolutional Networks:
+#     Role in Convolutional Filters: Consider a convolutional neural network (CNN) processing images. If the weight vectors corresponding to different convolutional filters are orthogonal, each filter specializes in capturing distinct visual features (edges, textures). This diversity enhances the model's ability to recognize a broad range of image patterns.
+# 9. Mathematical Rigor:
+#     Eigenvalue Preservation: Orthogonal matrices have the property of preserving eigenvalues, contributing to numerical stability during training and optimization processes.
+# 10. Practical Implementation:
+#     Orthogonal Initialization: Researchers and practitioners often use orthogonal weight initialization techniques to encourage the orthogonality of weight matrices at the beginning of training.
+# 11. Advanced Considerations:
+#     Adaptive Orthogonality: Some advanced techniques focus on maintaining orthogonality dynamically during training, adapting to the evolving nature of the learned features.
+# 12. Open Questions and Research:
+#     Ongoing Exploration: The exploration of orthogonality in neural networks is an ongoing area of research, with scientists seeking to uncover more insights into its impact on optimization, generalization, and the learning dynamics of deep networks.
+# In summary, weight orthogonality in neural networks is a multifaceted concept that goes beyond its geometric roots. It plays a crucial role in shaping the learning dynamics, stability, and generalization capabilities of deep learning models, contributing to the ongoing refinement of training techniques in the field.
+# 
+# 
+# 
+# 
+# 
+# 
+
+# %%
+# #  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
 import numpy as np
 import matplotlib.pyplot as plt
-
 plt.figure(figsize=(32, 8))
 
 sequence_length = 50
@@ -2019,6 +2154,7 @@ import matplotlib.pyplot as plt
 # write a function to plot this, what pecularities are evident when plotting this?
 # https://www.tensorflow.org/text/tutorials/transformer
 # https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
+# https://www.scaler.com/topics/nlp/positional-encoding/
 
 def sinusoidal_positional_encoding(max_position, d_model):
     position = np.arange(0, max_position)[:, np.newaxis]
@@ -2061,7 +2197,10 @@ def plot_positional_encoding(positional_encoding):
     # that are perceptually uniform in both color and black-and-white. 
     # They are also designed to be perceived by viewers with common forms of color blindness 
     cmap = 'viridis'
-    plt.pcolormesh(positional_encoding[:], cmap=cmap)
+    # play with the values and see how as we near the end of embd, the value seem to become constant!
+    # use :10, :100, :200, then 100:200, 150:200, etc for embddiing dimension
+    # plt.pcolormesh(positional_encoding[:,:200], cmap=cmap)
+    plt.pcolormesh(positional_encoding[:,:], cmap=cmap)
     plt.xlabel('Embedding Dimensions')
     plt.ylabel('Position')
     plt.colorbar(label=f'Value({cmap})')
@@ -2128,6 +2267,14 @@ plot_positional_encoding(pos_enc)
 # Alternating Colors: Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
 # Positional Diversity: The heatmap will illustrate how each position in the sequence has a unique representation in the embedding space. This is crucial for the model to distinguish between tokens based on their absolute or relative positions.
 
+
+# from 
+# Function Periods
+# The position vector has shorter wavelengths for lower dimensions. 
+# As I increase, the periods of the function also increase. 
+# When I reach the value of d, a large number of pos vectors are needed to cover the entire period 
+# of the function. The values of the first 20 positions at higher indexes are almost constant. 
+# This can be observed in the figure below, where the colors of columns 30-50 hardly change.
 
 #%%
 # # Generate x values
