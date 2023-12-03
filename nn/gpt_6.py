@@ -1723,7 +1723,7 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # Recurrent neural networks (RNNs) typically compute a hidden state ht, as a function of their
 # input at time t and a previous hidden state ht−1, capturing relative and absolute positions along the
 # time dimension directly through their sequential
-# structure. Non-recurrent models do not necessar-ily consider input elements sequentially and may
+# structure. Non-recurrent models do not necessarily consider input elements sequentially and may
 # hence require explicitly encoding position infor-mation to be able to use sequence order.
 # One common approach is to use position encodings which are combined with input elements to
 # expose position information to the model. These position encodings can be a deterministic func-
@@ -1754,6 +1754,20 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # representations, are invariant to the total sequence length. Residual connections help propagate position information to higher layers.
 
 # so this is not the case here as we are using attention mechanism as well,
+# and hence we need to encode the position information as well. 
+# good refs for positional embeddings : 
+# https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6
+# this blogpost does a very good job at explaining the implementation of the sinusoidal positional encoding
+# and pretty much explains all the questions concerning the formula and why its implemented a certain way. 
+# https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
+# this blog post,does a very good job at explaining the intuitions behind the sinusoidal positional encoding.
+# Ive watched and read alot of videos and explanations on this, some videos(also linked below) are good some
+# arent as they say things that are not backed, I tried to ask and answer them using different sources I find
+# but these two links that I wrote here, do a good job. however, read the following information aswell. 
+# finally sinusoidal positional embedding isnot used anymore, instead the learned positions are used (this is
+# what we implemented in our example, and BERT uses it, but sinusoidal posintioning had a lot of intresting
+# intuitions and ideas that can give me/you a new prespective and possibly allow you to learn and comeup with
+# similar improvements knowing the concepts/reasons behind it)
 #
 # some attributes concerning positional encodings : https://www.youtube.com/watch?v=1biZfFLPRSY
 # 1.every position should have the same identifier regardless of the sequence length or what the input is
@@ -2192,6 +2206,12 @@ plt.plot(range(100), y[0:100, slice(*dims)])
 # plt.plot(np.arange(100), y[:100, 8:12])
 plt.legend(["dim %d"%p for p in range(*dims)])
 # %%
+# side notes: 
+# sin = pos/n^(2i/d_model)
+# The highest number that i can be set to is d_model divided by 2 since the equations alternate for each element 
+# in the embedding. n in the original paper recommends 10,000.
+#  
+from pprint import pprint
 import random
 import numpy as np
 import matplotlib.pyplot as plt
@@ -2199,10 +2219,15 @@ import matplotlib.pyplot as plt
 # https://www.tensorflow.org/text/tutorials/transformer
 # https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
 # https://www.scaler.com/topics/nlp/positional-encoding/
+# https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
 
 def sinusoidal_positional_encoding(max_position, d_model):
+    
+    assert d_model%2==0, "this needs to be an even number, otherwise odd/even count wont match! and we'll face an error"
     position = np.arange(0, max_position)[:, np.newaxis]
-    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10_000) / d_model))
+    # we use exp instead of the paper's implementation so its numerically more stable (As we involve tiny numbers
+    # exp allows us to not face such issues!)
+    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000) / d_model))
     
     # Calculate sinusoidal embeddings
     pos_enc = np.zeros((max_position, d_model))
@@ -2210,7 +2235,7 @@ def sinusoidal_positional_encoding(max_position, d_model):
     pos_enc[:, 1::2] = np.cos(position * div_term)
     
     return pos_enc
-print(f'{plt.colormaps()=}')
+pprint(plt.colormaps())
 def plot_positional_encoding(positional_encoding):
     plt.figure(figsize=(12, 6))
     # concerning colormaps read this first : https://matplotlib.org/stable/users/explain/colors/colormaps.html#colormaps 
@@ -2240,10 +2265,12 @@ def plot_positional_encoding(positional_encoding):
     # significantly improves the readability of data visualizations. The viridis scales provide color maps 
     # that are perceptually uniform in both color and black-and-white. 
     # They are also designed to be perceived by viewers with common forms of color blindness 
-    cmap = 'viridis'
+    #  or  maybe the rdbu is better!
+    cmap = 'plasma'
     # play with the values and see how as we near the end of embd, the value seem to become constant!
     # use :10, :100, :200, then 100:200, 150:200, etc for embddiing dimension
     # plt.pcolormesh(positional_encoding[:,:200], cmap=cmap)
+    # for cmap in plt.colormaps():
     plt.pcolormesh(positional_encoding[:,:], cmap=cmap)
     plt.xlabel('Embedding Dimensions')
     plt.ylabel('Position')
@@ -2252,6 +2279,12 @@ def plot_positional_encoding(positional_encoding):
     plt.show()
 
 # Example usage
+max_position = 5
+d_model = 6
+pos_enc = sinusoidal_positional_encoding(max_position, d_model)
+print(f'{pos_enc=}')
+plot_positional_encoding(pos_enc)
+#  and now lets see larger pos/embd_size
 max_position = 100
 d_model = 512
 pos_enc = sinusoidal_positional_encoding(max_position, d_model)
@@ -4958,7 +4991,8 @@ print(f"{''.join(decode(output))}")
 # capabilities: the first Transformers to achieve better-than-chance performance on the Path-X challenge
 # (seq. length 16K, 61.4% accuracy) and Path-256 (seq. length 64K, 63.1% accuracy).
 
-
+#
+# https://python.plainenglish.io/swin-transformer-from-scratch-in-pytorch-31275152bf03
 # about vision transormers 
 # Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, the different versions, and the importance of libraries like Hugging Face:
 # 1. Underlying Idea:
