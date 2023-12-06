@@ -2556,6 +2556,126 @@ plot_positional_encoding(pos_enc)
 # This can be observed in the figure below, where the colors of columns 30-50 hardly change.
 
 #%%
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+#
+# this function calculates the Euclidean distance between the positional encoding vectors of 
+# neighboring time-steps and plots these distances.
+# The plot will show that the distances between neighboring time-steps decrease as you move along
+# the time axis, illustrating the decay of positional information over time in the sinusoidal positional
+# encoding scheme.
+def get_positional_encoding(max_len, d_model):
+    pos = np.arange(max_len)[:, np.newaxis]
+    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+    positional_encoding = np.zeros((max_len, d_model))
+    positional_encoding[:, 0::2] = np.sin(pos * div_term)
+    positional_encoding[:, 1::2] = np.cos(pos * div_term)
+    return positional_encoding
+
+def plot_positional_encoding_distances(positional_encoding):
+    distances = np.sum(np.square(positional_encoding[:-1] - positional_encoding[1:]), axis=1)
+    plt.plot(distances[:])
+    plt.ylabel('Distance')
+    plt.xlabel('Time-step')
+    plt.title('Distance between neighboring time-steps in positional encoding')
+    plt.show()
+
+max_len = 5000
+d_model = 512
+
+positional_encoding = get_positional_encoding(max_len, d_model)
+plot_positional_encoding_distances(positional_encoding)
+
+# now if we try to display this as a heatmap, we will get this: 
+def plot_positional_encoding_heatmap(positional_encoding):
+    distances = np.sum(np.square(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=2)
+    sns.heatmap(distances,cmap='Blues')
+    plt.ylabel('Position')
+    plt.xlabel('Position')
+    plt.title('Heatmap of distances between positional encoding vectors')
+    plt.show()
+
+def plot_positional_encoding_dot_product_heatmap(positional_encoding):
+    """this function calculates the dot product between all pairs of 
+    positional encoding vectors and plots these dot products as a heatmap.
+    The heatmap will show the dot product between positional encoding 
+    vectors at different positions in the sequence. 
+    
+    The diagonal line in the heatmap represents the dot product of a 
+    position with itself, which is the maximum possible value. 
+    The symmetry of the heatmap reflects the fact that the dot product 
+    from position i to position j is the same as the dot product from 
+    position j to position i. 
+    
+    Args:
+        positional_encoding (_type_): _description_
+    """
+    dot_product = np.dot(positional_encoding, positional_encoding.T)
+    sns.heatmap(dot_product, cmap='Blues')
+    plt.ylabel('Position')
+    plt.xlabel('Position')
+    plt.title('Heatmap of dot product between all pairs of time-steps in positional encoding')
+    plt.show()
+
+max_len = 50
+d_model = 512
+
+positional_encoding = get_positional_encoding(max_len, d_model)
+# the information is given below (explanation part)
+plot_positional_encoding_heatmap(positional_encoding)
+# showing that the distance between neighboring time-steps are symmetrical and decays nicely with time.
+# that is, the diagnol axis has the highest score, which really says, each token/position has the highest
+# relationship with itself, as we get farther away, we see the blue turns to white slowly, showing the relation
+# ship between nearer position is stronger than those far away, and the shades show that this gradually and symetrically
+# decreases. 
+plot_positional_encoding_dot_product_heatmap(positional_encoding)
+# explanation 
+# Sure, I'd be happy to explain the `plot_positional_encoding_heatmap()` function in detail. Here's what each line of code does:
+# ```python
+# def plot_positional_encoding_heatmap(positional_encoding):
+# ```
+# This line defines the function `plot_positional_encoding_heatmap()`, which takes one argument: `positional_encoding`. The `positional_encoding` argument is expected to be a 2D numpy array containing the positional encoding vectors.
+# ```python
+#     distances = np.sum(np.square(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=2)
+# ```
+# This line calculates the Euclidean distance between all pairs of positional encoding vectors. 
+# Here's how it works:
+# - `positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]` computes the difference between 
+#    all pairs of positional encoding vectors. The `np.newaxis` is used to add an extra dimension to the arrays,
+#    allowing numpy to broadcast the subtraction operation across all pairs of vectors.
+# - `np.square(...)` squares each element of the resulting array. This is the first step in the calculation of
+#    the Euclidean distance, which is the square root of the sum of the squares of the differences.
+# - `np.sum(..., axis=2)` sums the squared differences along the last dimension (dimension 2) of the array. 
+#    This completes the calculation of the Euclidean distance.
+# ```python
+#     sns.heatmap(distances)
+# ```
+# This line uses the seaborn library's `heatmap()` function to create a heatmap of the distances. 
+# Each cell in the heatmap corresponds to the distance between a pair of positional encoding vectors.
+# ```python
+#     plt.ylabel('Position')
+#     plt.xlabel('Position')
+# ```
+# These lines set the labels for the y-axis and x-axis of the heatmap to 'Position'.
+# ```python
+#     plt.title('Heatmap of distances between positional encoding vectors')
+# ```
+# This line sets the title of the heatmap to 'Heatmap of distances between positional encoding vectors'.
+# ```python
+#     plt.show()
+# ```
+# This line displays the heatmap. If this line were not included, the heatmap would be created but not displayed.
+# In summary, the `plot_positional_encoding_heatmap()` function calculates the Euclidean distance between all 
+# pairs of positional encoding vectors and displays these distances as a heatmap. The heatmap provides a visual
+# representation of how the positional encoding changes across different positions in the sequence. 
+# The diagonal line in the heatmap represents the distance of a position with itself, which is zero. 
+# The symmetry of the heatmap reflects the fact that the distance from position i to position j is the same as
+# the distance from position j to position i. This symmetry and the structure of the heatmap can provide insights
+# into the nature of the positional encoding scheme used in Transformer models.
+
+
+
 # # Generate x values
 # x = np.linspace(0, 4 * np.pi, 100)
 # # Generate intermediary variable for frequency transition
