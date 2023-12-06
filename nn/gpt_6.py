@@ -1538,19 +1538,19 @@ class AttentionHead(nn.Module):
 #%%
 # TODO:  add the efficient/fused version 
 # lets check  to see if  fusing kqv can improve our speed!
-# this works, but its not really that efficient. usually when we have multiple operations, its much better
+# this works, but one might think its not really that efficient provided that usually when we have multiple operations, its much better
 # to create 1 larger operation than several smaller one, and when it comes to multiplication, we can do better
 # for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs, and then split
-# the result! lets see how its done and then do a simple benchmark to see if it actually is any better!
+# the result! well, lets first see how its done and then do a simple benchmark to see if it actually is any better!
 # to give you an intuitive undrestanding try the following example ,
 # suppose we have our k,q,v layers
 # key = nn.Linear(5,5,bias=False)
 # query = nn.Linear(5,5,bias=False)
 # value = nn.Linear(5,5,bias=False)
 # x = torch.randn(size = (3,2,5))
-# and we want to calculatetheir outputs,before we do the multiplication, lets make sure their weights
+# and we want to calculate their outputs, before we do the multiplication, lets make sure their weights
 # are the something fixed so we can easily see it for ourselves whats going on. 
-# since the key,query and values's weights are 5,5, we initilize them with 0-25!
+# since the key,query and values's weights are 5,5, we have 25 values for each so lets initilize them with 0-25!
 # key.weight.data   =  torch.arange(0,25).view(5,5).float()
 # query.weight.data =  torch.arange(0,25).view(5,5).float()
 # value.weight.data =  torch.arange(0,25).view(5,5).float()
@@ -1562,12 +1562,23 @@ class AttentionHead(nn.Module):
 # kqv = nn.Linear(5,15, bias=False)
 # now if we calculate the output of kqv, we should see the outputs match
 # kqv_output = kqv(x)
-# but the shape is (3,2,15)! no problem we split the last dimension into 3 seprate tensors!
+# but the shape is (3,2,15)! shapes dont match! how are we going to compare them then? 
+# no problem we split the last dimension into 3 seprate tensors!
 # k2,q2,v2 = torch.split(kqv_output, 5, dim=-1)
 # and now if we do 
 # (k==k2).all(), (q==q2).all(), (v==v2).all()
-# we get True,True,True
-# and its faster aswell, 
+# we get True,True,True , signifying they are actually doing the very same thing!
+# now that we know how to implement this, lets implement our attention head using this new trick!
+# and see if its any faster! 
+
+# side note about Autoregressive models : https://www.youtube.com/watch?v=vwG3KWzuACo
+# the class of models we are tyring to implement here is called autoregressive models and they 
+# are shown to outperform recurrent networks (rnns/lstm/gru/etc)
+# an autoregressive model is a feedforward model that predicts the next variable xt  in a time series
+# based on k previous variables (xt-1, xt-2,...)
+# in RNNs, the parameters are shared across time (same function (f(.) at different t))
+# while Autoregressive models, make a strong conditional independence assumption. 
+# watch the video to have a clue!
 
 class AttentionHead2(nn.Module):
     def __init__(self, context_size, embd_size, head_size, use_bias=False) -> None:
@@ -1582,8 +1593,10 @@ class AttentionHead2(nn.Module):
         self.kqv = nn.Linear(embd_size, head_size*3,bias=False)
         # since we are in an autoregressive model we need to impose a constrain so that a token
         # can only interact with the previous tokens. we use torch.tril to create a lower triangle
-        # that contains the numbers, will the upper triangle is all zeros.
+        # that contains the numbers, wile the upper triangle is all zeros.
         # since this wont be optimized, we mark it as a buffer and register accordingly 
+        # when we do this, pytorch adds this to our model state_dict, and does not include it in
+        # the optimization process!
         self.register_buffer('tril',torch.tril(torch.ones(context_size,context_size)))
         
     
@@ -1602,6 +1615,7 @@ class AttentionHead2(nn.Module):
         # is when at test time we decide to generate some text using the starting token
         # which can be of any length, 1 or more. this way we dont face errors when token
         # size in input is 1!)
+        # this is what makes our attention head, (self)masked-attention!
         weight = weight.masked_fill(self.tril[:T, :T]== 0, float('-inf'))
         # and now do a softmax so we get probablities 
         weight = weight.softmax(dim=-1)
@@ -1638,8 +1652,7 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # Number of parameters in original layers: 28,755,648
 # Number of parameters in fused layer: 28,755,648
 
-# # as you can see we get contradictory results. and its expected. 
-
+# as you can see we get contradictory results. and its expected. 
 # In general, fusing operations into a single operation can potentially improve performance by 
 # reducing memory access and overhead associated with separate operations. However, it's important
 # to consider the trade-off between fusion and memory usage. 
@@ -1715,16 +1728,16 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #         return idxs
 
 # this works fine, however, we can do better. here we just encoded the tokens, but
-# as we already explained, attention mechansimhas no notion of position or spatial structure like convs,
+# as we already explained, attention mechansim has no notion of position or spatial structure like convs,
 # or rnns e.g. 
-# when dealing with rnns the sequential nature of the input would be preserved, as each word/token would be
+# when dealing with rnns the sequential nature of the input is preserved, as each word/token is
 # processed one after another, so the order would be preserved. 
 # from shaw etal 2018: 
 # Recurrent neural networks (RNNs) typically compute a hidden state ht, as a function of their
 # input at time t and a previous hidden state ht−1, capturing relative and absolute positions along the
-# time dimension directly through their sequential
-# structure. Non-recurrent models do not necessarily consider input elements sequentially and may
-# hence require explicitly encoding position infor-mation to be able to use sequence order.
+# time dimension directly through their sequential structure. 
+# Non-recurrent models do not necessarily consider input elements sequentially and may
+# hence require explicitly encoding position information to be able to use sequence order.
 # One common approach is to use position encodings which are combined with input elements to
 # expose position information to the model. These position encodings can be a deterministic func-
 # tion of position (Sukhbaatar et al., 2015; Vaswaniet al., 2017) or learned representations. 
@@ -1769,29 +1782,98 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # intuitions and ideas that can give me/you a new prespective and possibly allow you to learn and comeup with
 # similar improvements knowing the concepts/reasons behind it)
 #
+#  
+# Side notes: 
+# Q:Whats an embedding intuitively?
+# Understanding Embeddings Intuitively
+# Embeddings can be thought of as a way to represent complex, high-dimensional data in a more simplified, lower-dimensional space while maintaining meaningful relationships between the data points. It's like capturing the essence of something intricate in a simpler form that retains its essence or crucial characteristics.
+# Simplification with Meaning:
+#     Analogous to Maps:
+#         Just as a map condenses geographic information into a flat surface without losing the relative positions of cities, embeddings condense data without losing crucial relationships.
+#     Capturing Essence:
+#         Think of it as distilling the essence of a painting into a smaller sketch that still captures the main elements and style.
+#     Relationships Preservation:
+#         Imagine organizing a library: embedding ensures that books on similar topics are placed nearby, making it easier to find related information.
+# Practical Examples:
+#     Word Embeddings:
+#         Words represented as vectors: closer words in the embedding space often have similar meanings or usage contexts.
+#     Image Embeddings:
+#         Images represented in a lower-dimensional space where similar images are closer together, aiding tasks like image similarity search.
+# Key Takeaway:
+# An embedding, intuitively, is a condensed representation that retains essential information or relationships while simplifying the complexity of high-dimensional data. It's like summarizing a story without losing its essence or key plot points.
+#
+# Q:Whats a manifold intuitively:
+# Understanding Manifolds Intuitively
+# A manifold, intuitively, can be visualized as a flexible and curved surface embedded in a higher-dimensional space. In the context of embedding manifolds, it refers to the reduced-dimensional space where data points are situated after the embedding process.
+# Visualizing Manifolds:
+#     Flexible Surface:
+#         Picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet, able to take on various shapes within the higher-dimensional space.
+#     Embedded in Higher-Dimensional Space:
+#         Imagine the rubber sheet exists within a 3D space, but the manifold itself is a 2D surface. The embedding process places data points on this flexible surface.
+# Analogies for Understanding:
+#     Paper Map Analogy:
+#         Just as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data in a lower-dimensional space.
+#     Hiking Trails Analogy:
+#         If you think of a landscape with hills and valleys, the trails can be seen as the manifold, navigating the terrain while being constrained by the landscape's overall structure.
+# Connection to Data Representation:
+#     Data Points on the Surface:
+#         In the manifold, each point represents a data point. The goal is to position these points on the surface so that relationships between them are preserved from the original, higher-dimensional data.
+#     Curvature and Relationships:
+#         The curvature of the manifold reflects the relationships between data points. Smooth curves indicate similar relationships, while abrupt turns may represent significant changes in the data.
+# Key Takeaway:
+# A manifold, intuitively, is a flexible, curved surface in a higher-dimensional space. In the context of embedding manifolds, it serves as the reduced-dimensional space where data points are positioned after undergoing the embedding process, capturing essential relationships in a more manageable form.
+#
+# explain more: 
+# Sure, diving deeper into the concept of embedding manifolds involves understanding how data points are transformed from a high-dimensional space to a lower-dimensional one while preserving their intrinsic relationships.
+# Mathematics of Manifolds:
+#     Topological Spaces: A manifold is a topological space that looks locally like Euclidean space, meaning that in a small enough region, it resembles a familiar space like a plane.
+#     Intrinsic Properties: It retains certain intrinsic properties, such as local linearity or smoothness, even if embedded in a higher-dimensional space.
+# Embedding Process:
+#     Dimensionality Reduction: The primary goal is to reduce the dimensions while retaining relevant information. This is achieved by finding a way to project the data onto a lower-dimensional surface while preserving the structure and relationships within the data.
+#     Preserving Relationships: Techniques used, like PCA or t-SNE, aim to maintain the proximity or similarity between data points. Similar points in the original space should remain close in the lower-dimensional manifold.
+# Understanding the Manifold's Shape:
+#     Local Structure Preservation: The manifold captures local structures or relationships among data points. Think of it as preserving how nearby points relate to each other.
+#     Global Shape: Understanding the overall shape of the manifold is crucial. It might have complex twists, turns, and curvatures, reflecting intricate relationships among data points.
+# Challenges and Considerations:
+#     Curse of Dimensionality: As the dimensionality decreases, some information may be lost. Finding an optimal balance is essential to retain meaningful information.
+#     Choosing the Right Technique: Different techniques suit different types of data. Linear techniques like PCA might not capture nonlinear relationships, which methods like t-SNE can handle.
+# Practical Applications:
+#     Machine Learning: Embedding manifolds play a vital role in various ML tasks, like clustering, classification, and visualization, where high-dimensional data needs to be comprehensively analyzed.
+#     Semantic Understanding: In natural language processing, embeddings help understand word relationships, sentiments, and semantic meaning.
+# Conclusion:
+# An embedding manifold is a reduced-dimensional space where complex high-dimensional data is transformed while maintaining essential relationships. Achieving this involves a delicate balance between reducing dimensions and preserving meaningful information, crucial for various applications across multiple domains.
+#
+#
+#
+#
 # some attributes concerning positional encodings : https://www.youtube.com/watch?v=1biZfFLPRSY
-# 1.every position should have the same identifier regardless of the sequence length or what the input is
+# 1.Every position should have the same identifier regardless of the sequence length or what the input is
 #  so when the input changes, the position embedding remains the same)
 # 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
 #  be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
-#   or dismilarity overshadows/overtunes the semantic similarity. lets expand on this a little bit and make it more
+#   or dismilarity overshadows/overtunes the semantic similarity. 
+#   lets expand on this a little bit and make it more
 #   intuitive, when we plot the token embeddings (after they are learned), you'll notice that tokens/words with similar
 #   context are clustered together, you find queen and king to be next to eachother, car, tire, steering wheel to cluster
-#   together, etc, when we add the positional embedding which really is another vectors with number, what happens is
+#   together, etc, showing words used together or in similar context bunchup as a cluster. 
+#   when we add the positional embedding which really is another vectors with number, what happens is
 #   during trainig, the network does the same thing with these new information as well, that is, the queen/king token
-#   in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers, imagine, king
-#   is the first token, so it gets closer to the first token's clustre, the network creates other clusters for other positions
-#   likewise, and as you can see, if the positional embedding is too large, it can disrupt the semantic clustering of tokens
+#   in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers to.
+#   imagine, king is the first token, so it gets closer to the 'first token's cluster, the network creates other clusters
+#   for other positions likewise, and as you can see, if the positional embedding is too large, it can disrupt the semantic
+#   clustering of tokens.
 #   it will create new clusters based on the position information only (clusters of first, seconds, third tokens, etc) at the
-#   expense of destroying the semantic clustered created due to similar contexts, thus degrading the performance altogether
+#   expense of destroying the semantic clusteres created due to similar contexts/etc, thus degrading the performance altogether
 #   as you can imagine, having a too little impact from positional info or lack of any, we are only left with semantic clusters
 #   and lose any kind of incentive for the model to use to make a disntinction between two sequence of the same tokens (becasue
 #   theres no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
-# the paper used something called sinosodal positional encoding, but why? what if we use simple numbers to 
+#
+# the paper uses something called sinusodal positional encoding, but why? what if we use simple numbers to 
 # index the positions since we can treat text as words coming sequentially? so why not count the tokens as
-# we go like 0,1,2,3,etc? 
+# we go like 1,2,3,4,etc? 
 # we dont use that becasue it violates the second requirement of the positional encoding, where we said
-# shifts need be small! or in other words, bounded. think about it for a second, if the later tokens has larger
+# change/shift/translations need be small! or in other words, bounded. 
+# Think about it for a second, if the later tokens has larger
 # numbers assigned to them, then the model assigns more importance to them as apposed to the earlier tokens with 
 # smaller numbers, the contribution of later tokens will be emphasized while the earlier tokens can be just ignored
 # if the sequence lengths are large enough and hence hinder the model performance, 
@@ -1822,7 +1904,7 @@ x = np.linspace(0, 4*np.pi, 1000)
 # low_frequency_s = np.sin(x)
 # high_frequency_s = np.sin(10*x)
 # instead lets draw both for sin and cos
-freqs = [f(x) for x in [x, 10*x] for f in [np.sin, np.cos]]
+freqs = [f(x) for x in [x, 5*x] for f in [np.sin, np.cos]]
 plt.style.use('seaborn')
 plt.figure(figsize=(8, 4))
 fig, axs  = plt.subplots(2)
@@ -1833,14 +1915,15 @@ for i,freq in enumerate(freqs):
     label += 'Low Frequency' if i<2 else 'High Frequency'    
     
     axs[i%2].plot(x, freq, label=label)
-    axs[i%2].set(xlabel="x", ylabel="Amplitude")
+    axs[i%2].set(xlabel="x-frequency", ylabel="Amplitude")
     axs[i%2].legend(loc='upper right')
 plt.show()
 #%%
+# 
 # now if we manage to lower the frequency low enough to the point where it gives us a huge preferably inifinit
 # numbers, that would be like our previous suggetsion, linear range of numbers, but bounded this time!
 # but the second issue still exists, that is, these numbers still, when added to the embeddings, will push them
-# into specific subregions in the manifold in the feature space(really this means, they cluster up together!)
+# !into specific subregions in the feature space(really this means, they cluster up together somewhere!)
 # and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
 # by this position and not the semantic between the two adjacent tokens. we also dont want the difference between two tokens
 # be too little, as this would cause the semantic distance to overwhelm/dominate the positional distance/information, 
@@ -1859,27 +1942,75 @@ plt.show()
 # !fact check these answers
 # question : why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
 #
-# The reason for interleaving sine and cosine functions in sinusoidal positional encoding is to capture different frequencies and phases in a systematic manner. This interleaving pattern ensures that each dimension in the encoding captures unique positional information.
-# By alternating between sine and cosine functions, the encoding matrix can represent different frequencies and phases. The sine function captures the position-dependent changes with a periodic pattern, while the cosine function captures the position-independent changes with a constant pattern.
-# The intuition behind this interleaving pattern lies in the properties of sine and cosine functions. The sine function is an odd function, meaning it is symmetric about the origin, while the cosine function is an even function, meaning it is symmetric about the y-axis.
-# When we use these functions in positional encoding, the interleaving ensures that each dimension captures different positional information. The even-indexed dimensions (0, 2, 4, etc.) capture position-independent changes with cosine functions, which remain consistent regardless of the position. The odd-indexed dimensions (1, 3, 5, etc.) capture position-dependent changes with sine functions, which introduce periodic variations as the position changes.
-# By combining both sine and cosine functions in this interleaved manner, the positional encoding can effectively represent different frequencies and phases across the dimensions. This allows the model to differentiate between positions and capture the relative ordering of elements in the sequence.
-# Overall, the interleaving of sine and cosine functions in sinusoidal positional encoding ensures that each dimension captures unique positional information, utilizing the properties of these trigonometric functions to represent frequencies and phases.
+# The reason for interleaving sine and cosine functions in sinusoidal positional encoding is to capture 
+# different frequencies and phases in a systematic manner. This interleaving pattern ensures that each 
+# dimension in the encoding captures unique positional information.
+# By alternating between sine and cosine functions, the encoding matrix can represent different frequencies 
+# and phases. The sine function captures the position-dependent changes with a periodic pattern, while the 
+# cosine function captures the position-independent changes with a constant pattern.
+# The intuition behind this interleaving pattern lies in the properties of sine and cosine functions. 
+# The sine function is an odd function, meaning it is symmetric about the origin, while the cosine function 
+# is an even function, meaning it is symmetric about the y-axis.
+# When we use these functions in positional encoding, the interleaving ensures that each dimension captures 
+# different positional information. The even-indexed dimensions (0, 2, 4, etc.) capture position-independent
+# changes with cosine functions, which remain consistent regardless of the position. 
+# The odd-indexed dimensions (1, 3, 5, etc.) capture position-dependent changes with sine functions, which 
+# introduce periodic variations as the position changes.
+# By combining both sine and cosine functions in this interleaved manner, the positional encoding can effectively
+# represent different frequencies and phases across the dimensions. This allows the model to differentiate 
+# between positions and capture the relative ordering of elements in the sequence.
+# Overall, the interleaving of sine and cosine functions in sinusoidal positional encoding ensures that each 
+# dimension captures unique positional information, utilizing the properties of these trigonometric functions
+# to represent frequencies and phases.
 #
 # question :why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
-#You raise a valid point. In some tasks, using only sine functions might be sufficient to capture position-dependent information. The inclusion of cosine functions in positional encoding is not strictly necessary for all tasks. It depends on the specific requirements and characteristics of the problem at hand.
-# The reason for including cosine functions alongside sine functions in sinusoidal positional encoding is to provide a richer representation of positional information. While sine functions capture position-dependent changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern.
-# In some cases, position-independent information can be valuable for the model to learn and reason about the sequence. It can provide a reference point or a baseline for the model to understand how each position deviates from a standard or average position. By incorporating both sine and cosine functions, the model can potentially gain a more comprehensive understanding of the sequence and its positional relationships.
-# However, it's important to note that the necessity of including cosine functions may vary depending on the task. In certain scenarios, using only sine functions may be sufficient, especially when the position-dependent changes are the primary focus.
-# Ultimately, the decision to include cosine functions in the positional encoding can be considered as an architectural choice, and it may require experimentation and exploration to determine the optimal approach for a specific task.
+# You raise a valid point. In some tasks, using only sine functions might be sufficient to capture position-
+# dependent information. The inclusion of cosine functions in positional encoding is not strictly necessary 
+# for all tasks. It depends on the specific requirements and characteristics of the problem at hand.
+# The reason for including cosine functions alongside sine functions in sinusoidal positional encoding is to
+# provide a richer representation of positional information. While sine functions capture position-dependent
+# changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern.
+# In some cases, position-independent information can be valuable for the model to learn and reason about the
+# sequence. It can provide a reference point or a baseline for the model to understand how each position deviates
+# from a standard or average position. By incorporating both sine and cosine functions, the model can potentially
+# gain a more comprehensive understanding of the sequence and its positional relationships.
+# However, it's important to note that the necessity of including cosine functions may vary depending on the 
+# task. In certain scenarios, using only sine functions may be sufficient, especially when the position-dependent
+# changes are the primary focus.
+# Ultimately, the decision to include cosine functions in the positional encoding can be considered as an 
+# architectural choice, and it may require experimentation and exploration to determine the optimal approach 
+# for a specific task.
 #
 # can you explain the first paragraph more? like which tasks for example?
-# Certainly! The necessity of including cosine functions alongside sine functions in positional encoding can vary depending on the task at hand. Here are a few examples to illustrate when including position-independent changes might be beneficial:
-# 1. Machine Translation: In machine translation tasks, the relative positions of words in the source and target sentences are crucial for accurate translation. By including cosine functions in positional encoding, the model can capture position-independent information, such as the difference between the first and last words in a sentence or the average position of words. These position-independent changes can provide valuable contextual information for the translation process.
-# 2. Speech Recognition: In speech recognition tasks, the timing and ordering of phonemes or speech segments play a vital role. By incorporating cosine functions in positional encoding, the model can capture position-independent information, such as the overall duration or rhythm of a speech sequence. This can help the model understand the temporal relationships between different speech units.
-# 3. Natural Language Understanding: In tasks involving natural language understanding, such as sentiment analysis or question answering, the relative positions of words or phrases can be important for context comprehension. By including cosine functions, the model can capture position-independent information, such as average position or general positional trends, which can aid in understanding the overall context or sentiment of a sentence.
-# 4. Music Generation: In tasks related to music generation, such as composing melodies or generating harmonies, positional information is crucial for creating coherent musical sequences. Including cosine functions alongside sine functions enables the model to capture both position-dependent variations (captured by sine functions) and position-independent patterns (captured by cosine functions), helping to generate musically meaningful sequences.
-# These are just a few examples where including position-independent changes through cosine functions in positional encoding can be beneficial. However, it's important to note that the specific requirements and characteristics of each task may vary, and the decision to include cosine functions should be based on empirical evaluation and experimentation, considering the specific nature of the task and dataset.
+# Certainly! The necessity of including cosine functions alongside sine functions in positional encoding can 
+# vary depending on the task at hand. Here are a few examples to illustrate when including position-independent
+# changes might be beneficial:
+# 1. Machine Translation: In machine translation tasks, the relative positions of words in the source and target
+#    sentences are crucial for accurate translation. By including cosine functions in positional encoding, the 
+#    model can capture position-independent information, such as the difference between the first and last words
+#    in a sentence or the average position of words. These position-independent changes can provide valuable 
+#    contextual information for the translation process.
+#
+# 2. Speech Recognition: In speech recognition tasks, the timing and ordering of phonemes or speech segments 
+#    play a vital role. By incorporating cosine functions in positional encoding, the model can capture 
+#    position-independent information, such as the overall duration or rhythm of a speech sequence. This can
+#    help the model understand the temporal relationships between different speech units.
+#
+# 3. Natural Language Understanding: In tasks involving natural language understanding, such as sentiment analysis
+#    or question answering, the relative positions of words or phrases can be important for context comprehension.
+#    By including cosine functions, the model can capture position-independent information, such as average position
+#    or general positional trends, which can aid in understanding the overall context or sentiment of a sentence.
+#
+# 4. Music Generation: In tasks related to music generation, such as composing melodies or generating harmonies,
+#    positional information is crucial for creating coherent musical sequences. Including cosine functions alongside
+#    sine functions enables the model to capture both position-dependent variations (captured by sine functions)
+#    and position-independent patterns (captured by cosine functions), helping to generate musically meaningful 
+#    sequences.
+# These are just a few examples where including position-independent changes through cosine functions in 
+# positional encoding can be beneficial. However, it's important to note that the specific requirements and
+# characteristics of each task may vary, and the decision to include cosine functions should be based on 
+# empirical evaluation and experimentation, considering the specific nature of the task and dataset.
+#
 # what are more examples?
 # Certainly! Here are a few more examples where including cosine functions in positional encoding can be beneficial:
 # 1. Image Captioning: In image captioning tasks, the relative positions of objects or regions within an image can provide important contextual information. By including cosine functions in positional encoding, the model can capture position-independent information, such as the global layout or arrangement of objects in the image. This can aid in generating more accurate and contextually relevant captions for the image.
@@ -1887,22 +2018,24 @@ plt.show()
 # 3. Time Series Forecasting: In time series forecasting tasks, the temporal ordering and duration of events play a critical role in predicting future values. By including cosine functions in positional encoding, the model can capture position-independent information, such as the overall trend or seasonality in the time series. This can help the model understand long-term patterns and make more accurate predictions.
 # 4. Video Processing: In video processing tasks, the temporal ordering and relationships between frames are crucial for tasks like action recognition or video captioning. By incorporating cosine functions in positional encoding, the model can capture position-independent information, such as the overall motion or rhythm in the video sequence. This can aid in recognizing actions or generating coherent captions for the video.
 # These are just a few additional examples where including cosine functions in positional encoding can be beneficial. The specific applicability of cosine functions may depend on the characteristics and requirements of the task, as well as the nature of the data being processed. It's important to experiment and evaluate different encoding strategies to find the most suitable approach for each specific task.
-#in which task this doesnt help?
-#Including cosine functions in positional encoding may not provide significant benefits or may not be necessary in certain tasks where position-independent changes are not as relevant. Here are a few examples where the inclusion of cosine functions may not be as helpful:
+#
+# in which task this doesnt help?
+# Including cosine functions in positional encoding may not provide significant benefits or may not be necessary in certain tasks where position-independent changes are not as relevant. Here are a few examples where the inclusion of cosine functions may not be as helpful:
 # 1. Sequence Tagging: In tasks like part-of-speech tagging or named entity recognition, the primary focus is on capturing position-dependent information. The model needs to understand the relative positions of words to assign appropriate tags. In such cases, using only sine functions for positional encoding may be sufficient, as they can effectively capture position-dependent changes without the need for cosine functions.
 # 2. Sequence Generation: In tasks like text generation or image synthesis, the primary objective is to generate new sequences or samples based on the given input. The position-independent changes may not play a significant role in the generation process, as the focus is on capturing the distribution of data and generating coherent sequences. In such cases, using only sine functions for positional encoding may be adequate.
 # 3. Sequence Classification: In tasks like sentiment analysis or document classification, the position-independent changes may have minimal impact on the classification task. The model primarily needs to understand the local context and relationships between words or phrases. In these cases, using only sine functions for positional encoding may be sufficient to capture the position-dependent information.
 # It's important to note that the applicability of cosine functions in positional encoding depends on the specific task and dataset characteristics. While including cosine functions can provide a richer representation of positional information in many cases, there may be scenarios where the position-independent changes captured by cosine functions are not as relevant or impactful. It's always recommended to experiment and evaluate different encoding strategies to determine the most suitable approach for a given task.
-#can you explain this part in depth?
-# While sine functions capture position-dependent changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern.
-#Certainly! Let's dive deeper into the explanation of how sine and cosine functions capture position-dependent and position-independent changes, respectively:
+#
+# can you explain this part in depth?
+# "While sine functions capture position-dependent changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern."
+# Certainly! Let's dive deeper into the explanation of how sine and cosine functions capture position-dependent and position-independent changes, respectively:
 # Sine Functions: Sine functions are trigonometric functions that oscillate between -1 and 1 in a periodic manner. The sine function is an odd function, meaning it is symmetric about the origin. It captures position-dependent changes because it introduces variations based on the position within the sequence. As the position changes, the sine function produces different values, resulting in a periodic pattern. This periodicity is useful for capturing the relative ordering and position-dependent information in a sequence.
 # Cosine Functions: Cosine functions are also trigonometric functions that oscillate between -1 and 1, but they have a different pattern compared to sine functions. The cosine function is an even function, meaning it is symmetric about the y-axis. Unlike the sine function, which captures position-dependent changes, the cosine function captures position-independent changes. It produces a constant pattern that remains the same regardless of the position within the sequence. This pattern provides a reference point or a baseline for the model to understand how each position deviates from a standard or average position. It helps capture position-independent information that may be relevant for certain tasks.
 # To summarize, sine functions capture position-dependent changes by introducing variations and a periodic pattern based on the position within the sequence. On the other hand, cosine functions capture position-independent changes by providing a constant pattern that remains the same throughout the sequence. This combination of sine and cosine functions in positional encoding allows the model to capture both position-dependent and position-independent information, providing a more comprehensive representation of positional relationships within a sequence.
 #
 # Question: sin and cos are periodic functions, i.e. they repeat their values, so how is this not a problem in this case? how do they address this issue?
 #
-#You are correct that sine and cosine functions are periodic, meaning they repeat their values over a specific interval. This periodicity could potentially pose a problem if we were to use these functions directly as positional encodings. However, in the context of sinusoidal positional encoding, the periodic nature of sine and cosine functions is actually leveraged in a way that addresses this issue effectively.
+# You are correct that sine and cosine functions are periodic, meaning they repeat their values over a specific interval. This periodicity could potentially pose a problem if we were to use these functions directly as positional encodings. However, in the context of sinusoidal positional encoding, the periodic nature of sine and cosine functions is actually leveraged in a way that addresses this issue effectively.
 # In sinusoidal positional encoding, the position within the sequence is encoded using a combination of sine and cosine functions with different frequencies and phases. The frequency determines how quickly the function oscillates, while the phase determines the starting point of the oscillation.
 # By using different frequencies and phases for each dimension in the encoding, the sinusoidal positional encoding achieves a unique representation for each position in the sequence. This means that even though sine and cosine functions are periodic, the combination of different frequencies and phases ensures that the positional encoding values do not repeat exactly for each position.
 # For example, consider encoding a sequence of length L. Each position in the sequence corresponds to a unique set of frequencies and phases for the sine and cosine functions. As a result, the encoding values for each position will have a distinct combination of sine and cosine values, ensuring that the positional information is uniquely represented.
@@ -2237,7 +2370,7 @@ def sinusoidal_positional_encoding(max_position, d_model):
     return pos_enc
 pprint(plt.colormaps())
 def plot_positional_encoding(positional_encoding):
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(128, 64))
     # concerning colormaps read this first : https://matplotlib.org/stable/users/explain/colors/colormaps.html#colormaps 
     # https://matplotlib.org/stable/gallery/color/colormap_reference.html
     # side note for why we chose viridis : https://sjmgarnier.github.io/viridis/articles/intro-to-viridis.html 
@@ -2266,7 +2399,7 @@ def plot_positional_encoding(positional_encoding):
     # that are perceptually uniform in both color and black-and-white. 
     # They are also designed to be perceived by viewers with common forms of color blindness 
     #  or  maybe the rdbu is better!
-    cmap = 'plasma'
+    cmap = 'RdBu'
     # play with the values and see how as we near the end of embd, the value seem to become constant!
     # use :10, :100, :200, then 100:200, 150:200, etc for embddiing dimension
     # plt.pcolormesh(positional_encoding[:,:200], cmap=cmap)
@@ -2285,7 +2418,7 @@ pos_enc = sinusoidal_positional_encoding(max_position, d_model)
 print(f'{pos_enc=}')
 plot_positional_encoding(pos_enc)
 #  and now lets see larger pos/embd_size
-max_position = 100
+max_position = 1000
 d_model = 512
 pos_enc = sinusoidal_positional_encoding(max_position, d_model)
 plot_positional_encoding(pos_enc)
@@ -2344,12 +2477,81 @@ plot_positional_encoding(pos_enc)
 # Alternating Colors: Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
 # Positional Diversity: The heatmap will illustrate how each position in the sequence has a unique representation in the embedding space. This is crucial for the model to distinguish between tokens based on their absolute or relative positions.
 
-
+# In the previous plot, the blue/white stripes represent the values of the positional vectors. 
+# The reason you see fewer changes (less blue/white stripes) towards the end of the plot is due to
+# the nature of the positional encoding scheme used in transformer models. 
+# This scheme uses sine and cosine functions of different frequencies to generate the positional 
+# encoding vectors. 
+# As you move towards higher dimensions, the frequency of these functions decreases,
+# leading to fewer changes in the values and hence fewer stripes in the plot.
+# The stripes at the far end of the embedding dimensions do not represent a single value. 
+# They are indeed many tiny numbers that are simply too small to make a significant difference, 
+# thus they are shown as blue/white for all positions.
+# The difference in the number of stripes between the 1k plot and the 50,000 positions plot could 
+# be due to the difference in the total number of positions encoded in each plot. A plot with more 
+# positions (like the 50,000 positions plot) would naturally have more stripes as it represents more 
+# positional information.
+# The key point to understand from visualizing these positional vectors is how positional information 
+# is encoded in transformer models. It helps us see that the positional encoding scheme can capture the 
+# order of data points in a sequence, which is crucial for tasks like natural language processing where 
+# the order of words in a sentence carries important semantic information1. The plot also shows how this 
+# positional information varies across different dimensions, providing insights into the workings of 
+# high-dimensional data in machine learning models.
+#
+# Note that the frequency is actually decreasing in this snippet. 
+# This is because the div_term is an exponential decay term, where the base of the exponent is less than 1 
+# (np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)). 
+# This means that as you move along the embedding size, the frequency of the sine and cosine terms in the
+# positional encoding decreases. 
+# This is a key aspect of the Transformer’s positional encoding, allowing it to capture both short-term and
+# long-term dependencies in the input sequence. The sine and cosine functions provide a way to encode the 
+# position with a unique representation that can capture relative positions and is invariant to the sequence
+# length. The decreasing frequency ensures that the model can distinguish positions across a wide range of 
+# sequence lengths.
+# 
+# relationship with wavelength:
+# In the context of waves, frequency and wavelength are inversely related. 
+# As the frequency of a wave increases, the wavelength decreases, and vice versa. 
+# This relationship is governed by the equation:
+# v=fλ
+# where:
+# (v) is the speed of the wave,
+# (f) is the frequency, and
+# (λ(lambda)) is the wavelength.
+# In the positional encoding scheme used in the Transformer model, 
+# the decreasing frequency can be thought of as an increasing “wavelength” along the dimensions of the positional
+# encoding vector. This means that the positional information encoded by higher dimensions changes more slowly 
+# (longer “wavelength”), allowing the model to capture longer-term dependencies in the data. 
+# Conversely, the positional information encoded by lower dimensions changes more quickly (shorter “wavelength”),
+# enabling the model to capture shorter-term dependencies. 
+# This balance allows the model to understand both the local and global structure of the sequence.
+#
+#In the context of Transformer models, 
+# the concept of "longer waveform" is analogous to the slower changing positional encoding values in higher 
+# dimensions. 
+# The positional encoding in Transformer models uses a mix of sine and cosine functions with different frequencies.
+# The frequency of these functions decreases (or the "wavelength" increases) as you move to higher dimensions in 
+# the positional encoding vector. 
+# This means that for lower dimensions, the positional encoding values change rapidly (short "wavelength"), 
+# allowing the model to capture changes and patterns that occur over short distances in the sequence (short-term 
+# dependencies). 
+# On the other hand, in higher dimensions, the positional encoding values change more slowly (long "wavelength").
+# This allows the model to capture patterns and dependencies that occur over longer distances in the sequence 
+# (long-term dependencies). 
+# For example, in a sentence, a word might be influenced not just by the word next to it, but also by a word 
+# much further away. The slower changing positional encodings in the higher dimensions allow the model to 
+# capture these longer-term dependencies.
+# So, the "longer waveform" (or slower changing positional encoding values) helps the model to understand the 
+# broader context in the sequence, while the "shorter waveform" (or rapidly changing positional encoding values)
+# helps the model to understand the local structure of the sequence. This balance is crucial for the model's 
+# performance on tasks like language translation, where understanding both the local syntax and the broader 
+# semantic context is important.
+#
 # from 
 # Function Periods
 # The position vector has shorter wavelengths for lower dimensions. 
-# As I increase, the periods of the function also increase. 
-# When I reach the value of d, a large number of pos vectors are needed to cover the entire period 
+# As i increases, the periods of the function also increase. 
+# When i reaches the value of d, a large number of pos vectors are needed to cover the entire period 
 # of the function. The values of the first 20 positions at higher indexes are almost constant. 
 # This can be observed in the figure below, where the colors of columns 30-50 hardly change.
 
@@ -2514,6 +2716,43 @@ plt.plot(pos_vec)
 # 07:57 Relative Position Bias in theory
 # 12:53 PyTorch Implementation
 # 
+#
+# A very good and intuitive way as to why positional encodings are added vs concatenated (ref https://www.reddit.com/r/MachineLearning/comments/cttefo/d_positional_encoding_in_transformer/):
+# (to understand this fully, you need to read the previous notes I wrote/collected like orthogonality (which simply means independency!)) 
+# In attention, we basically take two word embeddings (x and y), pass one through a Query transformation matrix (Q) and the second through a Key transformation matrix (K), and compare how similar the resulting query and key vectors are by their dot product. So, basically, we want the dot product between Qx and Ky, which we write as:
+# (Qx)'(Ky) = x' (Q'Ky). So equivalently we just need to learn one joint Query-Key transformation (Q'K) that transform the secondary inputs y into a new space in which we can compare x.
+# By adding positional encodings e and f to x and y, respectively, we essentially change the dot product to
+# (Q(x+e))' (K(y+f)) = (Qx+Qe)' (Ky+Kf) = (Qx)' Ky + (Qx)' Kf + (Qe)' Ky + (Qe)' Kf = x' (Q'Ky) + x' (Q'Kf) + e' (Q'Ky) + e' (Q'K f), where in addition to the original x' (Q'Ky) term, which asks the question "how much attention should we pay to word x given word y", we also have x' (Q'Kf) + e' (Q'Ky) + e' (Q'K f), which ask the additional questions, "how much attention should we pay to word x given the position f of word y", "how much attention should we pay to y given the position e of word x", and "how much attention should we pay to the position e of word x given the position f of word y".
+# Essentially, the learned transformation matrix Q'K with positional encodings has to do all four of these tasks simultaneously. This is the part that may appear inefficient, since intuitively, there should be a trade-off in the ability of Q'K to do four tasks simultaneously and well.
+# HOWEVER, MY GUESS is that there isn't actually a trade-off when we force Q'K to do all four of these tasks, because of some approximate orthogonality condition that is satisfied of in high dimensions. The intuition for this is that randomly chosen vectors in high dimensions are almost always approximately orthogonal. There's no reason to think that the word vectors and position encoding vectors are related in any way. If the word embeddings form a smaller dimensional subspace and the positional encodings form another smaller dimensional subspace, then perhaps the two subspaces themselves are approximately orthogonal, so presumably these subspaces can be transformed approx. independently through the same learned Q'K transformation (since they basically exist on different axes in high dimensional space). I don't know if this is true, but it seems intuitively possible.
+# If true, this would explain why adding positional encodings, instead of concatenation, is essentially fine. Concatenation would ensure that the positional dimensions are orthogonal to the word dimensions, but my guess is that, because these embedding spaces are so high dimensional, you can get approximate orthogonality for free even when adding, without the costs of concatenation (many more parameters to learn). Adding layers would only help with this, by allowing for nonlinearities.
+# We also ultimately want e and f to behave in some nice ways, so that there's some kind of "closeness" in the vector representation with respect to small changes in positions. The sin and cos representation is nice since nearby positions have high similarity in their positional encodings, which may make it easier to learn transformations that "preserve" this desired closeness.
+# (Maybe I'm wrong, and the approximate orthogonality arises from stacking multiple layers or non-linearities in the fully-connected parts of the transformer).
+# tl;dr: It is intuitively possible that, in high dimensions, the word vectors form a smaller dimensional subspace within the full embedding space, and the positional vectors form a different smaller dimensional subspace approximately orthogonal to the one spanned by word vectors. Thus despite vector addition, the two subspaces can be manipulated essentially independently of each other by some single learned transformation. Thus, concatenation doesn't add much, but greatly increases cost in terms of parameters to learn.
+#
+# also this image: https://imgur.com/kaADdQB
+# shows the relative postional learning capability of the sinosoidal positional encoding 
+# ref: https://www.reddit.com/r/MachineLearning/comments/cttefo/comment/exoy4ww/"
+# The second image just shows Euclidean distances between the added embedding for a given position.
+# The thing is that their choice of positional encoding function reflects not only absolute, but also the relative distance among tokens in sequences.
+# In the paper they write:
+#     We chose this function because we hypothesized it would allow the model to easily learn to attend by relative positions, since for any fixed off set k,PE_pos+k can be represented as a linear function of PE_pos.
+# Unfortunately, I don't really wave a better way to elaborate it further in my mind at the moment. I'm sorry for that.
+# Answering your question, I personally think that they seem to simply pick up the first elegant solution to solve this problem.
+# However, I believe that there are a lot of more interesting ways to take advantage of positional encoding trick. I'm currently working on it for my own dataset.
+#"
+# Theres a wealth of information and good points in that thread! read it all!
+# such as : https://www.reddit.com/r/MachineLearning/comments/cttefo/comment/exnw14a/
+# "Because the distances between the neighboring values of the sine/cosine positional embeddings are "nice" 
+# (symmetrical, and decay sensibly with distance), You could come up with another function that does something
+# similar."
+# what does that mean? 
+# "Symmetrical" - see image 2. https://imgur.com/a/p7NcUm1
+# "Decay sensibly with distance" - In this gif you can see entries in the distance matrix which have similar value [https://imgur.com/a/p7NcUm1]
+# White dots are points (corresponding to different pairwise positions) which lay in some epsilon neighborhood from some threshold tau which changes over time from 0 to maximum distance.
+#
+# this issue has some good points as well : https://github.com/tensorflow/tensor2tensor/issues/1591 
+# intuitions such as addition creates subspace clusters, etc and concat vs add is discussed here
 #%%
 # !all entries interact with all other entries at the same time, and the order of words/tokens is lost
 # 'how are you' would be the same as 'are how you', 'you how are', 'you are how', 'how you are', etc
@@ -2558,15 +2797,158 @@ plt.plot(pos_vec)
 # learned positional embedding
 #
 #
+# 
+#
+#
+# Positional encoding:
+# As we pointed out earlier, the attention mechanism does not have any notion of position, unlike the cnn or rnns
+# that are inheritly sequential and are posision aware. 
+# without positional information, a sequence such as ABC would be the same as CBA, ACB, BCA, or any permutations of the 
+# tokens involved. this is specifically bad for an autoregressive task like generating text. 
+# An autoregressive model, given a token, the model needs to comeup with a good prediction! obviously this requires the order
+# of tokens to be taken into account to create meaningful sequences/texts. 
+# imagine you expecing the model to greet you like: Hello, nice to meet you! but instead you get a random sequence of tokens
+# like: ',to nice! Hello you meet' which is not what we are after! in reality the network might comeup with a weak notion of 
+# order, simply based on the statistics it saw in the dataset, however, it cant utilize that to comeup with complex structures
+# certainly not the ones that have subtle meaning changes, when the order of some parts are reversed! like :
+# live to work!
+# work to live!
+# as you can see the order plays a crucial role not only in generating text but also infering the undderlying meaning.
+# 
+# so how can we add this positional information. there are several ways we can think of to add this information. 
+# we can learn these so called positional encoding the same way we learn the token embeddings. this is called abosulte positional encoding!
+# it has some pros and cons we will get to in a moment. 
+# we can simply pre-compute these positional encodings. this is what the original paper of attention is all you need, did.
+# their choice is refered to as sinusoidal positional encoding which provides relative positioning as well.
+# basically the combination of sin/cos acts as a binary counter, and this way the positional info for each token
+# is calculated and provided to the network.
+# to be more specific, the frequency for sin/cos increases for each dimension, so the idea is, the network can, by looking,
+# at the frequencies, figureout, which token has come after which one, and using this, it can understand the 
+# relative posiosions of the tokens involved. ()
+# (the author in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out that counting was
+# was a hard problem, and 2 years later they came up with the sinusoidal positioning encoding. 
+# see 
+# https://www.reddit.com/r/learnmachinelearning/comments/9e4j4q/positional_encoding_in_transformer_model/
+# http://fastml.com/introduction-to-pointer-networks/
+# https://www.reddit.com/r/MachineLearning/comments/cttefo/d_positional_encoding_in_transformer/
+# https://arxiv.org/abs/1905.04226 )
+# later works however, showed that such embeddings can be learned and infact BERT did exactly that and opted to use
+# learned positional emebddings instead of the sinusoidal positional encoding used by the original paper.
+# later on, other versions such as rope or rotary positional encoding were introduced to provide relative positional 
+# encoding (better). after than Another work AliBi, completely removed the positional embedding and instead used
+# constraints on relationships with respect to their distance! (i.e. decaying the strength of relationship based on
+# distance) so this is an activate field of research and today as I write this, rope is being used along with 
+# learned positional encoding. This needs more 
+# 
+# method 1: 
+# for one we can simply add the tokens absolute position to the token embedding as an extra dimension. 
+# this method has several problems. 
+# 1. as the sequence length incresaes, larger and larger numbers are asinged, this creates
+# a nonintentional bias towards the tokens at the end, apart from that, it can hinder the optimization process and cause all
+# sorts of problems such as gradient explosion, etc. 
+# also the contribution of the tokens will be different, early tokens would have a minscule impact compared to the later tokens
+# that have a larger index. normalizing the values so all numbers fall into a range can mitigate this issue, but it creates 
+# another issue, the same position, can now take different values based on the sequence length. the 3rd position in a sequence of 
+# 4, has a different value (3/4=0.75) compared to a sequence of 10 (3/10=0.3). this will confuse the model!
+# so this is not a good idea! apart from this, this might clutter up the semantic meaning of the word emebddings
+# if we just append it, other than, if instead of a single dimension, we somehow could encode that number to a vector
+# the same length as the word/token embedding, we would get a better result. imagine this could give us a positional embedding
+# as apposed to position number/info/hint/condition! with the positional embedding, like word embedding, the network
+# could comeup with relative positional information by itself. like by clustering each position into its own feature subsapce
+# the same way we have this for word embedding which allows us to do kin - man = queen! or queen - woman = king! 
+# do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position, so that 
+# its semantic is preserved, and also the position is also separate from others. for this all dimensions of the embedding
+# need to be taken into account, so thats why the emebdding portion makes sense! 
+# now if we take this route, we see that the scale needs to be the same, and all positions need to use the same identifier
+# regardless of sequence length so network can actually differentiate between these positions properly.
+# from there, we either learn it, or precompute it. the sin/cos is the pre computed one!
+# what else can we do?
+# we can   
+# are not different
+#
 # this is called absolute position embedding itsl ike sinusodal position embedding that was
 # introduced in the original paper! explain more 
+# https://timodenk.com/blog/linear-relationships-in-the-transformers-positional-encoding/ (this is really good and many used his intuition to explain this)
 # https://www.youtube.com/watch?v=3mTsYm9qQFA
 # https://www.youtube.com/watch?v=o29P0Kpobz0
 # https://www.youtube.com/watch?v=JERXX2Byr90
 # https://www.youtube.com/watch?v=M2ToEXF6Olw
 #!https://www.youtube.com/watch?v=4AzsiCMw_-s
 # https://www.youtube.com/watch?v=IWmpRaJ9Dz0
+# https://www.youtube.com/watch?v=S27pHKBEp30 # epsecially the end of the lecture/question/answering has good stuff!
+# https://notesonai.com/Positional+Encoding
+# https://datascience.stackexchange.com/questions/55901/in-a-transformer-model-why-does-one-sum-positional-encoding-to-the-embedding-ra/117128#117128
+# https://datascience.stackexchange.com/questions/110180/why-cant-positions-in-transformers-be-simply-appended-to-the-input-to-preserve
+# https://assets.researchsquare.com/files/rs-2525471/v1/8624e58c681929fd04425437.pdf?c=1675250963
+# file:///home/hossein/Downloads/00_2021_TransformerReview.pdf (https://www.researchgate.net/publication/360066821_Exploring_Recent_Advancements_of_Transformer_Based_Architectures_in_Computer_Vision?enrichId=rgreq-495e0a1aba907f54e457b0542f3306d0-XXX&enrichSource=Y292ZXJQYWdlOzM2MDA2NjgyMTtBUzoxMTQ2OTA4ODA2NTEyNjQxQDE2NTA0NTU3NzYzNDc%3D&el=1_x_3&_esc=publicationCoverPdf)
+# Transformers in Vision: A Survey https://arxiv.org/pdf/2101.01169.pdf
+# Exploring recent advancements of Transformer based architectures in computer vision
+#
+# %%[markdown]
+# side note 
 # 
+# The frequency of a sine or cosine wave is determined by the rate at which it oscillates or completes cycles over time. In mathematical terms, frequency (f) is the number of cycles per unit of time, usually measured in Hertz (Hz). The relationship between frequency, angular frequency, and the period of a wave is given by the equation:
+# [ f = \frac{1}{T} ]
+# Where:
+#     ( f ) is the frequency,
+#     ( T ) is the period of the wave (the time it takes to complete one cycle),
+#     ( \omega ) (angular frequency) is related to ( f ) by ( \omega = 2\pi f ).
+# For a sine or cosine wave, the general form is:
+# [ y(t) = A \cdot \sin(2\pi f t + \phi) ]
+# Where:
+#     ( A ) is the amplitude,
+#     ( f ) is the frequency,
+#     ( t ) is time,
+#     ( \phi ) is the phase.
+# Now, to increase the frequency of a sine or cosine wave, you can do one of the following:
+#     Increase the angular frequency ( \omega ):
+#         ( \omega = 2\pi f )
+#         By increasing ( \omega ), you effectively increase the rate at which the sine or cosine function oscillates.
+#     Decrease the period ( T ):
+#         The period ( T ) is the reciprocal of frequency, so by decreasing the period, you increase the frequency.
+#         ( T = \frac{1}{f} )
+# Here's a more detailed explanation:
+#     Angular Frequency ( \omega ):
+#         The angular frequency ( \omega ) represents how quickly the wave oscillates in radians per unit of time.
+#         If you increase ( \omega ), the wave will complete more cycles in the same amount of time.
+#         This is often more intuitive when thinking about the periodicity of the wave in terms of its angular measure (radians) rather than cycles.
+#     Period ( T ):
+#         The period ( T ) is the time it takes for one complete cycle of the wave.
+#         If you decrease the period, the wave completes cycles more quickly, effectively increasing the frequency.
+# In summary, to increase the frequency of a sine or cosine wave, you can either increase the angular frequency ( \omega ) or decrease the period ( T ). These changes will result in a wave that oscillates more rapidly over time.
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_sine_wave(amplitude, frequency):
+    # Generate time values from 0 to 2*pi with small intervals
+    time = np.linspace(0, 2 * np.pi, 1000)
+    
+    # Calculate the sine values for each time point
+    sine_wave = amplitude * np.sin(2 * np.pi * frequency * time)
+    
+    # Plot the sine wave
+    plt.figure(figsize=(8, 4))
+    plt.plot(time, sine_wave, label=f'Sine Wave\nAmplitude: {amplitude}, Frequency: {frequency} Hz')
+    
+    # Add labels and title
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+    plt.title('Sine Wave - Amplitude and Frequency')
+    
+    # Add a legend
+    plt.legend()
+    
+    # Show the plot
+    plt.grid(True)
+    plt.show()
+
+# Set the amplitude and frequency values
+amplitude = 1.0
+frequency = 1.0  # in Hertz
+
+# Call the function to plot the sine wave
+plot_sine_wave(amplitude, frequency)
+# %%
 # since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
