@@ -2577,11 +2577,11 @@ def plot_positional_encoding_distances(positional_encoding):
     distances = np.sum(np.square(positional_encoding[:-1] - positional_encoding[1:]), axis=1)
     plt.plot(distances[:])
     plt.ylabel('Distance')
-    plt.xlabel('Time-step')
+    plt.xlabel('Time-step/embd dim')
     plt.title('Distance between neighboring time-steps in positional encoding')
     plt.show()
 
-max_len = 5000
+max_len = 1000
 d_model = 512
 
 positional_encoding = get_positional_encoding(max_len, d_model)
@@ -2618,8 +2618,9 @@ def plot_positional_encoding_dot_product_heatmap(positional_encoding):
     plt.title('Heatmap of dot product between all pairs of time-steps in positional encoding')
     plt.show()
 
-max_len = 50
-d_model = 512
+max_len = 512
+# smaller dims shows the shades much better than a larger dim such as 512
+d_model = 100
 
 positional_encoding = get_positional_encoding(max_len, d_model)
 # the information is given below (explanation part)
