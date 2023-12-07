@@ -1,13 +1,13 @@
 #%%
 # in the name of God the most compassionate the most merciful
-# in this section we will have a look at how a GPT(which is 
+# in this section we will have a look at how a GPT (which is 
 # short for Generative Pretrained Transformer) model works,
 # in this section we will implement the attention mechanism
 # which is the foundation of transformers, and see 
-# how it works and lean more about it (sel-attention, cross
+# how it works and lean more about it (self-attention, cross
 # attention, multi-head attention, etc)
 # 
-# beore  we delve into the implementation details, we have to take a detour
+# before we delve into the implementation details, we have to take a detour
 # and discuss some underlying concepts and techniques involved.
 # 
 # so how are we going about this. we need to create a language model
@@ -2315,8 +2315,7 @@ plt.ylabel("Encoding Value")
 plt.title("Sinusoidal Positional Encoding (pos_enc)")
 plt.legend()
 plt.show()
-#%%
-
+# this plot is the same as the following one!
 #%%
 import math
 import torch
@@ -2581,7 +2580,7 @@ def plot_positional_encoding_distances(positional_encoding):
     plt.title('Distance between neighboring time-steps in positional encoding')
     plt.show()
 
-max_len = 1000
+max_len = 50000
 d_model = 512
 
 positional_encoding = get_positional_encoding(max_len, d_model)
@@ -2629,7 +2628,7 @@ plot_positional_encoding_heatmap(positional_encoding)
 # that is, the diagnol axis has the highest score, which really says, each token/position has the highest
 # relationship with itself, as we get farther away, we see the blue turns to white slowly, showing the relation
 # ship between nearer position is stronger than those far away, and the shades show that this gradually and symetrically
-# decreases. 
+# decreases. try sin/cos only and see why we use both of them together!
 plot_positional_encoding_dot_product_heatmap(positional_encoding)
 # explanation 
 # Sure, I'd be happy to explain the `plot_positional_encoding_heatmap()` function in detail. Here's what each line of code does:
@@ -2873,7 +2872,16 @@ plt.plot(pos_vec)
 # White dots are points (corresponding to different pairwise positions) which lay in some epsilon neighborhood from some threshold tau which changes over time from 0 to maximum distance.
 #
 # this issue has some good points as well : https://github.com/tensorflow/tensor2tensor/issues/1591 
+# and this one : https://github.com/tensorflow/tensor2tensor/pull/177
 # intuitions such as addition creates subspace clusters, etc and concat vs add is discussed here
+# ref: https://colab.research.google.com/drive/14RGALTsPIYGAuIByXGutK-aYN-PikWzF
+# Why are positional embeddings (PE) added to word embeddings (WE) instead of concatenated?
+# Assume: the PE and WE are vectors of length 512.
+# Hypothesis: Many elements of the PE vector do not actually move very much as a function of the position - these are ~constant. Since those elements are constant, they do not add noise to the WE after the sum operation.
+# In effect, the PE only contains information in the positions 1 through say 256. And the WE only contains information the positions say 257 through 512.
+# So really... sum(WE, PE) generates the same amount of information as concat(PE[:256], WE[256:].
+# this repo and book have good ipython notebooks that show each operation with easy to follow explanations 
+# on googlecolab : https://github.com/Denis2054/Transformers-for-NLP-2nd-Edition
 #%%
 # !all entries interact with all other entries at the same time, and the order of words/tokens is lost
 # 'how are you' would be the same as 'are how you', 'you how are', 'you are how', 'how you are', etc
@@ -2998,6 +3006,9 @@ plt.plot(pos_vec)
 # https://www.youtube.com/watch?v=IWmpRaJ9Dz0
 # https://www.youtube.com/watch?v=S27pHKBEp30 # epsecially the end of the lecture/question/answering has good stuff!
 # https://notesonai.com/Positional+Encoding
+# http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding (might be good!)
+# stanford's 2023 course on nlu seems like a good resource though I myself havent watched it fully : https://www.youtube.com/watch?v=K_Dh0Sxujuc&list=PLoROMvodv4rOwvldxftJTmoR3kRcWkJBp
+# theres another course in-context I guess which are good as well: part1 is here: https://www.youtube.com/watch?v=eyNLkiQ89KI
 # https://datascience.stackexchange.com/questions/55901/in-a-transformer-model-why-does-one-sum-positional-encoding-to-the-embedding-ra/117128#117128
 # https://datascience.stackexchange.com/questions/110180/why-cant-positions-in-transformers-be-simply-appended-to-the-input-to-preserve
 # https://assets.researchsquare.com/files/rs-2525471/v1/8624e58c681929fd04425437.pdf?c=1675250963
