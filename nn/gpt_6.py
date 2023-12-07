@@ -44,12 +44,13 @@ with open('./tiny_shakespear.txt','r') as file:
     # this time we read the whole text as one big str
     dataset = file.read()
     
-print(f'{dataset[:100]=}')
+print(f'{dataset[:100]=}') 
+# prints:
+# dataset[:100]='First Citizen:\nBefore we proceed any further, hear me speak.\n\nAll:\nSpeak, speak.\n\nFirst Citizen:\nYou'
 # now lets create our atoi and itoa dictionaries for mapping
 # lets create our unique character list, which is infact our vocabulary or vocab for short
 vocab_list = sorted(set(''.join(dataset)))
 vocab_size = len(vocab_list)
-# ! explain token
 # lets create our mapping dictionaries, we are basically going to use them
 # for tokenization, converting our input into tokens which here are characters 
 # and ultimately their integer representations
@@ -89,13 +90,13 @@ vocab_size = len(vocab_list)
 # morphological and semantic information more effectively, especially for languages with complex word 
 # formations and agglutinative structures.
 # 
-# tiktokenize repo explains BPE in rather friendlier way: 
+# tiktokenize repo explains BPE in a rather friendlier way: 
 # Models don't see text like you and I, instead they see a sequence of numbers (known as tokens). 
 # Byte pair encoding (BPE) is a way of converting text into tokens. It has a couple desirable properties:
 # It's reversible and lossless, so you can convert tokens back into the original text
 # It works on arbitrary text, even text that is not in the tokeniser's training data
 # It compresses the text: the token sequence is shorter than the bytes corresponding to the original text. 
-# On average, in practice, each token corresponds to about 4 bytes.
+# On average, in practice, each token corresponds to about 4 bytes.(i.e. 4 characters!)
 # It attempts to let the model see common subwords. For instance, "ing" is a common subword in English, 
 # so BPE encodings will often split "encoding" into tokens like "encod" and "ing" 
 # (instead of e.g. "enc" and "oding"). Because the model will then see the "ing" token again and again 
@@ -133,6 +134,11 @@ itoa = {n:c for c,n in atoi.items()}
 print(f'{vocab_size=}, {vocab_list=}')
 print(f'{atoi=}')
 print(f'{itoa=}')
+# prints 
+# vocab_size=65, vocab_list=['\n', ' ', '!', '$', '&', "'", ',', '-', '.', '3', ':', ';', '?', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+# atoi={'\n': 0, ' ': 1, '!': 2, '$': 3, '&': 4, "'": 5, ',': 6, '-': 7, '.': 8, '3': 9, ':': 10, ';': 11, '?': 12, 'A': 13, 'B': 14, 'C': 15, 'D': 16, 'E': 17, 'F': 18, 'G': 19, 'H': 20, 'I': 21, 'J': 22, 'K': 23, 'L': 24, 'M': 25, 'N': 26, 'O': 27, 'P': 28, 'Q': 29, 'R': 30, 'S': 31, 'T': 32, 'U': 33, 'V': 34, 'W': 35, 'X': 36, 'Y': 37, 'Z': 38, 'a': 39, 'b': 40, 'c': 41, 'd': 42, 'e': 43, 'f': 44, 'g': 45, 'h': 46, 'i': 47, 'j': 48, 'k': 49, 'l': 50, 'm': 51, 'n': 52, 'o': 53, 'p': 54, 'q': 55, 'r': 56, 's': 57, 't': 58, 'u': 59, 'v': 60, 'w': 61, 'x': 62, 'y': 63, 'z': 64}
+# itoa={0: '\n', 1: ' ', 2: '!', 3: '$', 4: '&', 5: "'", 6: ',', 7: '-', 8: '.', 9: '3', 10: ':', 11: ';', 12: '?', 13: 'A', 14: 'B', 15: 'C', 16: 'D', 17: 'E', 18: 'F', 19: 'G', 20: 'H', 21: 'I', 22: 'J', 23: 'K', 24: 'L', 25: 'M', 26: 'N', 27: 'O', 28: 'P', 29: 'Q', 30: 'R', 31: 'S', 32: 'T', 33: 'U', 34: 'V', 35: 'W', 36: 'X', 37: 'Y', 38: 'Z', 39: 'a', 40: 'b', 41: 'c', 42: 'd', 43: 'e', 44: 'f', 45: 'g', 46: 'h', 47: 'i', 48: 'j', 49: 'k', 50: 'l', 51: 'm', 52: 'n', 53: 'o', 54: 'p', 55: 'q', 56: 'r', 57: 's', 58: 't', 59: 'u', 60: 'v', 61: 'w', 62: 'x', 63: 'y', 64: 'z'}
+
 # lets also create two helper functions to convert a list of these to the other part
 def encode(characters:Iterable[str] ):
     return [atoi[c] for c in characters]
@@ -143,6 +149,9 @@ def decode(token_lst:Iterable[int]):
 # lets test these 
 print(f'{encode(dataset[:10])}')
 print(f'{decode(encode(dataset[:10]))}')
+# prints 
+# [18, 47, 56, 57, 58, 1, 15, 47, 58, 47]
+# ['F', 'i', 'r', 's', 't', ' ', 'C', 'i', 't', 'i']
 
 # now lets try tiktoken
 try: 
@@ -168,14 +177,16 @@ print(f'{encoder_gpt.encode(dataset[:10])=}') # prints [5962, 327, 8846]
 # our input is a series of characters, (a sequence of some length), and our label is the next character
 # sicne we are using a simple bigram model, given a single character, we want the probablity of what comes
 # next. but, we also want to incorporate attention, and we want a context for our prediction, we want to
-# be able to look at the past, and look at the past characters, and based on that do sth. this is the essence
-# of attention (although this is not accurate, but for now this is the case, we will elaborate on this and expand
+# be able to look at the past, the past characters, and based on that do sth. this is the essence
+# of attention (although this is not accurate, but for now let assume this is the case, we will elaborate on this and expand
 # this metaphor and reasoning inshallah)
 # 
-# lets first tokenize the whle dataset or corpus as its usually called in nlp nomenclature!
+# lets first tokenize the whole dataset or corpus as its usually called in nlp nomenclature(well corpus 
+# usually is made of several bodies of text! but anyway you get the idea!)!
 data = encode(dataset)
 # since we are using pytorch lets convert that to a tensor
 data_tensor = torch.tensor(data)
+# as usual lets inspect the data
 print(data_tensor[:100])
 # now lets create a train/val split 
 train_length = int(0.9 * len(data_tensor))
@@ -199,9 +210,9 @@ train_data = data_tensor[:train_length]
 val_data = data_tensor[train_length:] 
 # note that since we are planning on creating a simple transformer model, we usually dont feed the whole dataset
 # becaue its prohibitevly computation intensive, instead, what happens in practice is that we, grab chunks 
-# of data from the dataset and feed it to the transformer. and these chunks, of course has a length, what length?
+# of data from the dataset and feed it to the model. these chunks, of course have a length, what length?
 # we usually specify a maximum_length for the input on which our transformer model works.
-# this maximum_length is usually refered to as block_size or context_size.
+# this maximum_length is usually refered to as block_size or more famously context_size.
 # we had previously used different context_sizes and this is not really that different,
 # lets for example define a context_size of 8
 # block_size and context_size are interchangable
@@ -217,7 +228,7 @@ print(f'{train_data[:block_size]=}')
 # shows, which characters are more likely to come, before a specific character comes later. 
 # what we are actually going to do is that, we are going to train all of these characters simultaneously
 # notice that in this example, we have 7 examples in a sequence of 8 characters:
-# lets elaborate on this more. 
+# lets elaborate on this more. consider [18, 47, 56, 57, 58,  1, 15, 47]) as input:
 # 1-in the context of 18, the next character is 47
 # 2-in the context of 18,47, the next character is 56
 # 3-in the context of 18,47,56, the next character is 57
@@ -226,9 +237,9 @@ print(f'{train_data[:block_size]=}')
 # 6-in the context of 18,47,56,57,58,1 the next character is 15
 # 7-and finally, in the context of 18,47,56,57,58,1,15 the next character is 47
 # so this is infact 8 7 individual example embedded in a single context, 
-# since we want the xontext_size to be 8, then we should grab one more character to have 
+# since we want the context_size to be 8, then we should grab one more character to have 
 # 8 contexts
-# lets visualize this in example in code
+# lets visualize this example in code
 # lets have a typical sequence of size 8 
 x = train_data[:block_size]
 y = train_data[1:block_size+1]
@@ -258,11 +269,17 @@ for i in range(block_size):
 # this way not only it sees the whole context_size as we initially expected
 # but also all sequences before it, and basically what consituted to make the sample. 
 # this allows us to later on, at test time be able to create sequences as small as context_size of only 1
-# up to the max_length which is our context_size of 8 in our case.
-# ! recheck and elaborate to clear any confusion
-# !so by doing this, the transformer can learn how to predict/create/genrate text up to context_size, and after
-# !it reached thta, we have to truncate it, becausse the transformer model never recieves more than the
-# !context_size as input when its predicting the next character.
+# up to the max_length which is our context_size of 8 in our case(and more).
+# so by doing this, the model can learn how to predict/create/genrate text up to context_size, and after
+# it reached that, we have to truncate it, becausse the model never recieves more than the
+# context_size as input when its predicting the next character.(we can continue generating infintely, but
+# really, what the model does, is to always generate the next character based on the 'last' context_size 
+# number of tokens. if context size is 8, only the last 8 characters are taken into account for creating
+# the next one. this matters if you think about it, the model can only memorize 8 tokens! all that came 
+# before is just gone! the model cant use any of them to infer new information! it can only use the last
+# context_size tokens! but nevertheless as we later see, we can continue to generate infinit characters
+# thogh they may not make sense if the context size is small as you can guess!)
+# 
 # so far what we covered here was the time dimension of our input. we have a sequence, and each entery
 # basically denotes a time t dimension, at which, a character is introduced. 
 # another imporatnt aspect we need to take care of is the batch dimension, cuz we are going to feed 
@@ -278,7 +295,7 @@ context_size = 8
 def get_batch(split, batch_size):
     #lets grab the data basedo on the split
     data = train_data if split =='train' else val_data
-    # we want a batch of 4 of 8 characters (context-size). 
+    # we want a batch of 4 of 8 tokens/characters (context-size). 
     # to make a batch we can grab 4 random indices as input and then expand them
     # by adding the next 8(context_size) characters to them, in order not to go past the 
     # last index, we subtract the length of data(last valid index) from context size 
@@ -392,8 +409,9 @@ class BigramModel(nn.Module):
     def __init__(self, vocab_size) -> None:
         super().__init__()
         self.vocab_size = vocab_size
-        # our bigram model was nothing more than a 2d array of vocab_size, we can achive that using 
+        # our bigram model was nothing more than a 2d array of vocab_size, we can achieve that using 
         # a single weight matrix or torch.Embedding. we use torch.Embedding to not reinvent the wheel!
+        # and since all new language models use word-embeddings! so its a good choice for our base model anyway!
         self.token_embedding = torch.nn.Embedding(vocab_size, vocab_size)
     
     # since we want to be able to calculate loss, if there are labels, we get Y as well
@@ -409,13 +427,14 @@ class BigramModel(nn.Module):
             # to be in the form of (B,C,T), that is, the channels/embeddings dimension
             # need to be right after the batch dimension or otherwise it wont work.
             # so we need to account for that.
-            # we can go on permute the dimensions, like this and make crossentropy happy 
+            # we can go on permuting the dimensions, like this and rectify the issue:
             # logits = logits.permute((0,2,1))
-            # however, if for some reason the output of logits in the form of (4,8,65) is not ideal, 
-            # maybe for example because really what it is 32 examples arranged in a (4,8) shape and 
-            # we rather a normal 2d tensor of shape (32,65), 
-            # we can instead, do just that, flatten the two dimensions into one and carry on!
-            # we basically are concatenating the batch and time dimensions
+            # however, if for some reason the output of logits in the form of (4,8,65) is not ideal for us, 
+            # and instead we want the usual form of (B,C) e.g, we can easily do it that way instead, 
+            # think about it, what really it is, is 4*8=32 examples arranged in a (4,8) shape and 
+            # if we rather a normal 2d tensor of shape (32,65), we can simply merge the first two dims!  
+            # lets do just that, flatten the two dimensions into one and carry on!
+            # we are basically concatenating the batch and time dimensions
             # into one dimension (effectively, stacking samples on top of each other), instead of having 
             # four compartments, each having 8 segments, we are going to have 1 long compartment with 32 segments/rows
             # for the lack of better words!!
@@ -427,7 +446,7 @@ class BigramModel(nn.Module):
             # we could also do,
             # labels = labels.view(-1)
             # but thats not really needed, so we just simply permute logits temporarily so the logits shape
-            # stays the same regardless of calculating the loss or not 
+            # stays the same regardless of calculating the loss or not :-)
             loss = F.cross_entropy(logits.permute((0,2,1)), labels)
         return logits, loss
     
@@ -458,9 +477,45 @@ class BigramModel(nn.Module):
             # probs = torch.softmax(logits, dim=1)
             # but here, we want to only focus on the next character because this is what comes next
             # each time obviously, so we only take the last timestep to see what the model predicted
+            # sidenote: you might ask we have 7 choices, why are we choosing the last character/token?
+            # can we choose any of those 7 time dimensions? like 1,2,3...,7 as well?
+            # in this case it really doesnt matter and the loss stays the same, as its just a bigram model!
+            # if we chose the last token its not like, the model cares about all the context_size, no, its just 
+            # meaningless to it, it does not have the capability to utilize the context_size at all! 
+            # so for this specific case, we can select any dimension other than 0 obviously and the loss wont change!
+            # but to be consistent with our future changes, and not changing the codebase as much as possible, 
+            # and the fact that when generating text with the starting token (zeros(1,1) as we will see in a moment)
+            # we have a single time dimension (i.e. 0) so any other value (except -1) would result in an error, we 
+            # dont hardcode a specific dim, and instead use -1 to refer to the last dim whatever it happens to
+            # be at the time of execution. 
+            # also note that while the choice of dim here doesnt affect the loss, it 'does' affect the text generation. 
+            # try different dimensions when trying to generate text after you trained the model and see for yourself 
+            # you can also use different dimensions as we talked about during training and see the loss wont change!
+            # (provided you set seeds so the output becomes determinstic)
+            # 
             logits = logits[:,-1,:] # this now becomes (B,C) instead of the initial (B,T,C)
             probs = torch.softmax(logits, dim=-1) 
-            # now lets sample from it
+            # now lets sample from it! what! why? you may ask!
+            # see genrating output really has nothing to do with the model, in a sense that, comming up
+            # with what we consider satisfactory can be more than just selecting the entry with highest probablity
+            # we can do all sorts of things to direct the generation process toward what we find satisfactory
+            # we can use temperature, top-p, etc to do just that. Using sampling using here is for this very reason
+            # To this end, we use torch.multinomial for generating the next token, this is a technique known as sampling! 
+            # instead of simply choosing the token with the highest probability (which is known as greedy decoding by the way),
+            # sampling selects the next token randomly according to the probability distribution produced by the model1.
+            # the reason we use sampling instead of the greedy decoding method (i.e. the normal way!) is to introduce more diversity
+            # and randomness into the generated output. 
+            # If we always choose the token with the highest probability, the generated text can become repetitive 
+            # and deterministic, especially over long sequences. By introducing some randomness like this, we can 
+            # generate more diverse and interesting output.
+            # note that this can sometimes generate less probable (and potentially less coherent) sequences
+            # as well (obviously!). The balance between diversity and coherence is a common challenge in text generation, and 
+            # different decoding strategies (like greedy decoding, sampling, beam search, using different temperatures, 
+            # or top-p, etc) offer different trade-offs.
+            # also replacement if true, means, if something is selected, it can be selected again! (basically 
+            # its place will be filled/replaced and ready to be used again, like if e.g. you chose/pickedup an
+            # apple! another apple will be repalce the old one, so you always have apple!)
+            # basically if a token is picked one, replacement=True, means it can be selected again
             idx_next_char = torch.multinomial(probs, num_samples=1, replacement=True) # shape is (B,1)
             # now lets add this to the next input to be fed to the model 
             # since idx has the shape(batch, T), we should add this tothe second dimension
@@ -468,9 +523,9 @@ class BigramModel(nn.Module):
             # creates the shape (B,T+1) 
             #this doesnt make sense for this particular model, becasue we are always checking
             # the next character given the previous one, so all the concatenation we are doing
-            # is just useless. the reason we are implementing this like this, is to create a 
-            # base, so that we can improve upon it when we add attention later on which will use
-            # the history of previous characters.
+            # is just useless now. the reason we are implementing this like this, as I pointed out earlier
+            # is to create a base foundation, so that we can improve upon it when we add attention later on 
+            # which will use the history of previous characters.
             idx = torch.cat((idx, idx_next_char), dim=1) 
         
         # and finally when all is done return the idx which by now should have the whole output
@@ -484,7 +539,7 @@ print(f'{out.shape} {loss}')
 # the loss is good, we learned previously that we can evaluate a base loss provided our number of classes
 # since we have 65 classes (our vocab_size or number of characters involved) the uniform probability for each class
 # would be 1/65 =0.015384615, which if we take its negative log would turn out to be -ln(1/65) = 4.17438727, 
-# which is pretty close to the loss we got here, signifying its a pretty decent value to begin with.
+# which is pretty close to the loss we'v got here, signifying its a pretty decent value to begin with.
 # also lets see the generate method at work
 # lets create a dummy input, basically a batch of 1 and sequence of 1 of zero!
 # we do this to generate a text from scratch
@@ -504,7 +559,7 @@ max_iter = 20000
 
 model = BigramModel(vocab_size)
 optimizer = torch.optim.AdamW(model.parameters(), lr = 1e-3)
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'#'cuda' if torch.cuda.is_available() else 'cpu'
 model = model.to(device=device)
 
 print(f'{torch.__config__.show()}')
@@ -547,17 +602,18 @@ for i in range(max_iter):
 # 2.4135568141937256
 # 2.50952410697937
 # 2.574878215789795
-# relying on single batch loss is not a good idea to measure the performance of a model. moreover
+# relying on single batch loss is not a good idea to measure the performance of our model. moreover
 # relying on training loss, is not good either, so it would be much better if we considered more batches
 # for loss and even better we could also investivate the models performance on our validation set. 
 # so lets do just this and define a function that calculates loss for training and validation sets alike
 # but considers more batches for loss calculation
 
+# this decorator signals torch not to calculate gradients for its operations!
 @torch.no_grad()
 def evaluate_loss (iterations, device=None):
     results={}
     # before calculating the loss, lets switch to eval mode,although for our specific case this doesnt matter
-    # but its goo practice, as later on, we will add layers that their behavior do change depending on traing
+    # but its good practice, as later on, we will add layers that their behavior do change depending on traing
     # val mode.  
     model.eval()
     if device is None:
@@ -602,66 +658,63 @@ for i in range(max_iter):
         loss= evaluate_loss(200)
         print(f'train_loss: {loss["train"].item():.4f},  val_loss: {loss["val"].item():.4f}')
 # which results in :
-# train_loss: 4.7491,  val_loss: 4.7430
-# train_loss: 3.6673,  val_loss: 3.6670
-# train_loss: 3.0460,  val_loss: 3.0511
-# train_loss: 2.7335,  val_loss: 2.7492
-# train_loss: 2.5948,  val_loss: 2.6156
-# train_loss: 2.5292,  val_loss: 2.5470
-# train_loss: 2.4982,  val_loss: 2.5194
-# train_loss: 2.4807,  val_loss: 2.4991
-# train_loss: 2.4737,  val_loss: 2.5036
-# train_loss: 2.4650,  val_loss: 2.4949
-# train_loss: 2.4648,  val_loss: 2.4910
-# train_loss: 2.4626,  val_loss: 2.4836
-# train_loss: 2.4570,  val_loss: 2.4893
-# train_loss: 2.4517,  val_loss: 2.4823
-# train_loss: 2.4508,  val_loss: 2.4819
-# train_loss: 2.4564,  val_loss: 2.4839
-# train_loss: 2.4555,  val_loss: 2.4802
-# train_loss: 2.4503,  val_loss: 2.4927
-# train_loss: 2.4522,  val_loss: 2.4905
-# train_loss: 2.4572,  val_loss: 2.4888
+# train_loss: 4.7005,  val_loss: 4.6906
+# train_loss: 3.7171,  val_loss: 3.7120
+# train_loss: 3.1180,  val_loss: 3.1345
+# train_loss: 2.8052,  val_loss: 2.8015
+# train_loss: 2.6346,  val_loss: 2.6489
+# train_loss: 2.5593,  val_loss: 2.5725
+# train_loss: 2.5153,  val_loss: 2.5390
+# train_loss: 2.4909,  val_loss: 2.5152
+# train_loss: 2.4886,  val_loss: 2.5018
+# train_loss: 2.4715,  val_loss: 2.4955
+# train_loss: 2.4784,  val_loss: 2.5003
+# train_loss: 2.4568,  val_loss: 2.4900
+# train_loss: 2.4595,  val_loss: 2.4769
+# train_loss: 2.4592,  val_loss: 2.4763
+# train_loss: 2.4545,  val_loss: 2.4833
+# train_loss: 2.4608,  val_loss: 2.4802
+# train_loss: 2.4556,  val_loss: 2.4844
+# train_loss: 2.4638,  val_loss: 2.4741
+# train_loss: 2.4557,  val_loss: 2.4766
+# train_loss: 2.4509,  val_loss: 2.4851
 #
-# now lets check its output again after some training 
+#now lets check its output again after some training 
 inputs = torch.zeros(size=(1,1), device=device, dtype=torch.int32)
 output = model.generate(inputs, max_token_count=500)
 print(''.join(decode(output.squeeze(0).tolist())))
 # prints :
-# Ane pod BUL:
-#
-# Oringe
-# nfote s Rinsou oe the,
-# An ETwe
-#
-# PUSENI bmilft!'d ate t Ifur
-# Athomeg?
-# Whagre,
-# TCo belangead ne bl e, bednth ftor veso.
-# US tla lin:
-# Yourthiee he w whetitrd;
-# Angoknghothartro ll heshethor hie douluk t, s se, denopit s h wom uspouct blyowie s'nos t prou gmesat
-# Shd, tieithy.
-# Asiour hofo bay avear hanousthaie
-# Calonth wolulo.
-#
-# The hancondors pthighar:
-# WAME outhaser d!
-# S:
-# h im t w s, inowo ORILOUCHoou isecetoubecompis
-# Ay gnd, teve luthorea, therpeclsthevecthede fichim?
-# PUSa VI aken 
+# The oerire aruse tta tele hasidet thend tor w is, is A:
+# Anganu nthiroure ghe fr'Cate ir he, chas, thto icithives ilaed s dl owaurd b.
+# Whu uasm threw oud foube, bearss:
+# When
+
+# Mey bomo then blcee aprerod wis CUKEO IOMaurey.
+# Siscaritheare, m tath kerd
+
+# Fong on, rrw ckne t ath,
+# OFoue tyerey pankee,
+# Bul y trof pp
+# Thaswer
+# Ye.
+# O:
+# PO:
+# Fo oulicoweny bl soth ne g ethe be t:
+# PUCEEEStof whaigaven sldd gle y hadellag ans'd.
+# And wethaing se her my ve icanool:
+# cthasectofer
+# Wed ina ik y RY wacr-the amar hes tha 
 # 
 # which looks much better than the initial random output we got earlier.
 #%% 
 torch.manual_seed(255)
-# now lets add attention mechanism to our base model. 
+# now lets add the attention mechanism to our base model. 
 # attention mechanism at its core tries to take advantage of the rich information embedded
 # in the sequence. for our work, this is specifically about the past history but in general 
-# attention can utilize both past and future connections/sequence tokens. what we described 
-# here just now is not exactly accurate, but gives us a foundation to build our intuition as
+# attention can utilize both past and future connections/sequence tokens. what we just described 
+# here is not exactly accurate, but gives us a foundation to build our intuition as
 # we continue on. we will elaborate more of course and hopefully get it all.
-# before we venture any further into the crux of the matter, let us learn about a technique
+# before we venture any further into the crux of the matter!, let us learn about a technique
 # thats used to efficiently implement attention mechanism.
 # for this purpose,lets imagine we have a simple input like the following: 
 # lets create and input of the following shape
@@ -672,7 +725,7 @@ x = torch.arange(0,64,dtype=torch.float).view(B,T,C)
 # input, we have a batch of 4 samples, each having 8 sequences with each sequence having a vector of 2 values
 # what we are planning to do is to provide a way by which each token can communicate with other 
 # tokens. we have 8 tokens in our sequence. so we want our tokens to be able to communicate with
-# all previous tokens that came before it. the reason we are only looking in the past token is 
+# all previous tokens that came before them. the reason we are only looking in the past token is 
 # simply becasue the we are trying to perdict the future, so it only makes sense to look at the
 # past and current timestamp and infer on what to do for the future.  
 # so the easiest way to implement a kind of communication between tokens could be to sum or average the
