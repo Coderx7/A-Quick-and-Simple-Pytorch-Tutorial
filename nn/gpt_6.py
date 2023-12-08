@@ -476,7 +476,7 @@ class BigramModel(nn.Module):
             # usually we would simply do 
             # probs = torch.softmax(logits, dim=1)
             # but here, we want to only focus on the next character because this is what comes next
-            # each time obviously, so we only take the last timestep to see what the model predicted
+            # each time obviously, so we only take the last timestep to see what the model predicted.
             # sidenote: you might ask we have 7 choices, why are we choosing the last character/token?
             # can we choose any of those 7 time dimensions? like 1,2,3...,7 as well?
             # in this case it really doesnt matter and the loss stays the same, as its just a bigram model!
@@ -708,37 +708,48 @@ print(''.join(decode(output.squeeze(0).tolist())))
 # which looks much better than the initial random output we got earlier.
 #%% 
 torch.manual_seed(255)
-# now lets add the attention mechanism to our base model. 
-# attention mechanism at its core tries to take advantage of the rich information embedded
-# in the sequence. for our work, this is specifically about the past history but in general 
-# attention can utilize both past and future connections/sequence tokens. what we just described 
-# here is not exactly accurate, but gives us a foundation to build our intuition as
-# we continue on. we will elaborate more of course and hopefully get it all.
-# before we venture any further into the crux of the matter!, let us learn about a technique
-# thats used to efficiently implement attention mechanism.
-# for this purpose,lets imagine we have a simple input like the following: 
-# lets create and input of the following shape
+# now that we have our base model, lets add the attention mechanism to it. 
+# The attention mechanism at its core is nothing but a communication mechanism, and what it does is
+# it tries to take advantage of the rich information embedded in the input/sequence. 
+# for our case here, this is specifically about the past history (i.e. past tokens and how they are related 
+# or show/affect the next token probablity)
+# but in general attention can utilize both past and future connections/sequence tokens. 
+# what we just described here is not the whole story, but its enough to gives us a foundation to build our
+# intuition as we continue on. 
+# we will elaborate more of course and hopefully gradually improve our definition
+# and understanding of the attention mechanism.
+# we said attention is a kind of communication mechanism, but what does that mean? how do tokens communicate?
+# to put it simply, by communication, we mean to somehow involve the value of one or more tokens in the operation
+# so that they can play a role in the final output. so one simple way could be to just sum all the values/weights 
+# assosiated with each token (previous tokens), and use that to determine the value/weight for the current token!
+# another way could be to use average instead of sum, of the said tokens! 
+# now lets expand on this and get an intuitive undrestanding what all of this means.
+# before we venture any further into the crux of the matter!(big words:-)), let us learn about a technique
+# thats used to efficiently implement attention mechanism, after this you should get a good idea about all of this.
+# For this purpose,lets imagine we have a simple input like the following: 
+# lets create an input of the following shape
 B,T,C = (4,8,2)
-# to make it more intuitive lets make a tensor with known numbers andthen reshape it
+# to make it more intuitive lets make a tensor with known numbers and then reshape it
 x = torch.arange(0,64,dtype=torch.float).view(B,T,C)
+print(f'x={x}')
 # imagine we have an input like what we encountered previously in our examples. in this sample 
 # input, we have a batch of 4 samples, each having 8 sequences with each sequence having a vector of 2 values
 # what we are planning to do is to provide a way by which each token can communicate with other 
 # tokens. we have 8 tokens in our sequence. so we want our tokens to be able to communicate with
-# all previous tokens that came before them. the reason we are only looking in the past token is 
-# simply becasue the we are trying to perdict the future, so it only makes sense to look at the
-# past and current timestamp and infer on what to do for the future.  
-# so the easiest way to implement a kind of communication between tokens could be to sum or average the
-# values of all previous tokens plus the current one as a way of taking into account their contribution
-# to the final answer.
+# all the previous tokens that came before them. 
+# The reason we are only looking in the past token is simply becasue we are trying to perdict the future,
+# so it only makes sense to look at the past and current timestamp and infer on what to do for the future.  
+# as we said earlier, one of the easiest ways we could come up to implement such communication mechanism 
+# between tokens could be to sum or average the values of all previous tokens as a way of taking into account
+# their contribution to the [final] answer/output.
 # that is, lets say if we are currently at token 5, we take the average of 
 # the current token and all previous tokens before it, effectively making a feature vector that
 # reflects our current status of the sequence so far, having taken all previous tokens/steps up to now.
-# note that as you may also have thought, summing or averaging arent the best way to model such interations.
+# note that as you may also have guessed, summing/averaging arent the best way to model such interations.
 # in fact they are an extremely weak form of interaction between tokens,
 # this kind of communicating is extremely lossy so to speak, that is we lose a great deal of information 
 # concerning the underlying relationships between tokens, their arrangements,their implicit interactions,
-# semantics, etc. but for now this is ok. we will later on see how to bring back such information.
+# semantics, etc. but for now this is ok. we will later on see how we can fix this issue.
 # so now what we want to do, is to calculate the sum or average of all tokens up to the current token in 
 # all batches at the same time.
 # a naive way would be to do sth like this using a for loop:
@@ -785,16 +796,17 @@ print(f'{results=}')
 #          [54., 55.],
 #          [55., 56.]]])
 #
-# You may find out that, some researchers refer to this operation here as BoW, or bag of words. 
+# You may notice that, some people/researchers refer to what we did here(averaging) as BoW, or bag of words. 
 # We are effectively averaging embeddings here and averaging embeddings can be considered a form of 
 # Bag of Words (BoW) representation. In BoW, the focus is on the occurrence and frequency of words, 
-# rather than their order or structure. By averaging embeddings, we are essentially treating each word 
+# rather than their order or structure. By averaging embeddings, we are essentially treating each 'word'
 # as an independent feature and capturing its representation in the form of a numerical vector.
 #
-# While averaging embeddings does not capture the exact frequency of each word, it does capture the 
-# overall distribution and semantic information present in the text. Similar to BoW, this approach 
-# disregards word order and focuses on the presence and representation of words. However, it should be
-# noted that averaging embeddings may preserve some semantic relationships between words, which BoW 
+# Although what we have is basically embeddings and averaging embeddings does not capture the exact 
+# frequency of each word, it does however, capture the overall distribution and semantic information
+# present in the text. 
+# Like BoW, our approach here disregards word order and focuses on the presence and representation of words. 
+# also note that averaging embeddings may preserve some semantic relationships between words, which BoW 
 # representations might not capture as effectively.
 # 
 # Side note: 
@@ -805,25 +817,25 @@ print(f'{results=}')
 # each word is treated as an independent feature. The presence or absence of words in the document is encoded
 # as a binary value (0 or 1), and the frequency of each word is often used as the value in the feature vector.
 # 
-# Here's a step-by-step overview of the BoW process:
-# 1. Tokenization: The text is split into individual words or tokens. Punctuation marks, whitespace, and other
-#    special characters are usually removed or treated as separate tokens.
-# 2. Vocabulary Creation: A vocabulary is created by taking all unique words from the entire corpus 
-#    (collection of documents). Each unique word is assigned a unique index or position in the vocabulary.
-# 3. Vectorization: Each document is represented as a feature vector, typically a one-hot encoding or a count
-#    vector. In a one-hot encoding, each word in the vocabulary corresponds to a binary feature, and the vector
-#    contains 1s in the positions where the word occurs and 0s elsewhere. In a count vector, the value at each 
-#    position represents the frequency of the corresponding word in the document.
-# 4. Classification or Analysis: The resulting feature vectors can be used as input to machine learning models
-#    for tasks such as text classification, sentiment analysis, document clustering, or information retrieval.
-# Needless to say, BoW has some limitations. It does not capture the semantic meaning or context of words, as
-# it treats each word independently. It also ignores the grammar and word order. However, BoW is simple, 
-# efficient, and can be a useful baseline representation for various NLP tasks.
+# for the reference, this is how a BoW process works:
+# First, we have the tokenization phase, in which the text is split into individual words or tokens. 
+# punctuation marks, whitespace, and other special characters are usually removed or treated as separate tokens.
+# Then, a vocabulary is created by taking all unique words from the entire corpus (collection of documents). 
+# each unique word is assigned a unique index or position in the vocabulary. this is the vocabulary creation phase!
+# next each document is represented as a feature vector, typically a as one-hot encoded  vector or a count vector. 
+# (as the name suggests, in the one-hot encoding scheme, each word in the vocabulary corresponds to a binary feature, and the vector
+#    contains 1s in the positions where the word occurs and 0s elsewhere. 
+# while in a count vector, the value at each position represents the frequency of the corresponding word in the document)
+# and finally, the resulting feature vectors can be used as input to out models for tasks such as text classification,
+# sentiment analysis, document clustering, information retrieval, etc. 
+# Needless to say, BoW has some limitations as well. It does not capture the semantic meaning or context of the words,
+# as it treats each word independently. It also ignores the grammar and word order. 
+# Having all these said, BoW is simple, efficient, and can be a useful baseline representation for various NLP tasks.
 # 
-# so to recap one more time, we are basiaclly treating each timestep/sequence dimension, as a word, so we have
+# so to recap one more time, we are basiaclly treating each timestep/sequence dimension, as a 'word', so we have
 # 8 tokens/words, and we are averaging them (we are infact averaging their embeddings, but thats obvious!)
-# so we got ourselves bow representation!
-# now back to our discussion, if we  try to visualize the results we get 
+# so we got ourselves a bow representation!
+# now back to our discussion, if we try to visualize the results we get 
 print(x[0])
 print(results[0])
 # prints:
@@ -881,8 +893,9 @@ print(f'{c=}\n----')
 #         [20., 13.]])
 # nothing fancy here, we have matrix multiplication, the first row of 'a' is dot-producted by first col
 # of 'b', then sumed, it makes up the first col of first row in c. likewise the first row of 'a' dot 
-# the second col of 'b', then summed the results, makes up the second col of first row in c. and this goes on for the rest of the matrixes. this is
-# what we learned back in higheschool, so what is it exactly that we are learning exactly?
+# the second col of 'b', then summed the results, makes up the second col of first row in c. and this 
+# goes on for the rest of the matrixes. this is what we learned back in higheschool, but what is it 
+# exactly that we are learning here exactly?!
 # if you look closely, you'll notice that, the c cols are actually the sum of all the rows in b!
 #        [9]
 # b[:,0]=[5] 
@@ -896,7 +909,8 @@ print(f'{c=}\n----')
 #           [20., 13.]  
 #           [20., 13.] 
 # I guess you are now starting to get where we are going with this, if we can some how alter the 'a' matrix,
-# we may very well be able to achieve our goal! how you may ask? the answer is using torch.tril!
+# we may very well be able to achieve our goal! 
+# how you may ask? the answer is using torch.tril!
 # torch.tril() is a function that returns a matrix from a given tensor, so that half of it set to zero,
 # basially it creates a triangular tensor, where the right half is just zeros! lets see how it works, 
 # lets apply it on 'a'
@@ -907,7 +921,7 @@ print(f'a_tril:\n{a_tril}')
 #        [[1., 0., 0.],
 #         [1., 1., 0.],
 #         [1., 1., 1.]])
-# as you can see the the right half is set to zero and we are left with a triangle shape of 1s! on the left side
+# as you can see the the right half is set to zero and we are left with a triangle shape of 1s on the left side
 # now if we do a@b this time we get:
 c = a_tril@b 
 print(f'b:\n{b}')
@@ -936,7 +950,7 @@ print(f'c:\n{c}')
 # so if we scale 'a' by the sum of all its columns, we should get average instead
 a = torch.ones(size=(3,3))
 a = torch.tril(a)
-a = a/a.sum(dim=1, keepdim=True)
+a = a/a.sum(dim=1, keepdim=True) # this looks familiar doesn it? yup its softmax!
 print(f'a:\n{a}')
 # a:
 # tensor([[1.0000, 0.0000, 0.0000],
@@ -966,7 +980,7 @@ print(f'c:\n{c}')
 #
 # so using this trick, we can take the incremental average of any matrix we like. 
 # now that we learned the trick, lets go back and implement the bows for loops using this techique !
-# prevbiously we had : 
+# previously we had : 
 # results = torch.zeros(size=(B,T,C))
 # for b in range(B):
 #     for t in range(T):
@@ -1065,7 +1079,6 @@ print((c==c2).all())
 # Here's a how it happens:
 # 1. Tensor a has the (shape: 3, 3):
 # 2. Tensor b has the (shape: 2, 3, 5):
-
 # 3. They are not compatible so we broadcast tensor a to match the shape of b. 
 # tensor a is expanded to (1, 3, 3) to have a batch dimension, and replicated 
 # along dim 0 to result in (2, 3, 3). now both tensors have a batch of 2, and 
@@ -1075,7 +1088,7 @@ print((c==c2).all())
 # sets of compatible tensors that need to be multiplied together. so we use a 
 # simple for loop, to do multiplication, and stack the results and we are done!
 #
-# now back to our discussion. as we just saw, the traingualr shape in our weighted
+# now back to our discussion. as we just saw, the traingular shape in our weighted
 # sum matrix, allows that each token at t dimension, can only interact with the tokens
 # before it.
 # there is another way of implementing the same thing but a bit differently
