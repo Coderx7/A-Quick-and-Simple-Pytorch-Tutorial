@@ -1160,21 +1160,23 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # so now lets incorporate attention into our model.
 #
 # Attention does its job by using two vectors called, key and query.
-# !basically every single token, emits two vectors called key and query, the query verctor
+# basically this mean every single token, emits two vectors called key and query, the query verctor
 # as the name suggests, implies, what we are looking for, and the key vetcor, again as the
 # name suggets, implies, the contents, what it contains. 
-# the way we get our 'weights' for these tokens is we simply dotproduct them together, 
+# note that "emit" here refers to the process of generating or producing something. 
+# When we say a token "emits" a key and a query vector, we mean that these vectors are produced 
+# or generated from the token through some transformation (usually a learned linear transformation). 
+# how exactly you may ask? the way we get our 'weights' for these tokens is we simply dotproduct them together, 
 # the ones that yield a high output/value, signify they are related positively.
 # so our query is dotproducted with all the token's(keys) and the outputs reveal their 
 # closeness/relevancy/similarity so to speak(if they align so to speak, they result in larger number)
 # so effectively, the ones with higher number, are more similar to the query, the highest, 
-# obviously having the most relavancy/similarity to the query.s
-# so lets implemenet this
-# #%%
-# we want to implement a single attention head, we can later use this to create 
+# obviously having the most relavancy/similarity to the query.
+#
+# now we want to implement a single attention head, so we can later use this to create 
 # multi-attention-head which is basically several single attention heads working in 
-# parallel. so how do we implement one! 
-# first lets create some random input 
+# parallel. 
+# first lets create some random input for our experiments while implementing attention 
 torch.manual_seed(255)
 # lets specify the batch, context_size and vocab_size
 B,T,C = 4,8,32
@@ -1205,7 +1207,7 @@ weight_raw = q@k.transpose(2,1)
 # on the input and each return an output of (B,T,head_size), they are in fact, processing
 # all the tokens in the input, individually, simultaneously, all at the same time. so each 
 # token is both a query, and a key, and when we do a dotproduct, we are basically telling 
-# it to reveal the relation/similarity/relevance of every token with every other tokens.
+# it to reveal the relation/similarity/relevance of every token with every other tokens in the same input
 # and as we explained earlier, this is infact our weight matrix (which was initially all zeros)
 # but is now learned from the data!
 # print(f'weight_raw\n{weight_raw}')
@@ -1426,9 +1428,6 @@ plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
 # now in practice, we are not intrested in aggregating the x raw values per say, rather we want their information, 
 # so instead of just using the raw values of x, we instead use a representation of them, so to speak. 
 # this is achieved using a third vector known as, 'value' and is the last vector we use. 
-# !explain when we say vector, note that, we are talking from the prespective of a token, (every token has some vector 
-# !of information and it gets to aggregate information via a weighted sum from all the tokens that point to it, and it
-# )# !in practice we use a matrix, and hence the linear module to implement this to run the operation for all tokens in parallell. 
 # just like the key and query, we set its bias to False, so we only get a simple vector,
 # and a dotproduct output (again this is the intuition, but how much adding a bias would
 # affect this we will see later, for now we stick to the default no bias version)
@@ -1455,7 +1454,7 @@ bow_final = weight@x_processed
 # also note that, in attention, samples do not interact with each other at all. when we have a batch of 4, each sample
 # is processed in isolation, but in parallell to other samples, based on our graph example earlier, we would have 4 
 # graphs of 8 nodes for example for each input sample. 
-#!
+#
 # we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
 # is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
 # self attention.
@@ -1474,6 +1473,35 @@ bow_final = weight@x_processed
 # cross-attention basically refers to the case where we have an encoder/decoder blocks, in which the queries come from x
 # but the key and value come from an external source and sometimes from the encoder block. so cross-attention is used
 # when theres a separate source of information we would like to pool from and use it as well.
+#
+#
+# side note:  
+# recap:
+# in this case the encoder (which processes the source language text) emits key and value vectors for each token in its input,
+# and the decoder (which generates the target language text) emits a query vector for each token in its output.
+# The attention mechanism then computes attention scores between the query vector and each key vector, uses these scores to
+# weight the value vectors, and sums them to produce a context-sensitive representation of each output token.
+# so each token in the encoder’s input (the source language text) emits a key and a value vector, 
+# and each token in the decoder’s output (the target language text) emits a query vector.
+# But in scenarios where the input and context are the same (like in a self-attention mechanism), 
+# each token emits all three types of vectors: key, query, and value.
+#
+# in this case, the key and value vectors are emited by the context (the encoder part of the model which processes the source
+# langauge text) and the query vector is emitted by the input (the decoder part of the model).
+# So each token in the context that the model is attending to is associated with a key vector while
+# each token in the input sequence(in the decoder part) is associated with a query and a value vector, 
+# generated by transforming the input embeddings. 
+#
+# The attention score between the 'input token' and a 'context token' is computed by taking the dot product of 
+# the query vector of the input token and the key vector of the context token.
+# These scores are then used to weight the value vectors of the 'context tokens', resulting in a context-sensitive
+# representation of the input token.
+# so, each token emits a query and a value vector, and each context token emits a key vector. 
+# The attention mechanism uses these to compute a weighted sum of the value vectors, with the weights determined
+# by the compatibility of the query with each key. 
+# This results in a single vector that is a context-sensitive representation of the input token.
+# so when we are translating, and basically our input and context are the same thing the key,query and value all
+# are emited by all the tokens in the input. 
 #
 # so far we implemented the attention based on the original paper(there are some differences we get to later on)
 # except the part where we need to divide by the sqrt of the head_size. that is called scaled-attention
