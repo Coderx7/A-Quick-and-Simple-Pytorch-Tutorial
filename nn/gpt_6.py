@@ -1036,6 +1036,7 @@ print(f'bow_results:\n{bow_results}')
 #          [54.0000, 55.0000],
 #          [55.0000, 56.0000]]])
 # which gives us the same results as we expected.
+# side note:
 # one more thing before we continue on, note that the weight matrix is TxT while 
 # the input is (BxTxC). (T,T) and (B,T,C) are not compatible, so what happens is
 # that (T,T) is reshaped and a batch dimension is added to (T,T),making it (1,T,T)
@@ -1088,9 +1089,11 @@ print((c==c2).all())
 # sets of compatible tensors that need to be multiplied together. so we use a 
 # simple for loop, to do multiplication, and stack the results and we are done!
 #
-# now back to our discussion. as we just saw, the traingular shape in our weighted
-# sum matrix, allows that each token at t dimension, can only interact with the tokens
-# before it.
+# now back to our discussion. as we just saw, the traingular form in our weighted
+# sum matrix, allows that each token at dimension t, can only interact with the tokens
+# before it. 
+# now you might think its a cool trick for taking average for a given matrix like 'a'
+# but what if we dont want the simple average, and something more powerful? 
 # there is another way of implementing the same thing but a bit differently
 # if you look closely you can see that, we are dealing with probablities, so
 # we may verywell use softmax to simplify this further.
@@ -1101,7 +1104,7 @@ weight = torch.zeros_like(tril_tensor)
 # now lets mask all the zeros to -inf, so when we do softmax, all those -infs
 # become 0. (recall that exp^-inf is 0! while exp^inf is inf! so its important to 
 # set -inf (and also exp^0 is 1))
-# so effectively what happens here is that, we setting each entery in trail_tensor
+# so effectively what happens here is that, we're setting each entery in trail_tensor
 # with zero to -inf, and leave the rest as zeros. when this tensor goes through softmax
 # the 0s will be 1s and -infs will be 0s before they are normalized, when they are normalized
 # the probablity of 1 will be split between all the enteries with the value of 1.
@@ -1109,42 +1112,55 @@ weight = torch.zeros_like(tril_tensor)
 # each one will take 0.5, the third will have 3 1s, so they each will become 0.333
 # and so on.
 weight=weight.masked_fill(tril_tensor==0, -torch.inf)
-# now calculate the probs for each row, treating all cols as probs so their sum is 1
+# now lets calculate the probs for each row, treating all cols as probs so their sum is 1
 weight = weight.softmax(dim=-1)
 bow_results2 = weight@x
 print(f'{torch.all(bow_results==bow_results2)}')
-# so you might ask, why would we want to make things more complicated like this to only
-# achieve what we already achieved pretyy efficiently before?
-# the answer is, this approach provides us with a flexibility that the previous ones
-# wouldnt provide us withs. if you think about it for a moment, you'll notice that
+# so you might ask, why would we want to do this? why make things more complicated?
+# only to achieve what we already achieved pretty efficiently before? it doesnt make any sense!
+# The answer is, this approach provides us with a flexibility that the previous ones
+# wouldnt provide us with. think about it for a moment, what would we do if we didnt want uniform probbablity
+# for all the tokens in a row? currently as you can see, we have uniform probablities in each row, we used that 
+# to calculate the average, becasue that was what we were after initially! but we said it earlier that 
+# average is a very weak form of communication! we lose a lot of information if we only use simple averaging 
+# like this. if you think a bit more, you'll notice that its really the uniform probablity that each token gets, 
+# uniform probablity means they are basically the same, in terms of impact on the output. 
+# thats like they are as important as the other tokens in every single situation! this assumption is
+# simply and clearly not true at all. again to understand why this is the case remember the weights matrices
+# in our models? if our model predicts all the classes the same, like at the very begining, when we havent 
+# started the training, the model is practically useless! until we train the model, and the weights get 
+# different values. remember trained weights vs raw weights! so this is the same here really.)
+# now if you see the previous implementation vs the newer one, you'll see that we basically 
 # the 'weight' matrix can essentially be anything and not just zeros! 
-# we have decoupled it from tril, which's job is to set the right half of the tensor
-# to zero, so we actually get the expected behavior later on.(which is setting a constrain really (more layer on))
+# in other words, we have decoupled the 'weight' part from the constraint part (i.e. tril), which's job is 
+# to set the right half of the tensor to zero, so we actually get the expected behavior later on. 
+# (which is setting a constraint really (more later on))
 # if you havent yet figured it out, the 'wieght' matrix, can be truly a weight matrix
 # which can show different strengths for each token, basically it can learn the interations
-# between tokens and manifest them. currently it is us who sets it to all zeros, so we get
+# between tokens and manifest them. currently it is us who set it to all zeros, so we get
 # uniform probablities, which inturn manifest itself as an average. but what if instead of 
 # all zeros, we actually learn the values from the data itself? that would make sense, and 
 # make it so that each token, can have a different connection(strength) to any other tokens
-# now, and thus build semantic/meaningful relation. this is inafct what we are after. we want
-# for tokens to learn associations and relations with other tokens based on the data present
-# in the dataset, having uniform weight like what we initially did really is a far cry from
-# what we intend, and therefore, we opt in to use this new approach that allows us to actually
+# now, and thus build semantic/meaningful relation. 
+# This is infact what we are after. we want for tokens to learn associations and relations with other tokens
+# based on the data present in the dataset, having uniform weight like what we initially did, is really a 
+# far cry from what we intend, and therefore, we opt in to use this new approach that allows us to actually
 # exploit this new capability. 
 # This is infact the problem that attention solves, that is gathering
-# information from the past but in a data driven manner.(side note, we are not limited to 'past' 
+# information from the past but in a data driven manner.(side note/reminder, we are not limited to 'past' 
 # information only per say, in this example, this is the case however, we will explain this 
 # in more detail)), we will see how attention does this exactly in a moment. 
 #
-# but before we jump into attention implementation also note that the tril part, infact is a hard-constrain here that prevents tokens from
-# the past from interacting with the tokens from the future. 
+# but before we jump into attention implementation also note that the tril part, infact is a hard-constrain here
+# that prevents tokens from the past from interacting with the tokens from the future. 
 # so to recap here, basically the idea is, this triangular form, allows us to have 
 # weighted aggregations of past elements. each element in the lower triangular part, 
 # specifies, the degree by which it plays a rule in the said outcome. 
-# that is how much of each element gets to fuse into this specific position(i.e. current token's)
-# so now lets incorporate attention into our model
+# that is how much of each element gets to get incorporated into the result of this specific position(i.e. current token's)
+# so now lets incorporate attention into our model.
+#
 # Attention does its job by using two vectors called, key and query.
-# basically every single token, emits two vectors called key and query, the query verctor
+# !basically every single token, emits two vectors called key and query, the query verctor
 # as the name suggests, implies, what we are looking for, and the key vetcor, again as the
 # name suggets, implies, the contents, what it contains. 
 # the way we get our 'weights' for these tokens is we simply dotproduct them together, 
@@ -1168,8 +1184,8 @@ x = torch.randn(size=(B,T,C))
 # we can use nn.Linear to implement them but beore that, what are the dims of such vectors,
 # we are dealing with text and thus our inputs are tokens/vocabs, so the first dim would be 
 # our vocab_size to account for all tokens, the next dim, is sth called a head_sizes, which 
-# specifies the size of the key/query output usually 16 is used a lot for head size so we 
-# use that as well
+# specifies the size of the key/query output.  
+# lets define one
 head_size = 16
 # lets not forget to set bias=False, so what it does is exactly dotproduct 
 # (actually, some people still leave the bias enabled! 
@@ -1184,22 +1200,25 @@ q = query(x)    # shape : 4,8,16 or (B,T, head_size)
  # explictily specify the dims we want to be transposed. 
  # this will result in 4,8,16 by 4,16,8 which would give us 4,8,8 which is (B,T,T)
  # really as the result
- #! check transpose result is it okto use 2,1 or -2,-1 or 1,2
 weight_raw = q@k.transpose(2,1)
 # now lets for a moment think about what is happening here, the key and query are applied
 # on the input and each return an output of (B,T,head_size), they are in fact, processing
-# all the tokens in the input, individually, simultaneously, all the same time. so each 
+# all the tokens in the input, individually, simultaneously, all at the same time. so each 
 # token is both a query, and a key, and when we do a dotproduct, we are basically telling 
 # it to reveal the relation/similarity/relevance of every token with every other tokens.
-# and as we explained earlier, this is infact our weight matrix (which was initially zeros)
+# and as we explained earlier, this is infact our weight matrix (which was initially all zeros)
 # but is now learned from the data!
 # print(f'weight_raw\n{weight_raw}')
-# now we can apply constrain on it so that tokens can only communicate with the past so 
+# now we can apply the constraint on it so that tokens can only communicate with the past so 
 # we use the tril trick now!
 tril_constrain = torch.tril(torch.ones(size=(T,T)))
+# apply the tril on our weight_matrix, so we thanos snaped:d the right half values so each token can only
+# talk to its past! (convinietly our weightmatrix is exactly the same dims as our tril!)
 raw_wieghts_masked = weight_raw.masked_fill(tril_constrain==0, float('-inf'))
-# apply sotmax to get probablity for each token
-weight = raw_wieghts_masked.softmax(dim=2) # remember weight is (B,T,T)
+# apply sotmax to get probablity for each token,
+# remember weight is (B,T,T) and we use the last dim, we could use -1 as well, 
+# but I wanted to make it explicitly clear here!
+weight = raw_wieghts_masked.softmax(dim=2) 
 # and finally we can apply our weight on the input (we called it raw for a reason, read on)
 # (by the way this is also called self-attention!)
 bow_raw = weight@x 
@@ -1357,18 +1376,47 @@ print(f'weight\n{weight}')
 #          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
 #          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
 #
-# take the last token, which 8.6020e-02, notice this token, not only knows its content and own position in 
-# the sequence(its the 8th token after all) but also knows which tokens comes before it and how much its 
+# take the last token, which is 8.6020e-02, notice this token, not only knows its content and own position in 
+# the sequence(its the 8th token after all!) but also knows which tokens comes before it and how much its 
 # related to any of them.(basically when it knows which token comes before it, it creates its own query so
 # to speak, and talks to every single previous token to find about which ones are more or less relavent to
 # it and to what extend.) 
-# For example,lets say, (since we are dealing with character level text generation!), the last token is a 
-# vowel and says hey im a vowel and im looking for everyone else thats a vowel! and uses query to talk to 
-# other tokens(keys). and intrestingly another token (lets say number 4) says im a vowel as well, and the 
-# response is thus generate a larger number.(this is not a good example, words in sentence would make more sense
-# !give a better example!)
-# in our example, For the last token, it seems the 5th and 3rd token are particularly intresting/relavent/important,
-# followed by the 7th token.
+# For example,lets say, we have this sentence: "I saw the Eiffel Tower when I visited Paris" and suppose
+# each token is a word, so I, saw, the, ... are all tokens, therefore we have a sequence of 9 tokens here. 
+# In this sentence, if we focus on the word "visited", the attention mechanism allows it to understand that
+# "visited" token is most closely related to "Paris". 
+# This is because in the context of visiting, a location(in this case, "Paris") is usually involved.
+# The attention mechanism assigns higher weights to "Paris" when processing the word "visited", indicating that
+# "Paris" is important for understanding the context of "visited".
+# Similarly, when the model processes "Eiffel Tower", it understands that "Eiffel Tower" is closely related to Paris",
+# and thus assigns a higher weight to "Paris".
+# This way, the attention mechanism allows the model to capture the dependencies between words in a sentence, 
+# even if they are far apart. It’s like the model’s way of paying "attention" to important words/tokens while 
+# processing a given word/token.
+# now back at our own example, lets visualize the weights for better understanding
+def plot_heatmap(weight, label, cmap='plasma'):
+    import matplotlib.pyplot as plt 
+    import seaborn as sns 
+    import numpy as np 
+    
+    # lets draw the heatmap for each tensor 
+    plt.figure(figsize=(12,6))
+    sns.heatmap(weight.numpy(),cmap=cmap)
+    plt.title(label)
+    plt.show()
+    
+plot_heatmap(tril_constrain.detach(), label='tril_constrain', cmap='Blues')
+# since we have a batch here, basically 4 samples, we flatten the first two dims 
+# so we can plot all as a 2d heatmap 
+plot_heatmap(raw_wieghts_masked.view(-1,8).detach(), label='raw_wieghts_masked-all batches',cmap='RdBu')
+# now lets look at the first batch in more detail
+plot_heatmap(raw_wieghts_masked[0].detach(), label='raw_wieghts_masked-first batch',cmap='RdBu')
+# since the colors are not that defined, maybe gray cmap shows this better! but either are ok
+plot_heatmap(weight[0].detach(),'weight-first batch',cmap='Blues')
+plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
+# 
+# in our example, For the last token, it seems the 2nd and 4th tokens (index 2 and 4 respectively) are particularly intresting/relavent/important,
+# followed by the 6th(index 6) token.
 # likewise, this happens for every token, i.e. token number 4, says the same thing and searches in its past toekns
 # so on and so forth! 
 # so what happens next is that when we get a high relevancy scale /response in the weights, like we just described
@@ -1388,15 +1436,15 @@ value = torch.nn.Linear(C,head_size, bias=False) # produces (B,T,head_size) just
 x_processed = value(x)
 # this is not yet final final, we still need to do one more thing (read on!)
 bow_final = weight@x_processed
-#
-#!check also note that, as we previously once pointed out, attention is a communication mechanism between tokens, and 
+# !note that, as we previously pointed out, multiple times!, attention is a communication mechanism between tokens, and 
 # by default there is nothing in this mechanism that provides a notion of space/position for tokens involved, i.e.
 # by default these tokens/nodes/points, dont have any idea about where they are or how they are positioned (with resepect
-# to others) etc, so we need to encode this information as well.(to better visualizing it, consider each token as 
+# to others) etc, so we need to encode this information as well. (to better visualizing it, consider each token as 
 # a node in a directed graph, each node has a connection to another node, (for example each node has a connection to
-# itself, and another connection to other nodes,etc) and as you can see there is no notion of space here,the attention
-# simply acts on a set of vectors in this graph, and thats why we need to encode them positionally as well, so they 
-# have information about their position with regards to other tokens. 
+# itself, and another connection to other nodes,etc) and as you can see there is no notion of space here, theres no order here
+# in the sense, which one do you call 1 or 2, etc when every node is connected to some other nodes and they are all connected,
+# )the attention simply acts on a set of vectors in this graph, and thats why we need to encode them positionally 
+# as well, so they have information about their position with regards to other tokens. 
 # !check (compare this to the convolution case and images
 # or even text where the spatial aspect of data is preserved, but in attention, as we just stated, there is no notion
 # of position, its just a set of individual vectors being operated on)-note that the connection between nodes, do give
@@ -1407,7 +1455,7 @@ bow_final = weight@x_processed
 # also note that, in attention, samples do not interact with each other at all. when we have a batch of 4, each sample
 # is processed in isolation, but in parallell to other samples, based on our graph example earlier, we would have 4 
 # graphs of 8 nodes for example for each input sample. 
-#
+#!
 # we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
 # is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
 # self attention.
