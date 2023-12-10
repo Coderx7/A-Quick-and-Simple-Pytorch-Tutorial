@@ -1184,9 +1184,10 @@ B,T,C = 4,8,32
 x = torch.randn(size=(B,T,C))
 # we said that attention works with two vectors, key and query, lets implement them
 # we can use nn.Linear to implement them but beore that, what are the dims of such vectors,
+# (hint: we said 'every token' emits/produces a vector through a transformation)
 # we are dealing with text and thus our inputs are tokens/vocabs, so the first dim would be 
 # our vocab_size to account for all tokens, the next dim, is sth called a head_sizes, which 
-# specifies the size of the key/query output.  
+# specifies the size of the key/query output (or key/query vectory length really).  
 # lets define one
 head_size = 16
 # lets not forget to set bias=False, so what it does is exactly dotproduct 
@@ -1222,7 +1223,7 @@ raw_wieghts_masked = weight_raw.masked_fill(tril_constrain==0, float('-inf'))
 # but I wanted to make it explicitly clear here!
 weight = raw_wieghts_masked.softmax(dim=2) 
 # and finally we can apply our weight on the input (we called it raw for a reason, read on)
-# (by the way this is also called self-attention!)
+# (by the way this is also called self-attention(without tril/masking part) and masked self-attention with the tril/masking part!)
 bow_raw = weight@x 
 # lets print raw_weights and weights and have some intuitive observations 
 print(f'weight_raw\n{weight_raw}')
@@ -1435,22 +1436,30 @@ value = torch.nn.Linear(C,head_size, bias=False) # produces (B,T,head_size) just
 x_processed = value(x)
 # this is not yet final final, we still need to do one more thing (read on!)
 bow_final = weight@x_processed
-# !note that, as we previously pointed out, multiple times!, attention is a communication mechanism between tokens, and 
-# by default there is nothing in this mechanism that provides a notion of space/position for tokens involved, i.e.
-# by default these tokens/nodes/points, dont have any idea about where they are or how they are positioned (with resepect
-# to others) etc, so we need to encode this information as well. (to better visualizing it, consider each token as 
-# a node in a directed graph, each node has a connection to another node, (for example each node has a connection to
-# itself, and another connection to other nodes,etc) and as you can see there is no notion of space here, theres no order here
-# in the sense, which one do you call 1 or 2, etc when every node is connected to some other nodes and they are all connected,
-# )the attention simply acts on a set of vectors in this graph, and thats why we need to encode them positionally 
-# as well, so they have information about their position with regards to other tokens. 
-# !check (compare this to the convolution case and images
-# or even text where the spatial aspect of data is preserved, but in attention, as we just stated, there is no notion
-# of position, its just a set of individual vectors being operated on)-note that the connection between nodes, do give
-# us a sense of structure, but it may not be enough to infer the underlying semantic, imagine a case, where a word
-# for example has several meaning, and may very well have high relevancy to some tokens at the same time, but without
-# additional positional information, an ambiguous semantic can be infered between the tokens involved, however when
-# positional information is also present, such ambiguity can be avoided)
+# attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
+# there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
+# by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
+# positioned (with resepect to eachother). 
+# to have a better mental picture, imagine each token as a node in a directed graph, each node has a connection to some
+# other nodes, (for example each node has a connection to itself, and another connection to other nodes,etc) as you can
+# see there is no notion of space or better said order between nodes. 
+# which one would you call is number 1 or 2, in a graph, in which the structure simply doesnt define any order by itself,
+# unless you define one using a mechanism of some sor?) 
+# The attention simply acts on a set of vectors in this graph, so if the order or position of these nodes 
+# is of any significance to us, then we need to encode them as well, 
+#
+# as it happens in our case, the positional information is important to us, becasue we want to generate text, and order
+# matters here(text are inherntly sequential, so order absolutely matters). 
+# models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially, and 
+# CNNs have spatial information, as they operate by sliding a fixed window over the input)
+# but this is not the case for attention. as we just stated, there is no notion of position, its just a set of individual
+# vectors being operated on)
+# note that the connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
+# semantic, imagine a case, where a word for example has several meaning, and may very well have high relevancy to a few 
+# tokens at the same time, but without additional positional information, an ambiguous semantic can be infered between the
+# tokens involved, however when positional information is also present, such ambiguity can be avoided) 
+# (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
+#
 # also note that, in attention, samples do not interact with each other at all. when we have a batch of 4, each sample
 # is processed in isolation, but in parallell to other samples, based on our graph example earlier, we would have 4 
 # graphs of 8 nodes for example for each input sample. 
@@ -1458,27 +1467,38 @@ bow_final = weight@x_processed
 # we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
 # is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
 # self attention.
-# also note that, in our specific case, tokens/nodes are can not communicate with the future nodes, but in general
+# also note that, in our specific case, tokens/nodes can not communicate with the future nodes, but in general
 # this constraint can be removed (and infact is removed/not implemented for some applications) where its benificial
-# to be able to communicate with all the tokens. one example is sentiment analysis, where you want all the tokens to
-# able to communicate with eachother so you can get an accurate analysis. and for this case, we would use an encoder
-# block, which is basically what we have here, minus the constraint section(tril/mask part), what we have implemented
-# here is called a decoder block, where we are decoding bunch of tokens, and it makes sense that the previous tokens
-# do not comunicate with the future ones(becasue they would give the answer! and it defeats the whole purpose here!),
-# becasue its a given that only the previous tokens must be used to predict the future/next token, hence the filtering/constraint part to prevent tokens from 
-# comunicating with the future nodes/tokens.
-# !so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
-# and value use the same source. the attention mechanism as we briefly pointed out, is much more general and can be
-# used in different ways. one of such ways, is what is used to create sth called cross-attention. 
-# cross-attention basically refers to the case where we have encoder/decoder blocks, in which the queries come from x
-# but the key and value come from an external source and sometimes from the encoder block. so cross-attention is used
-# when theres a separate source of information we would like to pool from and use it as well.
-# this is usually the case in sequence-to-sequence models, such as in machine translation, infact the original paper's
-# uscase was machine translation! and it incorporates an encoder and a decoder like we just described. 
+# to be able to communicate with all the tokens. one example is sentiment analysis, where we want all the tokens to
+# able to communicate with eachother so we can get an accurate analysis in which, we would use an encoder
+# block, which is basically what we have here, minus the constraint section(tril/mask part). 
+# What we have implemented so far (with the tril, masking) here is called a decoder block, where we are decoding bunch 
+# of tokens, for which it makes prefect sense for the previous tokens not to be able to comunicate with the future ones
+# (becasue they would give the answer away! and it defeats the whole purpose here!),
+# as we want the model to predict the next token given only the previous tokens, hence we have the filtering/constraint
+# part to prevent just that.
 #
-# so far we implemented the attention based on the original paper(there are some differences we get to later on)
+# cross-attention:
+# so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
+# and value use the same source. The attention mechanism as we briefly pointed out, is quite versatile and can be 
+# utilized in various ways. One such example/way is the creation of something called cross-attention.
+# cross-attention is basically related to the scenarios where we have encoder/decoder blocks in our model, in which the
+# queries originate from decoder's input while the key and value are derived from an external source, sometimes from 
+# the encoder block. 
+# so Cross-attention comes into play when we have a separate source of information we would like to extract from and utilize.
+# This is commonly seen in sequence-to-sequence models, such as machine translation.
+# In such models, we have two sources of information: the source text and the generated text (translation output). 
+# The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
+# with the output as much as possible. The key and value are applied to the encoder/source material, while the query 
+# is applied to the decoder’s input. This process helps in creating a more accurate and contextually relevant translation.
+#   
+# infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
+# described. 
+#
+# scaled-attention:
+# so far we implemented the attention based on the original paper(minus some differences we get to later on)
 # except the part where we need to divide by the sqrt of the head_size. that is called scaled-attention
-# so lets talk about this, and see why its needed. 
+# so lets talk about this, and see why its needed.
 # the reason we add this so called 'scale' to our computation, is that, without it, the probablities will be saturated
 # and when we add this term to the mix, it will make the 'weight' matrix to be 'unit variance', when Q and K are unit variance
 # and this allows softamx to stay diffuse and not saturate too much.
