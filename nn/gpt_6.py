@@ -1200,7 +1200,7 @@ print(f'{torch.all(bow_results==bow_results2)}')
 #
 # side note: 
 # it might be intresting to include another point of view regarding tril-matrix and its interaction with query & key. 
-# From this point of view, the value of 1 at a position p, means the 'query' can attend to the 'key'
+# From this point of view, the value of 1 at the position p, means the 'query' can attend to the 'key'
 # at that position, and the value of 0 means otherwise (i.e. query can not attend to the key at that position).
 # this in turn means : 
 # 1.each row corresponds to a query (the word we're predicting) and
@@ -1210,7 +1210,7 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # furthermore,it shows that tril-matrix is simply a constraint on how query and key are prevented from communicating/attending
 # and how simple and straight forward the overall interaction between query and key is .
 #
-# now we want to implement a single attention head, we can later use this to create 
+# its now time to implement a single attention head, we can later use this to create 
 # multi-attention-head which is basically several single attention heads working in 
 # parallel. 
 # first lets create some random input for our experiments while implementing attention 
@@ -1553,8 +1553,8 @@ plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
 # when we do a softmax it will assign a large probablity to them, and this instructs the network that, we need more
 # information from them, effectively allowing for aggregating a lot of their information into our position(lets say e.g. 8th token. 
 # and we happen to learn more about them this way.
-# now in practice, we are not intrested in aggregating the x raw values per say, rather we want their information, 
-# so instead of just using the raw values of x, we instead use a representation of them, so to speak. 
+# now in practice, we are not intrested in aggregating the inputs raw values per say, rather we want their information, 
+# so instead of just using the raw values of x(our input), we instead use a representation of them, so to speak. 
 # this is achieved using a third vector known as, 'value' and is the last vector we use. 
 # just like the key and query, we set its bias to False, so we only get a simple vector,
 # and a dotproduct output (again this is the intuition, but how much adding a bias would
@@ -1618,7 +1618,7 @@ bow_final = weight@x_processed
 # The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
 # with the output as much as possible. The key and value are applied to the encoder/source material, while the query 
 # is applied to the decoder’s input. This process helps in creating a more accurate and contextually relevant translation.
-#   
+# 
 # infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
 # described. 
 #
