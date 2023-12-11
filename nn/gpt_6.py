@@ -1,11 +1,10 @@
 #%%
 # in the name of God the most compassionate the most merciful
-# in this section we will have a look at how a GPT (which is 
-# short for Generative Pretrained Transformer) model works,
+# in this section we will have a look at how a transformer model works,
 # in this section we will implement the attention mechanism
 # which is the foundation of transformers, and see 
-# how it works and lean more about it (self-attention, cross
-# attention, multi-head attention, etc)
+# how it works and lean more about it (self-attention, masked-attention, 
+# scaled-attention, cross-attention, multi-head attention, etc)
 # 
 # before we delve into the implementation details, we have to take a detour
 # and discuss some underlying concepts and techniques involved.
@@ -401,9 +400,34 @@ for b in range(batch_size):
 # tensor([39, 57, 58,  1, 51, 63,  1, 50]) --> 53 
 #
 # so now that we have the data sorted out, lets create our model. 
-# as we said, we are going to use a bigram model and later add attention mechanism to it. 
+# as we said, we are going to use a bigram model as our language model here and later add attention
+# mechanism to it. 
 # to make things easier and more self contained, lets add all the required logic to this model
 # like when we do a forward, we be able to calculate loss as well if we are given the targets
+#
+# side note:
+# review/reminder for some keyterms: language model, bi/n-gram models, seq-to-seq models:
+# A language model is a probabilistic model of a natural language. It’s used to predict the likelihood of
+# a sequence of words or tokens(characters,etc). 
+# Language models are used in a variety of tasks, including speech recognition, machine translation, 
+# natural language generation, optical character recognition, handwriting recognition, grammar induction, 
+# and information retrieval.
+# A bigram is a type of language model where the probability of the next word in a sequence depends only on
+# the previous word. It’s a sequence of two adjacent elements from a string of tokens, which are typically 
+# letters, syllables, or words. 
+# Bigrams, along with other n-grams, are used in most successful language models for tasks like speech recognition.
+# A sequence-to-sequence (Seq2Seq) model is used in sequence prediction tasks, such as language modeling and 
+# machine translation. 
+# The idea is to use one LSTM (Long Short-Term Memory), the encoder, to read the input sequence one timestep 
+# at a time, to obtain a large fixed dimensional vector representation (a context vector), and then to use 
+# another LSTM, the decoder, to extract the output sequence from that vector. 
+# The second LSTM is essentially a recurrent neural network language model except that it is conditioned on 
+# the input sequence. 
+# So, in essence, language models form the foundation of sequence-to-sequence models. They provide the 
+# mechanism for predicting the next element in a sequence, which is a key component of sequence-to-sequence 
+# models.
+#
+#
 # so lets go
 class BigramModel(nn.Module):
     def __init__(self, vocab_size) -> None:
@@ -1157,7 +1181,7 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # weighted aggregations of past elements. each element in the lower triangular part, 
 # specifies, the degree by which it plays a rule in the said outcome. 
 # that is how much of each element gets to get incorporated into the result of this specific position(i.e. current token's)
-# so now lets incorporate attention into our model.
+#
 #
 # Attention does its job by using two vectors called, key and query.
 # basically this mean every single token, emits two vectors called key and query, the query verctor
@@ -1166,28 +1190,42 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # note that "emit" here refers to the process of generating or producing something. 
 # When we say a token "emits" a key and a query vector, we mean that these vectors are produced 
 # or generated from the token through some transformation (usually a learned linear transformation). 
-# how exactly you may ask? the way we get our 'weights' for these tokens is we simply dotproduct them together, 
+# how exactly you may ask? the way we get our 'weights' for these tokens is like this:
+# we simply dotproduct them together, 
 # the ones that yield a high output/value, signify they are related positively.
 # so our query is dotproducted with all the token's(keys) and the outputs reveal their 
 # closeness/relevancy/similarity so to speak(if they align so to speak, they result in larger number)
 # so effectively, the ones with higher number, are more similar to the query, the highest, 
 # obviously having the most relavancy/similarity to the query.
 #
-# now we want to implement a single attention head, so we can later use this to create 
+# side note: 
+# it might be intresting to include another point of view regarding tril-matrix and its interaction with query & key. 
+# From this point of view, the value of 1 at a position p, means the 'query' can attend to the 'key'
+# at that position, and the value of 0 means otherwise (i.e. query can not attend to the key at that position).
+# this in turn means : 
+# 1.each row corresponds to a query (the word we're predicting) and
+# 2.each column corresponds to a key (the words we’re attending to).
+# which once again shows, how we are evaluatiing multiple queries against multiple keys at the same time, 
+# which is a key feature of the attention mechanism in transformers.
+# furthermore,it shows that tril-matrix is simply a constraint on how query and key are prevented from communicating/attending
+# and how simple and straight forward the overall interaction between query and key is .
+#
+# now we want to implement a single attention head, we can later use this to create 
 # multi-attention-head which is basically several single attention heads working in 
 # parallel. 
 # first lets create some random input for our experiments while implementing attention 
 torch.manual_seed(255)
-# lets specify the batch, context_size and vocab_size
+# lets specify the batch, context_size and channel_num/embedding_size
 B,T,C = 4,8,32
 # lets create an input 
 x = torch.randn(size=(B,T,C))
-# we said that attention works with two vectors, key and query, lets implement them
-# we can use nn.Linear to implement them but beore that, what are the dims of such vectors,
-# (hint: we said 'every token' emits/produces a vector through a transformation)
-# we are dealing with text and thus our inputs are tokens/vocabs, so the first dim would be 
-# our vocab_size to account for all tokens, the next dim, is sth called a head_sizes, which 
-# specifies the size of the key/query output (or key/query vectory length really).  
+# we said that attention works with two vectors, key and query, lets implement them then!
+# we can use nn.Linear to implement them but beore that, what are the dims for these vectors?,
+# hint: recall that we said 'every token' emits/produces a vector through a transformation,
+# since we are dealing with text, and nearly always take our inputs in the form of [word] embeddings
+# the first dim would be our embedding size. the next dim, is sth called a head_sizes, which 
+# specifies the size of the key/query output (or key/query vectory length really). its usually set
+# as the same value as our embedding_size, but we can set it any value we like.)  
 # lets define one
 head_size = 16
 # lets not forget to set bias=False, so what it does is exactly dotproduct 
@@ -1212,11 +1250,11 @@ weight_raw = q@k.transpose(2,1)
 # and as we explained earlier, this is infact our weight matrix (which was initially all zeros)
 # but is now learned from the data!
 # print(f'weight_raw\n{weight_raw}')
-# now we can apply the constraint on it so that tokens can only communicate with the past so 
-# we use the tril trick now!
+# now we can apply the constraint on it so that tokens can only communicate with the past 
+# so we use the tril trick now!
 tril_constrain = torch.tril(torch.ones(size=(T,T)))
 # apply the tril on our weight_matrix, so we thanos snaped:d the right half values so each token can only
-# talk to its past! (convinietly our weightmatrix is exactly the same dims as our tril!)
+# talk to its past! (convinietly our weightmatrix is exactly the same dims as our tril! we see why!)
 raw_wieghts_masked = weight_raw.masked_fill(tril_constrain==0, float('-inf'))
 # apply sotmax to get probablity for each token,
 # remember weight is (B,T,T) and we use the last dim, we could use -1 as well, 
@@ -1378,37 +1416,126 @@ print(f'weight\n{weight}')
 #          [1.0348e-01, 6.9321e-01, 1.3957e-01, 1.8735e-02, 1.5783e-02, 2.9217e-02, 0.0000e+00, 0.0000e+00],
 #          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
 #          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
+# 
+# to get a better understanding, how could we interpret these numbers?  
+# obviously our input is random, and the relationship between each token is random as well. 
+# but if for a moment we imagine these to be the values for a model at the begining of the training, 
+# we may find some intristing intuitions. obviously this would be much more coherent and clear when working 
+# on an already trained set of weights. 
+# nonetheless, imagine this to belong to a sentence like "The cat sat on the mat." (I just made it up!) 
+# our tokens would be ["The", "cat", "sat", "on", "the", "red","mat", "."].
+# by looking at the weights we may infer : 
+#
+# 1.The first row corresponds to the word “The”. The attention is entirely on itself (1.0000), and not on any other words (0.0000),
+#    which makes sense as there are no previous words to attend to.
+# 2.The second row would correspond to the word “cat”. It attends mostly to “The” (0.8064) and a bit to itself “cat” (0.1936). 
+#    This could be because the model is learning that “The” often precedes a noun.
+# 3.The third row would correspond to “sat”. It attends mostly to “cat” (0.7787), then to “sat” (0.1688), and a bit to “The” (0.0525).
+#    This could be because “sat” is a verb that is often associated with the subject “cat”.
+# 4.The fourth row would correspond to “on”. It attends mostly to “The” (0.7022), then to “cat” (0.2459), a bit to “sat” (0.0422),
+#    and very little to “on” (0.0097). This could be because prepositions like “on” often relate to the subject and verb in a sentence.
+# 5.The fifth row would correspond to “the”. It attends mostly to “on” (0.3936), then to “sat” (0.3733), a bit to “cat” (0.0725), 
+#    and "The" (0.0118), and very little to “the” (0.1498). This could be because “the” often follows a preposition like “on”.
+# 6.The sixth row would correspond to "mat". It attends mostly to “cat” (0.6932), then to “The” (0.1035), a bit to “sat” (0.1396), 
+#    "on" (0.0187), "the" (0.0158), and a little to "mat" (0.0292). This could be because “mat” is the object where the “cat” “sat”.
+# 7.The seventh row would correspond to “.”. It attends mostly to “mat” (0.3957), then to “cat” (0.3213), a bit to “The” (0.0575),
+#    "sat" (0.0678), “on” (0.0902), “the” (0.0180), and a little to “.” (0.0496). This could be because the period often concludes 
+#     the action and the object in the sentence.
+#
+#
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+tokens = ["The", "cat", "sat", "on", "the", "red", "mat", "."]
+plt.figure(figsize=(8, 8))
+
+# we can use this oneliner using seaborn and create a heatmap plot.
+# sns.heatmap(weight[0].detach().numpy(), annot=True, cbar=True, fmt=".4f", xticklabels=tokens, yticklabels=tokens, cmap='hot')
+# or use the old way using matplotlib:
+plt.imshow(weight[0].detach().numpy(), cmap='hot', interpolation='nearest')
+plt.colorbar()
+plt.title("weight[0]")
+plt.xticks(np.arange(len(tokens)), tokens, rotation=45)
+plt.yticks(np.arange(len(tokens)), tokens)
+# Add the attention weights on each cell
+for i in range(len(tokens)):
+    for j in range(len(tokens)):
+        text = plt.text(j, i, round(weight[0].detach().numpy()[i, j], 4),
+                       ha="center", va="center", color="w")
+plt.show()
+#
+# so to recap once again : 
+# First, let’s assume that we have tokenized a sentence like 'I saw Eiffel tower when I visited Paris' and have the
+# following sequence of tokens:
+# ["I", "saw", "Eiffel", "tower", "when", "I", "visited", "Paris"]
+# In the self-attention mechanism, each word in the sentence needs to calculate an attention score with every other word,
+# including itself. 
+# This is done using the query, key, and value vectors which are derived from the word embeddings.
+# However, when we’re training a model to generate text (like in our case), we want it to only attend to earlier positions 
+# in the input sequence. Why? because the model should not have access to future tokens while predicting the current token.
+# This is where masked self-attention comes into play.
+# Masked self-attention prevents the model from 'peeking into the future'. It uses a mask to nullify the effect of future 
+# tokens. This mask is typically created using the tril() function, which returns the lower triangular part of a matrix.
+# For our sentence, the mask would look something like this:
+# [[1, 0, 0, 0, 0, 0, 0, 0],
+#  [1, 1, 0, 0, 0, 0, 0, 0],
+#  [1, 1, 1, 0, 0, 0, 0, 0],
+#  [1, 1, 1, 1, 0, 0, 0, 0],
+#  [1, 1, 1, 1, 1, 0, 0, 0],
+#  [1, 1, 1, 1, 1, 1, 0, 0],
+#  [1, 1, 1, 1, 1, 1, 1, 0],
+#  [1, 1, 1, 1, 1, 1, 1, 1]]
+# Each row corresponds to a query (the word we're predicting) and each column corresponds to a key (the words we’re attending to).
+# The value 1 means the query can attend to the key at that position, and 0 means it cannot.
+# For example, when predicting the word “tower”, the model can attend to “I”, “saw”, “Eiffel”, and “tower”, 
+# but not to “when”, “I”, “visited”, “Paris”. This is reflected in the 4th row of the mask.
+# This way, the model is forced to make predictions based only on the ‘past’ tokens, mimicking how we, as humans, read text
+# from left to right and make predictions without knowing what text comes next.
 #
 # take the last token, which is 8.6020e-02, notice this token, not only knows its content and own position in 
 # the sequence(its the 8th token after all!) but also knows which tokens comes before it and how much its 
 # related to any of them.(basically when it knows which token comes before it, it creates its own query so
 # to speak, and talks to every single previous token to find about which ones are more or less relavent to
 # it and to what extend.) 
+# ! check the example and make sure it aligns well with the previous paragraph, like we said the previous tokens
+# cant talk to future ones, but here we are saying visted is relvant to paris! if we chose paris, we could say so
+# and id make more sense
 # For example,lets say, we have this sentence: "I saw the Eiffel Tower when I visited Paris" and suppose
 # each token is a word, so I, saw, the, ... are all tokens, therefore we have a sequence of 9 tokens here. 
-# In this sentence, if we focus on the word "visited", the attention mechanism allows it to understand that
-# "visited" token is most closely related to "Paris". 
-# This is because in the context of visiting, a location(in this case, "Paris") is usually involved.
-# The attention mechanism assigns higher weights to "Paris" when processing the word "visited", indicating that
-# "Paris" is important for understanding the context of "visited".
+# In this sentence, if we focus on the word "Paris", the attention mechanism allows it to understand that
+# "Paris" token is most closely related to "visited", and visited is related to I as well. 
+# This is because in the context of visiting, a location(in this case, "Paris") is usually involved and viceversa.
+# The attention mechanism assigns higher weights to "visited" when processing the word "Paris", indicating that
+# "visited" is important for understanding the context of "Paris".
 # Similarly, when the model processes "Eiffel Tower", it understands that "Eiffel Tower" is closely related to Paris",
 # and thus assigns a higher weight to "Paris".
 # This way, the attention mechanism allows the model to capture the dependencies between words in a sentence, 
 # even if they are far apart. It’s like the model’s way of paying "attention" to important words/tokens while 
 # processing a given word/token.
 # now back at our own example, lets visualize the weights for better understanding
-def plot_heatmap(weight, label, cmap='plasma'):
+def plot_heatmap(weight, label, cmap='plasma', annotate=False):
     import matplotlib.pyplot as plt 
     import seaborn as sns 
     import numpy as np 
     
     # lets draw the heatmap for each tensor 
     plt.figure(figsize=(12,6))
-    sns.heatmap(weight.numpy(),cmap=cmap)
+    sns.heatmap(weight.numpy(),cmap=cmap, annot=annotate,)
     plt.title(label)
+    # Add the attention weights on each cell
+    # if annotate:
+        # plt.imshow(weight.numpy(),cmap=cmap)
+        # plt.colorbar()
+        # for i in range(weight.shape[0]):
+            # for j in range(weight.shape[1]):
+                # plt.text(j, i, round(weight.numpy()[i, j], 4),
+                            # ha="center", va="center", color="w")
+        
     plt.show()
     
-plot_heatmap(tril_constrain.detach(), label='tril_constrain', cmap='Blues')
+    
+plot_heatmap(tril_constrain.detach(), label='tril_constrain', cmap='Blues', annotate=True)
 # since we have a batch here, basically 4 samples, we flatten the first two dims 
 # so we can plot all as a 2d heatmap 
 plot_heatmap(raw_wieghts_masked.view(-1,8).detach(), label='raw_wieghts_masked-all batches',cmap='RdBu')
@@ -1588,6 +1715,7 @@ print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8,dim=-1)}')
 # so this scaling is used to retain the variance at a good value especially at initialization.
 # so now that we are finally finished the self attention head, lets implement it as a module and incorporate everything
 # we just discussed here.
+#! key,query use vocab_size or embd_size? if embd_size we need to update the previous explanation
 class AttentionHead(nn.Module):
     def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
         super().__init__()
