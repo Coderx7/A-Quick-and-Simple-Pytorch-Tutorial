@@ -1760,7 +1760,7 @@ print(at(x).shape)
 # now that we know how to implement this, lets implement our attention head using this new trick!
 # and see if its any faster! 
 
-class AttentionHead2(nn.Module):
+class AttentionHeadFused(nn.Module):
     def __init__(self, context_size, embd_size, head_size, use_bias=False) -> None:
         super().__init__()
         self.context_size = context_size
@@ -1808,7 +1808,7 @@ es = 128
 hs  = 128
 torch.backends.cudnn.benchmark = True
 at  = AttentionHead(cs,es,hs).cuda()
-at2 = AttentionHead2(cs,es,hs).cuda()
+at2 = AttentionHeadFused(cs,es,hs).cuda()
 x = torch.randn(size=(128,cs,es)).cuda()
 # import timeit
 %timeit -n 100 at(x) 
@@ -1833,45 +1833,162 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # Number of parameters in fused layer: 28,755,648
 
 # as you can see we get contradictory results. and its expected. 
-# In general, fusing operations into a single operation can potentially improve performance by 
-# reducing memory access and overhead associated with separate operations. However, it's important
-# to consider the trade-off between fusion and memory usage. 
-# Fusing all the operations into a single linear layer (kqv) and then splitting the output may reduce
-# memory access and overhead, but it may also lead to increased memory consumption due to the larger 
-# output tensor.
-# The efficiency of fusion and splitting depends on factors like the size of the input, the dimensions of
-# the layers, and the available hardware resources. 
+# In general, fusing several operations into a single operation can potentially improve performance by 
+# reducing memory access and the overhead associated with those separate operations. 
+# However, the efficiency of such optimizations depends on several factors like the size of the input,
+# the dimensions of the layers, the operations involved and the hardware capabilities. 
 # Thereore It's always recommended to benchmark and compare the performance of different approaches on our
 # specific hardware and input size to determine the most efficient solution.
-# In some cases, hardware optimizations like tensor cores on certain GPUs or specialized operations can 
-# further impact the performance. Therefore, it's beneficial to consider hardware-specific optimizations
-# and consult the hardware documentation or performance guides for guidance on optimizing specific 
-# operations.
-# In summary, whether fusion provides better performance and if it's more efficient to use a single linear
-# layer and split the output can depend on various factors, including the specific operations, input size,
-# layer dimensions, and hardware being used. It's recommended to benchmark and compare different approaches 
-# to determine the most efficient solution for your specific scenario.
-
-# We then compare the number of parameters in the original layers and the fused layer.
 # In general, fusing layers can be beneficial when the input size is large, and the number 
 # of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
 # This is because the fused layer requires fewer memory accesses and computations than the original 
 # layers.
-# lets test the example using positionless attention! (we can test wuth unscaled attention as well)
-#%% test with unscaled attention
-#
-#
-#
-# %%
-# test with positionless attention
-#
+
+#%% test with unscaled/unmasked/noposition attention
+# lets create a few arguments to our attentionhead so we can easily test different options and see how they
+# fair against eachother! and whether what we said stays correct!
+# remember our attentionhead currently doesnt use any positional information!
+class AttentionHeadNoPos(nn.Module):
+    def __init__(self, context_size, embd_size, head_size, use_bias=False, scale=True, masking=True) -> None:
+        super().__init__()
+        self.context_size = context_size
+        self.embd_size = embd_size
+        self.head_size = head_size
+        self.scale = scale
+        self.masking = masking
+        self.key = nn.Linear(embd_size, head_size, bias=use_bias)
+        self.query = nn.Linear(embd_size, head_size, bias=use_bias)
+        self.value = nn.Linear(embd_size, head_size, bias=use_bias)
+        self.register_buffer('tril', torch.tril(torch.ones(context_size, context_size)))
+
+    def forward(self, inputs:torch.Tensor) -> torch.Tensor:
+        B,T,C = inputs.shape 
+        k = self.key(inputs)  
+        q = self.query(inputs)
+        v = self.value(inputs)
+        # lets check the effects of scaling/unscaling in practice
+        if self.scale:
+            weight = q@k.transpose(-2,-1)* self.head_size**-0.5
+        else:
+            weight = q@k.transpose(-2,-1)
+        # lets check the masking effects as well
+        if self.masking:
+            weight = weight.masked_fill(self.tril[:T,:T]==0,float('-inf'))
+        weight = weight.softmax(dim=-1)
+        bow = weight@v
+        return bow
+    
+class BigramWithAttentionNoPos(nn.Module):
+    def __init__(self, vocab_size, context_size, embd_size, head_size, scale=True, masking=True, use_bias=False) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        self.context_size = context_size
+        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+        # add a self-attention head
+        self.attnhead = AttentionHeadNoPos(context_size, 
+                                       embd_size, 
+                                       head_size, 
+                                       scale=scale, 
+                                       masking=masking, 
+                                       use_bias=use_bias)
+        self.fc = torch.nn.Linear(head_size, vocab_size)
+        
+    def forward(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+        token_embeddings = self.embeddings(inputs) 
+        out_attention = self.attnhead(token_embeddings)
+        logits = self.fc(out_attention)
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits.permute(0,2,1), labels)
+        return logits, loss
+    
+    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
+        for _ in range(max_token_count):
+            assert idxs.ndim >1, f"idx.shape '({tuple(idxs.shape)})' is invalid({idxs.ndim}). it must have the form (B,T)"
+            idxs_cropped = idxs[:, -self.context_size:]
+            logits,_ = self(idxs_cropped)
+            logits = logits[:,-1,:]
+            probs = logits.softmax(dim=-1)
+            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+            idxs = torch.cat((idxs,new_idx), dim=-1)
+        return idxs
+    
+# now lets test this and see if it works 
+def train(scaling, masking, bias, lr, batch_size, vocab_size, max_iter, device):
+    
+    model = BigramWithAttentionNoPos(vocab_size=vocab_size,
+                                     context_size=32,
+                                     embd_size=128,
+                                     head_size=128,
+                                     scale=scaling,
+                                     masking=masking,
+                                     use_bias=bias)
+    
+    param_count = sum([p.nelement() for p in model.parameters()])
+    print(f'param count:     {param_count:,}')
+    print(f'scaling:         {model.attnhead.scale}')
+    print(f'masking:         {model.attnhead.masking}')
+    print(f'positional info: -NO-')
+    print(f'head size:       {model.attnhead.head_size}')
+    print(f'embd size:       {model.embd_size}')
+    print(f'context size:    {model.context_size}')
+
+    with torch.no_grad():
+        x,y = get_batch('train',4)
+        _, loss = model(x,y)
+        print(f'loss before training: {loss:.4f}')
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    model = model.to(device)
+    # set model to train mode explicitly
+    model.train()
+    for i in range(max_iter):
+        # get the batch
+        x,y = get_batch('train', batch_size=batch_size)
+        x,y = tuple(t.to(device) for t in (x,y))
+        # feed the model and get the logits
+        logits, loss = model(x,y)
+        # evaluate the model
+        if i%1000==0:
+            losses=evaluate_loss(100, device)
+            print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
+        # zero-out grads
+        model.zero_grad(True)
+               
+        loss.backward() 
+        optimizer.step()
+    print(f'done!')
+
+    # now lets try its output
+    input = torch.zeros(size=(1,1)).int()
+    output = model.generate(input, 500).squeeze(0).tolist()
+    print(f"{''.join(decode(output))}")
+    print(f'-'*25)
+
+# and now we can train this : 
+device='cpu'
+batch_size = 32
+vocab_size = len(vocab_list)
+max_iter = 25000
+# attention requires much lower lr compared to plain bigram model
+lr = 0.001
+# attention with scaling - default
+train(scaling=True, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# attention without scaling 
+train(scaling=False, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter,device=device)
+# attention without masking 
+train(scaling=True, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# attention without scaling and without masking
+train(scaling=False, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# attention model with bias enabled
+train(scaling=True, masking=True, bias=True, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+#! check if its ok to include them now or at the very end. because the changes may not be evident here!
 #
 # 
+# 
+# 
 # %%
-# test with non-masked-attention
-#
-#
-#%%
 #
 # we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
 # is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
