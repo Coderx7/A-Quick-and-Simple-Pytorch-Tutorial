@@ -427,6 +427,15 @@ for b in range(batch_size):
 # mechanism for predicting the next element in a sequence, which is a key component of sequence-to-sequence 
 # models.
 #
+# ! explain more about autoregressive models
+# side note about Autoregressive models : https://www.youtube.com/watch?v=vwG3KWzuACo
+# the class of models we are tyring to implement here is called autoregressive and they 
+# are shown to outperform recurrent networks (rnns/lstm/gru/etc)
+# an autoregressive model is a feedforward model that predicts the next variable xt in a time series
+# based on k previous variables (xt-1, xt-2,...) 
+# in RNNs, the parameters are shared across time (same function (f(.) at different t))
+# while Autoregressive models, make a strong conditional independence assumption. 
+# watch the video to have a clue!
 #
 # so lets go
 class BigramModel(nn.Module):
@@ -1498,8 +1507,11 @@ def plot_heatmap(weight, label, cmap='plasma', annotate=False):
     
     
 plot_heatmap(tril_constrain.detach(), label='tril_constrain', cmap='Blues', annotate=True)
-# since we have a batch here, basically 4 samples, we flatten the first two dims 
-# so we can plot all as a 2d heatmap 
+# sidenote:
+# note that in attention, samples do not interact with each other at all. when we have a batch of 4, 
+# each sample is processed in isolation, but in parallell to other samples.
+# therefore since we have a batch here, basically 4 samples, we flatten the first two dims 
+# so we can plot all as a 2d heatmap and see this visually. 
 plot_heatmap(raw_wieghts_masked.view(-1,8).detach(), label='raw_wieghts_masked-all batches',cmap='RdBu')
 # now lets look at the first batch in more detail
 plot_heatmap(raw_wieghts_masked[0].detach(), label='raw_wieghts_masked-first batch',cmap='RdBu')
@@ -1524,75 +1536,18 @@ value = torch.nn.Linear(C,head_size, bias=False)
 x_processed = value(x)
 # so 
 bow_final = weight@x_processed
-# we arenot done yet.
-# attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
-# there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
-# by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
-# positioned (with resepect to eachother). 
-# to have a better mental picture, imagine each token as a node in a directed graph, each node has a connection to some
-# other nodes, (for example each node has a connection to itself, and another connection to other nodes,etc) as you can
-# see there is no notion of space or better said order between nodes. 
-# which one would you call is number 1 or 2, in a graph, in which the structure simply doesnt define any order by itself,
-# unless you define one using a mechanism of some sor?) 
-# The attention simply acts on a set of vectors in this graph, so if the order or position of these nodes 
-# is of any significance to us, then we need to encode them as well, 
-#
-# as it happens in our case, the positional information is important to us, becasue we want to generate text, and order
-# matters here(text are inherntly sequential, so order absolutely matters). 
-# models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially, and 
-# CNNs have spatial information, as they operate by sliding a fixed window over the input)
-# but this is not the case for attention. as we just stated, there is no notion of position, its just a set of individual
-# vectors being operated on)
-# note that the connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
-# semantic, imagine a case, where a word for example has several meaning, and may very well have high relevancy to a few 
-# tokens at the same time, but without additional positional information, an ambiguous semantic can be infered between the
-# tokens involved, however when positional information is also present, such ambiguity can be avoided) 
-# (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
-#
-# also note that, in attention, samples do not interact with each other at all. when we have a batch of 4, each sample
-# is processed in isolation, but in parallell to other samples, based on our graph example earlier, we would have 4 
-# graphs of 8 nodes for example for each input sample. 
-#
-# we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
-# is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
-# self attention.
-# also note that, in our specific case, tokens/nodes can not communicate with the future nodes, but in general
-# this constraint can be removed (and infact is removed/not implemented for some applications) where its benificial
-# to be able to communicate with all the tokens. one example is sentiment analysis, where we want all the tokens to
-# able to communicate with eachother so we can get an accurate analysis in which, we would use an encoder
-# block, which is basically what we have here, minus the constraint section(tril/mask part). 
-# What we have implemented so far (with the tril, masking) here is called a decoder block, where we are decoding bunch 
-# of tokens, for which it makes prefect sense for the previous tokens not to be able to comunicate with the future ones
-# (becasue they would give the answer away! and it defeats the whole purpose here!),
-# as we want the model to predict the next token given only the previous tokens, hence we have the filtering/constraint
-# part to prevent just that.
-#
-# cross-attention:
-# so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
-# and value use the same source. The attention mechanism as we briefly pointed out, is quite versatile and can be 
-# utilized in various ways. One such example/way is the creation of something called cross-attention.
-# cross-attention is basically related to the scenarios where we have encoder/decoder blocks in our model, in which the
-# queries originate from decoder's input while the key and value are derived from an external source, sometimes from 
-# the encoder block. 
-# so Cross-attention comes into play when we have a separate source of information we would like to extract from and utilize.
-# This is commonly seen in sequence-to-sequence models, such as machine translation.
-# In such models, we have two sources of information: the source text and the generated text (translation output). 
-# The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
-# with the output as much as possible. The key and value are applied to the encoder/source material, while the query 
-# is applied to the decoder’s input. This process helps in creating a more accurate and contextually relevant translation.
-# 
-# infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
-# described. 
-#
+# we are not done yet.
 # scaled-attention:
-# so far we implemented the attention based on the original paper(minus some differences we get to later on)
+# so far we implemented the attention based on the original transformer paper(minus some differences we 
+# get to later on, note that the attention mechanism predates transformer and was first intruced in 2014
+# by bahdanu etal)
 # except the part where we need to divide by the sqrt of the head_size. that is called scaled-attention
 # so lets talk about this, and see why its needed.
-# the reason we add this so called 'scale' to our computation, is that, without it, the probablities will be saturated
-# and when we add this term to the mix, it will make the 'weight' matrix to be 'unit variance', when Q and K are unit variance
-# and this allows softamx to stay diffuse and not saturate too much.
-# in other words, if we simply multiply key and query like that, the variance of the resulting weight matrix will be
-# around the head_size instead of 1 which is bad and makes optimization really hard.
+# the reason is simple, without it, the probablities will be saturated.
+# when we add this term to the calculations, it will make the 'weight' matrix to be 'unit variance', 
+# when Q and K are unit variance. this in turn allows softamx to stay diffuse and not saturate too much.
+# in other words, if we simply multiply key and query like that, the variance of the resulting weight matrix 
+# will be around the head_size instead of 1 which is bad and makes optimization really hard.
 # to see this effect consider the following example
 k = torch.randn(size=(B,T,head_size))
 q = torch.randn(size=(B,T,head_size))
@@ -1605,9 +1560,9 @@ w_scaled = q@k.transpose(-2, -1) * head_size**-0.5
 print(f'after applying 1/sqrt(head_size)')
 # makes the weight variance 1!
 print(f'{w_scaled.var()=}')
-# why is it important? if you recall, the weight matrix is fed into softmax, so its really important, especially during
-# initialization that weight matrix be fairly diffuse, if we look at weight matrix here, we'll notice that they are now
-# fairly diffuse 
+# why is it important? if you recall, the weight matrix is fed into softmax, so its really important 
+# that weight matrix be fairly diffuse especially during initialization, if we look at the weight matrix here, 
+# we'll notice that they are fairly diffuse now. 
 print(f'weight_scaled[0]:\n{w_scaled[0]}')
 # prints 
 # weight_scaled[0]:
@@ -1621,7 +1576,8 @@ print(f'weight_scaled[0]:\n{w_scaled[0]}')
 #         [ 0.4180, -2.8353, -0.6435,  0.4842, -3.0202,  1.7690,  1.8837, -0.4393]])
 #
 # when softmax is applied:
-print(w_scaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0])
+masked_w_scaled_probs = w_scaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0]
+print(masked_w_scaled_probs)
 # tensor([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
 #         [0.8026, 0.1974, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
 #         [0.1901, 0.4814, 0.3285, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
@@ -1631,7 +1587,6 @@ print(w_scaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax
 #         [0.3027, 0.0263, 0.0233, 0.1562, 0.0618, 0.2176, 0.2121, 0.0000],
 #         [0.0901, 0.0035, 0.0312, 0.0962, 0.0029, 0.3478, 0.3901, 0.0382]])
 #
-# 
 # now compare it with the unscaled weight : 
 print(f'weight_unscaled[0]:\n{w_unscaled[0]}')
 # weight_unscaled[0]:
@@ -1645,7 +1600,8 @@ print(f'weight_unscaled[0]:\n{w_unscaled[0]}')
 #         [  1.6719, -11.3411,  -2.5740,   1.9369, -12.0810,   7.0760,   7.5347, -1.7573]])
 #
 # when softmax is applied:
-print(w_unscaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0])
+masked_w_unscaled_probs = w_unscaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softmax(dim=-1)[0]
+print(masked_w_unscaled_probs)
 # tensor([[1.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
 #         [9.9636e-01, 3.6442e-03, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
 #         [1.9592e-02, 8.0566e-01, 1.7475e-01, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00],
@@ -1655,29 +1611,40 @@ print(w_unscaled.masked_fill(torch.tril(torch.ones(T,T))==0,float('-inf')).softm
 #         [6.3261e-01, 3.5856e-05, 2.2371e-05, 4.4856e-02, 1.1023e-03, 1.6883e-01, 1.5254e-01, 0.0000e+00],
 #         [1.7351e-03, 3.8710e-09, 2.4850e-05, 2.2616e-03, 1.8472e-09, 3.8572e-01, 6.1020e-01, 5.6236e-05]])
 #
-# as you can see, some values are very negative, while others are very positive, for example, we have both 11 and -11
-# and this is a recipe for disaster! the reason it is a problem is that, with softamx, when numbers take very positive
-# and nagative values, softmax actually converges towards one-hot-vector. basically the values shrink towards the max.
-# this can be seen the above, but the example below should demonstrate it more clearly.
+# as you can see, some values are very negative, while others are very positive, for example, we have both 11 and -11 
+# in the unscaled weight matrix and this is a recipe for disaster! 
+# The reason it is a problem is that, with softamx, when numbers take very positive
+# and nagative values, softmax actually converges towards one-hot-vector. 
+# basically the values shrink towards the max value.
+plot_heatmap(masked_w_unscaled_probs.view(-1,8).detach(),'unscaled masked-weight-probs(probs look more like onehot)',cmap='hot',annotate=True)
+plot_heatmap(masked_w_scaled_probs.view(-1,8).detach(),'scaled masked-weight-probs(probs are more uniform)',cmap='hot',annotate=True)
+# note that in the unscaled weights, the majority of values are either black(close to zero) or very bright
+# where as in the scaled version, all values seem to be fairly uniform (they are all shades of red).
+# compre the last two rows in these two weight matrixes, and you'll notice the unscaled one seems its convering
+# towards a one-hot vector inwhich nearly all values are close to zero except one or two value having a much
+# larger value.
+# to further expand on this, consider the following example, it should demonstrate it more clearly and solidfy this concept for you.
 # lets apply softmax on a list of numbers that are close to each other, we see the probablities are difuse and normal
 print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2]),dim=-1)}')
 # we get a diffused probablity out of softmax
 # tensor([0.2562, 0.3822, 0.1717, 0.1898])
-# however if we increase the magnitude of the numbers(sharpen them) (and thus the difference between them) by like multiplying by 
-# a number like 8 (just to simulate the effect here and so we can compare it with the previous case)
-print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8,dim=-1)}')
-# we see that the softmax, starts to sharpen towards the max, shrinking others except the 
-# largest number, and effectively
-# converging toward a one-hot-encoded vector.
+# however if we increase the magnitude of the numbers(sharpen them) (and thus also the difference between them) 
+# by multiplying by a number like 8 e.g. (just to simulate the effect here and compare it with the previous case)
+print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8, dim=-1)}')
+# we see the softmax starts to sharpen towards the max, shrinking other values except the largest number, and
+# effectively converging toward a one-hot-encoded vector.
 # tensor([0.0390, 0.9559, 0.0016, 0.0035])
-# so we dont want these values to be extreme, especially during initialization or otherwise, softmax will be way too picky!
-# and we are basically aggregating the information from a single node instead of multiple ones (becasue one has the largest
-# nvalue, its as if our sequence length is 1! and we lose access to the wealth of information the past history offers)
+#
+# Therefore we dont want these values to be extreme, especially during initialization or otherwise, softmax will
+# be way too picky!/gravitated toward them which means, we are basically aggregating the information from a 
+# single node/token instead of multiple ones (becasue one has the largest value, its as if our sequence length
+# is 1 or all the previous tokens are just 0s! and like that, we lose access to the wealth of information 
+# the past history offers)
 # so we want the probablities to be diffuse and not peaked like the second example here.
 # so this scaling is used to retain the variance at a good value especially at initialization.
 # so now that we are finally finished the self attention head, lets implement it as a module and incorporate everything
 # we just discussed here.
-#! key,query use vocab_size or embd_size? if embd_size we need to update the previous explanation
+#
 class AttentionHead(nn.Module):
     def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
         super().__init__()
@@ -1688,7 +1655,9 @@ class AttentionHead(nn.Module):
         # it embd_size
         self.embd_size = embd_size
         # head_size is the output dimension of our attnetion
-        # !note that usually the head_size is equal to embd_size
+        # note that usually the head_size is equal to embd_size 
+        # and this is one of the reasons the transformers
+        # overhead increases rapidly!
         self.head_size = head_size
         self.key = nn.Linear(embd_size, head_size, bias=use_bias)
         self.query = nn.Linear(embd_size, head_size, bias=use_bias)
@@ -1712,70 +1681,65 @@ class AttentionHead(nn.Module):
         self.register_buffer('tril', torch.tril(torch.ones(context_size,context_size)))
 
     def __call__(self, inputs:torch.Tensor) -> torch.Tensor:
-        #! check the shapes!! 
-        B,T,C = inputs.shape # 4,8,16
-        # print(f'{inputs.shape=}')
+        B,T,C = inputs.shape # (4,8,16)
         # create the weight by using k,q,v
-        k = self.key(inputs)    #! (B,T,C) or (B,E,16)? (4,8,16)
-        q = self.query(inputs)  #! (B,T,C) or (B,E,16)? (4,8,16)
-        v = self.value(inputs)  #! (B,T,C) or (B,E,16)? (4,8,16)
+        k = self.key(inputs)    #! (B,T,C)  (4,8,16)
+        q = self.query(inputs)  #! (B,T,C)  (4,8,16)
+        v = self.value(inputs)  #! (B,T,C)  (4,8,16)
         # create the weight matrix and scale it by 1/sqrt(head_size) to keep weight unit variance 
-        weight = q@k.transpose(-2,-1)* self.head_size**-0.5 # !(B,E,E)
-        # weight_C = q@k.transpose(-2,-1)* C**-0.5 # !(B,E,E)
-        # print(f'weight.var: {weight.var().item():.4f}')
-        # print(f'weight_C.var: {weight_C.var().item():.4f}')
-        # print(f'x:{tuple(inputs.shape)} k:{tuple(k.shape)} q:{tuple(q.shape)} v:{tuple(v.shape)} w:{tuple(weight.shape)} hs:{self.head_size}')
-        # apply the tril constrain - (this makes this a decoder block!)
+        weight = q@k.transpose(-2,-1)* self.head_size**-0.5 # !(B,T,T)
+        # apply the tril constraint - (this makes this suitable for a decoder block only!)
         # important note: notice we used tril[:T,:T] and not simply tril
         # this is because, when the input has a small context_size < self.context_size
-        # like when we wantto generate inputs with sth like zeros((1,1)) which says
-        # there is a single token (context_size 1) of 0 as the begining of the sequence
-        # when this is input, the tril by default makes a context_size,context_size matrix
+        # like when we want to generate inputs with sth like zeros((1,1)) which says
+        # there is a single token (context_size 1) of 0 as the begining of the sequence,
+        # when this is input, the tril by default makes a (context_size, context_size) matrix
         # which will be different than the input context_size which is 1 e.g. or 2 e.g.
-        # and it will fail becasue our weight would be 1,1,1 or 1,2,2, but trail is 1,8,8
-        # and clearly this will cause an error. for this reason, we always create the 
+        # and it will fail becasue our weight would be (1,1,1) or (1,2,2), but trail is (1,8,8)
+        # and clearly this will cause an error. For this reason, we always create the 
         # tril check dynamcally by explicitly specifying the context_size based on the 
         # current input context_size so in case the context_size is smaller, tril is resized
-        # dynamically accordingly. 
+        # dynamically accordingly.
+        # to see this try uncommenting these lines and use an input with context_size of 1,2
+        # basically smaller than context_size and see how it fails if you dont use :T,:T notion here
         # print(f'tril[:T,:T]==0: {(self.tril[:T,:T]==0).shape}')
         # print(f'tril==0: {(self.tril==0).shape}')
         weight = weight.masked_fill(self.tril[:T,:T]==0,float('-inf'))
         # weight2 = weight.masked_fill(self.tril==0,float('-inf'))
         # print(f'{weight.shape=}')
         # print(f'{weight2.shape=}')
-        # note that we are using batch, so instead of hardcodin 2,
-        # we use -1 to refer to the last dim
+        # note that we are using batch, so instead of hardcoding 2,
+        # we simply use -1 to refer to the last dim
         weight = weight.softmax(dim=-1)
         # finally apply the weight on the v
-        bow = weight@v  # !(B,E,16)
+        bow = weight@v # (B,context_sz,head_sz)
         return bow        
 
-# now lets add this to our model 
-        
-# so to recap, we first calculated the relavancy between all tokens against eachother, then constrained them so that 
-# each token can only use the information from/interact with its past tokens. then since we needed probablity distribution so
-# we then normalized it and then used that to pickout which tokens information(in the past) to aggregate/use with the inputs to 
-# achieve our goal.(which is to predict the next character based on everything seen so far!)
-# we dont want to aggregate inputs value (with respect to the weight matrix), we instead would like to use their representation
-# so we use a new layer to do this, its called value, and we instead use its output instead of inputs raw value.
-#
+# now lets test our attention module now: 
+at  = AttentionHead(8,16,18)
+x = torch.randn(size=(4,8,16))
+print(at(x).shape)
 # 
 #%%
+# side-quest!:
 # TODO:  add the efficient/fused version 
-# lets check  to see if  fusing kqv can improve our speed!
-# this works, but one might think its not really that efficient provided that usually when we have multiple operations, its much better
-# to create 1 larger operation than several smaller one, and when it comes to multiplication, we can do better
-# for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs, and then split
-# the result! well, lets first see how its done and then do a simple benchmark to see if it actually is any better!
+# before we add this to our base model, lets check and see if fusing kqv can improve our speed!
+# we might think its not really that efficient provided that usually when we have multiple operations, 
+# its much better to create 1 larger operation than several smaller one, and when it comes to multiplication,
+# we can do better for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs,
+# and then split the result! 
+# well, lets first see how its done and then do a simple benchmark to see if it actually is any better!
 # to give you an intuitive undrestanding try the following example ,
 # suppose we have our k,q,v layers
-# key = nn.Linear(5,5,bias=False)
-# query = nn.Linear(5,5,bias=False)
-# value = nn.Linear(5,5,bias=False)
+# key = nn.Linear(5,5, bias=False)
+# query = nn.Linear(5,5, bias=False)
+# value = nn.Linear(5,5, bias=False)
 # x = torch.randn(size = (3,2,5))
-# and we want to calculate their outputs, before we do the multiplication, lets make sure their weights
-# are the something fixed so we can easily see it for ourselves whats going on. 
-# since the key,query and values's weights are 5,5, we have 25 values for each so lets initilize them with 0-25!
+# and we want to calculate their outputs. 
+# before we do the multiplication, lets make sure their weights
+# are the something fixed so we can easily see for ourselves whats going on. 
+# since the key,query and values' weights are 5,5, we have 25 values for each, 
+# lets initilize them with 0-25! and then reshape them to the proper form.
 # key.weight.data   =  torch.arange(0,25).view(5,5).float()
 # query.weight.data =  torch.arange(0,25).view(5,5).float()
 # value.weight.data =  torch.arange(0,25).view(5,5).float()
@@ -1795,15 +1759,6 @@ class AttentionHead(nn.Module):
 # we get True,True,True , signifying they are actually doing the very same thing!
 # now that we know how to implement this, lets implement our attention head using this new trick!
 # and see if its any faster! 
-
-# side note about Autoregressive models : https://www.youtube.com/watch?v=vwG3KWzuACo
-# the class of models we are tyring to implement here is called autoregressive models and they 
-# are shown to outperform recurrent networks (rnns/lstm/gru/etc)
-# an autoregressive model is a feedforward model that predicts the next variable xt  in a time series
-# based on k previous variables (xt-1, xt-2,...)
-# in RNNs, the parameters are shared across time (same function (f(.) at different t))
-# while Autoregressive models, make a strong conditional independence assumption. 
-# watch the video to have a clue!
 
 class AttentionHead2(nn.Module):
     def __init__(self, context_size, embd_size, head_size, use_bias=False) -> None:
@@ -1902,56 +1857,77 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
 # This is because the fused layer requires fewer memory accesses and computations than the original 
 # layers.
-
-
+# lets test the example using positionless attention! (we can test wuth unscaled attention as well)
+#%% test with unscaled attention
+#
+#
+#
+# %%
+# test with positionless attention
+#
+#
+# 
+# %%
+# test with non-masked-attention
+#
+#
 #%%
 #
-# before we jump in and add the attention module, lets review our base model and see how we can 
-# improve/prepare it before we incorporate the attention. 
-# class BigramModelWithAttention(nn.Module):
-#     def __init__(self, vocab_size, embd_size) -> None:
-#         super().__init__()
-#         self.vocab_size = vocab_size
-#         self.embd_size = embd_size
-#         # unlike the previous model, lets decouple the final logits from 
-#         # the number of embeddings, because we are using attentions, and
-#         # we want to have multiple operations inbetween obviously.
-#         self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
-#         # in order to get the final logits, we need a linea layer at end
-#         self.fc = torch.nn.Linear(embd_size, vocab_size)
-#        
-#     def __call__(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
-#         out = self.embeddings(inputs) # has the shape (B,T,E) e is embd_size
-#         logits = self.fc(out)         # has the shape (B,T,C) c is vocabsize
-#         loss = None
-#         if labels is not None:
-#             # recall that crossentropy likes its input to be B,C,T and we are B,T,C
-#             # so lets permute and make it happy!
-#             loss = F.cross_entropy(logits.permute(0,2,1), labels)
-#         return logits, loss
-#    
-#     def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
-#         # lets generate an output as long as num_max_token
-#         for i in range(max_token_count):
-#             # make sure idx is 2d
-#             assert len(idxs) >1, f"idx.shape '({tuple(idxs.shape)})' is invalid. it must have the form (B,T)"
-#             # now lets feed it to the model and sample from the probablities it produces
-#             preds,_ = self(idxs)
-#             # convert to probs 
-#             probs = preds.softmax(dim=1)
-#             # since we are bigram still, lets only get the last token as the next token predicted!
-#             probs = probs[:,-1,:]
-#             # now lets sample from it 
-#             new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
-#             # now concatenate the new token to the previous one and feed it back to the model
-#             # for the next round of prediction
-#             # also remember that we are creating a sequence, so we concat them at dim=1 to get 
-#             # a longer sequence (we are gradually increasing the sequence length from 1 up to
-#             # max_token_count)
-#             idxs = torch.cat((idxs,new_idx), dim=1)
-#            
-#         return idxs
-
+# we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
+# is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
+# self attention.
+# also note that, in our specific case, tokens/nodes can not communicate with the future nodes, but in general
+# this constraint can be removed (and infact is removed/not implemented for some applications) where its benificial
+# to be able to communicate with all the tokens. one example is sentiment analysis, where we want all the tokens to
+# able to communicate with eachother so we can get an accurate analysis in which, we would use an encoder
+# block, which is basically what we have here, minus the constraint section(tril/mask part). 
+# What we have implemented so far (with the tril, masking) here is called a decoder block, where we are decoding bunch 
+# of tokens, for which it makes prefect sense for the previous tokens not to be able to comunicate with the future ones
+# (becasue they would give the answer away! and it defeats the whole purpose here!),
+# as we want the model to predict the next token given only the previous tokens, hence we have the filtering/constraint
+# part to prevent just that.
+#
+# cross-attention:
+# so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
+# and value use the same source. The attention mechanism as we briefly pointed out, is quite versatile and can be 
+# utilized in various ways. One such example/way is the creation of something called cross-attention.
+# cross-attention is basically related to the scenarios where we have encoder/decoder blocks in our model, in which the
+# queries originate from decoder's input while the key and value are derived from an external source, sometimes from 
+# the encoder block. 
+# so Cross-attention comes into play when we have a separate source of information we would like to extract from and utilize.
+# This is commonly seen in sequence-to-sequence models, such as machine translation.
+# In such models, we have two sources of information: the source text and the generated text (translation output). 
+# The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
+# with the output as much as possible. The key and value are applied to the encoder/source material, while the query 
+# is applied to the decoder’s input. This process helps in creating a more accurate and contextually relevant translation.
+# 
+# infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
+# described. 
+# 
+# attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
+# there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
+# by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
+# positioned (with resepect to eachother). 
+# to have a better mental picture, imagine each token as a node in a directed graph, each node has a connection to some
+# other nodes, (for example each node has a connection to itself, and another connection to other nodes,etc) as you can
+# see there is no notion of space or better said order between nodes. 
+# which one would you call is number 1 or 2, in a graph, in which the structure simply doesnt define any order by itself,
+# unless you define one using a mechanism of some sor?) 
+# The attention simply acts on a set of vectors in this graph, so if the order or position of these nodes 
+# is of any significance to us, then we need to encode them as well, 
+#
+# as it happens in our case, the positional information is important to us, becasue we want to generate text, and order
+# matters here(text are inherntly sequential, so order absolutely matters). 
+# models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially, and 
+# CNNs have spatial information, as they operate by sliding a fixed window over the input)
+# but this is not the case for attention. as we just stated, there is no notion of position, its just a set of individual
+# vectors being operated on)
+# note that the connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
+# semantic, imagine a case, where a word for example has several meaning, and may very well have high relevancy to a few 
+# tokens at the same time, but without additional positional information, an ambiguous semantic can be infered between the
+# tokens involved, however when positional information is also present, such ambiguity can be avoided) 
+# (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
+#
 # this works fine, however, we can do better. here we just encoded the tokens, but
 # as we already explained, attention mechansim has no notion of position or spatial structure like convs,
 # or rnns e.g. 
