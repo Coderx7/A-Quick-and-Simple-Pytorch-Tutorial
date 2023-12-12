@@ -1417,32 +1417,43 @@ print(f'weight\n{weight}')
 #          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
 #          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
 # 
-# to get a better understanding, how could we interpret these numbers?  
+# take the last token, which is 8.6020e-02, notice this token, not only knows its content and own position in 
+# the sequence(its the 8th token after all!) but also knows which tokens comes before it and how much its 
+# related to any of them.(basically when it knows which token comes before it, it creates its own query so
+# to speak, and talks to every single previous token to find about which ones are more or less relavent to
+# it and to what extend.) 
+#
+# lets expand on this a bit more using an example, how could we interpret these numbers?  
 # obviously our input is random, and the relationship between each token is random as well. 
 # but if for a moment we imagine these to be the values for a model at the begining of the training, 
-# we may find some intristing intuitions. obviously this would be much more coherent and clear when working 
+# we may find some intersting intuitions. obviously this would be much more coherent and clear when working 
 # on an already trained set of weights. 
-# nonetheless, imagine this to belong to a sentence like "The cat sat on the mat." (I just made it up!) 
+# nonetheless, imagine these weights to belong to a sentence like "The cat sat on the red mat." (I just made it up!) 
 # our tokens would be ["The", "cat", "sat", "on", "the", "red","mat", "."].
-# by looking at the weights we may infer : 
+# by looking at the weights we may infer: 
 #
-# 1.The first row corresponds to the word “The”. The attention is entirely on itself (1.0000), and not on any other words (0.0000),
-#    which makes sense as there are no previous words to attend to.
-# 2.The second row would correspond to the word “cat”. It attends mostly to “The” (0.8064) and a bit to itself “cat” (0.1936). 
-#    This could be because the model is learning that “The” often precedes a noun.
-# 3.The third row would correspond to “sat”. It attends mostly to “cat” (0.7787), then to “sat” (0.1688), and a bit to “The” (0.0525).
-#    This could be because “sat” is a verb that is often associated with the subject “cat”.
-# 4.The fourth row would correspond to “on”. It attends mostly to “The” (0.7022), then to “cat” (0.2459), a bit to “sat” (0.0422),
-#    and very little to “on” (0.0097). This could be because prepositions like “on” often relate to the subject and verb in a sentence.
-# 5.The fifth row would correspond to “the”. It attends mostly to “on” (0.3936), then to “sat” (0.3733), a bit to “cat” (0.0725), 
-#    and "The" (0.0118), and very little to “the” (0.1498). This could be because “the” often follows a preposition like “on”.
-# 6.The sixth row would correspond to "mat". It attends mostly to “cat” (0.6932), then to “The” (0.1035), a bit to “sat” (0.1396), 
-#    "on" (0.0187), "the" (0.0158), and a little to "mat" (0.0292). This could be because “mat” is the object where the “cat” “sat”.
-# 7.The seventh row would correspond to “.”. It attends mostly to “mat” (0.3957), then to “cat” (0.3213), a bit to “The” (0.0575),
-#    "sat" (0.0678), “on” (0.0902), “the” (0.0180), and a little to “.” (0.0496). This could be because the period often concludes 
-#     the action and the object in the sentence.
+# 1.The first row would correspond to the word "The". The attention is entirely on itself (1.0000), and not on any
+#   other words (0.0000), which makes sense as there are no previous words to attend to.
+# 
+# 2.The second row would correspond to the word "cat". It attends mostly to "The" (0.8064) and a bit to itself 
+#   "cat" (0.1936). This could be because the model is learning that "The" often precedes a noun.
 #
+# 3.The third row would correspond to "sat". It attends mostly to "cat" (0.7787), then to "sat" (0.1688), and
+#   a bit to "The" (0.0525). This could be because "sat" is a verb that is often associated with the subject 
+#   "cat".
 #
+# 4.The fourth row would correspond to "on". It attends mostly to "The" (0.7022), then to "cat" (0.2459), 
+#   a bit to "sat" (0.0422), and very little to "on" (0.0097). This could be because prepositions like "on" 
+#   often relate to the subject and verb in a sentence, hence higher number for "The" and "cat".
+# 
+# 5.The sixth row would correspond to "mat". It attends mostly to "red" (0.3957), then to "cat" (0.3213),
+#   a bit to "on" (0.0902) and "sat" (0.0678). This could be because "mat" is the object where the "cat" "sat" "on".
+#   and intrestingly the "red" is highly related to "mat", overall conveying all the important semantics and relationships.
+# 
+# as you noticed I didnt include other tokens as they wouldnt make much sense considering they are random
+# but we could comeup with an example nevertheless that could give us an intuive understanding of whats going 
+# on in a typical attention weight matrix.
+# below is a simple heatmap that shows the same wieghts which hopefully give you an evern better mental image:
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -1453,7 +1464,7 @@ plt.figure(figsize=(8, 8))
 # we can use this oneliner using seaborn and create a heatmap plot.
 # sns.heatmap(weight[0].detach().numpy(), annot=True, cbar=True, fmt=".4f", xticklabels=tokens, yticklabels=tokens, cmap='hot')
 # or use the old way using matplotlib:
-plt.imshow(weight[0].detach().numpy(), cmap='hot', interpolation='nearest')
+plt.imshow(weight[0].detach().numpy(), cmap='Blues', interpolation='nearest')
 plt.colorbar()
 plt.title("weight[0]")
 plt.xticks(np.arange(len(tokens)), tokens, rotation=45)
@@ -1465,54 +1476,6 @@ for i in range(len(tokens)):
                        ha="center", va="center", color="w")
 plt.show()
 #
-# so to recap once again : 
-# First, let’s assume that we have tokenized a sentence like 'I saw Eiffel tower when I visited Paris' and have the
-# following sequence of tokens:
-# ["I", "saw", "Eiffel", "tower", "when", "I", "visited", "Paris"]
-# In the self-attention mechanism, each word in the sentence needs to calculate an attention score with every other word,
-# including itself. 
-# This is done using the query, key, and value vectors which are derived from the word embeddings.
-# However, when we’re training a model to generate text (like in our case), we want it to only attend to earlier positions 
-# in the input sequence. Why? because the model should not have access to future tokens while predicting the current token.
-# This is where masked self-attention comes into play.
-# Masked self-attention prevents the model from 'peeking into the future'. It uses a mask to nullify the effect of future 
-# tokens. This mask is typically created using the tril() function, which returns the lower triangular part of a matrix.
-# For our sentence, the mask would look something like this:
-# [[1, 0, 0, 0, 0, 0, 0, 0],
-#  [1, 1, 0, 0, 0, 0, 0, 0],
-#  [1, 1, 1, 0, 0, 0, 0, 0],
-#  [1, 1, 1, 1, 0, 0, 0, 0],
-#  [1, 1, 1, 1, 1, 0, 0, 0],
-#  [1, 1, 1, 1, 1, 1, 0, 0],
-#  [1, 1, 1, 1, 1, 1, 1, 0],
-#  [1, 1, 1, 1, 1, 1, 1, 1]]
-# Each row corresponds to a query (the word we're predicting) and each column corresponds to a key (the words we’re attending to).
-# The value 1 means the query can attend to the key at that position, and 0 means it cannot.
-# For example, when predicting the word “tower”, the model can attend to “I”, “saw”, “Eiffel”, and “tower”, 
-# but not to “when”, “I”, “visited”, “Paris”. This is reflected in the 4th row of the mask.
-# This way, the model is forced to make predictions based only on the ‘past’ tokens, mimicking how we, as humans, read text
-# from left to right and make predictions without knowing what text comes next.
-#
-# take the last token, which is 8.6020e-02, notice this token, not only knows its content and own position in 
-# the sequence(its the 8th token after all!) but also knows which tokens comes before it and how much its 
-# related to any of them.(basically when it knows which token comes before it, it creates its own query so
-# to speak, and talks to every single previous token to find about which ones are more or less relavent to
-# it and to what extend.) 
-# ! check the example and make sure it aligns well with the previous paragraph, like we said the previous tokens
-# cant talk to future ones, but here we are saying visted is relvant to paris! if we chose paris, we could say so
-# and id make more sense
-# For example,lets say, we have this sentence: "I saw the Eiffel Tower when I visited Paris" and suppose
-# each token is a word, so I, saw, the, ... are all tokens, therefore we have a sequence of 9 tokens here. 
-# In this sentence, if we focus on the word "Paris", the attention mechanism allows it to understand that
-# "Paris" token is most closely related to "visited", and visited is related to I as well. 
-# This is because in the context of visiting, a location(in this case, "Paris") is usually involved and viceversa.
-# The attention mechanism assigns higher weights to "visited" when processing the word "Paris", indicating that
-# "visited" is important for understanding the context of "Paris".
-# Similarly, when the model processes "Eiffel Tower", it understands that "Eiffel Tower" is closely related to Paris",
-# and thus assigns a higher weight to "Paris".
-# This way, the attention mechanism allows the model to capture the dependencies between words in a sentence, 
-# even if they are far apart. It’s like the model’s way of paying "attention" to important words/tokens while 
-# processing a given word/token.
 # now back at our own example, lets visualize the weights for better understanding
 def plot_heatmap(weight, label, cmap='plasma', annotate=False):
     import matplotlib.pyplot as plt 
@@ -1531,7 +1494,6 @@ def plot_heatmap(weight, label, cmap='plasma', annotate=False):
             # for j in range(weight.shape[1]):
                 # plt.text(j, i, round(weight.numpy()[i, j], 4),
                             # ha="center", va="center", color="w")
-        
     plt.show()
     
     
@@ -1544,25 +1506,25 @@ plot_heatmap(raw_wieghts_masked[0].detach(), label='raw_wieghts_masked-first bat
 # since the colors are not that defined, maybe gray cmap shows this better! but either are ok
 plot_heatmap(weight[0].detach(),'weight-first batch',cmap='Blues')
 plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
-# 
-# in our example, For the last token, it seems the 2nd and 4th tokens (index 2 and 4 respectively) are particularly intresting/relavent/important,
-# followed by the 6th(index 6) token.
-# likewise, this happens for every token, i.e. token number 4, says the same thing and searches in its past toekns
-# so on and so forth! 
-# so what happens next is that when we get a high relevancy scale /response in the weights, like we just described
-# when we do a softmax it will assign a large probablity to them, and this instructs the network that, we need more
-# information from them, effectively allowing for aggregating a lot of their information into our position(lets say e.g. 8th token. 
-# and we happen to learn more about them this way.
-# now in practice, we are not intrested in aggregating the inputs raw values per say, rather we want their information, 
-# so instead of just using the raw values of x(our input), we instead use a representation of them, so to speak. 
+#
+
+# So far we learned that when we get a high relevancy scale/response in the weights, when we do a softmax it 
+# will assign a large probablity to them, informing the network that we need more information from them, 
+# effectively allowing for aggregating a lot of their information into our position and we happen to learn
+# more about them this way.
+# However, in practice, we are not intrested in aggregating the inputs raw values per say, rather we want their information, 
+# so instead of just using the raw values of our input(x), we instead use a representation of them. 
 # this is achieved using a third vector known as, 'value' and is the last vector we use. 
 # just like the key and query, we set its bias to False, so we only get a simple vector,
-# and a dotproduct output (again this is the intuition, but how much adding a bias would
+# and a dotproduct output.(again this is the intuition, but how much adding a bias would
 # affect this we will see later, for now we stick to the default no bias version)
-value = torch.nn.Linear(C,head_size, bias=False) # produces (B,T,head_size) just like the other two key,query vectors
+#
+# produces (B,T,head_size) just like the previous two key,query vectors
+value = torch.nn.Linear(C,head_size, bias=False) 
 x_processed = value(x)
-# this is not yet final final, we still need to do one more thing (read on!)
+# so 
 bow_final = weight@x_processed
+# we arenot done yet.
 # attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
 # there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
 # by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
