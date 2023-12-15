@@ -2247,99 +2247,7 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # information, crucial for various applications across multiple domains.
 #
 #
-# some attributes concerning positional encodings : (ref https://www.youtube.com/watch?v=1biZfFLPRSY )
-# 1.Every position should have the same identifier regardless of the sequence length or what the input is
-#  so when the input changes, the position embedding remains the same)
-# 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
-#  be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
-#   or dismilarity overshadows/overtunes the semantic similarity. 
-#   lets expand on this a little bit and make it more
-#   intuitive, when we plot the token embeddings (after they are learned), you'll notice that tokens/words with similar
-#   context are clustered together, you find queen and king to be next to eachother, car, tire, steering wheel to cluster
-#   together, etc, showing words used together or in similar context bunchup as a cluster. 
-#   when we add the positional embedding which really is another vectors with number, what happens is
-#   during trainig, the network does the same thing with these new information as well, that is, the queen/king token
-#   in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers to.
-#   imagine, king is the first token, so it gets closer to the 'first token's cluster, the network creates other clusters
-#   for other positions likewise, and as you can see, if the positional embedding is too large, it can disrupt the semantic
-#   clustering of tokens.
-#   it will create new clusters based on the position information only (clusters of first, seconds, third tokens, etc) at the
-#   expense of destroying the semantic clusteres created due to similar contexts/etc, thus degrading the performance altogether
-#   as you can imagine, having a too little impact from positional info or lack of any, we are only left with semantic clusters
-#   and lose any kind of incentive for the model to use to make a disntinction between two sequence of the same tokens (becasue
-#   theres no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
-#
-# the paper uses something called sinusodal positional encoding, but why? what if we use simple numbers to 
-# index the positions since we can treat text as words coming sequentially? so why not count the tokens as
-# we go like 1,2,3,4,etc? 
-# we dont use that becasue it violates the second requirement of the positional encoding, where we said
-# change/shift/translations need be small! or in other words, bounded. 
-# Think about it for a second, if the later tokens has larger
-# numbers assigned to them, then the model assigns more importance to them as apposed to the earlier tokens with 
-# smaller numbers, the contribution of later tokens will be emphasized while the earlier tokens can be just ignored
-# if the sequence lengths are large enough and hence hinder the model performance, 
-# thats why the paper's author opted out to use sin/cos
-# for their functions of choice for positional encoding, as they are both bounded to -1,1 and they are 
-# inifite(periodically result in [-1,1])! that is can support any sequence length up to inifity (as we can
-# have values between -1 and 1 for infinity)! you might think about something like sogmoid which also is
-# bounded to [0,1], but sigmoid is a saturating function and the actual range of numbers is pretty limited 
-# especially for larger numbers(test it with 1-10 e.g. and larger numbers!) unlike the sin/cos that has a lot of variability for large numbers,
-# the sin/cos function has its own problem, the problem is they are periodic! that is, the same number
-# repeats for different positions! and this violates the first requirement of identifiers being unique for each position!
-# the problem stems from its 'frequency'! if we lower the frequency it means it takes longer to repeat a number twice
-# the higher the frequency the shorter the range of numbers. In other words, The low-frequency sine wave (sin(x))
-# has fewer oscillations within a given range of x, while the high-frequency sine wave (sin(10x) e.g.) has more 
-# rapid oscillations within the same range.
-# look at the following example to see this better.
-# %%
-#
-import matplotlib.pyplot as plt 
-import matplotlib.colors as mcolors
-import numpy as np 
 
-# lets create 1000 points in the span of (0,4pi), 
-# for refresher see https://www.mathsisfun.com/algebra/trig-sin-cos-tan-graphs.html and 
-# https://www.math.net/sinusoidal
-# we use pi, instead of degrees (0,360) here becasue np.sin() uses radian instead of degrees
-x = np.linspace(0, 4*np.pi, 1000)
-# low_frequency_s = np.sin(x)
-# high_frequency_s = np.sin(10*x)
-# instead lets draw both for sin and cos
-freqs = [f(x) for x in [x, 5*x] for f in [np.sin, np.cos]]
-plt.style.use('seaborn')
-plt.figure(figsize=(8, 4))
-fig, axs  = plt.subplots(2)
-fig.suptitle('Low Frequency vs High Frequency')
-
-for i,freq in enumerate(freqs):
-    label = 'sin-' if i%2==0 else 'cos-'
-    label += 'Low Frequency' if i<2 else 'High Frequency'    
-    
-    axs[i%2].plot(x, freq, label=label)
-    axs[i%2].set(xlabel="x-frequency", ylabel="Amplitude")
-    axs[i%2].legend(loc='upper right')
-plt.show()
-#%%
-# 
-# now if we manage to lower the frequency low enough to the point where it gives us a huge preferably inifinit
-# numbers, that would be like our previous suggetsion, linear range of numbers, but bounded this time!
-# but the second issue still exists, that is, these numbers still, when added to the embeddings, will push them
-# !into specific subregions in the feature space(really this means, they cluster up together somewhere!)
-# and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
-# by this position and not the semantic between the two adjacent tokens. we also dont want the difference between two tokens
-# be too little, as this would cause the semantic distance to overwhelm/dominate the positional distance/information, 
-# basically render it useless! so what should we do? 
-# if we go and use sin only, the adjacent numbers would be close to each other, we need to somehow create a bit 
-# of contrast that shows theres some kind of distance between the two tokens (and by extension others in the sequence)
-# so what do we do? if you look at the plots, you'll notice that, intrestingly we can utilize cos() for this
-# and alternate between them. if we use a low frequency sin/cos for the first token, we can use a higher frequency 
-# sin/cos for the next token, and for the third token, we can use sin again, followed by a cos for the forth and so on 
-# and so forth! the more we increase the frequency, the more different the values we get between two tokens. 
-# note that
-# we create a single positional vector by alternating sin/cos for every feature/dimension of the vector, so if we have d=100,
-# we fill the even indexes using sin() and the odd ones with cos(), this way, we get a unique value for each position
-# !and by increasing the frequency as we go, we make sure .... continue explanation
-# 
 # !fact check these answers
 # question : why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
 #
@@ -3335,26 +3243,28 @@ plt.plot(pos_vec)
 # that are inheritly sequential and are posision aware. 
 # without positional information, a sequence such as ABC would be the same as CBA, ACB, BCA, or any permutations of the 
 # tokens involved. this is specifically bad for an autoregressive task like generating text. 
-# An autoregressive model, given a token, the model needs to comeup with a good prediction! obviously this requires the order
-# of tokens to be taken into account to create meaningful sequences/texts. 
-# imagine you expecing the model to greet you like: Hello, nice to meet you! but instead you get a random sequence of tokens
-# like: ',to nice! Hello you meet' which is not what we are after! in reality the network might comeup with a weak notion of 
-# order, simply based on the statistics it saw in the dataset, however, it cant utilize that to comeup with complex structures
-# certainly not the ones that have subtle meaning changes, when the order of some parts are reversed! like :
+# in An autoregressive model, given a token, the model needs to comeup with a good prediction! obviously this requires
+# the knwoledge about the order of the tokens to be taken into account to create meaningful sequences/texts. 
+# imagine you expecing the model to greet you like: Hello, nice to meet you! but instead you get a random sequence of 
+# tokens like: ',to nice! Hello you meet' which is not what we are after! in reality the network might comeup with a 
+# weak notion of order, simply based on the statistics it saw in the dataset, however, it cant utilize that to comeup
+# with complex structures certainly not the ones that have subtle meaning changes, when the order of some parts are 
+# reversed! like :
 # live to work!
 # work to live!
-# as you can see the order plays a crucial role not only in generating text but also infering the undderlying meaning.
+# as you can see the order plays a crucial role not only in generating text but also infering the undderlying meaning/sematic.
 # 
-# so how can we add this positional information. there are several ways we can think of to add this information. 
-# we can learn these so called positional encoding the same way we learn the token embeddings. this is called abosulte positional encoding!
-# it has some pros and cons we will get to in a moment. 
-# we can simply pre-compute these positional encodings. this is what the original paper of attention is all you need, did.
+# So how can we add this positional information. There are several ways we can think of to add this information. 
+# we can learn these so called positional encoding the same way we learn the token embeddings. 
+# this is called abosulte positional encoding! it has some pros and cons we will get to in a moment. 
+# We can simply pre-compute these positional encodings. this is what the original paper of "attention is all you need", did.
 # their choice is refered to as sinusoidal positional encoding which provides relative positioning as well.
-# basically the combination of sin/cos acts as a binary counter, and this way the positional info for each token
-# is calculated and provided to the network.
-# to be more specific, the frequency for sin/cos increases for each dimension, so the idea is, the network can, by looking,
-# at the frequencies, figureout, which token has come after which one, and using this, it can understand the 
-# relative posiosions of the tokens involved. ()
+# Basically the combination of sin/cos acts as a kind of counter(imagine how binary system works, sth to that effect), and this
+# way the positional info for each token is calculated and provided to the network.
+# 
+#! To be more specific, the frequency for sin/cos increases/decreases for each dimension, so the idea is, the network 
+# can, by looking, at the frequencies, figureout, which token has come after which one, and using this, it can understand
+# the relative posiosions of the tokens involved. ()
 # (the author in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out that counting was
 # was a hard problem, and 2 years later they came up with the sinusoidal positioning encoding. 
 # see 
@@ -3365,123 +3275,21 @@ plt.plot(pos_vec)
 # later works however, showed that such embeddings can be learned and infact BERT did exactly that and opted to use
 # learned positional emebddings instead of the sinusoidal positional encoding used by the original paper.
 # later on, other versions such as rope or rotary positional encoding were introduced to provide relative positional 
-# encoding (better). after than Another work AliBi, completely removed the positional embedding and instead used
+# encoding (better). after that another work AliBi, completely removed the positional embedding and instead used
 # constraints on relationships with respect to their distance! (i.e. decaying the strength of relationship based on
 # distance) so this is an activate field of research and today as I write this, rope is being used along with 
-# learned positional encoding. This needs more 
+# learned positional encoding. So its still a field of active research. we can use any of these, rope is more populare
+# followed by learned positions though.
 # 
-# method 1: 
-# for one we can simply add the tokens absolute position to the token embedding as an extra dimension. 
-# this method has several problems. 
-# 1. as the sequence length incresaes, larger and larger numbers are asinged, this creates
-# a nonintentional bias towards the tokens at the end, apart from that, it can hinder the optimization process and cause all
-# sorts of problems such as gradient explosion, etc. 
-# also the contribution of the tokens will be different, early tokens would have a minscule impact compared to the later tokens
-# that have a larger index. normalizing the values so all numbers fall into a range can mitigate this issue, but it creates 
-# another issue, the same position, can now take different values based on the sequence length. the 3rd position in a sequence of 
-# 4, has a different value (3/4=0.75) compared to a sequence of 10 (3/10=0.3). this will confuse the model!
-# so this is not a good idea! apart from this, this might clutter up the semantic meaning of the word emebddings
-# if we just append it, other than, if instead of a single dimension, we somehow could encode that number to a vector
-# the same length as the word/token embedding, we would get a better result. imagine this could give us a positional embedding
-# as apposed to position number/info/hint/condition! with the positional embedding, like word embedding, the network
-# could comeup with relative positional information by itself. like by clustering each position into its own feature subsapce
-# the same way we have this for word embedding which allows us to do kin - man = queen! or queen - woman = king! 
-# do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position, so that 
-# its semantic is preserved, and also the position is also separate from others. for this all dimensions of the embedding
-# need to be taken into account, so thats why the emebdding portion makes sense! 
-# now if we take this route, we see that the scale needs to be the same, and all positions need to use the same identifier
-# regardless of sequence length so network can actually differentiate between these positions properly.
-# from there, we either learn it, or precompute it. the sin/cos is the pre computed one!
-# what else can we do?
-# we can   
-# are not different
-#
-# this is called absolute position embedding itsl ike sinusodal position embedding that was
-# introduced in the original paper! explain more 
-# https://timodenk.com/blog/linear-relationships-in-the-transformers-positional-encoding/ (this is really good and many used his intuition to explain this)
-# https://www.youtube.com/watch?v=3mTsYm9qQFA
-# https://www.youtube.com/watch?v=o29P0Kpobz0
-# https://www.youtube.com/watch?v=JERXX2Byr90
-# https://www.youtube.com/watch?v=M2ToEXF6Olw
-#!https://www.youtube.com/watch?v=4AzsiCMw_-s
-# https://www.youtube.com/watch?v=IWmpRaJ9Dz0
-# https://www.youtube.com/watch?v=S27pHKBEp30 # epsecially the end of the lecture/question/answering has good stuff!
-# https://notesonai.com/Positional+Encoding
-# http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding (might be good!)
-# stanford's 2023 course on nlu seems like a good resource though I myself havent watched it fully : https://www.youtube.com/watch?v=K_Dh0Sxujuc&list=PLoROMvodv4rOwvldxftJTmoR3kRcWkJBp
-# theres another course in-context I guess which are good as well: part1 is here: https://www.youtube.com/watch?v=eyNLkiQ89KI
-# https://datascience.stackexchange.com/questions/55901/in-a-transformer-model-why-does-one-sum-positional-encoding-to-the-embedding-ra/117128#117128
-# https://datascience.stackexchange.com/questions/110180/why-cant-positions-in-transformers-be-simply-appended-to-the-input-to-preserve
-# https://assets.researchsquare.com/files/rs-2525471/v1/8624e58c681929fd04425437.pdf?c=1675250963
-# file:///home/hossein/Downloads/00_2021_TransformerReview.pdf (https://www.researchgate.net/publication/360066821_Exploring_Recent_Advancements_of_Transformer_Based_Architectures_in_Computer_Vision?enrichId=rgreq-495e0a1aba907f54e457b0542f3306d0-XXX&enrichSource=Y292ZXJQYWdlOzM2MDA2NjgyMTtBUzoxMTQ2OTA4ODA2NTEyNjQxQDE2NTA0NTU3NzYzNDc%3D&el=1_x_3&_esc=publicationCoverPdf)
-# Transformers in Vision: A Survey https://arxiv.org/pdf/2101.01169.pdf
-# Exploring recent advancements of Transformer based architectures in computer vision
-#
-# %%[markdown]
-# side note 
-# 
-# The frequency of a sine or cosine wave is determined by the rate at which it oscillates or completes cycles over time. In mathematical terms, frequency (f) is the number of cycles per unit of time, usually measured in Hertz (Hz). The relationship between frequency, angular frequency, and the period of a wave is given by the equation:
-# [ f = \frac{1}{T} ]
-# Where:
-#     ( f ) is the frequency,
-#     ( T ) is the period of the wave (the time it takes to complete one cycle),
-#     ( \omega ) (angular frequency) is related to ( f ) by ( \omega = 2\pi f ).
-# For a sine or cosine wave, the general form is:
-# [ y(t) = A \cdot \sin(2\pi f t + \phi) ]
-# Where:
-#     ( A ) is the amplitude,
-#     ( f ) is the frequency,
-#     ( t ) is time,
-#     ( \phi ) is the phase.
-# Now, to increase the frequency of a sine or cosine wave, you can do one of the following:
-#     Increase the angular frequency ( \omega ):
-#         ( \omega = 2\pi f )
-#         By increasing ( \omega ), you effectively increase the rate at which the sine or cosine function oscillates.
-#     Decrease the period ( T ):
-#         The period ( T ) is the reciprocal of frequency, so by decreasing the period, you increase the frequency.
-#         ( T = \frac{1}{f} )
-# Here's a more detailed explanation:
-#     Angular Frequency ( \omega ):
-#         The angular frequency ( \omega ) represents how quickly the wave oscillates in radians per unit of time.
-#         If you increase ( \omega ), the wave will complete more cycles in the same amount of time.
-#         This is often more intuitive when thinking about the periodicity of the wave in terms of its angular measure (radians) rather than cycles.
-#     Period ( T ):
-#         The period ( T ) is the time it takes for one complete cycle of the wave.
-#         If you decrease the period, the wave completes cycles more quickly, effectively increasing the frequency.
-# In summary, to increase the frequency of a sine or cosine wave, you can either increase the angular frequency ( \omega ) or decrease the period ( T ). These changes will result in a wave that oscillates more rapidly over time.
-import numpy as np
-import matplotlib.pyplot as plt
 
-def plot_sine_wave(amplitude, frequency):
-    # Generate time values from 0 to 2*pi with small intervals
-    time = np.linspace(0, 2 * np.pi, 1000)
-    
-    # Calculate the sine values for each time point
-    sine_wave = amplitude * np.sin(2 * np.pi * frequency * time)
-    
-    # Plot the sine wave
-    plt.figure(figsize=(8, 4))
-    plt.plot(time, sine_wave, label=f'Sine Wave\nAmplitude: {amplitude}, Frequency: {frequency} Hz')
-    
-    # Add labels and title
-    plt.xlabel('Time (s)')
-    plt.ylabel('Amplitude')
-    plt.title('Sine Wave - Amplitude and Frequency')
-    
-    # Add a legend
-    plt.legend()
-    
-    # Show the plot
-    plt.grid(True)
-    plt.show()
-
-# Set the amplitude and frequency values
-amplitude = 1.0
-frequency = 1.0  # in Hertz
-
-# Call the function to plot the sine wave
-plot_sine_wave(amplitude, frequency)
 # %%
+# 
+# 
+# 
+# 
+# 
+# %%
+#
 # since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
@@ -6162,3 +5970,255 @@ ax.set_ylabel('Dimension {}'.format(dim2), fontsize=12)
 ax.set_zlabel('Dimension {}'.format(dim3), fontsize=12)
 fig.colorbar(scatter, ax=ax, label='Position')
 plt.show()
+
+# positional encoding information and explanations:
+#%%
+# there some attributes concerning positional encodings that are either desirable or critical to have
+# different people developed different intuitions some are more relavent some are less. below I tried to 
+# include some of the main attributes I found to be intrestring and critical from different sources and 
+# tried to briefly expand on them and explain them a bit:
+# I add my corrections as well, so this is not just purely transcribtion of some sort!
+# (ref1: https://www.youtube.com/watch?v=1biZfFLPRSY )
+# 1.Every position should have the same identifier regardless of the sequence length or what the input is
+#  so when the input changes, the position embedding remains the same)
+# 
+# 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
+#  be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
+#   or dismilarity overshadows/overtunes the semantic similarity. 
+# lets expand on this a little bit more and make it a bit more intuitive.
+# When we plot the token embeddings (after they are learned), you'll notice that tokens/words with similar
+# context are clustered together, you may find queen and king closer to eachother than they are to car, tire etc.
+# and likewise, you'll find car, tire, steering wheel, etc to cluster together.
+# This shows, words used together or in a similar context tend to (and usually do) form a cluster around eachother.
+# 
+# When we add the positional embedding which really is another vectors with some numbers, what happens is
+# that during trainig, the network does the same thing with these new information as well, the queen/king token
+# in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers to.
+# imagine, king is the first token, so it gets closer to the 'first token's cluster, the network creates other clusters
+# for other positions likewise, and as you can see, if the positional embedding is too large, it can disrupt the semantic
+# clustering of the tokens.
+# This will lead to new clusters based on the position information only (clusters of firsts, seconds, thirds , etc) at
+# the expense of destroying the semantic clusteres previously developed due to similar contexts/etc, thus degrading the
+# performance altogether.
+# as you can imagine, having a too little impact from positional info or lack of any, we will only be left with semantic
+# clusters and lose any kind of incentive for the model to use to make a disntinction between two sequence of the same 
+# tokens (becasue there is no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
+#
+#
+# The paper uses something called sinusodal positional encoding, but why? what if we use numbers to 
+# index the positions since we can treat text as a sequence of words coming? so why not count the tokens as
+# we go like 1,2,3,4,etc? 
+# We dont simply becasue, it violates the second requirement of the positional encoding we mentioned just now.
+# The change/shift/translation needs to be small and bounded. why? 
+# Think about it for a moment, if the later tokens have larger numbers as position index, then the model assigns more
+# importance to them as apposed to the earlier tokens with smaller numbers. The contribution of later tokens will be 
+# emphasized while the earlier tokens can be just ignored. all positions must be uniform and evenly paced (fixed delta).
+# If the sequence lengths are large enough it hinders the model performance, on the other hand, as the sequence
+# gets longer and longer, larger and larger numbers will be used, which will cause exploding gradients,etc (the majority
+# of weight values are close to zero, we want them to be close to zero to have a stable optimization) and will create
+# a lot of issues in the optimization process. 
+# This is why we need them to be bounded and not go to infinity as the sequence gets longer.
+#
+# The paper's authors opted out to use sin/cos becasue they are both bounded to -1,1 and they are 
+# offer inifite range of numbers(periodically result in [-1,1])! 
+# This means, it can support any sequence length even up to inifity! (as we can have values between -1 and 1 for infinity)
+# You might think to yourself, something like sogmoid can be used it is bounded to [0,1] right?
+# No, the sigmoid function is a saturating function and the actual range of numbers is pretty limited 
+# especially for larger numbers(test it with 1-10 e.g. and larger numbers!) unlike the sin/cos that has a lot of
+# variability for large numbers.
+# Intrestingly, the sin/cos functions have a problem of their own, that being, they are periodic! that is, the same number
+# repeats for different positions! this obvioulsy violates the first requirement of identifiers being unique for each 
+# position! we cant encode two different positions with the same number and viceversa. (imagine your nth token gets reset to 1
+# it will completely mess up the order we so tireslly trying to embed!)
+# The problem stems from their 'frequency'! 
+# if we lower the frequency it means it takes longer to repeat a number twice.
+# The higher the frequency the shorter the range of numbers. In other words, The low-frequency sine wave (sin(x))
+# has fewer oscillations within a given range of x, while the high-frequency sine wave (sin(10x) e.g.) has more 
+# rapid oscillations within the same range.
+# The following snippet shows this:
+#
+#
+import matplotlib.pyplot as plt 
+import matplotlib.colors as mcolors
+import numpy as np 
+
+def plot_sin_cos_frequency(scale=5):
+    # lets create 1000 points in the span of (0,4pi), 
+    # for refresher see https://www.mathsisfun.com/algebra/trig-sin-cos-tan-graphs.html and 
+    # https://www.math.net/sinusoidal
+    # we use pi, instead of degrees (0,360) becasue np.sin() uses radian instead of degrees
+    x = np.linspace(0, 4*np.pi, 1000)
+    # instead lets draw both for sin and cos
+    # uncomment this and see how playing with frequency can change the range of numbers available to you
+    # freqs = [f(x) for x in [(1/scale)*x, scale*x] for f in [np.sin, np.cos]]
+    freqs = [f(x) for x in [x, scale*x] for f in [np.sin, np.cos]]
+    plt.style.use('seaborn')
+    plt.figure(figsize=(8, 4))
+    fig, axs  = plt.subplots(2)
+    fig.suptitle('Low Frequency vs High Frequency')
+
+    for i,freq in enumerate(freqs):
+        label = 'sin-' if i%2==0 else 'cos-'
+        label += 'Low Frequency' if i<2 else 'High Frequency'    
+        
+        axs[i%2].plot(x, freq, label=label)
+        axs[i%2].set(xlabel="x-frequency", ylabel="Amplitude")
+        axs[i%2].legend(loc='upper right')
+    plt.show()
+plot_sin_cos_frequency(scale=10)
+#%%
+# !the concept of delta-distance (a fixed distance between all locations, bywhich the network can move relatively between tokens)
+# now if we manage to lower the frequency low enough to the point where it gives us a huge, preferably inifinit
+# numbers before the next period starts, that would be like our first suggetsion, linear range of numbers, but bounded!
+# 
+# But the second issue still persists, these numbers still, when added to the embeddings, will push them
+# into specific subregions in the feature space(really this means, they cluster up together somewhere)
+# and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
+# by this position and not the semantic between the two adjacent tokens. 
+# we also dont want the difference between two tokens to be too little, as this would cause the semantic distance to 
+# overwhelm/dominate the positional distance/information, basically render it useless! so what should we do? 
+# if we go and use sin only, the adjacent numbers would be close to each other, we need to somehow create a bit 
+# of contrast that shows theres some kind of distance between the two tokens (and by extension others in the sequence)
+# so what do we do? if you look at the plots, you'll notice that, intrestingly we can utilize cos() for this
+# and alternate between them. if we use a low frequency sin/cos for the first token, we can use a higher frequency 
+# sin/cos for the next token, and for the third token, we can use sin again, followed by a cos for the forth and so on 
+# and so forth! the more we increase the frequency, the more different the values we get between two tokens. 
+# note that
+# we create a single positional vector by alternating sin/cos for every feature/dimension of the vector, so if we have d=100,
+# we fill the even indexes using sin() and the odd ones with cos(), this way, we get a unique value for each position
+# !and by increasing the frequency as we go, we make sure .... continue explanation
+# 
+#
+#
+# 
+# method 1: 
+# For one we can simply add the tokens absolute position to the token embedding as an extra dimension. 
+# this method has several problems. 
+# 1. as the sequence length incresaes, larger and larger numbers are asinged, this creates
+# a nonintentional bias towards the tokens at the end, apart from that, it can hinder the optimization process and
+# cause all sorts of problems such as gradient explosion, etc. 
+# also the contribution of the tokens will be different, early tokens would have a minscule impact compared to the 
+# later tokens that have a larger index. 
+# 2.normalizing the values so all numbers fall into a range can mitigate this issue, but it creates 
+# another issue, the same position, can now take different values based on the sequence length. the 3rd position in 
+# a sequence of 4, has a different value (3/4=0.75) compared to a sequence of 10 (3/10=0.3). 
+# this will confuse the model!
+# so this is not a good idea! apart from this, this might clutter up the semantic meaning of the word emebddings
+# if we just append it, other than, if instead of a single dimension, we somehow could encode that number to a vector
+# the same length as the word/token embedding, we would get a better result. 
+# imagine this could give us a positional embedding as apposed to position number/info/hint/condition! with the positional
+# embedding, like word embedding, the network could comeup with relative positional information by itself. 
+# like by clustering each position into its own feature subsapce the same way we have this for word embedding which 
+# allows us to do king - man = queen! or queen - woman = king! 
+# do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position, so that 
+# its semantic is preserved, and also the position is also separate from others. for this all dimensions of the embedding
+# need to be taken into account, so thats why the emebdding portion makes sense! 
+# now if we take this route, we see that the scale needs to be the same, and all positions need to use the same identifier
+# regardless of sequence length so network can actually differentiate between these positions properly.
+# from there, we either learn it, or precompute it. the sin/cos is the pre computed one!
+# what else can we do?
+#
+# this is called absolute position embedding itsl ike sinusodal position embedding that was
+# introduced in the original paper! explain more 
+
+
+#
+#
+#%%
+# Side note/reminder -Frequency 
+# 
+# The frequency of a sine or cosine wave is determined by the rate at which it oscillates or completes cycles over time.
+# In mathematical terms, frequency (f) is the number of cycles per unit of time, usually measured in Hertz (Hz). 
+# The relationship between frequency, angular frequency, and the period of a wave is given by the equation:
+# [ f = 1/T ]
+# Where:
+#     ( f ) is the frequency,
+#     ( T ) is the period of the wave (the time it takes to complete one cycle),
+#     ( ω(omega) ) (angular frequency) is related to ( f ) by ( ω = 2pi*f ).
+# For a sine or cosine wave, the general form is:
+# [ y(t) = A * sin(2pi*f*t + phi) ]
+# Where:
+#     ( A ) is the amplitude,
+#     ( f ) is the frequency,
+#     ( t ) is time,
+#     ( phi ) is the phase.
+# Now, to increase the frequency of a sine or cosine wave, you can do one of the following:
+#     Increase the angular frequency ( ω ):
+#         ( ω = 2pi f )
+#         By increasing ( ω ), you effectively increase the rate at which the sine or cosine function oscillates.
+#     Decrease the period ( T ):
+#         The period ( T ) is the reciprocal of frequency, so by decreasing the period, you increase the frequency.
+#         ( T = 1/f )
+# Here's a more detailed explanation:
+#     Angular Frequency ( omega ):
+#         The angular frequency ( ω ) represents how quickly the wave oscillates in radians per unit of time.
+#         If you increase ( omega ), the wave will complete more cycles in the same amount of time.
+#         This is often more intuitive when thinking about the periodicity of the wave in terms of its angular 
+#         measure (radians) rather than cycles.
+#     Period ( T ):
+#         The period ( T ) is the time it takes for one complete cycle of the wave.
+#         If you decrease the period, the wave completes cycles more quickly, effectively increasing the frequency.
+# In summary, to increase the frequency of a sine or cosine wave, you can either increase the angular frequency ( ω )
+# or decrease the period ( T ). These changes will result in a wave that oscillates more rapidly over time.
+
+import numpy as np
+import matplotlib.pyplot as plt
+#! this plot shows the frequency changes better than my previous one that shows sin/cos together with high/low freq
+# use this instead of that
+def plot_sine_wave(amplitude, frequency):
+    # Generate time values from 0 to 2*pi with small intervals
+    time = np.linspace(0, 2 * np.pi, 1000)
+    
+    # Calculate the sine values for each time point
+    sine_wave = amplitude * np.sin(2 * np.pi * frequency * time)
+    
+    # Plot the sine wave
+    plt.figure(figsize=(8, 4))
+    plt.plot(time, sine_wave, label=f'Sine Wave\nAmplitude: {amplitude}, Frequency: {frequency} Hz')
+    
+    # Add labels and title
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+    plt.title('Sine Wave - Amplitude and Frequency')
+    
+    # Add a legend
+    plt.legend()
+    
+    # Show the plot
+    plt.grid(True)
+    plt.show()
+
+# Set the amplitude and frequency values
+amplitude = 1.0
+frequency = 1.0  # in Hertz
+
+# Call the function to plot the sine wave
+plot_sine_wave(amplitude, frequency)
+#%% 
+
+
+
+
+
+
+# refs: 
+# andrekarpathyis video lecture on gpt : youtube link:
+# https://timodenk.com/blog/linear-relationships-in-the-transformers-positional-encoding/ (this is really good and many used his intuition to explain this)
+# https://www.youtube.com/watch?v=3mTsYm9qQFA
+# https://www.youtube.com/watch?v=o29P0Kpobz0
+# https://www.youtube.com/watch?v=JERXX2Byr90
+# https://www.youtube.com/watch?v=M2ToEXF6Olw
+#!https://www.youtube.com/watch?v=4AzsiCMw_-s
+# https://www.youtube.com/watch?v=IWmpRaJ9Dz0
+# https://www.youtube.com/watch?v=S27pHKBEp30 # epsecially the end of the lecture/question/answering has good stuff!
+# https://notesonai.com/Positional+Encoding
+# http://nlp.seas.harvard.edu/2018/04/03/attention.html#positional-encoding (might be good!)
+# stanford's 2023 course on nlu seems like a good resource though I myself havent watched it fully : https://www.youtube.com/watch?v=K_Dh0Sxujuc&list=PLoROMvodv4rOwvldxftJTmoR3kRcWkJBp
+# theres another course in-context I guess which are good as well: part1 is here: https://www.youtube.com/watch?v=eyNLkiQ89KI
+# https://datascience.stackexchange.com/questions/55901/in-a-transformer-model-why-does-one-sum-positional-encoding-to-the-embedding-ra/117128#117128
+# https://datascience.stackexchange.com/questions/110180/why-cant-positions-in-transformers-be-simply-appended-to-the-input-to-preserve
+# https://assets.researchsquare.com/files/rs-2525471/v1/8624e58c681929fd04425437.pdf?c=1675250963
+# file:///home/hossein/Downloads/00_2021_TransformerReview.pdf (https://www.researchgate.net/publication/360066821_Exploring_Recent_Advancements_of_Transformer_Based_Architectures_in_Computer_Vision?enrichId=rgreq-495e0a1aba907f54e457b0542f3306d0-XXX&enrichSource=Y292ZXJQYWdlOzM2MDA2NjgyMTtBUzoxMTQ2OTA4ODA2NTEyNjQxQDE2NTA0NTU3NzYzNDc%3D&el=1_x_3&_esc=publicationCoverPdf)
+# Transformers in Vision: A Survey https://arxiv.org/pdf/2101.01169.pdf
+# Exploring recent advancements of Transformer based architectures in computer vision
+#
