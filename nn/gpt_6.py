@@ -1524,7 +1524,7 @@ plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
 # will assign a large probablity to them, informing the network that we need more information from them, 
 # effectively allowing for aggregating a lot of their information into our position and we happen to learn
 # more about them this way.
-# However, in practice, we are not intrested in aggregating the inputs raw values per say, rather we want their information, 
+# However, in practice, we are not intrested in aggregating the 'inputs' raw values per say, rather we want their information, 
 # so instead of just using the raw values of our input(x), we instead use a representation of them. 
 # this is achieved using a third vector known as, 'value' and is the last vector we use. 
 # just like the key and query, we set its bias to False, so we only get a simple vector,
@@ -1640,13 +1640,13 @@ print(f'{torch.softmax(torch.tensor([0.1,0.5,-0.3,-0.2])*8, dim=-1)}')
 # single node/token instead of multiple ones (becasue one has the largest value, its as if our sequence length
 # is 1 or all the previous tokens are just 0s! and like that, we lose access to the wealth of information 
 # the past history offers)
-# so we want the probablities to be diffuse and not peaked like the second example here.
+# so we want the probablities to be diffuse/not peaked like the second example here.
 # so this scaling is used to retain the variance at a good value especially at initialization.
 # so now that we are finally finished the self attention head, lets implement it as a module and incorporate everything
 # we just discussed here.
 #
 class AttentionHead(nn.Module):
-    def __init__(self, context_size, embd_size, head_size=16, use_bias=False) -> None:
+    def __init__(self, context_size, embd_size, head_size, use_bias=False) -> None:
         super().__init__()
         # we need context_size or block_size for creating the tril constrain
         self.context_size = context_size
@@ -1721,6 +1721,7 @@ x = torch.randn(size=(4,8,16))
 print(at(x).shape)
 # 
 #%%
+import torch, torch.nn as nn
 # side-quest!:
 # TODO:  add the efficient/fused version 
 # before we add this to our base model, lets check and see if fusing kqv can improve our speed!
@@ -1740,23 +1741,45 @@ print(at(x).shape)
 # are the something fixed so we can easily see for ourselves whats going on. 
 # since the key,query and values' weights are 5,5, we have 25 values for each, 
 # lets initilize them with 0-25! and then reshape them to the proper form.
-# key.weight.data   =  torch.arange(0,25).view(5,5).float()
-# query.weight.data =  torch.arange(0,25).view(5,5).float()
-# value.weight.data =  torch.arange(0,25).view(5,5).float()
+# key.weight.data   =  torch.arange(25).view(5,5).float()
+# query.weight.data =  torch.arange(25).view(5,5).float()
+# value.weight.data =  torch.arange(25).view(5,5).float()
 # now lets calculte their outputs :
 # k,q,v = [m(x) for m in (key, query, value)]
 # now we said that we can do a single multiplication instead of 3 by merging the weights of key,query and
 # value how do we do that? we simply create a linear layer with 3 times the output size of the initial size
 # used for k,q,v layers. 
-# kqv = nn.Linear(5,15, bias=False)
+# kqv = nn.Linear(5,5*3, bias=False)
+# to work with the same values, with repeate the weights 3 times and then reshape
+# kqv.weight.data = torch.arange(25).repeat(3).view(5*3,5).float()
 # now if we calculate the output of kqv, we should see the outputs match
 # kqv_output = kqv(x)
 # but the shape is (3,2,15)! shapes dont match! how are we going to compare them then? 
 # no problem we split the last dimension into 3 seprate tensors!
-# k2,q2,v2 = torch.split(kqv_output, 5, dim=-1)
+# k2,q2,v2 = kqv_output.split(5, dim=-1)
 # and now if we do 
-# (k==k2).all(), (q==q2).all(), (v==v2).all()
+# print(torch.allclose(k,k2), torch.allclose(q,q2), torch.allclose(v,v2))
 # we get True,True,True , signifying they are actually doing the very same thing!
+# note that sometimes this may return false, due to numerical instability in floats
+# but these two operations are equivalent 100%. to be certain you can use int instead
+# and see the output of these two sets of operations are identical.
+# key = nn.Linear(5,5, bias=False)
+# query = nn.Linear(5,5, bias=False)
+# value = nn.Linear(5,5, bias=False)
+# x = torch.randint(30, size=(3,2,5))
+# #we set requires_gradient to false becasue a tensor that requires gradients must be floating point/complex dtype
+# [m.requires_grad_(False) for m in (key, query, value)]
+# key.weight.data   =  torch.arange(25).view(5,5)
+# query.weight.data =  torch.arange(25).view(5,5)
+# value.weight.data =  torch.arange(25).view(5,5)
+# k,q,v = [m(x) for m in (key, query, value)]
+# # same here, becasue we are setting the weights value to int, we set require_gradients to false
+# kqv = nn.Linear(5,5*3, bias=False).requires_grad_(False)
+# kqv.weight.data = torch.arange(25).repeat(3).view(5*3,5)
+# kqv_output = kqv(x)
+# k2,q2,v2 = kqv_output.split(5, dim=-1)
+# print(*[(o1==o2).all() for o1,o2 in zip((k,q,v),(k2,q2,v2))])
+# 
 # now that we know how to implement this, lets implement our attention head using this new trick!
 # and see if its any faster! 
 
@@ -1832,196 +1855,221 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # Number of parameters in original layers: 28,755,648
 # Number of parameters in fused layer: 28,755,648
 
-# as you can see we get contradictory results. and its expected. 
-# In general, fusing several operations into a single operation can potentially improve performance by 
-# reducing memory access and the overhead associated with those separate operations. 
-# However, the efficiency of such optimizations depends on several factors like the size of the input,
-# the dimensions of the layers, the operations involved and the hardware capabilities. 
+# we get contradictory results but why? 
+# Fusing several operations into a single operation does not always result in improved performance.
+# the improvement is directlt related to the implementations both software wise and more importantly
+# hardware wise. 
+# In general, fusing multiple operations into one larger one, improves performance by reducing memory access
+# and the overhead associated with those separate operations, but to what extend we dont know and benchmarking
+# or consulting the documentations both for the software(library we use) and or lowlevel hardware details are 
+# the only way to know forsure.  
+# in Pytorch documentation, its stated that usually fusing multiple separate kernels into one can improve 
+# performance, but this is mostly related to cuda operations and is indeed the case. however meddling around
+# with matrix multiplication of random sizes, as you can see maynot translate into what we expect for the outcome,
+# (e.g. cuda kernels, ops may be optimized specififcally for matrixes with certain size specificities, like being
+# in orders of 2, and do not yield the same pefromane when the tensors donot align properly so to speak!(are larger
+# than a specific size, are smaller than a specfic size, etc))
 # Thereore It's always recommended to benchmark and compare the performance of different approaches on our
 # specific hardware and input size to determine the most efficient solution.
-# In general, fusing layers can be beneficial when the input size is large, and the number 
+# fusing layers can be beneficial when the input size is large, and the number 
 # of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
 # This is because the fused layer requires fewer memory accesses and computations than the original 
 # layers.
 
-#%% test with unscaled/unmasked/noposition attention
+#%%
+#%% 
+# side quest 2 : test with unscaled/unmasked/noposition attention
 # lets create a few arguments to our attentionhead so we can easily test different options and see how they
 # fair against eachother! and whether what we said stays correct!
 # remember our attentionhead currently doesnt use any positional information!
-class AttentionHeadNoPos(nn.Module):
-    def __init__(self, context_size, embd_size, head_size, use_bias=False, scale=True, masking=True) -> None:
-        super().__init__()
-        self.context_size = context_size
-        self.embd_size = embd_size
-        self.head_size = head_size
-        self.scale = scale
-        self.masking = masking
-        self.key = nn.Linear(embd_size, head_size, bias=use_bias)
-        self.query = nn.Linear(embd_size, head_size, bias=use_bias)
-        self.value = nn.Linear(embd_size, head_size, bias=use_bias)
-        self.register_buffer('tril', torch.tril(torch.ones(context_size, context_size)))
+# note that simply testing a single attentionhead does not show a significant difference between any of 
+# the mentioned changes. in order to see the actual difference, we need to test them in a better testcase
+# which involves several attentionsheads/and layers to get a realistic sense of the differences. 
+# we will do this at the end inshaalah.
+# class AttentionHeadNoPos(nn.Module):
+#     def __init__(self, context_size, embd_size, head_size, use_bias=False, scale=True, masking=True) -> None:
+#         super().__init__()
+#         self.context_size = context_size
+#         self.embd_size = embd_size
+#         self.head_size = head_size
+#         self.scale = scale
+#         self.masking = masking
+#         self.key = nn.Linear(embd_size, head_size, bias=use_bias)
+#         self.query = nn.Linear(embd_size, head_size, bias=use_bias)
+#         self.value = nn.Linear(embd_size, head_size, bias=use_bias)
+#         self.register_buffer('tril', torch.tril(torch.ones(context_size, context_size)))
 
-    def forward(self, inputs:torch.Tensor) -> torch.Tensor:
-        B,T,C = inputs.shape 
-        k = self.key(inputs)  
-        q = self.query(inputs)
-        v = self.value(inputs)
-        # lets check the effects of scaling/unscaling in practice
-        if self.scale:
-            weight = q@k.transpose(-2,-1)* self.head_size**-0.5
-        else:
-            weight = q@k.transpose(-2,-1)
-        # lets check the masking effects as well
-        if self.masking:
-            weight = weight.masked_fill(self.tril[:T,:T]==0,float('-inf'))
-        weight = weight.softmax(dim=-1)
-        bow = weight@v
-        return bow
+#     def forward(self, inputs:torch.Tensor) -> torch.Tensor:
+#         B,T,C = inputs.shape 
+#         k = self.key(inputs)  
+#         q = self.query(inputs)
+#         v = self.value(inputs)
+#         # lets check the effects of scaling/unscaling in practice
+#         if self.scale:
+#             weight = q@k.transpose(-2,-1)* self.head_size**-0.5
+#         else:
+#             weight = q@k.transpose(-2,-1)
+#         # lets check the masking effects as well
+#         if self.masking:
+#             weight = weight.masked_fill(self.tril[:T,:T]==0,float('-inf'))
+#         weight = weight.softmax(dim=-1)
+#         bow = weight@v
+#         return bow
     
-class BigramWithAttentionNoPos(nn.Module):
-    def __init__(self, vocab_size, context_size, embd_size, head_size, scale=True, masking=True, use_bias=False) -> None:
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.embd_size = embd_size
-        self.context_size = context_size
-        self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
-        # add a self-attention head
-        self.attnhead = AttentionHeadNoPos(context_size, 
-                                       embd_size, 
-                                       head_size, 
-                                       scale=scale, 
-                                       masking=masking, 
-                                       use_bias=use_bias)
-        self.fc = torch.nn.Linear(head_size, vocab_size)
+# class BigramWithAttentionNoPos(nn.Module):
+#     def __init__(self, vocab_size, context_size, embd_size, head_size, scale=True, masking=True, use_bias=False) -> None:
+#         super().__init__()
+#         self.vocab_size = vocab_size
+#         self.embd_size = embd_size
+#         self.context_size = context_size
+#         self.embeddings = torch.nn.Embedding(vocab_size, embd_size)
+#         # add a self-attention head
+#         self.attnhead = AttentionHeadNoPos(context_size, 
+#                                        embd_size, 
+#                                        head_size, 
+#                                        scale=scale, 
+#                                        masking=masking, 
+#                                        use_bias=use_bias)
+#         self.fc = torch.nn.Linear(head_size, vocab_size)
         
-    def forward(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
-        token_embeddings = self.embeddings(inputs) 
-        out_attention = self.attnhead(token_embeddings)
-        logits = self.fc(out_attention)
-        loss = None
-        if labels is not None:
-            loss = F.cross_entropy(logits.permute(0,2,1), labels)
-        return logits, loss
+#     def forward(self, inputs:torch.Tensor, labels=None) -> torch.Tensor:
+#         token_embeddings = self.embeddings(inputs) 
+#         out_attention = self.attnhead(token_embeddings)
+#         logits = self.fc(out_attention)
+#         loss = None
+#         if labels is not None:
+#             loss = F.cross_entropy(logits.permute(0,2,1), labels)
+#         return logits, loss
     
-    def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
-        for _ in range(max_token_count):
-            assert idxs.ndim >1, f"idx.shape '({tuple(idxs.shape)})' is invalid({idxs.ndim}). it must have the form (B,T)"
-            idxs_cropped = idxs[:, -self.context_size:]
-            logits,_ = self(idxs_cropped)
-            logits = logits[:,-1,:]
-            probs = logits.softmax(dim=-1)
-            new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
-            idxs = torch.cat((idxs,new_idx), dim=-1)
-        return idxs
+#     def generate(self, idxs, max_token_count)-> list[torch.Tensor]:
+#         for _ in range(max_token_count):
+#             assert idxs.ndim >1, f"idx.shape '({tuple(idxs.shape)})' is invalid({idxs.ndim}). it must have the form (B,T)"
+#             idxs_cropped = idxs[:, -self.context_size:]
+#             logits,_ = self(idxs_cropped)
+#             logits = logits[:,-1,:]
+#             probs = logits.softmax(dim=-1)
+#             new_idx = torch.multinomial(probs, num_samples=1, replacement=True)
+#             idxs = torch.cat((idxs,new_idx), dim=-1)
+#         return idxs
     
-# now lets test this and see if it works 
-def train(scaling, masking, bias, lr, batch_size, vocab_size, max_iter, device):
+# # now lets test this and see if it works 
+# def train(scaling, masking, bias, lr, batch_size, vocab_size, max_iter, device):
     
-    model = BigramWithAttentionNoPos(vocab_size=vocab_size,
-                                     context_size=32,
-                                     embd_size=128,
-                                     head_size=128,
-                                     scale=scaling,
-                                     masking=masking,
-                                     use_bias=bias)
+#     model = BigramWithAttentionNoPos(vocab_size=vocab_size,
+#                                      context_size=32,
+#                                      embd_size=128,
+#                                      head_size=128,
+#                                      scale=scaling,
+#                                      masking=masking,
+#                                      use_bias=bias)
     
-    param_count = sum([p.nelement() for p in model.parameters()])
-    print(f'param count:     {param_count:,}')
-    print(f'scaling:         {model.attnhead.scale}')
-    print(f'masking:         {model.attnhead.masking}')
-    print(f'positional info: -NO-')
-    print(f'head size:       {model.attnhead.head_size}')
-    print(f'embd size:       {model.embd_size}')
-    print(f'context size:    {model.context_size}')
+#     param_count = sum([p.nelement() for p in model.parameters()])
+#     print(f'param count:     {param_count:,}')
+#     print(f'scaling:         {model.attnhead.scale}')
+#     print(f'masking:         {model.attnhead.masking}')
+#     print(f'positional info: -NO-')
+#     print(f'head size:       {model.attnhead.head_size}')
+#     print(f'embd size:       {model.embd_size}')
+#     print(f'context size:    {model.context_size}')
 
-    with torch.no_grad():
-        x,y = get_batch('train',4)
-        _, loss = model(x,y)
-        print(f'loss before training: {loss:.4f}')
+#     with torch.no_grad():
+#         x,y = get_batch('train',4)
+#         _, loss = model(x,y)
+#         print(f'loss before training: {loss:.4f}')
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    model = model.to(device)
-    # set model to train mode explicitly
-    model.train()
-    for i in range(max_iter):
-        # get the batch
-        x,y = get_batch('train', batch_size=batch_size)
-        x,y = tuple(t.to(device) for t in (x,y))
-        # feed the model and get the logits
-        logits, loss = model(x,y)
-        # evaluate the model
-        if i%1000==0:
-            losses=evaluate_loss(100, device)
-            print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
-        # zero-out grads
-        model.zero_grad(True)
+#     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+#     model = model.to(device)
+#     # set model to train mode explicitly
+#     model.train()
+#     for i in range(max_iter):
+#         # get the batch
+#         x,y = get_batch('train', batch_size=batch_size)
+#         x,y = tuple(t.to(device) for t in (x,y))
+#         # feed the model and get the logits
+#         logits, loss = model(x,y)
+#         # evaluate the model
+#         if i%1000==0:
+#             losses=evaluate_loss(100, device)
+#             print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
+#         # zero-out grads
+#         model.zero_grad(True)
                
-        loss.backward() 
-        optimizer.step()
-    print(f'done!')
+#         loss.backward() 
+#         optimizer.step()
+#     print(f'done!')
 
-    # now lets try its output
-    input = torch.zeros(size=(1,1)).int()
-    output = model.generate(input, 500).squeeze(0).tolist()
-    print(f"{''.join(decode(output))}")
-    print(f'-'*25)
+#     # now lets try its output
+#     input = torch.zeros(size=(1,1)).int()
+#     output = model.generate(input, 500).squeeze(0).tolist()
+#     print(f"{''.join(decode(output))}")
+#     print(f'-'*25)
 
-# and now we can train this : 
-device='cpu'
-batch_size = 32
-vocab_size = len(vocab_list)
-max_iter = 25000
-# attention requires much lower lr compared to plain bigram model
-lr = 0.001
-# attention with scaling - default
-train(scaling=True, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
-# attention without scaling 
-train(scaling=False, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter,device=device)
-# attention without masking 
-train(scaling=True, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
-# attention without scaling and without masking
-train(scaling=False, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
-# attention model with bias enabled
-train(scaling=True, masking=True, bias=True, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# # and now we can train this : 
+# device='cpu'
+# batch_size = 32
+# vocab_size = len(vocab_list)
+# max_iter = 25000
+# # attention requires much lower lr compared to plain bigram model
+# lr = 0.001
+# # attention with scaling - default
+# train(scaling=True, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# # attention without scaling 
+# train(scaling=False, masking=True, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter,device=device)
+# # attention without masking 
+# train(scaling=True, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# # attention without scaling and without masking
+# train(scaling=False, masking=False, bias=False, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
+# # attention model with bias enabled
+# train(scaling=True, masking=True, bias=True, lr=lr, batch_size=batch_size, vocab_size=vocab_size, max_iter=max_iter, device=device)
 #! check if its ok to include them now or at the very end. because the changes may not be evident here!
 #
-# 
-# 
-# 
+
 # %%
 #
-# we said earlier that what we implemented here is known as self-attention, the reason it is called self attention
-# is that the key and query and values are applied on the same input(the use the same source!), and hence the name,
-# self attention.
-# also note that, in our specific case, tokens/nodes can not communicate with the future nodes, but in general
-# this constraint can be removed (and infact is removed/not implemented for some applications) where its benificial
-# to be able to communicate with all the tokens. one example is sentiment analysis, where we want all the tokens to
-# able to communicate with eachother so we can get an accurate analysis in which, we would use an encoder
-# block, which is basically what we have here, minus the constraint section(tril/mask part). 
-# What we have implemented so far (with the tril, masking) here is called a decoder block, where we are decoding bunch 
-# of tokens, for which it makes prefect sense for the previous tokens not to be able to comunicate with the future ones
-# (becasue they would give the answer away! and it defeats the whole purpose here!),
-# as we want the model to predict the next token given only the previous tokens, hence we have the filtering/constraint
-# part to prevent just that.
+# Earlier we mentioned that our implementation of attention so far, is refered to as self-attention, the reason 
+# being the key, query and value vectors are applied on the same input(they use the same source!), hence the name, self attention.
+# Moreover, we also saw that for our specific case, tokens/nodes can not communicate with the future 
+# nodes becasue we are developing an autoregressive language model, which by definition requires us
+# to make predictions solely based on what has come thus far. 
+# However, in general this constraint can be removed when it's advantageous for all tokens to interact, 
+# such as in usecases like sentiment analysis and machine translation among other examples. 
+# Take sentiment analysis for example, inwhich we want all the tokens to able to communicate with 
+# eachother for an accurate analysis. we dont care if a previous token looks at a fture one or not, infact
+# we welcome all interactions between tokens so that it maximizes the chances of revealing as much information
+# as possible to ultimately reach to the right conclusion which determining the overal sentiment.
+# In these cases, we do this by employing an encoder block, which is similar to our current setup but without the 
+# constraint section.
 #
+# What we have implemented so far (with the tril, masking) is refered to as a decoder block, in which we are 
+# trying to generate a new token given the previous ones.
+# side note:
+# (loosly speaking, decoder is synomous with generation, just as the encoder is with encoding!
+# you can imagine, the decoder as a block that generates/produces something, as apposed to the encoder part/block 
+# which its job is to create a highlevel represenation of the input, (usually refered to as "latent space"/"encoding"),
+# to be consumed by others (like decoders!). this process is known as encoding and this is where the encoder gets its name.
+# the encoder is there to capture important features and patterns in the input.
+# on the other hand, the decoder takes these highlevel representations and generates something meaningful
+# from it, such as text, image, etc. This process is known as decoding and hence the name decoder.
+#
+
 # cross-attention:
-# so far we explained about the self-attention, which we saw, is called that way solely for the fact that key, query
-# and value use the same source. The attention mechanism as we briefly pointed out, is quite versatile and can be 
+# The attention mechanism as we briefly pointed out, is quite versatile and can be 
 # utilized in various ways. One such example/way is the creation of something called cross-attention.
-# cross-attention is basically related to the scenarios where we have encoder/decoder blocks in our model, in which the
-# queries originate from decoder's input while the key and value are derived from an external source, sometimes from 
-# the encoder block. 
-# so Cross-attention comes into play when we have a separate source of information we would like to extract from and utilize.
-# This is commonly seen in sequence-to-sequence models, such as machine translation.
+# cross-attention is basically related to the scenarios in which we have encoder/decoder blocks in our model, 
+# in which the queries originate from decoder's input while the key and value are derived from an external 
+# source, sometimes from the encoder block itself. 
+# Cross-attention comes into play when we have a separate source of information we would like to extract from
+# and utilize. This is commonly seen in sequence-to-sequence models, such as machine translation.
 # In such models, we have two sources of information: the source text and the generated text (translation output). 
 # The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
-# with the output as much as possible. The key and value are applied to the encoder/source material, while the query 
-# is applied to the decoder’s input. This process helps in creating a more accurate and contextually relevant translation.
+# with the output as much as possible(getting them as close as possible). 
+# The key and value are applied to the encoder/source material, while the query is applied to the decoder’s input. 
+# This process helps in creating a more accurate and contextually relevant translation.
 # 
 # infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
 # described. 
 # 
-# attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
+# The Attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
 # there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
 # by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
 # positioned (with resepect to eachother). 
@@ -5858,3 +5906,224 @@ print(f"{''.join(decode(output))}")
 # https://www.youtube.com/watch?v=3B6q4xnuFUE
 # https://www.youtube.com/watch?v=HobIo2oT0xY
 # https://www.youtube.com/watch?v=tFYxJZBAbE8
+
+
+
+#%%
+# manifold related plots 
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define a simple manifold function that maps 2D inputs to 1D outputs
+def manifold_function(x, y):
+    return np.sin(np.sqrt(x**2 + y**2))
+
+# Generate some random data points along the manifold
+num_points = 500
+xs = np.random.uniform(-1, 1, size=num_points)
+ys = np.random.uniform(-1, 1, size=num_points)
+zs = manifold_function(xs, ys)
+
+# Plot the data points in 3D space
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.scatter(xs, ys, zs)
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z')
+plt.show()
+
+import matplotlib.pyplot as plt
+from sklearn import manifold, datasets
+
+# Load the digits dataset
+digits = datasets.load_digits(n_class=6)
+X = digits.data
+y = digits.target
+n_samples, n_features = X.shape
+
+# Perform t-SNE manifold learning
+tsne = manifold.TSNE(n_components=2, init='pca', random_state=0)
+X_tsne = tsne.fit_transform(X)
+
+# Plot the results
+plt.figure(figsize=(6, 5))
+colors = "r", "g", "b", "c", "m", "y"
+for i, c, label in zip(range(6), colors, digits.target_names):
+    plt.scatter(X_tsne[y == i, 0], X_tsne[y == i, 1], c=c, label=label)
+plt.legend()
+plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+
+# Define the sinusoidal positional encoding function
+def positional_encoding(position, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    sines = np.sin(angle_rads)
+    return sines
+
+# Generate the positional encodings
+positions = np.arange(1000)[:, np.newaxis]
+d_model = 512
+pos_encodings = positional_encoding(positions, d_model)
+
+# Perform t-SNE manifold learning
+tsne = TSNE(n_components=2, init='pca', random_state=0)
+X_tsne = tsne.fit_transform(pos_encodings)
+
+# Plot the results
+plt.figure(figsize=(6, 5))
+plt.scatter(X_tsne[:, 0], X_tsne[:, 1])
+plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define the sinusoidal positional encoding function
+def positional_encoding(position, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    sines = np.sin(angle_rads)
+    return sines
+
+# Generate the positional encodings
+positions = np.arange(1000)[:, np.newaxis]
+d_model = 512
+pos_encodings = positional_encoding(positions, d_model)
+
+# Perform t-SNE manifold learning
+tsne = TSNE(n_components=3, init='pca', random_state=0)
+X_tsne = tsne.fit_transform(pos_encodings)
+
+# Plot the results
+fig = plt.figure(figsize=(6, 5))
+ax = fig.add_subplot(111, projection='3d')
+ax.scatter(X_tsne[:, 0], X_tsne[:, 1], X_tsne[:, 2])
+plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define the sinusoidal positional encoding function
+def positional_encoding(position, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    sines = np.sin(angle_rads)
+    return sines
+
+# Generate the positional encodings
+positions = np.arange(1000)[:, np.newaxis]
+d_model = 512
+pos_encodings = positional_encoding(positions, d_model)
+
+# Perform PCA
+pca = PCA(n_components=3)
+X_pca = pca.fit_transform(pos_encodings)
+
+# Plot the results
+fig = plt.figure(figsize=(6, 5))
+ax = fig.add_subplot(111, projection='3d')
+ax.scatter(X_pca[:, 0], X_pca[:, 1], X_pca[:, 2])
+plt.show()
+
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from sklearn.decomposition import TruncatedSVD
+# from mpl_toolkits.mplot3d import Axes3D
+
+# # Define the sinusoidal positional encoding function
+# def positional_encoding(position, d_model):
+#     angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+#     angle_rads = position * angle_rates
+#     sines = np.sin(angle_rads)
+#     return sines
+
+# # Generate the positional encodings
+# positions = np.arange(1000)[:, np.newaxis]
+# d_model = 512
+# pos_encodings = positional_encoding(positions, d_model)
+
+# # Perform SVD
+# svd = TruncatedSVD(n_components=3)
+# X_svd = svd.fit_transform(pos_encodings)
+
+# # Plot the results
+# fig = plt.figure(figsize=(6, 5))
+# ax = fig.add_subplot(111, projection='3d')
+# ax.scatter(X_svd[:, 0], X_svd[:, 1], X_svd[:, 2])
+# plt.show()
+
+# %matplotlib notebook
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import TruncatedSVD
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define the sinusoidal positional encoding function
+def positional_encoding(position, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    sines = np.sin(angle_rads)
+    return sines
+
+# Generate the positional encodings
+positions = np.arange(1000)[:, np.newaxis]
+d_model = 512
+pos_encodings = positional_encoding(positions, d_model)
+
+# Perform SVD
+svd = TruncatedSVD(n_components=3)
+X_svd = svd.fit_transform(pos_encodings)
+
+# Plot the results
+fig = plt.figure(figsize=(8, 6))
+ax = fig.add_subplot(111, projection='3d')
+scatter = ax.scatter(X_svd[:, 0], X_svd[:, 1], X_svd[:, 2], c=positions, cmap='viridis', alpha=0.6)
+
+# Make the plot more visually appealing
+ax.set_title('3D Visualization of Sinusoidal Positional Encodings', fontsize=16)
+ax.set_xlabel('Component 1', fontsize=12)
+ax.set_ylabel('Component 2', fontsize=12)
+ax.set_zlabel('Component 3', fontsize=12)
+fig.colorbar(scatter, ax=ax, label='Position')
+plt.show()
+#%%
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define the sinusoidal positional encoding function
+def positional_encoding(position, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    sines = np.sin(angle_rads)
+    return sines
+
+# Generate the positional encodings
+positions = np.arange(1000)[:, np.newaxis]
+d_model = 512
+pos_encodings = positional_encoding(positions, d_model)
+
+# Select three dimensions to plot
+dim1, dim2, dim3 = 0, 1, 2  # Change these to select different dimensions
+
+# Plot the results
+fig = plt.figure(figsize=(8, 6))
+ax = fig.add_subplot(111, projection='3d')
+scatter = ax.scatter(pos_encodings[:, dim1], pos_encodings[:, dim2], pos_encodings[:, dim3], c=positions, cmap='viridis', alpha=0.6)
+
+# Make the plot more visually appealing
+ax.set_title('3D Visualization of Sinusoidal Positional Encodings', fontsize=16)
+ax.set_xlabel('Dimension {}'.format(dim1), fontsize=12)
+ax.set_ylabel('Dimension {}'.format(dim2), fontsize=12)
+ax.set_zlabel('Dimension {}'.format(dim3), fontsize=12)
+fig.colorbar(scatter, ax=ax, label='Position')
+plt.show()
