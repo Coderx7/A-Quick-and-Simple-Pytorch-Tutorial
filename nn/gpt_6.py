@@ -2093,12 +2093,9 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # tokens involved, however when positional information is also present, such ambiguity can be avoided) 
 # (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
 #
-# this works fine, however, we can do better. here we just encoded the tokens, but
-# as we already explained, attention mechansim has no notion of position or spatial structure like convs,
-# or rnns e.g. 
-# when dealing with rnns the sequential nature of the input is preserved, as each word/token is
-# processed one after another, so the order would be preserved. 
-# from shaw etal 2018: 
+# 
+# we can do better with attention.
+# # from shaw etal 2018: 
 # Recurrent neural networks (RNNs) typically compute a hidden state ht, as a function of their
 # input at time t and a previous hidden state ht−1, capturing relative and absolute positions along the
 # time dimension directly through their sequential structure. 
@@ -2132,8 +2129,8 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # property is shared by our relative position representations which, in contrast to absolute position
 # representations, are invariant to the total sequence length. Residual connections help propagate position information to higher layers.
 
-# so this is not the case here as we are using attention mechanism as well,
-# and hence we need to encode the position information as well. 
+# so in short, we need to encode the position information in our attention if we want better result!. 
+# 
 # good refs for positional embeddings : 
 # https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6
 # this blogpost does a very good job at explaining the implementation of the sinusoidal positional encoding
@@ -2141,78 +2138,116 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
 # this blog post,does a very good job at explaining the intuitions behind the sinusoidal positional encoding.
 # Ive watched and read alot of videos and explanations on this, some videos(also linked below) are good some
-# arent as they say things that are not backed, I tried to ask and answer them using different sources I find
-# but these two links that I wrote here, do a good job. however, read the following information aswell. 
-# finally sinusoidal positional embedding isnot used anymore, instead the learned positions are used (this is
-# what we implemented in our example, and BERT uses it, but sinusoidal posintioning had a lot of intresting
-# intuitions and ideas that can give me/you a new prespective and possibly allow you to learn and comeup with
-# similar improvements knowing the concepts/reasons behind it)
+# not as much, as they say things that are not backed, or the explanation is superficial. 
+# I tried to ask and answer them using different sources I found
+# but these two links that I wrote here, do a good job nonetheless. (however, read the following information aswell.)
+# finally sinusoidal positional embedding is not used anymore (at least widely as far as im aware), instead the learned 
+# positions are used (this is what we implemented in our example, and BERT uses it, but sinusoidal posintioning had
+# a lot of intresting intuitions and ideas behind it that can give me/you a new prespective and possibly allow you 
+# to learn and comeup with similar improvements knowing the concepts/reasons behind it)
 #
 #  
 # Side notes: 
-# Q:Whats an embedding intuitively?
+# reminders about concepts we deal with here: 
+#
+# Q: Whats an embedding intuitively?
 # Understanding Embeddings Intuitively
-# Embeddings can be thought of as a way to represent complex, high-dimensional data in a more simplified, lower-dimensional space while maintaining meaningful relationships between the data points. It's like capturing the essence of something intricate in a simpler form that retains its essence or crucial characteristics.
+# Embeddings can be thought of as a way to represent complex, high-dimensional data in a more simplified, 
+# lower-dimensional space while maintaining meaningful relationships between the data points. 
+# It's like capturing the essence of something intricate in a simpler form that retains its essence or crucial
+# characteristics.
+# 
 # Simplification with Meaning:
 #     Analogous to Maps:
-#         Just as a map condenses geographic information into a flat surface without losing the relative positions of cities, embeddings condense data without losing crucial relationships.
+#         Just as a map condenses geographic information into a flat surface without losing the relative positions 
+#         of cities, embeddings condense data without losing crucial relationships.
 #     Capturing Essence:
-#         Think of it as distilling the essence of a painting into a smaller sketch that still captures the main elements and style.
+#         Think of it as distilling the essence of a painting into a smaller sketch that still captures the main 
+#         elements and style.
 #     Relationships Preservation:
-#         Imagine organizing a library: embedding ensures that books on similar topics are placed nearby, making it easier to find related information.
+#         Imagine organizing a library: embedding ensures that books on similar topics are placed nearby, making it
+#         easier to find related information.
+# 
 # Practical Examples:
 #     Word Embeddings:
 #         Words represented as vectors: closer words in the embedding space often have similar meanings or usage contexts.
 #     Image Embeddings:
-#         Images represented in a lower-dimensional space where similar images are closer together, aiding tasks like image similarity search.
+#         Images represented in a lower-dimensional space where similar images are closer together, aiding tasks like 
+#         image similarity search.
 # Key Takeaway:
-# An embedding, intuitively, is a condensed representation that retains essential information or relationships while simplifying the complexity of high-dimensional data. It's like summarizing a story without losing its essence or key plot points.
+# An embedding, intuitively, is a condensed representation that retains essential information or relationships while 
+# simplifying the complexity of high-dimensional data. It's like summarizing a story without losing its essence or 
+# key plot points.
 #
 # Q:Whats a manifold intuitively:
 # Understanding Manifolds Intuitively
-# A manifold, intuitively, can be visualized as a flexible and curved surface embedded in a higher-dimensional space. In the context of embedding manifolds, it refers to the reduced-dimensional space where data points are situated after the embedding process.
+# A manifold, intuitively, can be visualized as a flexible and curved surface embedded in a higher-dimensional space. 
+# In the context of embedding manifolds, it refers to the reduced-dimensional space where data points are situated 
+# after the embedding process.
+# 
 # Visualizing Manifolds:
 #     Flexible Surface:
-#         Picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet, able to take on various shapes within the higher-dimensional space.
+#         Picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet, able to take
+#         on various shapes within the higher-dimensional space.
 #     Embedded in Higher-Dimensional Space:
-#         Imagine the rubber sheet exists within a 3D space, but the manifold itself is a 2D surface. The embedding process places data points on this flexible surface.
+#         Imagine the rubber sheet exists within a 3D space, but the manifold itself is a 2D surface. The embedding 
+#         process places data points on this flexible surface.
 # Analogies for Understanding:
 #     Paper Map Analogy:
-#         Just as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data in a lower-dimensional space.
+#         Just as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data 
+#         in a lower-dimensional space.
 #     Hiking Trails Analogy:
-#         If you think of a landscape with hills and valleys, the trails can be seen as the manifold, navigating the terrain while being constrained by the landscape's overall structure.
+#         If you think of a landscape with hills and valleys, the trails can be seen as the manifold, navigating the 
+#         terrain while being constrained by the landscape's overall structure.
 # Connection to Data Representation:
 #     Data Points on the Surface:
-#         In the manifold, each point represents a data point. The goal is to position these points on the surface so that relationships between them are preserved from the original, higher-dimensional data.
+#         In the manifold, each point represents a data point. The goal is to position these points on the surface 
+#         so that relationships between them are preserved from the original, higher-dimensional data.
 #     Curvature and Relationships:
-#         The curvature of the manifold reflects the relationships between data points. Smooth curves indicate similar relationships, while abrupt turns may represent significant changes in the data.
+#         The curvature of the manifold reflects the relationships between data points. Smooth curves indicate 
+#         similar relationships, while abrupt turns may represent significant changes in the data.
 # Key Takeaway:
-# A manifold, intuitively, is a flexible, curved surface in a higher-dimensional space. In the context of embedding manifolds, it serves as the reduced-dimensional space where data points are positioned after undergoing the embedding process, capturing essential relationships in a more manageable form.
+# A manifold, intuitively, is a flexible, curved surface in a higher-dimensional space. In the context of embedding 
+# manifolds, it serves as the reduced-dimensional space where data points are positioned after undergoing the 
+# embedding process, capturing essential relationships in a more manageable form.
 #
-# explain more: 
-# Sure, diving deeper into the concept of embedding manifolds involves understanding how data points are transformed from a high-dimensional space to a lower-dimensional one while preserving their intrinsic relationships.
+# Further elaboration: 
+# diving deeper into the concept of embedding manifolds involves understanding how data points are transformed from a
+# high-dimensional space to a lower-dimensional one while preserving their intrinsic relationships.
+# 
 # Mathematics of Manifolds:
-#     Topological Spaces: A manifold is a topological space that looks locally like Euclidean space, meaning that in a small enough region, it resembles a familiar space like a plane.
-#     Intrinsic Properties: It retains certain intrinsic properties, such as local linearity or smoothness, even if embedded in a higher-dimensional space.
+# Topological Spaces: A manifold is a topological space that looks locally like Euclidean space, meaning that in 
+#     a small enough region, it resembles a familiar space like a plane.
+#     Intrinsic Properties: It retains certain intrinsic properties, such as local linearity or smoothness, even if 
+#     embedded in a higher-dimensional space.
 # Embedding Process:
-#     Dimensionality Reduction: The primary goal is to reduce the dimensions while retaining relevant information. This is achieved by finding a way to project the data onto a lower-dimensional surface while preserving the structure and relationships within the data.
-#     Preserving Relationships: Techniques used, like PCA or t-SNE, aim to maintain the proximity or similarity between data points. Similar points in the original space should remain close in the lower-dimensional manifold.
+#     Dimensionality Reduction: The primary goal is to reduce the dimensions while retaining relevant information. 
+#     This is achieved by finding a way to project the data onto a lower-dimensional surface while preserving the 
+#     structure and relationships within the data.
+#     Preserving Relationships: Techniques used, like PCA or t-SNE, aim to maintain the proximity or similarity 
+#     between data points. Similar points in the original space should remain close in the lower-dimensional manifold.
 # Understanding the Manifold's Shape:
-#     Local Structure Preservation: The manifold captures local structures or relationships among data points. Think of it as preserving how nearby points relate to each other.
-#     Global Shape: Understanding the overall shape of the manifold is crucial. It might have complex twists, turns, and curvatures, reflecting intricate relationships among data points.
+#     Local Structure Preservation: The manifold captures local structures or relationships among data points. Think 
+#     of it as preserving how nearby points relate to each other.
+#     Global Shape: Understanding the overall shape of the manifold is crucial. It might have complex twists, turns,
+#     and curvatures, reflecting intricate relationships among data points.
 # Challenges and Considerations:
-#     Curse of Dimensionality: As the dimensionality decreases, some information may be lost. Finding an optimal balance is essential to retain meaningful information.
-#     Choosing the Right Technique: Different techniques suit different types of data. Linear techniques like PCA might not capture nonlinear relationships, which methods like t-SNE can handle.
+#     Curse of Dimensionality: As the dimensionality decreases, some information may be lost. Finding an optimal 
+#     balance is essential to retain meaningful information.
+#     Choosing the Right Technique: Different techniques suit different types of data. Linear techniques like PCA 
+#     might not capture nonlinear relationships, which methods like t-SNE can handle.
 # Practical Applications:
-#     Machine Learning: Embedding manifolds play a vital role in various ML tasks, like clustering, classification, and visualization, where high-dimensional data needs to be comprehensively analyzed.
-#     Semantic Understanding: In natural language processing, embeddings help understand word relationships, sentiments, and semantic meaning.
+#     Machine Learning: Embedding manifolds play a vital role in various ML tasks, like clustering, classification, 
+#     and visualization, where high-dimensional data needs to be comprehensively analyzed.
+#     Semantic Understanding: In natural language processing, embeddings help understand word relationships, sentiments,
+#     and semantic meaning.
 # Conclusion:
-# An embedding manifold is a reduced-dimensional space where complex high-dimensional data is transformed while maintaining essential relationships. Achieving this involves a delicate balance between reducing dimensions and preserving meaningful information, crucial for various applications across multiple domains.
+# An embedding manifold is a reduced-dimensional space where complex high-dimensional data is transformed while maintaining
+# essential relationships. Achieving this involves a delicate balance between reducing dimensions and preserving meaningful
+# information, crucial for various applications across multiple domains.
 #
 #
-#
-#
-# some attributes concerning positional encodings : https://www.youtube.com/watch?v=1biZfFLPRSY
+# some attributes concerning positional encodings : (ref https://www.youtube.com/watch?v=1biZfFLPRSY )
 # 1.Every position should have the same identifier regardless of the sequence length or what the input is
 #  so when the input changes, the position embedding remains the same)
 # 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
