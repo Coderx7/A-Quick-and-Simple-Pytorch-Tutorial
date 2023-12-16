@@ -2312,6 +2312,20 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # you'll see this is the case and unlike the original paper, the sin is applied on even indexes, while cosine is
 # applied on the odd indexes. 
 #
+# side note 2 - clarification on constant pattern: 
+# The phrase "constant pattern" might be a bit misleading. so lets elaborate a bit more on it and hopefully clear any
+# confusion or misunderstanding it might have arisen. 
+# Both the sine and cosine functions are periodic and not constant and they both produce patterns that repeat over time. 
+# However, the key difference lies in their starting points and their behavior around zero. The cosine function, cos(x), 
+# starts at its maximum value (1) when x=0 and decreases from there, while the sine function, sin(x), starts at 0 when x=0
+# and increases from there. 
+# In the context of positional encoding, this means that for positions close to zero, the cosine-encoded positions will 
+# have higher values compared to the sine-encoded positions. This is often interpreted as the cosine function providing
+# a kind of "baseline" or "anchor" at the start of the sequence, hence the term "position-independent". 
+# It's important to note that both sine and cosine functions are still position-dependent in the sense that their values
+# change with the input position. However, the cosine function's initial high value at position zero provides a unique 
+# characteristic that is often associated with position-independent behavior in the context of positional encoding.
+#
 #
 # Question :why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
 # In some tasks, using only sine functions might be sufficient to capture position-dependent information. 
@@ -2524,7 +2538,7 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # sinusoidal positional encoding addresses these issues and provides a more effective representation of positional information.
 #
 #
-# Q: why does taking into account the phase or timing of the position within the sequence important?
+# Question: why does taking into account the phase or timing of the position within the sequence important?
 # Its important because it provides additional information about the relative ordering and relationships between elements
 # in the sequence. Here's why:
 # 1. Capture Sequential Dependencies: The phase component of the positional encoding helps capture sequential dependencies 
@@ -2557,82 +2571,123 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # more comprehensive representation. 
 # Here are a few reasons why both components, sine and cosine, are beneficial:
 #     Versatility and Generalization:
-#         Sine for Periodic Patterns: Sine is well-suited for encoding positions with periodic patterns, such as sequences where certain positions exhibit recurring behaviors or variations.
-#         Cosine for Constant Features: Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. This helps in capturing position-independent characteristics that may not follow a periodic trend.
+#         Sine for Periodic Patterns: Sine is well-suited for encoding positions with periodic patterns, such as sequences
+#         where certain positions exhibit recurring behaviors or variations.
+#         
 #     Robustness to Shifts:
-#         Shift Invariance: The combination of sine and cosine allows the positional encoding to exhibit a form of shift invariance. When a sequence is shifted, the phase relationships between sine and cosine components change accordingly, preserving the relative positional information.
+#         Shift Invariance: The combination of sine and cosine allows the positional encoding to exhibit a form of shift 
+#         invariance. When a sequence is shifted, the phase relationships between sine and cosine components change 
+#         accordingly, preserving the relative positional information.
 #     Handling Different Time Scales:
 #         Sine for Short-Term Changes: Sine can capture short-term variations or changes that occur with a certain periodicity.
-#         Cosine for Long-Term Stability: Cosine, being constant over time, is suitable for encoding long-term stability or features that remain consistent irrespective of position changes.
+#         Cosine for Long-Term Stability: Cosine, being constant over time, is suitable for encoding long-term stability or 
+#         features that remain consistent irrespective of position changes.
 #     Reducing Redundancy:
-#         Orthogonality: The orthogonal nature of sine and cosine functions ensures that the information captured by each component is independent and non-redundant. This enhances the model's ability to distinguish between different positional characteristics.
+#         Orthogonality: The orthogonal nature of sine and cosine functions ensures that the information captured by each 
+#          component is independent and non-redundant. This enhances the model's ability to distinguish between different positional 
+#          characteristics.
 #     Adaptability to Varied Sequences:
-#         Handling Diverse Patterns: Many sequences exhibit a mix of periodic and non-periodic changes. The combination of sine and cosine allows the model to adapt to diverse patterns of positional information.
-# In summary, incorporating both sine and cosine components in positional encoding provides a more versatile and adaptable representation of positional information. This approach enables the model to capture a wide range of patterns, both periodic and non-periodic, enhancing its ability to understand and generalize across different sequences and tasks.
-# Let's illustrate the points mentioned using a unified example in the context of time series data representing temperature variations throughout the year:
-# Consider a dataset that records daily temperature readings over a year. Each day's temperature can be seen as a position in the sequence. Here's how sine and cosine functions are beneficial in this scenario:
-# Versatility and Generalization:
-#     Sine for Periodic Patterns:
-#         Example: Sine captures the seasonal periodicity in temperature, such as warmer temperatures during summer and colder temperatures during winter.
-#     Cosine for Constant Features:
-#         Example: Cosine represents features that remain constant, like the average temperature across different seasons, providing a position-independent encoding.
-# Robustness to Shifts:
-#     Shift Invariance:
-#         Example: Shifting the entire temperature sequence (e.g., moving the start of the year) changes the phase relationship between sine and cosine, preserving the relative information despite the shift.
-# Handling Different Time Scales:
-#     Sine for Short-Term Changes:
-#         Example: Sine captures short-term variations like daily temperature fluctuations, exhibiting a periodic pattern.
-#     Cosine for Long-Term Stability:
-#         Example: Cosine represents long-term stability, such as the overall trend of temperature changes over the entire year.
-# Reducing Redundancy:
-#     Orthogonality:
-#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall trends is independent, reducing redundancy in the positional encoding.
-# Adaptability to Varied Sequences:
-#     Handling Diverse Patterns:
-#         Example: Temperature data often involves a mix of periodic patterns (seasonal changes) and non-periodic variations (unpredictable weather events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
-# In summary, by incorporating both sine and cosine components in the positional encoding of temperature data, the model becomes more versatile. It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of various temperature sequences and tasks.
-# Example 2: 
+#         Handling Diverse Patterns: Many sequences exhibit a mix of periodic and non-periodic changes. The combination of
+#         sine and cosine allows the model to adapt to diverse patterns of positional information.
+# 
+# This approach enables the model to capture a wide range of patterns, both periodic and non-periodic, enhancing its ability
+# to understand and generalize across different sequences and tasks.
+#
+# !note: read the explanation about cosine -constant features at the end (this is not accurate and requires explanation)
+# 
+# 
+# Example : 
 # Let's adapt the example to use text/word data, making it more intuitive:
 # Versatility and Generalization:
 #     Sine for Periodic Patterns:
-#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, such as weekly trends in news coverage.
+#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, such as weekly
+#         trends in news coverage.
 #     Cosine for Constant Features:
-#         Example: Cosine represents features that are constant across different positions, like the consistent presence of certain keywords, providing a position-independent encoding.
+#         Example: Cosine represents features that are constant across different positions, like the consistent presence of certain
+#         keywords, providing a position-independent encoding.
 # Robustness to Shifts:
 #     Shift Invariance:
-#         Example: Shifting the entire sequence of news headlines (e.g., moving the start of the dataset) changes the phase relationship between sine and cosine, preserving the relative information despite the shift.
+#         Example: Shifting the entire sequence of news headlines (e.g., moving the start of the dataset) changes the phase 
+#         relationship between sine and cosine, preserving the relative information despite the shift.
 # Handling Different Time Scales:
 #     Sine for Short-Term Changes:
-#         Example: Sine captures short-term variations like daily fluctuations in the frequency of specific words or topics in the news.
+#         Example: Sine captures short-term variations like daily fluctuations in the frequency of specific words or topics 
+#         in the news.
 #     Cosine for Long-Term Stability:
-#         Example: Cosine represents long-term stability, such as the overall trend of changes in the prevalence of certain themes over the entire dataset.
+#         Example: Cosine represents long-term stability, such as the overall trend of changes in the prevalence of certain 
+#         themes over the entire dataset.
 # Reducing Redundancy:
 #     Orthogonality:
-#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall trends in news coverage is independent, reducing redundancy in the positional encoding.
+#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall
+#         trends in news coverage is independent, reducing redundancy in the positional encoding.
 # Adaptability to Varied Sequences:
 #     Handling Diverse Patterns:
-#         Example: News headlines often exhibit a mix of periodic patterns (coverage of recurring events) and non-periodic variations (unpredictable news events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
-# In summary, by incorporating both sine and cosine components in the positional encoding of daily news headlines, the model becomes more versatile. It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of various text sequences and tasks.
+#         Example: News headlines often exhibit a mix of periodic patterns (coverage of recurring events) and non-periodic 
+#         variations (unpredictable news events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
 # 
-# Q: what does Orthogonality refers to and how is it relavent or intuitive here? 
+# In summary, by incorporating both sine and cosine components in the positional encoding of daily news headlines, 
+# the model becomes more versatile. 
+# It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of
+# various text sequences and tasks.
+# 
+# Question: what does Orthogonality refer to and how is it relavent or intuitive here? 
 # Orthogonality in the Context of Positional Encoding:
-# In mathematics, orthogonality refers to the relationship between two vectors being perpendicular to each other. In the context of the positional encoding using sine and cosine functions, orthogonality is a crucial concept that enhances the effectiveness of the encoding.
+# In mathematics, orthogonality refers to the relationship between two vectors being perpendicular to each other. 
+# In the context of the positional encoding using sine and cosine functions, orthogonality is a crucial concept that 
+# enhances the effectiveness of the encoding.
 # Let's break down how orthogonality is relevant and intuitive in this scenario:
 #     Independence of Components:
-#         The sine and cosine functions are orthogonal to each other. This means that the information encoded by the sine component is independent of the information encoded by the cosine component, and vice versa.
+#         The sine and cosine functions are orthogonal to each other. This means that the information encoded by the sine
+#         component is independent of the information encoded by the cosine component, and vice versa.
 #     Reducing Redundancy:
-#         In positional encoding, the goal is to represent various aspects of the sequence in a way that minimizes redundancy. If the sine and cosine components were not orthogonal, there might be overlapping information between them, diminishing the effectiveness of the encoding.
+#         In positional encoding, the goal is to represent various aspects of the sequence in a way that minimizes redundancy. 
+#         If the sine and cosine components were not orthogonal, there might be overlapping information between them, 
+#         diminishing the effectiveness of the encoding.
 #     Distinct Encoding of Features:
-#         The orthogonal nature ensures that each component is responsible for encoding different aspects of the sequence. Sine may capture periodic patterns, while cosine encodes constant features. Their orthogonality guarantees that the information captured by one does not overlap or interfere with the information captured by the other.
+#         The orthogonal nature ensures that each component is responsible for encoding different aspects of the sequence. 
+#         Sine may capture periodic patterns, while cosine encodes constant features. Their orthogonality guarantees that
+#         the information captured by one does not overlap or interfere with the information captured by the other.
 #     Enhanced Discrimination:
-#         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes in the other. This separation of information contributes to a more nuanced understanding of the sequence.
+#         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the 
+# model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes in the other. This separation of information contributes to a more nuanced understanding of the sequence.
 #     Mathematical Simplicity:
-#         The orthogonal relationship simplifies mathematical operations involving these components. When combining sine and cosine components, their orthogonality ensures that their interactions are well-defined and do not introduce complex dependencies.
+#         The orthogonal relationship simplifies mathematical operations involving these components. When combining sine and 
+# cosine components, their orthogonality ensures that their interactions are well-defined and do not introduce complex dependencies.
 # Example:
-# Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) and persistent themes (captured by cosine) without confusion.
-# In summary, orthogonality in the context of sine and cosine functions used in positional encoding ensures independence between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional encoding scheme in various sequence-related tasks.
+# Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability 
+# (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) and persistent themes (captured by cosine) without confusion.
+# In summary, orthogonality in the context of sine and cosine functions used in positional encoding ensures independence 
+# between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional encoding scheme in various sequence-related tasks.
 # 
-# Q: is orthogonality in neural networks different or does it refer to the same thing? explain in depth
+#
+#! Important note concerning Cosine and Constant feature analogy: 
+# previously we had some remarks concerning cosine and its alleged/supposed role in sinusoidal positional encoding such as: 
+# "Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. 
+#  This helps in capturing position-independent characteristics that may not follow a periodic trend."
+# or 
+# "Sine may capture periodic patterns, while cosine encodes constant features"
+# This needs more clarification as its not entirely accurate and may very well be misunderstood. so lets elaborate:
+# 
+# See both sine and cosine functions are periodic and oscillate between -1 and 1 and neither of them encode "constant" features.
+# The key difference between them is their phase, i.e., where they start from. The sine function sin(x) starts from 0 
+# and goes up to 1, then down to -1, and back to 0 as x increases. This makes it suitable for capturing patterns that 
+# repeat after a certain period, hence why we said something like 'sin captures "periodic patterns"'.
+# The cosine function cos(x), on the other hand, starts from 1 (its maximum value) when x=0, then decreases to -1, and
+# back to 1. This means that for positions close to zero, the cosine-encoded positions will have higher values compared
+# to the sine-encoded positions. This unique characteristic of cosine function is often associated with "constant" or 
+# "baseline" features in the context of positional encoding, but it's important to note that the cosine function is not 
+# "constant" - it also varies with x.
+# Therefore, in the context of positional encoding, the alternating pattern of sine and cosine across dimensions helps the
+# model to capture various frequency patterns and differentiate positions in the sequence. 
+# The cosine function's initial high value at position zero provides a kind of "anchor" or "baseline" at the start of 
+# the sequence, while the sine function provides variation and differentiation across positions.
+# So, a more accurate and befitting statement could be: 
+# "The cosine function, due to its behavior around the zero position, can provide a kind of 'baseline' or 'anchor' at 
+# the start of the sequence in positional encoding. This helps in capturing position-independent characteristics that 
+# may not follow a periodic trend."
+#
+#
+# Question: is orthogonality in neural networks different or does it refer to the same thing? explain in depth
 #
 # Orthogonality in Neural Networks:
 # In the context of neural networks, orthogonality takes on a slightly different meaning compared to its traditional mathematical definition, but the fundamental idea remains rooted in independence and lack of correlation.
@@ -2650,61 +2705,121 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #     Mitigating Vanishing or Exploding Gradients:
 #         Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation. This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
 # Example:
-# Consider a deep neural network processing images. If the weight vectors corresponding to different convolutional filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of the image, whether it's edges, textures, or higher-level features. This diversity contributes to a more robust and generalizable representation of the input data.
+# Consider a deep neural network processing images. If the weight vectors corresponding to different convolutional 
+# filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of the image, whether 
+# it's edges, textures, or higher-level features. This diversity contributes to a more robust and generalizable 
+# representation of the input data.
 # Summary:
-# While the term "orthogonality" may have a different application in neural networks compared to its traditional mathematical context, the core idea remains centered around independence, lack of correlation, and promoting diverse and efficient learning. In neural networks, weight orthogonality specifically addresses the relationships between weight vectors, contributing to improved generalization, reduced redundancy, and more effective training.
+# While the term "orthogonality" may have a different application in neural networks compared to its traditional
+# mathematical context, the core idea remains centered around independence, lack of correlation, and promoting diverse
+# and efficient learning. In neural networks, weight orthogonality specifically addresses the relationships between 
+# weight vectors, contributing to improved generalization, reduced redundancy, and more effective training.
 # 
 # More Explanation : 
 #Orthogonality in Neural Networks: A Deeper Dive
-# In neural networks, orthogonality extends beyond its traditional geometric interpretation and takes on a specialized meaning within the context of weight matrices. Let's delve deeper into the nuances of weight orthogonality and its implications in the realm of deep learning.
+# In neural networks, orthogonality extends beyond its traditional geometric interpretation and takes on a specialized 
+# meaning within the context of weight matrices. 
+# Let's delve deeper into the nuances of weight orthogonality and its implications in the realm of deep learning.
 # 1. Geometric Perspective:
-#     Traditional Orthogonality: In mathematics, orthogonality between vectors implies a right-angle relationship. In the context of neural networks, this concept is adapted to the weight space. Weight vectors are considered orthogonal if their dot product is close to zero, signifying independence.
+#     Traditional Orthogonality: In mathematics, orthogonality between vectors implies a right-angle relationship.
+#     In the context of neural networks, this concept is adapted to the weight space. Weight vectors are considered 
+#     orthogonal if their dot product is close to zero, signifying independence.
+# 
 # 2. Weight Orthogonality:
-#     Defining Weight Orthogonality: In neural networks, weight orthogonality refers to the idea that weight matrices (collections of weight vectors) are as orthogonal as possible. This concept is often applied to weight initialization or regularization techniques.
+#     Defining Weight Orthogonality: In neural networks, weight orthogonality refers to the idea that weight matrices
+#     (collections of weight vectors) are as orthogonal as possible. 
+#     This concept is often applied to weight initialization or regularization techniques.
+# 
 # 3. Reducing Redundancy and Overfitting:
-#     Overfitting Mitigation: When weight vectors are orthogonal, they are less likely to redundantly encode similar patterns. This property can mitigate overfitting by encouraging the model to learn distinctive features, reducing reliance on specific training examples.
+#     Overfitting Mitigation: When weight vectors are orthogonal, they are less likely to redundantly encode similar 
+#     patterns. This property can mitigate overfitting by encouraging the model to learn distinctive features, reducing
+#     reliance on specific training examples.
+# 
 # 4. Facilitating Training Stability:
-#     Independent Learning: Orthogonal weight vectors contribute to stable training. Updates to one weight vector have less impact on others, promoting more independent learning. This is particularly important in deep networks where instability in training can be a challenge.
+#     Independent Learning: Orthogonal weight vectors contribute to stable training. Updates to one weight vector have 
+#     less impact on others, promoting more independent learning. This is particularly important in deep networks where
+#     instability in training can be a challenge.
+# 
 # 5. Enhancing Representational Capacity:
-#     Diverse Representations: Orthogonal weight matrices enhance the network's representational capacity. Each weight vector can specialize in capturing unique features or patterns, allowing the model to learn a rich and diverse set of representations.
+#     Diverse Representations: Orthogonal weight matrices enhance the network's representational capacity. 
+#     Each weight vector can specialize in capturing unique features or patterns, allowing the model to learn a rich
+#     and diverse set of representations.
+# 
 # 6. Generalization and Adaptability:
-#     Improved Generalization: Orthogonality fosters better generalization by ensuring that the model can adapt to a wide range of patterns. The independence between weight vectors allows the network to handle diverse input data effectively.
+#     Improved Generalization: Orthogonality fosters better generalization by ensuring that the model can adapt to a wide
+#     range of patterns. The independence between weight vectors allows the network to handle diverse input data 
+#     effectively.
+# 
 # 7. Mitigating Gradient Issues:
-#     Addressing Gradient Challenges: Orthogonal weight matrices can help mitigate issues like vanishing or exploding gradients during backpropagation. This is critical for maintaining a stable gradient flow, especially in deep networks.
+#     Addressing Gradient Challenges: Orthogonal weight matrices can help mitigate issues like vanishing or exploding 
+#     gradients during backpropagation. This is critical for maintaining a stable gradient flow, especially in deep 
+#     networks.
+# 
 # 8. Example: Image Processing in Convolutional Networks:
-#     Role in Convolutional Filters: Consider a convolutional neural network (CNN) processing images. If the weight vectors corresponding to different convolutional filters are orthogonal, each filter specializes in capturing distinct visual features (edges, textures). This diversity enhances the model's ability to recognize a broad range of image patterns.
+#     Role in Convolutional Filters: Consider a convolutional neural network (CNN) processing images. If the weight 
+#     vectors corresponding to different convolutional filters are orthogonal, each filter specializes in capturing 
+#     distinct visual features (edges, textures). This diversity enhances the model's ability to recognize a broad 
+#     range of image patterns.
+# 
 # 9. Mathematical Rigor:
-#     Eigenvalue Preservation: Orthogonal matrices have the property of preserving eigenvalues, contributing to numerical stability during training and optimization processes.
+#     Eigenvalue Preservation: Orthogonal matrices have the property of preserving eigenvalues, contributing to 
+#     numerical stability during training and optimization processes.
+# 
 # 10. Practical Implementation:
-#     Orthogonal Initialization: Researchers and practitioners often use orthogonal weight initialization techniques to encourage the orthogonality of weight matrices at the beginning of training.
+#     Orthogonal Initialization: Researchers and practitioners often use orthogonal weight initialization techniques to
+#     encourage the orthogonality of weight matrices at the beginning of training.
+# 
 # 11. Advanced Considerations:
-#     Adaptive Orthogonality: Some advanced techniques focus on maintaining orthogonality dynamically during training, adapting to the evolving nature of the learned features.
+#     Adaptive Orthogonality: Some advanced techniques focus on maintaining orthogonality dynamically during training, 
+#     adapting to the evolving nature of the learned features.
+# 
 # 12. Open Questions and Research:
-#     Ongoing Exploration: The exploration of orthogonality in neural networks is an ongoing area of research, with scientists seeking to uncover more insights into its impact on optimization, generalization, and the learning dynamics of deep networks.
-# In summary, weight orthogonality in neural networks is a multifaceted concept that goes beyond its geometric roots. It plays a crucial role in shaping the learning dynamics, stability, and generalization capabilities of deep learning models, contributing to the ongoing refinement of training techniques in the field.
+#     Ongoing Exploration: The exploration of orthogonality in neural networks is an ongoing area of research, with 
+#     scientists seeking to uncover more insights into its impact on optimization, generalization, and the learning 
+#     dynamics of deep networks.
+# 
+# In summary, weight orthogonality in neural networks is a multifaceted concept that goes beyond its geometric roots. 
+# It plays a crucial role in shaping the learning dynamics, stability, and generalization capabilities of deep learning
+# models, contributing to the ongoing refinement of training techniques in the field.
 # 
 # 
-# Q: how do you change frequency for a sin/cos? 
-# In the context of sine and cosine functions used for positional encoding or signal processing, changing the frequency involves modifying the rate at which these functions oscillate or complete cycles within a given interval. The frequency of a sine or cosine function determines how rapidly it repeats its pattern over time.
+# Question: How do you change frequency for a sin/cos? 
+# In the context of sine and cosine functions used for positional encoding or signal processing, changing the frequency
+# involves modifying the rate at which these functions oscillate or complete cycles within a given interval. 
+# The frequency of a sine or cosine function determines how rapidly it repeats its pattern over time.
 # Changing Frequency in Sinusoidal Functions:
 #     Frequency Parameter: The formula for a sinusoidal function ( f(x) = A \cdot \sin(Bx + C) ) consists of several components:
 #         ( A ) represents the amplitude (the peak value of the function).
 #         ( B ) corresponds to the frequency, determining how quickly the function oscillates.
 #         ( C ) represents the phase shift (a horizontal shift of the function).
 #     Modifying Frequency: To change the frequency of a sinusoidal function, adjust the ( B ) parameter:
-#         Increasing ( B ) will accelerate the oscillation, compressing the function horizontally. This effectively increases the frequency.
-#         Decreasing ( B ) will decelerate the oscillation, stretching the function horizontally. This effectively decreases the frequency.
-#     Relationship with Period: The frequency and the period of a sinusoidal function are inversely related. Frequency ( f ) and period ( T ) are related by the equation ( f = \frac{1}{T} ), where ( T ) represents the period (the length of one complete cycle).
+#         Increasing ( B ) will accelerate the oscillation, compressing the function horizontally. 
+#         This effectively increases the frequency.
+#         Decreasing ( B ) will decelerate the oscillation, stretching the function horizontally. 
+#         This effectively decreases the frequency.
+#     Relationship with Period: The frequency and the period of a sinusoidal function are inversely related. 
+#         Frequency ( f ) and period ( T ) are related by the equation ( f = \frac{1}{T} ), where ( T ) represents the
+#         period (the length of one complete cycle).
+# 
 # Changing Frequency in Cosine Functions:
-# Similar to sinusoidal functions, cosine functions follow a similar formula ( g(x) = A \cdot \cos(Bx + C) ), with ( A ) as the amplitude, ( B ) as the frequency, and ( C ) as the phase shift.
+# Similar to sinusoidal functions, cosine functions follow a similar formula ( g(x) = A \cdot \cos(Bx + C) ),
+# with (A) as the amplitude, ( B ) as the frequency, and ( C ) as the phase shift.
 #     Frequency Modification: Adjusting the ( B ) parameter in a cosine function will also change its frequency:
 #         Increasing ( B ) will speed up the oscillation, effectively increasing the frequency.
 #         Decreasing ( B ) will slow down the oscillation, effectively decreasing the frequency.
-#     Correlation with Sine Function: Cosine functions are related to sine functions, typically having the same frequency but with a phase shift of ( \frac{\pi}{2} ) radians or ( 90^\circ ).
-# Application in Positional Encoding:
-# In positional encoding, altering the frequency of sine and cosine functions helps represent different positional information within a sequence. By adjusting the frequency parameters for sine and cosine functions, distinct patterns at various scales or positions can be encoded, allowing models to differentiate between different positions in a sequence.
-# Overall, changing the frequency parameter in sine and cosine functions involves adjusting the rate of oscillation, thereby affecting the speed at which these functions repeat their patterns. This adjustment is fundamental in encoding different positional information in sequence-related tasks within neural networks or signal processing applications.
+#     Correlation with Sine Function: Cosine functions are related to sine functions, typically having the same frequency
+#         but with a phase shift of ( \frac{\pi}{2} ) radians or ( 90^\circ ).
 # 
+# Application in Positional Encoding:
+# In positional encoding, altering the frequency of sine and cosine functions helps represent different positional information
+# within a sequence. By adjusting the frequency parameters for sine and cosine functions, distinct patterns at various 
+# scales or positions can be encoded, allowing models to differentiate between different positions in a sequence.
+# Overall, changing the frequency parameter in sine and cosine functions involves adjusting the rate of oscillation, 
+# thereby affecting the speed at which these functions repeat their patterns. 
+# This adjustment is fundamental in encoding different positional information in sequence-related tasks within neural 
+# networks or signal processing applications.
+# 
+#
 # imagine sin(1), sin(1/2), sin(1/100), ..., sin(1/100^2), sin(1/100^3),... 
 # The frequency of sin(1/100^n) as n increases is inversely proportional to the period of the function. 
 # The period of sin(1/100^n) is 2π/(1/100^n) = 2π100^n. Therefore, the frequency of sin(1/100^n) is 1/(2π100^n) 1.
