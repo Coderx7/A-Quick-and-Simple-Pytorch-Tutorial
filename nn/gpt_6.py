@@ -2082,17 +2082,24 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # is of any significance to us, then we need to encode them as well, 
 #
 # as it happens in our case, the positional information is important to us, becasue we want to generate text, and order
-# matters here(text are inherntly sequential, so order absolutely matters). 
+# matters here(text are inherntly sequential, and also we need to prevent leftward information flow in the decoder 
+# to preserve the auto-regressive property). 
 # models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially, and 
 # CNNs have spatial information, as they operate by sliding a fixed window over the input)
 # but this is not the case for attention. as we just stated, there is no notion of position, its just a set of individual
-# vectors being operated on)
-# note that the connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
+# vectors being operated on) 
+#
+# As the original authors put it: 
+# "Since our model contains no recurrence and no convolution, in order for the model to make use of the order of the
+#  sequence, we must inject some information about the relative or absolute position of the tokens in the sequence."
+#
+# note that the(statistics from) connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
 # semantic, imagine a case, where a word for example has several meaning, and may very well have high relevancy to a few 
 # tokens at the same time, but without additional positional information, an ambiguous semantic can be infered between the
 # tokens involved, however when positional information is also present, such ambiguity can be avoided) 
 # (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
 #
+# (See section 3.2.3 Applications of Attention in our Model in the paper)
 # 
 # we can do better with attention.
 # # from shaw etal 2018: 
@@ -2849,6 +2856,8 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # 
 # 
 # # %%
+#P E(pos,2i) = sin(pos/10000^(2i/dmodel))
+#P E(pos,2i+1) = cos(pos/10000^(2i/dmodel))
 # #  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
 import numpy as np
 import matplotlib.pyplot as plt
@@ -3568,11 +3577,18 @@ plt.plot(pos_vec)
 # later on, other versions such as rope or rotary positional encoding were introduced to provide relative positional 
 # encoding (better). after that another work AliBi, completely removed the positional embedding and instead used
 # constraints on relationships with respect to their distance! (i.e. decaying the strength of relationship based on
-# distance) so this is an activate field of research and today as I write this, rope is being used along with 
+# distance) so this is an active field of research and today as I write this, rope is being used along with 
 # learned positional encoding. So its still a field of active research. we can use any of these, rope is more populare
 # followed by learned positions though.
 # 
-
+# side note: the authors also tested with learned embedding and got nearly identical results but ultimately chose sinusoidal
+# embedding becasue they thought: 
+# "...because we hypothesized it would allow the model to easily learn to attend by relative positions, since for any
+# fixed offset k, P_Epos+k can be represented as a linear function of P_Epos.
+# and
+# "...it may allow the model to extrapolate to sequence lengths longer than the ones encountered during training."
+#
+#
 # %%
 # 
 # 
