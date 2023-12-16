@@ -2249,11 +2249,10 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #
 
 # !fact check these answers
-# question : why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
+# Question : why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
 #
-# The reason for interleaving sine and cosine functions in sinusoidal positional encoding is to capture 
-# different frequencies and phases in a systematic manner. This interleaving pattern ensures that each 
-# dimension in the encoding captures unique positional information.
+# The reason is to capture different frequencies and phases in a systematic manner. 
+# This interleaving pattern ensures that each dimension in the encoding captures unique positional information.
 # By alternating between sine and cosine functions, the encoding matrix can represent different frequencies 
 # and phases. The sine function captures the position-dependent changes with a periodic pattern, while the 
 # cosine function captures the position-independent changes with a constant pattern.
@@ -2272,10 +2271,52 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # dimension captures unique positional information, utilizing the properties of these trigonometric functions
 # to represent frequencies and phases.
 #
-# question :why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
-# You raise a valid point. In some tasks, using only sine functions might be sufficient to capture position-
-# dependent information. The inclusion of cosine functions in positional encoding is not strictly necessary 
-# for all tasks. It depends on the specific requirements and characteristics of the problem at hand.
+# side note:
+# The terms "position-dependent" and "position-independent" in this context refer to how the values of the sine
+# and cosine functions change with respect to the input (or position in the sequence).
+# The sine function, sin(x), starts at 0 when x=0 and oscillates between -1 and 1 as x increases or 
+# decreases. This means that the output of the sine function is dependent on the position, and it changes as the
+# position changes, hence the term "position-dependent".
+# On the other hand, the cosine function, cos(x), starts at 1 when x=0 and also oscillates between -1 and 1 as 
+# x increases or decreases. However, the key difference is that the cosine function's maximum value occurs at x=0,
+# and it decreases from there. This means that the cosine function captures the highest value at the start of the 
+# sequence (position-independent), and then the value changes as the position changes.
+# In the context of positional encoding in transformer models, the alternating pattern of sine and cosine functions
+# across different dimensions helps the model to capture various frequency patterns and differentiate positions in
+# the sequence. The cosine function's initial high value provides a kind of "anchor" at the start of the sequence, 
+# while the sine function provides variation and differentiation across positions. This combination helps the model
+# to understand the relative positions of elements in the sequence. 
+#
+#
+# if its not yet clear, lets expand on it a bit more before we get to reset of the discusion here: 
+# We know we use sine and cosine functions to encode the position of each element in the sequence and the idea is
+# to provide the model with some information about the relative positions of the elements in the sequence.
+# Now, let's consider a sequence of numbers from 1 to 10. If we apply the sine function to this sequence, we'll get
+# a new sequence of numbers that goes up and down between -1 and 1. This new sequence has a clear pattern that repeats
+# every time we go from 1 to 10. This is what we mean when we say that the sine function captures "position-dependent"
+# changes. The output of the sine function depends on the input position.
+# On the other hand, if we apply the cosine function to the same sequence from 1 to 10, we'll also get a sequence of
+# numbers that goes up and down between -1 and 1. However, the pattern is different from the sine function. 
+# The cosine function starts at its maximum value when the input is 0 and then goes down and up again. This is what 
+# we mean when we say that the cosine function captures "position-independent" changes. 
+# The output of the cosine function changes in a way that is not directly tied to the input position.
+# In positional encoding, we interleave (or alternate) the sine and cosine functions. 
+# This means that we apply the sine function to the odd positions (1, 3, 5, etc.) and the cosine function to the 
+# even positions (0, 2, 4, etc.). This interleaving of sine and cosine functions helps the model to capture different
+# patterns of changes across the sequence, which in turn helps the model to understand the relative positions of
+# the elements in the sequence.
+# note that in practice it doesnt matter if we swap the order of sin/cos, because doing so in the positional encoding
+# would not fundamentally change the properties of the encoding. 
+# The sine and cosine functions are phase-shifted versions of each other(cos(x)=sin(x+2π​)).
+# This means that they carry the same information but shifted. and in fact in our implementation and lots of others
+# you'll see this is the case and unlike the original paper, the sin is applied on even indexes, while cosine is
+# applied on the odd indexes. 
+#
+#
+# Question :why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
+# In some tasks, using only sine functions might be sufficient to capture position-dependent information. 
+# The inclusion of cosine functions in positional encoding is not strictly necessary for all tasks. 
+# It depends on the specific requirements and characteristics of the problem at hand.
 # The reason for including cosine functions alongside sine functions in sinusoidal positional encoding is to
 # provide a richer representation of positional information. While sine functions capture position-dependent
 # changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern.
@@ -2290,8 +2331,43 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # architectural choice, and it may require experimentation and exploration to determine the optimal approach 
 # for a specific task.
 #
-# can you explain the first paragraph more? like which tasks for example?
-# Certainly! The necessity of including cosine functions alongside sine functions in positional encoding can 
+# lets use an example to make it more intuitive : 
+# let's consider a simple example of a sequence of words: "I", "love", "AI", "research".
+# If we were to use only sine functions for positional encoding, we might assign each word a unique sine value based
+# on its position in the sequence. For instance, "I" might be assigned sin(0) = 0, "love" might be assigned sin(1) = 0.8415,
+# "AI" might be assigned sin(2) = 0.9093, and "research" might be assigned sin(3) = 0.1411. 
+# These values capture the position-dependent changes in the sequence.
+# Now, let's add cosine functions to the mix. We might assign each word a unique cosine value based on its position in 
+# the sequence. For instance, "I" might be assigned cos(0) = 1, "love" might be assigned cos(1) = 0.5403, "AI" might be
+# assigned cos(2) = -0.4161, and "research" might be assigned cos(3) = -0.9900. These values capture the position-independent
+# changes in the sequence.
+# By combining these sine and cosine values, we create a richer representation of each word's position in the sequence. 
+# For instance, the word "I" is now represented by the pair (0, 1), "love" is represented by the pair (0.8415, 0.5403), 
+# "AI" is represented by the pair (0.9093, -0.4161), and "research" is represented by the pair (0.1411, -0.9900).
+# This interleaved pattern of sine and cosine values allows the model to capture both position-dependent and position-independent
+# changes in the sequence, providing a more comprehensive understanding of the sequence and its positional relationships.
+#
+# !Now lets have an intuition for when the cosine might not be strictly needed(see 'Extra explanation' below):
+# let's consider the task of language modeling, specifically predicting the next word in a sentence. 
+# In this case, the model needs to understand the order of the words,
+# but it might not necessarily need to understand the position of each word in an 'absolute' sense.
+# For example, in the sentence "I love AI research", the model needs to know that "AI" comes after "love" and before 
+# "research". This is position-dependent information, which can be captured by the sine function in positional encoding.
+# However, the model might not need to know that "AI" is the third word in the sentence in an absolute sense. This is 
+# position-independent information, which would be captured by the cosine function in positional encoding.
+# In this case, using only sine functions for positional encoding might be sufficient. 
+# The model can learn the relative positions of the words (i.e., which words come before and after each other) without 
+# needing to know their absolute positions in the sentence.
+# However, it's important to note that this is a simplification. In practice, transformer models often benefit from using
+# both sine and cosine functions in positional encoding, as it provides a richer representation of positional information. 
+# But in theory, for some tasks like the one described above, using only sine functions might be sufficient.
+# ! in our implementation we will see this in action where we use both sin-sin/cos/absolute positioning/no positional info
+# ! and see how they affect the model quality. 
+#
+# 
+#
+# --Examples that would benifit from using cosine (along sine) for positional encoding:
+# The necessity of including cosine functions alongside sine functions in positional encoding can 
 # vary depending on the task at hand. Here are a few examples to illustrate when including position-independent
 # changes might be beneficial:
 # 1. Machine Translation: In machine translation tasks, the relative positions of words in the source and target
@@ -2315,71 +2391,171 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 #    sine functions enables the model to capture both position-dependent variations (captured by sine functions)
 #    and position-independent patterns (captured by cosine functions), helping to generate musically meaningful 
 #    sequences.
-# These are just a few examples where including position-independent changes through cosine functions in 
-# positional encoding can be beneficial. However, it's important to note that the specific requirements and
-# characteristics of each task may vary, and the decision to include cosine functions should be based on 
-# empirical evaluation and experimentation, considering the specific nature of the task and dataset.
+# 5. Image Captioning: In image captioning tasks, the relative positions of objects or regions within an image can 
+#    provide important contextual information. By including cosine functions in positional encoding, the model can 
+#    capture position-independent information, such as the global layout or arrangement of objects in the image. 
+#    This can aid in generating more accurate and contextually relevant captions for the image.
+# 
+# 6. Document Classification: In document classification tasks, the position of words or paragraphs within a document 
+#    can be indicative of the document's topic or structure. By incorporating cosine functions in positional encoding, 
+#    the model can capture position-independent information, such as the overall organization or hierarchy of the 
+#    document. This can assist in better understanding the document's content and making more informed classification 
+#    decisions.
+# 
+# 7. Time Series Forecasting: In time series forecasting tasks, the temporal ordering and duration of events play a 
+#    critical role in predicting future values. By including cosine functions in positional encoding, the model can 
+#    capture position-independent information, such as the overall trend or seasonality in the time series. 
+#    This can help the model understand long-term patterns and make more accurate predictions.
+# 
+# 8. Video Processing: In video processing tasks, the temporal ordering and relationships between frames are crucial 
+#    for tasks like action recognition or video captioning. By incorporating cosine functions in positional encoding, 
+#    the model can capture position-independent information, such as the overall motion or rhythm in the video sequence.
+#    This can aid in recognizing actions or generating coherent captions for the video.
+# 
+#! --Examples that wouldnt benifit from cosine(contradicts with previous samples (3,sentiment analysis is used in both examples)):
+# Including cosine functions in positional encoding may not provide significant benefits or may not be necessary in 
+#    certain tasks where position-independent changes are not as relevant. Here are a few examples where the inclusion
+#    of cosine functions may not be as helpful:
+# 1. Sequence Tagging: In tasks like part-of-speech tagging or named entity recognition, the primary focus is on capturing
+#    position-dependent information. The model needs to understand the relative positions of words to assign appropriate
+#    tags. In such cases, using only sine functions for positional encoding may be sufficient, as they can effectively 
+#    capture position-dependent changes without the need for cosine functions.
 #
-# what are more examples?
-# Certainly! Here are a few more examples where including cosine functions in positional encoding can be beneficial:
-# 1. Image Captioning: In image captioning tasks, the relative positions of objects or regions within an image can provide important contextual information. By including cosine functions in positional encoding, the model can capture position-independent information, such as the global layout or arrangement of objects in the image. This can aid in generating more accurate and contextually relevant captions for the image.
-# 2. Document Classification: In document classification tasks, the position of words or paragraphs within a document can be indicative of the document's topic or structure. By incorporating cosine functions in positional encoding, the model can capture position-independent information, such as the overall organization or hierarchy of the document. This can assist in better understanding the document's content and making more informed classification decisions.
-# 3. Time Series Forecasting: In time series forecasting tasks, the temporal ordering and duration of events play a critical role in predicting future values. By including cosine functions in positional encoding, the model can capture position-independent information, such as the overall trend or seasonality in the time series. This can help the model understand long-term patterns and make more accurate predictions.
-# 4. Video Processing: In video processing tasks, the temporal ordering and relationships between frames are crucial for tasks like action recognition or video captioning. By incorporating cosine functions in positional encoding, the model can capture position-independent information, such as the overall motion or rhythm in the video sequence. This can aid in recognizing actions or generating coherent captions for the video.
-# These are just a few additional examples where including cosine functions in positional encoding can be beneficial. The specific applicability of cosine functions may depend on the characteristics and requirements of the task, as well as the nature of the data being processed. It's important to experiment and evaluate different encoding strategies to find the most suitable approach for each specific task.
+# 2. Sequence Generation: In tasks like text generation or image synthesis, the primary objective is to generate new 
+#    sequences or samples based on the given input. The position-independent changes may not play a significant role in 
+#    the generation process, as the focus is on capturing the distribution of data and generating coherent sequences. 
+#    In such cases, using only sine functions for positional encoding may be adequate.
 #
-# in which task this doesnt help?
-# Including cosine functions in positional encoding may not provide significant benefits or may not be necessary in certain tasks where position-independent changes are not as relevant. Here are a few examples where the inclusion of cosine functions may not be as helpful:
-# 1. Sequence Tagging: In tasks like part-of-speech tagging or named entity recognition, the primary focus is on capturing position-dependent information. The model needs to understand the relative positions of words to assign appropriate tags. In such cases, using only sine functions for positional encoding may be sufficient, as they can effectively capture position-dependent changes without the need for cosine functions.
-# 2. Sequence Generation: In tasks like text generation or image synthesis, the primary objective is to generate new sequences or samples based on the given input. The position-independent changes may not play a significant role in the generation process, as the focus is on capturing the distribution of data and generating coherent sequences. In such cases, using only sine functions for positional encoding may be adequate.
-# 3. Sequence Classification: In tasks like sentiment analysis or document classification, the position-independent changes may have minimal impact on the classification task. The model primarily needs to understand the local context and relationships between words or phrases. In these cases, using only sine functions for positional encoding may be sufficient to capture the position-dependent information.
-# It's important to note that the applicability of cosine functions in positional encoding depends on the specific task and dataset characteristics. While including cosine functions can provide a richer representation of positional information in many cases, there may be scenarios where the position-independent changes captured by cosine functions are not as relevant or impactful. It's always recommended to experiment and evaluate different encoding strategies to determine the most suitable approach for a given task.
+# 3. Sequence Classification: In tasks like sentiment analysis or document classification, the position-independent changes
+#    may have minimal impact on the classification task. The model primarily needs to understand the local context and 
+#    relationships between words or phrases. In these cases, using only sine functions for positional encoding may be 
+#    sufficient to capture the position-dependent information.
 #
-# can you explain this part in depth?
-# "While sine functions capture position-dependent changes with a periodic pattern, cosine functions capture position-independent changes with a constant pattern."
-# Certainly! Let's dive deeper into the explanation of how sine and cosine functions capture position-dependent and position-independent changes, respectively:
-# Sine Functions: Sine functions are trigonometric functions that oscillate between -1 and 1 in a periodic manner. The sine function is an odd function, meaning it is symmetric about the origin. It captures position-dependent changes because it introduces variations based on the position within the sequence. As the position changes, the sine function produces different values, resulting in a periodic pattern. This periodicity is useful for capturing the relative ordering and position-dependent information in a sequence.
-# Cosine Functions: Cosine functions are also trigonometric functions that oscillate between -1 and 1, but they have a different pattern compared to sine functions. The cosine function is an even function, meaning it is symmetric about the y-axis. Unlike the sine function, which captures position-dependent changes, the cosine function captures position-independent changes. It produces a constant pattern that remains the same regardless of the position within the sequence. This pattern provides a reference point or a baseline for the model to understand how each position deviates from a standard or average position. It helps capture position-independent information that may be relevant for certain tasks.
-# To summarize, sine functions capture position-dependent changes by introducing variations and a periodic pattern based on the position within the sequence. On the other hand, cosine functions capture position-independent changes by providing a constant pattern that remains the same throughout the sequence. This combination of sine and cosine functions in positional encoding allows the model to capture both position-dependent and position-independent information, providing a more comprehensive representation of positional relationships within a sequence.
+# It's important to note that the applicability of cosine functions in positional encoding depends on the specific task 
+#    and dataset characteristics. While including cosine functions can provide a richer representation of positional 
+#    information in many cases, there may be scenarios where the position-independent changes captured by cosine 
+#    functions are not as relevant or impactful. It's always recommended to experiment and evaluate different encoding 
+#    strategies to determine the most suitable approach for a given task.
+#
+#! --Extra-explanation(its shorter version is explained above we may want to merge them (possibly remove this one)): 
+# Let's dive deeper into the explanation of how sine and cosine functions capture position-dependent and 
+# position-independent changes, respectively:
+# Sine Functions: Sine functions are trigonometric functions that oscillate between -1 and 1 in a periodic manner. 
+# The sine function is an odd function, meaning it is symmetric about the origin. It captures position-dependent changes 
+# because it introduces variations based on the position within the sequence. As the position changes, the sine function 
+# produces different values, resulting in a periodic pattern. 
+# This periodicity is useful for capturing the relative ordering and position-dependent information in a sequence.
+#
+# Cosine Functions: Cosine functions are also trigonometric functions that oscillate between -1 and 1, but they have a 
+# different pattern compared to sine functions. The cosine function is an even function, meaning it is symmetric about
+# the y-axis. Unlike the sine function, which captures position-dependent changes, the cosine function captures 
+# position-independent changes. It produces a constant pattern that remains the same regardless of the position within
+# the sequence. This pattern provides a reference point or a baseline for the model to understand how each position 
+# deviates from a standard or average position. It helps capture position-independent information that may be relevant 
+# for certain tasks.
+# To summarize, sine functions capture position-dependent changes by introducing variations and a periodic pattern based
+# on the position within the sequence. On the other hand, cosine functions capture position-independent changes by 
+# providing a constant pattern that remains the same throughout the sequence. This combination of sine and cosine 
+# functions in positional encoding allows the model to capture both position-dependent and position-independent information,
+# providing a more comprehensive representation of positional relationships within a sequence.
+#
 #
 # Question: sin and cos are periodic functions, i.e. they repeat their values, so how is this not a problem in this case? how do they address this issue?
 #
-# You are correct that sine and cosine functions are periodic, meaning they repeat their values over a specific interval. This periodicity could potentially pose a problem if we were to use these functions directly as positional encodings. However, in the context of sinusoidal positional encoding, the periodic nature of sine and cosine functions is actually leveraged in a way that addresses this issue effectively.
-# In sinusoidal positional encoding, the position within the sequence is encoded using a combination of sine and cosine functions with different frequencies and phases. The frequency determines how quickly the function oscillates, while the phase determines the starting point of the oscillation.
-# By using different frequencies and phases for each dimension in the encoding, the sinusoidal positional encoding achieves a unique representation for each position in the sequence. This means that even though sine and cosine functions are periodic, the combination of different frequencies and phases ensures that the positional encoding values do not repeat exactly for each position.
-# For example, consider encoding a sequence of length L. Each position in the sequence corresponds to a unique set of frequencies and phases for the sine and cosine functions. As a result, the encoding values for each position will have a distinct combination of sine and cosine values, ensuring that the positional information is uniquely represented.
-# Therefore, the periodicity of sine and cosine functions is not a problem in sinusoidal positional encoding because the combination of different frequencies and phases allows for the creation of unique positional encodings that capture the necessary positional information without exact repetition.
-# Overall, the use of different frequencies and phases in sinusoidal positional encoding effectively addresses the periodic nature of sine and cosine functions, ensuring that the encoding values for each position are distinct and provide unique representation within the sequence.
+# The periodicity could potentially pose a problem if we were to use these functions directly as positional encodings.
+# However, in the context of sinusoidal positional encoding, the periodic nature of sine and cosine functions is actually
+# leveraged in a way that addresses this issue effectively.
+# In sinusoidal positional encoding, the position within the sequence is encoded using a combination of sine and cosine 
+# functions with different frequencies and phases. 
+# The frequency determines how quickly the function oscillates, while the phase determines the starting point of the oscillation.
+# By using different frequencies and phases for each dimension in the encoding, the sinusoidal positional encoding achieves
+# a unique representation for each position in the sequence. This means that even though sine and cosine functions are 
+# periodic, the combination of different frequencies and phases ensures that the positional encoding values do not repeat 
+# exactly for each position.
+# For example, consider encoding a sequence of length L. Each position in the sequence corresponds to a unique set of 
+# frequencies and phases for the sine and cosine functions. As a result, the encoding values for each position will have
+# a distinct combination of sine and cosine values, ensuring that the positional information is uniquely represented.
+# Thats why the periodicity of sine and cosine functions is not a problem in sinusoidal positional encoding.
 #
-# if we used a low frequency with sin, it would provide us a large range of numbers, wouldnt that alone be enough?
-# Using a low frequency with sine functions can indeed provide a larger range of numbers, but it may not be sufficient on its own to capture all the necessary positional information. While it can help differentiate between positions, it doesn't take into account the phase or timing of the position within the sequence.
-# Including cosine functions alongside sine functions in sinusoidal positional encoding adds an additional dimension that captures position-independent changes. The cosine functions provide a constant pattern that remains the same throughout the sequence, allowing the model to understand the relative position of each element with respect to a reference point or baseline.
-# By combining sine and cosine functions, sinusoidal positional encoding captures both position-dependent and position-independent changes. This richer representation allows the model to not only differentiate between positions but also understand the overall context and relationships between different positions within the sequence.
-# Additionally, using a low frequency with sine functions alone could lead to potential overlaps or interference between positional encodings, especially in longer sequences. Incorporating multiple frequencies and phases for both sine and cosine functions helps ensure that the positional encodings are distinct and can be easily distinguished by the model.
-# So while a low frequency with sine functions can provide a larger range of numbers, including cosine functions alongside sine functions enhances the positional encoding by capturing position-independent changes and ensuring a more comprehensive representation of positional information.
 #
-# Q: can you elaborate more on how using a low frequency with sine functions alone could lead to potential overlaps or interference between positional encodings?
-# Certainly! Let's dive deeper into why using a low frequency with sine functions alone could lead to potential overlaps or interference between positional encodings.
-# When using sine functions for positional encoding, the frequency determines how quickly the function oscillates. A low frequency means that the sine function will complete fewer oscillations over a given range of positions. As a result, the values of the sine function will change more slowly as the position increases, leading to a larger range of numbers.
-# While this can help differentiate between positions to some extent, it may not be sufficient to capture all the necessary positional information, especially in longer sequences. Here's why:
-# 1. Overlapping Encodings: In longer sequences, using a low frequency with sine functions alone can result in overlapping encodings. Since the sine function changes slowly, adjacent positions in the sequence may have similar or overlapping encoding values. This can lead to a loss of distinctiveness between positions, making it harder for the model to differentiate between them accurately.
-# 2. Lack of Precision: Using a low frequency alone may not provide enough precision to capture subtle positional differences. The encoding values may not be fine-grained enough to accurately represent the relative positions within the sequence. This lack of precision can limit the model's ability to understand the precise relationships between elements in the sequence.
-# 3. Limited Contextual Information: Sine functions alone do not capture position-independent changes or provide contextual information. They only capture position-dependent changes. By incorporating cosine functions in addition to sine functions, sinusoidal positional encoding captures both position-dependent patterns (sine functions) and position-independent patterns (cosine functions). This allows the model to understand the overall context and relationships between different positions in the sequence.
-# By including multiple frequencies and phases for both sine and cosine functions, sinusoidal positional encoding ensures that each position has a distinct encoding value. This helps prevent overlaps or interference between positional encodings and provides a more comprehensive representation of positional information.
-# In summary, using a low frequency with sine functions alone may result in overlapping encodings, lack of precision, and limited contextual information. Incorporating multiple frequencies and phases, including the use of cosine functions, in sinusoidal positional encoding addresses these issues and provides a more effective representation of positional information.
+# !Question: if we used a low frequency with sin, it would provide us with a large range of numbers, wouldnt that alone be enough? (has overlaps with what we covered before)
+# Using a low frequency with sine functions can indeed provide us with a larger range of numbers, but it may not be sufficient on
+# its own to capture all the necessary positional information. 
+# In other words, while it can help differentiate between positions, it doesn't take into account the phase or timing of the 
+# position within the sequence.
+# Including cosine functions alongside sine functions in sinusoidal positional encoding adds an additional dimension that 
+# captures position-independent changes. The cosine function provides a constant pattern that remains the same throughout
+# the sequence, allowing the model to understand the relative position of each element with respect to a reference point 
+# or baseline.
+# By combining sine and cosine functions, sinusoidal positional encoding captures both position-dependent and position-independent
+# changes. This richer representation allows the model to not only differentiate between positions but also understand the 
+# overall context and relationships between different positions within the sequence.
+# Moreover, its important to note that using a low frequency with sine functions alone could lead to potential overlaps
+# or interference between positional encodings, especially in longer sequences. (explanation given below)
+# Incorporating multiple frequencies and phases for both sine and cosine functions helps ensure that the positional encodings
+# are distinct and can be easily distinguished by the model.
+# 
+#
+#! Question: How could using a low frequency with sine functions alone, lead to potential overlaps or interference between positional encodings?(related to another question beofre)
+# When using sine functions for positional encoding, the frequency determines how quickly the function oscillates. 
+# A low frequency means that the sine function will complete fewer oscillations over a given range of positions. As a 
+# result, the values of the sine function will change more slowly as the position increases, leading to a larger range 
+# of numbers.
+# While this can help differentiate between positions to some extent, it may not be sufficient to capture all the necessary
+# positional information, especially in longer sequences. Here's why:
+# 1. Overlapping Encodings: In longer sequences, using a low frequency with sine functions alone can result in overlapping
+#    encodings. Since the sine function changes slowly, adjacent positions in the sequence may have similar or overlapping 
+#    encoding values. This can lead to a loss of distinctiveness between positions, making it harder for the model to 
+#    differentiate between them accurately.
+# 2. Lack of Precision: Using a low frequency alone may not provide enough precision to capture subtle positional differences.
+#    The encoding values may not be fine-grained enough to accurately represent the relative positions within the sequence.
+#    This lack of precision can limit the model's ability to understand the precise relationships between elements in the
+#    sequence.
+# 3. Limited Contextual Information: Sine functions alone do not capture position-independent changes or provide contextual 
+#    information. They only capture position-dependent changes. By incorporating cosine functions in addition to sine functions,
+#    sinusoidal positional encoding captures both position-dependent patterns (sine functions) and position-independent patterns
+#    (cosine functions). This allows the model to understand the overall context and relationships between different positions 
+#     in the sequence.
+# By including multiple frequencies and phases for both sine and cosine functions, sinusoidal positional encoding ensures 
+# that each position has a distinct encoding value. This helps prevent overlaps or interference between positional encodings
+# and provides a more comprehensive representation of positional information.
+# In summary, using a low frequency with sine functions alone may result in overlapping encodings, lack of precision, and 
+# limited contextual information. Incorporating multiple frequencies and phases, including the use of cosine functions, in 
+# sinusoidal positional encoding addresses these issues and provides a more effective representation of positional information.
 #
 #
 # Q: why does taking into account the phase or timing of the position within the sequence important?
-# Taking into account the phase or timing of the position within the sequence is important because it provides additional information about the relative ordering and relationships between elements in the sequence. Here's why phase or timing is crucial in positional encoding:
-# 1. Capture Sequential Dependencies: The phase component of the positional encoding helps capture sequential dependencies between elements in the sequence. It specifies the starting point or reference for the oscillation of the sine and cosine functions. By incorporating phase information, the model can understand the sequential order of the elements and how they relate to each other in the context of the task. This is particularly essential in tasks where the order of the elements carries significant meaning, such as natural language processing tasks or time series analysis.
-# 2. Encode Relative Positional Information: Phase information enables the model to encode the relative positional information of elements within the sequence. It indicates how far along the sequence an element is compared to others. By considering the phase, the model can differentiate between positions and understand the relative distances or intervals between elements. This is crucial for tasks that require understanding positional relationships, such as machine translation or sentiment analysis.
-# 3. Differentiate Positions with Same Frequency: When using sine functions alone, different positions can have the same frequency but different phases. By incorporating the phase component, each position obtains a unique encoding value, even if they share the same frequency. This ensures that the model can distinguish between positions that have similar frequency-based changes but occur at different points within the sequence.
-# 4. Capture Temporal or Spatial Patterns: Phase information can capture temporal or spatial patterns in the data. For example, in time series analysis, the phase component can help capture the seasonality or periodic patterns in the data. In spatial data analysis, it can capture the spatial arrangement or layout of objects within an image or a graph. By considering the phase, the model can learn to recognize and utilize these patterns effectively.
-# Incorporating the phase or timing of the position within the sequence in positional encoding provides the model with crucial information about sequential dependencies, positional relationships, and patterns in the data. It enhances the model's ability to understand and exploit the temporal or spatial characteristics of the sequence, leading to improved performance in various tasks.
+# Its important because it provides additional information about the relative ordering and relationships between elements
+# in the sequence. Here's why:
+# 1. Capture Sequential Dependencies: The phase component of the positional encoding helps capture sequential dependencies 
+#    between elements in the sequence. It specifies the starting point or reference for the oscillation of the sine and cosine
+#    functions. By incorporating phase information, the model can understand the sequential order of the elements and how 
+#    they relate to each other in the context of the task. This is particularly essential in tasks where the order of the 
+#    elements carries significant meaning, such as natural language processing tasks or time series analysis.
+# 2. Encode Relative Positional Information: Phase information enables the model to encode the relative positional information
+#    of elements within the sequence. It indicates how far along the sequence an element is compared to others. 
+#    By considering the phase, the model can differentiate between positions and understand the relative distances or intervals
+#    between elements. This is crucial for tasks that require understanding positional relationships, such as machine translation
+#    or sentiment analysis.
+# 3. Differentiate Positions with Same Frequency: When using sine functions alone, different positions can have the same
+#    frequency but different phases. By incorporating the phase component, each position obtains a unique encoding value,
+#    even if they share the same frequency. This ensures that the model can distinguish between positions that have similar
+#    frequency-based changes but occur at different points within the sequence.
+# 4. Capture Temporal or Spatial Patterns: Phase information can capture temporal or spatial patterns in the data. 
+#    For example, in time series analysis, the phase component can help capture the seasonality or periodic patterns 
+#    in the data. In spatial data analysis, it can capture the spatial arrangement or layout of objects within an image
+#    or a graph. By considering the phase, the model can learn to recognize and utilize these patterns effectively.
+# Incorporating the phase or timing of the position within the sequence in positional encoding provides the model with 
+# crucial information about sequential dependencies, positional relationships, and patterns in the data. 
+# It enhances the model's ability to understand and exploit the temporal or spatial characteristics of the sequence, 
+# leading to improved performance in various tasks.
 # 
 #
 # Part2:why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
-# While the sine function is effective at capturing position-dependent information due to its periodic nature, incorporating the cosine function to capture position-independent changes provides additional flexibility and ensures a more comprehensive representation. Here are a few reasons why both components, sine and cosine, are beneficial:
+# While the sine function is effective at capturing position-dependent information due to its periodic nature, 
+# incorporating the cosine function to capture position-independent changes provides additional flexibility and ensures a
+# more comprehensive representation. 
+# Here are a few reasons why both components, sine and cosine, are beneficial:
 #     Versatility and Generalization:
 #         Sine for Periodic Patterns: Sine is well-suited for encoding positions with periodic patterns, such as sequences where certain positions exhibit recurring behaviors or variations.
 #         Cosine for Constant Features: Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. This helps in capturing position-independent characteristics that may not follow a periodic trend.
@@ -3194,17 +3370,17 @@ plt.plot(pos_vec)
 #%%
 # !all entries interact with all other entries at the same time, and the order of words/tokens is lost
 # 'how are you' would be the same as 'are how you', 'you how are', 'you are how', 'how you are', etc
-# since we are using this in a autoregressive model, given a character, we want the next one, its obvious
+# since we are using this in a autoregressive model, given a token, we want the next one, its obvious
 # that we want the order of words/tokens to be preserved, so we get the output that makes sense!, otherwise,
 # this would create the same output for all of these input, which is not what we want!.(theres nothing in
-# the input to specify the order, that is we treat it as if theres none!). in other
-# usecases, such as translation from one language to another, we dont have this issue, as we want to grab
+# the input to specify the order, that is we treat it as if theres none!). 
+# in other usecases, such as translation from one language to another, we dont have this issue, as we want to grab
 # one paragraph in one language completely and then produce a translation later, the first part doesnt
 # need this as we arent after producing the next word/token, but the second part does, we talk about this in more
 # details later, but for now, we know we want to preserve the order as well. so what do we do?  
-# so we need to also incorporate the position information for each token as well.
-# there are several ways we can add this inormation, each with its own set of merits and drawbacks
-# for one, we can add a number for to each token, like 0 for how, 1 for are, and 2 for you, and so on and so forth
+# 
+# there are several ways we can add this positional information, each with its own set of merits and drawbacks
+# for one, we can add a number for each token, like 0 for how, 1 for are, and 2 for you, and so on.
 # but this has several issues, and doesnt work as expected, becasue, suppose we have large number of tokens
 # doing so can create a bias for later tokens, it puts more value/attention on tokens with larger numbers
 # also if the length of a sentences is increased, we get different value, for the positions, 
