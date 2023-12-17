@@ -2873,19 +2873,21 @@ def sin_pos_enc_simple(pos, embd_d):
         pos_vector[i] = np.sin(pos/10_000 ** (2*i/embd_d))
         # if embd is odd check so we dont go over the last index
         if i+1<embd_d:
-            pos_vector[i+1] = np.cos(pos/10_000 ** ((2*i+1)/embd_d))
+            pos_vector[i+1] = np.cos(pos/10_000 ** (2*i/embd_d))
     return pos_vector
 # now we can have a positional vector for each position, form 0 to infinity!
 # lets plot this for a few positions and see the result
 def plot_vec(func, pos_cnt, embd_d,figsize=(6,4)):
     plt.figure(figsize=figsize)
-    plt.plot([func(pos, embd_d=512) for pos in range(50)])
+    plt.plot([func(pos, embd_d) for pos in range(pos_cnt)])
     plt.xlabel("Position")
     plt.ylabel("Encoding Value")
     plt.title("Sinusoidal Positional Encoding")
     plt.show()
     
 plot_vec(sin_pos_enc_simple,pos_cnt=50, embd_d=512)
+#%%
+
 #%%
 # in practice however, we dont use for loops, so you may see vectorized implementation like this: 
 def sin_pos_enc_vectorized(pos, embd_d):
@@ -2895,14 +2897,15 @@ def sin_pos_enc_vectorized(pos, embd_d):
     # the same for all the odd entries in pos_vec with cosine. 
     # to do this we need a vectorized operation on the right side and it is achieved
     # using np.arange() function.
-    # basically, the np.arange(0,embd_d) here, generates an array of numbers from 0 to embd_d-1 
+    # basically, the np.arange(0, embd_d) here, generates an array of numbers from 0 to embd_d-1 
     # and then this array is used in the division and multiplication operations (element-wise).
     # this way it is much faster than using a for loop.
-    # pos_vec[0::2] = np.sin(pos/10_000 ** (2*np.arange(0,embd_d)/embd_d))
-    # pos_vec[1::2] = np.cos(pos/10_000 ** (2*np.arange(0,embd_d)/embd_d)) 
-    # but this is not accurate, if you look, we are using the same dimensions for all
-    # dimensions, whereas we need to use the even for one and the odd one for others
-    # lets separate that div term from pos and do it the right way 
+    # note that we have to use step=2 to half the dims so it fits into each half
+    # pos_vec[0::2] = np.sin(pos/10_000 ** (2*np.arange(0,embd_d,2)/embd_d))
+    # pos_vec[1::2] = np.cos(pos/10_000 ** (2*np.arange(0,embd_d,2)/embd_d))
+    # but this means we are using the same dimensions(evens) for all dimensions(evens and odds),
+    # we can separat this and use the even dims with sin and the odd ones with the cosine.
+    # lets separate that operation into two parts, remove the pos part and create a standalone div_term 
     div_term = 10_000 ** (2*np.arange(0,embd_d)/embd_d)
     # lets make it clear that we only want the even dims for sin
     pos_vec[0::2] = np.sin(pos/div_term[0::2])
@@ -2912,26 +2915,33 @@ def sin_pos_enc_vectorized(pos, embd_d):
 
 # and we get the same result
 plot_vec(sin_pos_enc_vectorized,pos_cnt=50, embd_d=512)
+# in fact theres a slight difference, but its not that significant so in practice 
+# we dont really care about the odd/even separation and usually use the even dims 
+# for everything!
+# so to recap: the exact offset of 1 in the exponent doesn’t make a significant difference 
+# in the positional encodings, and using the same term for both sine and cosine simplifies
+# the implementation so thats why in some implementations people started doing that.
 #%%
 # However in practice we instead use a more efficient implementation which is as folllows:
 def sin_pos_enc_eff(pos, embd_d):
     pos_vec = np.zeros(embd_d)
-    # instead of doing power and division of tiny floats, that can get problematic 
-    # we instead use their equivalent using log and exp() operations. 
-    # we know log(m.n) equals log(m)+log(n), likewise log(m/n) = log(m) - log(n)
-    # we can write division as a multiplication operation, more specifically we 
+    # instead of doing power when dealing with floats, which can get problematic 
+    # we instead use their equivalent using log() and exp() operations. 
+    # we know we can write division as a multiplication operation, so we 
     # can write pos/10000^x as pos * 1/10000^x  (x being 2i/embd_d)
-    # we can then write 1/10000^x as 10000^-x  
-    # which then we can write it as : e^log(10000^-x)
-    # because exp and log are the inverse of eachothers so e^log(num) is num.
+    # we can then write 1/10000^x as 10000^-x becasue we know negative exponentiation
+    # is eual to fraction.  
+    # then we can write it as : e^log(10000^-x)
+    # because exp and log are the inverse of eachothers and e^log(num) is num.
     # its usually done for several reasons including numerical stability which is 
     # what we want here. but why?
     # we know that if a^b = e^(b * log(a))
-    # if we expand this we get
+    # so if we use this we get
     # to write e^(-x * log(10000))
     # which is then simply e^(-2i/embd_d * log(10000) which in turn is :
     # e^(-2i*log(10000)/embd_d)
-    # note the minus sign (if you omit it, you have to use division instead of multiplication with pos!)
+    # note the minus sign (if you omit it, you have to use division instead of 
+    # multiplication with pos!)
     div_term = np.exp(-2*np.arange(0, embd_d) * np.log(10_000)/embd_d)
     # all that remains is to multiply this by pos
     pos_vec[0::2] = np.sin(pos * div_term[0::2])
@@ -2941,21 +2951,44 @@ def sin_pos_enc_eff(pos, embd_d):
 plot_vec(sin_pos_enc_eff, 50, 512)
 # this plot is the same as the following one!
 #%%
-# here is an alternative implementation, which uses the 
+# and finally here is an alternative implementation, which uses the 
 # same embedding values for all embeddings (even or odd)
 # this
 import numpy as np
-def pos_enc(position_count=10000, embd_size=512):
-    # Compute the positional encodings once in log space.
-    position_embd = np.zeros(shape=(position_count, embd_size))
-    position = np.arange(0, position_count)[:, np.newaxis]
-    div_term = np.exp(-np.arange(0, embd_size, 2) * (np.log(10_000) / embd_size))
-    position_embd[:, 0::2] = np.sin(position * div_term)
-    position_embd[:, 1::2] = np.cos(position * div_term)
-    return position_embd
-    
+def sin_pos_enc_v2(pos, embd_d):
+    pos_vec = np.zeros(embd_d)
+    # note that we are using the step=2, and removed the 2! from 2i term
+    div_term = np.exp(-np.arange(0, embd_d, 2) * (np.log(10_000) / embd_d))
+    pos_vec[:, 0::2] = np.sin(pos * div_term)
+    pos_vec[:, 1::2] = np.cos(pos * div_term)
+    return pos_vec
+plot_vec(sin_pos_enc_eff, 50, 512)
+#%%
+# we can further change this so it can calculate the embeddings for all positions
+def sin_pos_enc_all(max_positions, embd_d):
+    #pos_vec is a 2d tensor now 
+    pos_vec = np.zeros(shape=(max_positions, embd_d))
+    # note the 2 behind np.arange() is removed (2i). this is a common simplification 
+    # which overall doesnt make much difference.
+    # we also calculate the exponent only for the even dimensions (hence step=2) and
+    # use that for both sine/cosine. this is another simplification thats common.
+    div_term = np.exp(-np.arange(0, embd_d,2) * np.log(10_000)/embd_d)
+    # now for all positions we need to create an array like we did for embd dims
+    # since we need to do an elementwise multiplication with div_term which is 
+    # an array of (embd//2), our final output should be (pos_max, embd//2)
+    # they are not compatible, so we add a new dim to positions
+    # so when they multiply it becomes (max_pos,1) * (1,embd//2) then get broadcasted
+    # into (maxpos,embd//2) and then the calculation is carried out.
+    # ((embd//2) is the same as (1,embd//2) so it doesnt need any changes and all
+    # should work now!)
+    positions = np.arange(0, max_positions)[:,None]
+    # calculate the positions for all positions all atonce
+    pos_vec[:,0::2] = np.sin(positions * div_term)
+    pos_vec[:,1::2] = np.cos(positions * div_term)
+    return pos_vec
+
 plt.figure(figsize=(15, 5))
-y = pos_enc(embd_size=20)
+y = sin_pos_enc_all(max_positions=100, embd_d=20)
 # lets plot 4 embd values for 100 positions, 
 # (we used 4:8 becasue they demonstrate pretty graphs! 
 # use other numbers and see the outcome) 
