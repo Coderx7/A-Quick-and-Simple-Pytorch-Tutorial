@@ -248,10 +248,10 @@ y = train_data[1:block_size+1]
 # its label(next character) would obviously be block_size+1, pretty obvious right?
 #
 # lets print this for better understanding 
-for i in range(block_size):
+for pos in range(block_size):
     # note that since we are using slice, x[:i+1], gives us 0 up to ith element (inclusive)
     # this should be obvious! but I said it in case you forgot!!
-    print(f'input is {x[:i+1].tolist()} label is {y[i]}')
+    print(f'input is {x[:pos+1].tolist()} label is {y[pos]}')
 # prints 
 # input is [18] label is 47
 # input is [18, 47] label is 56
@@ -600,7 +600,7 @@ print(f'{device=}')
 print(f'{model=}')
 
 model.train()
-for i in range(max_iter):
+for pos in range(max_iter):
     x,y = get_batch('train', batch_size=batch_size)
     x=x.to(device)
     y=y.to(device)
@@ -612,7 +612,7 @@ for i in range(max_iter):
     # and do a single optimizer update
     optimizer.step()
     
-    if i%1000==0:
+    if pos%1000==0:
         print(f'{loss}')
 # prints 
 # 4.760574817657471
@@ -674,7 +674,7 @@ model = BigramModel(vocab_size)
 optimizer = torch.optim.AdamW(model.parameters(), lr = 1e-3)
 model = model.to(device=device)
 model.train()
-for i in range(max_iter):
+for pos in range(max_iter):
     x,y = get_batch('train', batch_size=batch_size)
     x=x.to(device)
     y=y.to(device)
@@ -686,7 +686,7 @@ for i in range(max_iter):
     # and do a single optimizer update
     optimizer.step()
     
-    if i%1000==0:
+    if pos%1000==0:
         # now instead of simply printing loss, lets use our new function!
         loss= evaluate_loss(200)
         print(f'train_loss: {loss["train"].item():.4f},  val_loss: {loss["val"].item():.4f}')
@@ -1103,8 +1103,8 @@ print(f'b:\n{b}')
 # and sub tensors also are compatible, we have (T,T) and (T,C) so we now
 # individually multiply each sub-tensor
 c2 = torch.zeros_like(b)
-for i in range(b.shape[0]):
-    c2[i,...] = a[i]@b[i] # (T,T) x (T,C) -> (T,C)
+for pos in range(b.shape[0]):
+    c2[pos,...] = a[pos]@b[pos] # (T,T) x (T,C) -> (T,C)
 # and ultimatley the result will have the shape (B,T,C)
 print((c==c2).all())
 # so to recap this 
@@ -1479,9 +1479,9 @@ plt.title("weight[0]")
 plt.xticks(np.arange(len(tokens)), tokens, rotation=45)
 plt.yticks(np.arange(len(tokens)), tokens)
 # Add the attention weights on each cell
-for i in range(len(tokens)):
-    for j in range(len(tokens)):
-        text = plt.text(j, i, round(weight[0].detach().numpy()[i, j], 4),
+for pos in range(len(tokens)):
+    for i in range(len(tokens)):
+        text = plt.text(i, pos, round(weight[0].detach().numpy()[pos, i], 4),
                        ha="center", va="center", color="w")
 plt.show()
 #
@@ -2856,91 +2856,108 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # 
 # 
 # # %%
+#  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
+#
+# lets implement sinusoidal positional embedding 
+# the sinusoidal equation is given in the paper and is as follows: 
 #P E(pos,2i) = sin(pos/10000^(2i/dmodel))
 #P E(pos,2i+1) = cos(pos/10000^(2i/dmodel))
-# #  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
-import numpy as np
-import matplotlib.pyplot as plt
-plt.figure(figsize=(32, 8))
-
-sequence_length = 50
-embedding_dim = 4
-
-positions = np.arange(sequence_length)
-embeddings = np.zeros((sequence_length, embedding_dim))
-
-# Calculate sine and cosine values for each position and dimension
-for pos in positions:
-    for dim in range(embedding_dim):
-        freq = 1 / (10000 ** (2 * dim / embedding_dim))
-        embeddings[pos, dim] = np.sin(pos / freq)
-        embeddings[pos, dim] = np.cos(pos / freq)
-
-# Plot the positional encodings
-for dim in range(embedding_dim):
-    plt.plot(positions, embeddings[:, dim], label=f"Dimension {dim+1}")
-
-plt.xlabel("Position")
-plt.ylabel("Encoding Value")
-plt.title("Sinusoidal Positional Encoding")
-plt.legend()
-plt.show()
+# basically for each position we interleave sin and cosine functions for all embd entries.
+# so it would be sth like this 
+import numpy as np 
+import matplotlib.pyplot as plt 
+def sin_pos_enc_simple(pos, embd_d):
+    # return a sinusiodal positional vector for the given position 
+    pos_vector = np.zeros(shape=(embd_d))
+    for i in range(0,embd_d,2):
+        pos_vector[i] = np.sin(pos/10_000 ** (2*i/embd_d))
+        # if embd is odd check so we dont go over the last index
+        if i+1<embd_d:
+            pos_vector[i+1] = np.cos(pos/10_000 ** ((2*i+1)/embd_d))
+    return pos_vector
+# now we can have a positional vector for each position, form 0 to infinity!
+# lets plot this for a few positions and see the result
+def plot_vec(func, pos_cnt, embd_d,figsize=(6,4)):
+    plt.figure(figsize=figsize)
+    plt.plot([func(pos, embd_d=512) for pos in range(50)])
+    plt.xlabel("Position")
+    plt.ylabel("Encoding Value")
+    plt.title("Sinusoidal Positional Encoding")
+    plt.show()
+    
+plot_vec(sin_pos_enc_simple,pos_cnt=50, embd_d=512)
 #%%
-#
-#
-#
-#
-#
+# in practice however, we dont use for loops, so you may see vectorized implementation like this: 
+def sin_pos_enc_vectorized(pos, embd_d):
+    pos_vec = np.zeros(embd_d)
+    # instead of a for loop, we utilize the numpy's array slicing capabilities
+    # we first initialize all even entries in pos_vec with sin, and then we do
+    # the same for all the odd entries in pos_vec with cosine. 
+    # to do this we need a vectorized operation on the right side and it is achieved
+    # using np.arange() function.
+    # basically, the np.arange(0,embd_d) here, generates an array of numbers from 0 to embd_d-1 
+    # and then this array is used in the division and multiplication operations (element-wise).
+    # this way it is much faster than using a for loop.
+    # pos_vec[0::2] = np.sin(pos/10_000 ** (2*np.arange(0,embd_d)/embd_d))
+    # pos_vec[1::2] = np.cos(pos/10_000 ** (2*np.arange(0,embd_d)/embd_d)) 
+    # but this is not accurate, if you look, we are using the same dimensions for all
+    # dimensions, whereas we need to use the even for one and the odd one for others
+    # lets separate that div term from pos and do it the right way 
+    div_term = 10_000 ** (2*np.arange(0,embd_d)/embd_d)
+    # lets make it clear that we only want the even dims for sin
+    pos_vec[0::2] = np.sin(pos/div_term[0::2])
+    # and the odd ones for cosine
+    pos_vec[1::2] = np.cos(pos/div_term[1::2])
+    return pos_vec
+
+# and we get the same result
+plot_vec(sin_pos_enc_vectorized,pos_cnt=50, embd_d=512)
 #%%
-#
-#
-#%%
-import numpy as np
-import matplotlib.pyplot as plt
+# However in practice we instead use a more efficient implementation which is as folllows:
+def sin_pos_enc_eff(pos, embd_d):
+    pos_vec = np.zeros(embd_d)
+    # instead of doing power and division of tiny floats, that can get problematic 
+    # we instead use their equivalent using log and exp() operations. 
+    # we know log(m.n) equals log(m)+log(n), likewise log(m/n) = log(m) - log(n)
+    # we can write division as a multiplication operation, more specifically we 
+    # can write pos/10000^x as pos * 1/10000^x  (x being 2i/embd_d)
+    # we can then write 1/10000^x as 10000^-x  
+    # which then we can write it as : e^log(10000^-x)
+    # because exp and log are the inverse of eachothers so e^log(num) is num.
+    # its usually done for several reasons including numerical stability which is 
+    # what we want here. but why?
+    # we know that if a^b = e^(b * log(a))
+    # if we expand this we get
+    # to write e^(-x * log(10000))
+    # which is then simply e^(-2i/embd_d * log(10000) which in turn is :
+    # e^(-2i*log(10000)/embd_d)
+    # note the minus sign (if you omit it, you have to use division instead of multiplication with pos!)
+    div_term = np.exp(-2*np.arange(0, embd_d) * np.log(10_000)/embd_d)
+    # all that remains is to multiply this by pos
+    pos_vec[0::2] = np.sin(pos * div_term[0::2])
+    pos_vec[1::2] = np.cos(pos * div_term[1::2])
+    return pos_vec
 
-def pos_enc(pos, embd_size):
-    div_term = np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)
-    rep = np.zeros(embd_size)
-    rep[0::2] = np.sin(pos * div_term)
-    rep[1::2] = np.cos(pos * div_term)
-    return rep
-
-sequence_length = 100
-embedding_dim = 16
-
-positions = np.arange(sequence_length)
-embeddings = np.zeros((sequence_length, embedding_dim))
-
-# Calculate positional encodings using pos_enc function
-for pos in positions:
-    embeddings[pos] = pos_enc(pos, embedding_dim)
-
-# Plot the positional encodings
-for dim in range(embedding_dim):
-    plt.plot(positions, embeddings[:, dim], label=f"Dimension {dim+1}")
-
-plt.xlabel("Position")
-plt.ylabel("Encoding Value")
-plt.title("Sinusoidal Positional Encoding (pos_enc)")
-plt.legend()
-plt.show()
+plot_vec(sin_pos_enc_eff, 50, 512)
 # this plot is the same as the following one!
 #%%
-import math
-import torch
+# here is an alternative implementation, which uses the 
+# same embedding values for all embeddings (even or odd)
+# this
 import numpy as np
-def pos_enc(embd_size, max_seq_length=10000):
+def pos_enc(position_count=10000, embd_size=512):
     # Compute the positional encodings once in log space.
-    position_embd = np.zeros(shape=(max_seq_length, embd_size))
-    position = np.arange(0, max_seq_length)[:, np.newaxis]
-    div_term = np.exp(np.arange(0, embd_size, 2) * -(math.log(10000.0) / embd_size))
+    position_embd = np.zeros(shape=(position_count, embd_size))
+    position = np.arange(0, position_count)[:, np.newaxis]
+    div_term = np.exp(-np.arange(0, embd_size, 2) * (np.log(10_000) / embd_size))
     position_embd[:, 0::2] = np.sin(position * div_term)
     position_embd[:, 1::2] = np.cos(position * div_term)
     return position_embd
     
 plt.figure(figsize=(15, 5))
 y = pos_enc(embd_size=20)
-# lets plot 4 embd values for 100 positions, (we used 4:8 becasue they demonstrate pretty graphs! 
+# lets plot 4 embd values for 100 positions, 
+# (we used 4:8 becasue they demonstrate pretty graphs! 
 # use other numbers and see the outcome) 
 dims = (4,8)
 plt.plot(range(100), y[0:100, slice(*dims)])
@@ -3734,13 +3751,13 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 model = model.to(device)
 # set model to train mode explicitly
 model.train()
-for i in range(max_iter):
+for pos in range(max_iter):
     # get the batch
     x,y = get_batch('train', batch_size=batch_size)
     # feed the model and get the logits
     logits, loss = model(x,y)
     # evaluate the model
-    if i%1000==0:
+    if pos%1000==0:
         losses=evaluate_loss(100, device)
         print(f'train: {losses["train"]:.4f}  val: {losses["val"]:.4f}')
     # zeroout_grads
@@ -4117,13 +4134,13 @@ print(f'context_size =  {context_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -4371,13 +4388,13 @@ print(f'context_size =  {context_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -4635,13 +4652,13 @@ print(f'context_size =  {context_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -4892,13 +4909,13 @@ print(f'context_size =  {context_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -5309,13 +5326,13 @@ print(f'context_size =  {context_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -5531,14 +5548,14 @@ print(f'batch_size   =  {batch_size}')
 print(f'device       =  {device}')
 print(f'use_bias_attn=  {use_bias_attn}')
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # read a batch 
     x, y = get_batch('train', batch_size=batch_size)
     x,y= tuple(t.to(device) for t in (x,y))
     logits, loss = model(x,y)
     
     # calculate the smoother loss on multiple batches on train/val splits
-    if i%eval_period == 0:
+    if pos%eval_period == 0:
         losses = evaluate_loss(200, device)
         print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
     # zero-out gradients 
@@ -5758,7 +5775,7 @@ print(f"mixed-precision {'Enabled' if use_mix_precision else 'Disabled'}")
 scaler = torch.cuda.amp.grad_scaler.GradScaler(enabled=use_mix_precision)
 
 
-for i in range(max_iter):
+for pos in range(max_iter):
     # this context manager will take care of the dtype conversions for us
     # when we set enabled=False, the scaler and autocast basically become no op!
     # and we can seemlessly switch between them without any code changes at all!
@@ -5769,7 +5786,7 @@ for i in range(max_iter):
         logits, loss = model(x,y)
         
         # calculate the smoother loss on multiple batches on train/val splits
-        if i%eval_period == 0:
+        if pos%eval_period == 0:
             losses = evaluate_loss(200, device)
             print(f"train: {losses['train']:.4f}  val: {losses['val']:.4}")
         # zero-out gradients 
@@ -5793,7 +5810,7 @@ for i in range(max_iter):
         # and finally update the scaler for the next iteration 
         scaler.update()
         # save model params 
-        if i%5000==0:
+        if pos%5000==0:
             # When saving, save the scaler state dict alongside the usual model and optimizer state dicts. 
             # we either  do this at the beginning of an iteration before any forward passes, 
             # or at the end of an iteration after scaler.update()
@@ -6100,8 +6117,8 @@ X_tsne = tsne.fit_transform(X)
 # Plot the results
 plt.figure(figsize=(6, 5))
 colors = "r", "g", "b", "c", "m", "y"
-for i, c, label in zip(range(6), colors, digits.target_names):
-    plt.scatter(X_tsne[y == i, 0], X_tsne[y == i, 1], c=c, label=label)
+for pos, c, label in zip(range(6), colors, digits.target_names):
+    plt.scatter(X_tsne[y == pos, 0], X_tsne[y == pos, 1], c=c, label=label)
 plt.legend()
 plt.show()
 
