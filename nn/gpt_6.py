@@ -2957,7 +2957,10 @@ plot_vec(sin_pos_enc_eff, 50, 512)
 import numpy as np
 def sin_pos_enc_v2(pos, embd_d):
     pos_vec = np.zeros(embd_d)
-    # note that we are using the step=2, and removed the 2! from 2i term
+    # note that we are using the step=2, and removed the 2! from 2i term as well
+    # this is another form of simplification that doesnt drastically change the 
+    # positional embedding (except for the fact that without it the output changes
+    # more slowly and fewer dimensions towards the end get constant looking values) 
     div_term = np.exp(-np.arange(0, embd_d, 2) * (np.log(10_000) / embd_d))
     pos_vec[:, 0::2] = np.sin(pos * div_term)
     pos_vec[:, 1::2] = np.cos(pos * div_term)
@@ -2965,14 +2968,16 @@ def sin_pos_enc_v2(pos, embd_d):
 plot_vec(sin_pos_enc_eff, 50, 512)
 #%%
 # we can further change this so it can calculate the embeddings for all positions
-def sin_pos_enc_all(max_positions, embd_d):
+def sin_pos_enc_all(position_count, embd_dim):
     #pos_vec is a 2d tensor now 
-    pos_vec = np.zeros(shape=(max_positions, embd_d))
+    pos_vec = np.zeros(shape=(position_count, embd_dim))
     # note the 2 behind np.arange() is removed (2i). this is a common simplification 
-    # which overall doesnt make much difference.
+    # which overall doesnt make much difference (except for the fact that without it
+    # the output changes more slowly and fewer dimensions towards the end get constant
+    # looking values, we'll see how this looks visually in a moment)
     # we also calculate the exponent only for the even dimensions (hence step=2) and
     # use that for both sine/cosine. this is another simplification thats common.
-    div_term = np.exp(-np.arange(0, embd_d,2) * np.log(10_000)/embd_d)
+    div_term = np.exp(-np.arange(0, embd_dim,2) * np.log(10_000)/embd_dim)
     # now for all positions we need to create an array like we did for embd dims
     # since we need to do an elementwise multiplication with div_term which is 
     # an array of (embd//2), our final output should be (pos_max, embd//2)
@@ -2981,14 +2986,14 @@ def sin_pos_enc_all(max_positions, embd_d):
     # into (maxpos,embd//2) and then the calculation is carried out.
     # ((embd//2) is the same as (1,embd//2) so it doesnt need any changes and all
     # should work now!)
-    positions = np.arange(0, max_positions)[:,None]
+    positions = np.arange(0, position_count)[:,None]
     # calculate the positions for all positions all atonce
     pos_vec[:,0::2] = np.sin(positions * div_term)
     pos_vec[:,1::2] = np.cos(positions * div_term)
     return pos_vec
 
 plt.figure(figsize=(15, 5))
-y = sin_pos_enc_all(max_positions=100, embd_d=20)
+y = sin_pos_enc_all(position_count=100, embd_dim=20)
 # lets plot 4 embd values for 100 positions, 
 # (we used 4:8 becasue they demonstrate pretty graphs! 
 # use other numbers and see the outcome) 
@@ -2997,40 +3002,53 @@ plt.plot(range(100), y[0:100, slice(*dims)])
 # plt.plot(np.arange(100), y[:100, 8:12])
 plt.legend(["dim %d"%p for p in range(*dims)])
 # %%
-# side notes: 
-# sin = pos/n^(2i/d_model)
-# The highest number that i can be set to is d_model divided by 2 since the equations alternate for each element 
-# in the embedding. n in the original paper recommends 10,000.
-#  
+# side note: 
+# given the equations:
+# P E(pos,2i) = sin(pos/10000^(2i/dmodel))
+# P E(pos,2i+1) = cos(pos/10000^(2i/dmodel))
+# 
+# we see that as pos increases, the argument of the sine function increases as well. 
+# This results in the output of the sine function cycling through its range from -1 to 1.
+# However, because of the denominator 10000^2i/dmodel​, the rate at which the output cycles,
+# decreases as i increases. This means that for larger i, the output of the function changes
+# more slowly as pos increases.
+# to be more specific:
+# the denominator term(10000^2i/dmodel)​ effectively determines the “wavelength” of the sine 
+# function. As i increases, the denominator 10000^2i/dmodel​ increases, which means the argument
+# of the sine function increases more slowly. 
+# This corresponds to an increase in the wavelength of the sine function.
+# So, for larger i, the "wavelength" (or the distance between successive peaks or troughs) increases.
+# This means the function changes more slowly as pos increases, allowing the model to capture 
+# longer-term dependencies between words in a sentence. 
+# Conversely, for smaller i, the "wavelength" is shorter, and the function changes more quickly 
+# with increasing pos, allowing the model to capture shorter-term dependencies.
+# This combination of different wavelengths at different dimensions helps the model capture 
+# complex patterns in the positional relationships between words.
+# now lets build better intuitions by visually seeing what we just described here:
 from pprint import pprint
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-# write a function to plot this, what pecularities are evident when plotting this?
-# https://www.tensorflow.org/text/tutorials/transformer
-# https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
-# https://www.scaler.com/topics/nlp/positional-encoding/
-# https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
 
-def sinusoidal_positional_encoding(max_position, d_model):
-    
-    assert d_model%2==0, "this needs to be an even number, otherwise odd/even count wont match! and we'll face an error"
-    position = np.arange(0, max_position)[:, np.newaxis]
-    # we use exp instead of the paper's implementation so its numerically more stable (As we involve tiny numbers
-    # exp allows us to not face such issues!)
-    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000) / d_model))
-    
-    # Calculate sinusoidal embeddings
-    pos_enc = np.zeros((max_position, d_model))
-    pos_enc[:, 0::2] = np.sin(position * div_term)
-    pos_enc[:, 1::2] = np.cos(position * div_term)
-    
-    return pos_enc
-pprint(plt.colormaps())
+# lets draw a heatmap/pseudocolor plot of our positional encodings and see how they look and behave
+# visually: 
+def sinusoidal_positional_encoding(position_count, embd_dim):
+    assert embd_dim%2==0, "this needs to be an even number, otherwise odd/even count wont match! and we'll face an error"
+    pos_vec = np.zeros((position_count, embd_dim))
+    # use exp instead of the paper's implementation so its numerically more stable 
+    # note that we are using the simplified version of the equation (even dims without the '2' scaler!)
+    div_term = np.exp(-np.arange(0, embd_dim,2) * (np.log(10000) / embd_dim))
+    positions = np.arange(0, position_count)[:, np.newaxis]
+    pos_vec[:, 0::2] = np.sin(positions * div_term)
+    pos_vec[:, 1::2] = np.cos(positions * div_term)
+    return pos_vec
+
 def plot_positional_encoding(positional_encoding):
     plt.figure(figsize=(128, 64))
     # concerning colormaps read this first : https://matplotlib.org/stable/users/explain/colors/colormaps.html#colormaps 
     # https://matplotlib.org/stable/gallery/color/colormap_reference.html
+    # initially I used viridis, but later chose to use RdBu instead (redblue) becasue it was more coherent imho
+    # but for colorimpered,virdis is the way to go so I leave my previous explanation here:
     # side note for why we chose viridis : https://sjmgarnier.github.io/viridis/articles/intro-to-viridis.html 
     # what other colormaps we have? simply check plt.colormaps() to see your other options
     # uncomment the following line instead of the next line and see the effect of different colormaps.
@@ -3040,12 +3058,12 @@ def plot_positional_encoding(positional_encoding):
     # Perceptually uniform, means values close to each other have similar-appearing colors and values
     # far away from each other have more different-appearing colors, consistently across the range of values.
     # and sequential simply refers to the fact that the lightness value increases monotonically through the colormap.
-    # we have other types such as Diverging, Cyclic and Qualitative, which each has its own specific usecase
+    # we have other types such as Diverging, Cyclic and Qualitative, which each have their own specific usecases
     # for example Qualitive colormaps which are usually miscellaneous colors, are used to represent information
     # that does not have ordering or relationships. 
     # The Cyclic colormaps on the otherhand as the name suggest, refer to change in lightness of two different colors that 
     # meet in the middle and beginning/end at an unsaturated color; 
-    # are used for values that wrap around at the endpoints, such as phase angle, wind direction, or time of day.
+    # and are used for values that wrap around at the endpoints, such as phase angle, wind direction, or time of day.
     # The Diverging ones, refer to change in lightness and possibly saturation of two different colors that meet in the 
     # middle at an unsaturated color. 
     # They are used when the information being plotted has a critical middle value, such as topography or when the data 
@@ -3056,84 +3074,54 @@ def plot_positional_encoding(positional_encoding):
     # significantly improves the readability of data visualizations. The viridis scales provide color maps 
     # that are perceptually uniform in both color and black-and-white. 
     # They are also designed to be perceived by viewers with common forms of color blindness 
-    #  or  maybe the rdbu is better!
+    # or  maybe the rdbu is better!
     cmap = 'RdBu'
     # play with the values and see how as we near the end of embd, the value seem to become constant!
+    # and shows the relationship of pos with our denominator which as i increases the output changes more slowly
+    # and as pos increases with increasing i(dim) output changes evern more slowly to the point they all
+    # look like constant.
     # use :10, :100, :200, then 100:200, 150:200, etc for embddiing dimension
     # plt.pcolormesh(positional_encoding[:,:200], cmap=cmap)
     # for cmap in plt.colormaps():
     plt.pcolormesh(positional_encoding[:,:], cmap=cmap)
     plt.xlabel('Embedding Dimensions')
     plt.ylabel('Position')
+    # lets add a colorbar show the mapping of colors-to-values in the heatmap.
     plt.colorbar(label=f'Value({cmap})')
     plt.title('Sinusoidal Positional Encoding')
     plt.show()
 
-# Example usage
-max_position = 5
-d_model = 6
-pos_enc = sinusoidal_positional_encoding(max_position, d_model)
-print(f'{pos_enc=}')
-plot_positional_encoding(pos_enc)
+# now lets plot this first with a few positions/embeddings and then much larger numbers
+# in both cases we should see the effect of pos/embd as they increase.
+position_count = 5
+embd_dim = 6
+pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
+print(f'{pos_vec=}')
+plot_positional_encoding(pos_vec)
 #  and now lets see larger pos/embd_size
-max_position = 1000
-d_model = 512
-pos_enc = sinusoidal_positional_encoding(max_position, d_model)
-plot_positional_encoding(pos_enc)
+position_count = 1000
+embd_dim = 512
+pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
+plot_positional_encoding(pos_vec)
 
-# heres how this function is doing its job: 
-# 1. **Figure Initialization**:
-#    ```python
-#    plt.figure(figsize=(12, 6))
-#    ```
-#    This line initializes a new figure for the plot with a specific size. The `figsize=(12, 6)` parameter 
-#    specifies the width and height of the figure in inches.
-# 2. **Heatmap Generation**:
-#    ```python
-#    plt.pcolormesh(positional_encoding, cmap='viridis')
-#    ```
-#    - `plt.pcolormesh()` creates a pseudocolor plot (heatmap) from a 2D array, which in this case is the 
-#    `positional_encoding` matrix.
-#    - `positional_encoding` is the matrix containing the sinusoidal positional encoding values. It represents
-#    the embeddings for different positions along the sequence and their respective dimensions.
-#    - `cmap='viridis'` specifies the colormap to use for the heatmap. In this case, the 'viridis' colormap 
-#    ranges from yellow to blue, providing good perceptual uniformity for different values.
-# 3. **Axis Labels**:
-#    ```python
-#    plt.xlabel('Embedding Dimensions')
-#    plt.ylabel('Position')
-#    ```
-#    - `plt.xlabel()` and `plt.ylabel()` set labels for the x-axis and y-axis, respectively. 
-#    'Embedding Dimensions' represents the different dimensions of the embeddings, and 'Position' 
-#    denotes the positions along the sequence.
-# 4. **Colorbar**:
-#    ```python
-#    plt.colorbar(label='Value')
-#    ```
-#    - `plt.colorbar()` adds a colorbar to the plot, indicating the mapping of colors to values in the heatmap.
-#    The 'Value' label describes the quantity represented by the colors in the heatmap.
-# 5. **Title**:
-#    ```python
-#    plt.title('Sinusoidal Positional Encoding')
-#    ```
-#    - `plt.title()` sets the title of the plot as 'Sinusoidal Positional Encoding'. This title provides 
-#    context for what the heatmap represents.
-# 6. **Displaying the Plot**:
-#    ```python
-#    plt.show()
-#    ```
-#    - `plt.show()` displays the generated plot. 
-# It's necessary to view the heatmap within the Jupyter Notebook, Python script, or any interactive environment.
-# In summary, the `plot_positional_encoding()` function utilizes `matplotlib` to create a heatmap representation 
-# of the sinusoidal positional encoding matrix. 
-# This visualization helps in understanding how positions along a sequence are encoded in a neural network model,
-# especially in scenarios like attention mechanisms or positional embeddings within transformers.
-#
-# Now, regarding peculiarities when plotting sinusoidal positional encoding:
-# Wave Patterns: You'll observe clear wave patterns in the plot, reflecting the sinusoidal nature of the encoding. These waves indicate how different positions along the sequence are represented in the embedding space.
-# Frequency Variation: The frequency of the waves varies across different dimensions of the embedding. Lower dimensions may capture longer-range dependencies, while higher dimensions may focus on shorter-range dependencies.
-# Alternating Colors: Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
-# Positional Diversity: The heatmap will illustrate how each position in the sequence has a unique representation in the embedding space. This is crucial for the model to distinguish between tokens based on their absolute or relative positions.
+# Recap: 
+# wavelength pattern: 
+# We can see clear wave patterns in the plot, which reflects the sinusoidal nature of the encoding. 
+# These waves indicate how different positions along the sequence are represented in the embedding space.
+
+# Frequency Variation: 
+# The frequency of the waves varies across different dimensions of the embedding. 
+# !Lower dimensions may capture longer-range dependencies, while
+# !higher dimensions may focus on shorter-range dependencies.
+
+# Alternating Colors: 
+# Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in
+# the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
+# 
+# Positional Diversity: 
+# The heatmap will illustrate how each position in the sequence has a unique representation in 
+# the embedding space. This is crucial for the model to distinguish between tokens based on 
+# their absolute or relative positions.
 
 # In the previous plot, the blue/white stripes represent the values of the positional vectors. 
 # The reason you see fewer changes (less blue/white stripes) towards the end of the plot is due to
@@ -3143,8 +3131,9 @@ plot_positional_encoding(pos_enc)
 # As you move towards higher dimensions, the frequency of these functions decreases,
 # leading to fewer changes in the values and hence fewer stripes in the plot.
 # The stripes at the far end of the embedding dimensions do not represent a single value. 
-# They are indeed many tiny numbers that are simply too small to make a significant difference, 
+# They are many tiny numbers that are simply too small to make a significant difference, 
 # thus they are shown as blue/white for all positions.
+# 
 # The difference in the number of stripes between the 1k plot and the 50,000 positions plot could 
 # be due to the difference in the total number of positions encoded in each plot. A plot with more 
 # positions (like the 50,000 positions plot) would naturally have more stripes as it represents more 
@@ -3152,19 +3141,20 @@ plot_positional_encoding(pos_enc)
 # The key point to understand from visualizing these positional vectors is how positional information 
 # is encoded in transformer models. It helps us see that the positional encoding scheme can capture the 
 # order of data points in a sequence, which is crucial for tasks like natural language processing where 
-# the order of words in a sentence carries important semantic information1. The plot also shows how this 
-# positional information varies across different dimensions, providing insights into the workings of 
-# high-dimensional data in machine learning models.
+# the order of words in a sentence carries important semantic information. 
+# The plot also shows how this positional information varies across different dimensions, providing 
+# insights into the workings of high-dimensional data in machine learning models.
 #
 # Note that the frequency is actually decreasing in this snippet. 
-# This is because the div_term is an exponential decay term, where the base of the exponent is less than 1 
-# (np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)). 
-# This means that as you move along the embedding size, the frequency of the sine and cosine terms in the
-# positional encoding decreases. 
-# This is a key aspect of the Transformer’s positional encoding, allowing it to capture both short-term and
-# long-term dependencies in the input sequence. The sine and cosine functions provide a way to encode the 
-# position with a unique representation that can capture relative positions and is invariant to the sequence
-# length. The decreasing frequency ensures that the model can distinguish positions across a wide range of 
+# This is because the div_term is an exponential decay term, where the base of the exponent is 
+# less than 1. (np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)). 
+# This means that as you move along the embedding size, the frequency of the sine and cosine terms
+# in the positional encoding decreases. 
+# This is a key aspect of the Transformer’s positional encoding, allowing it to capture both short-term
+# and long-term dependencies in the input sequence. 
+# The sine and cosine functions provide a way to encode the position with a unique representation 
+# that can capture relative positions and is invariant to the sequence length. 
+# The decreasing frequency ensures that the model can distinguish positions across a wide range of 
 # sequence lengths.
 # 
 # relationship with wavelength:
@@ -3240,9 +3230,9 @@ def plot_positional_encoding_distances(positional_encoding):
     plt.show()
 
 max_len = 50000
-d_model = 512
+embd_dim = 512
 
-positional_encoding = get_positional_encoding(max_len, d_model)
+positional_encoding = get_positional_encoding(max_len, embd_dim)
 plot_positional_encoding_distances(positional_encoding)
 
 # now if we try to display this as a heatmap, we will get this: 
@@ -3278,9 +3268,9 @@ def plot_positional_encoding_dot_product_heatmap(positional_encoding):
 
 max_len = 512
 # smaller dims shows the shades much better than a larger dim such as 512
-d_model = 100
+embd_dim = 100
 
-positional_encoding = get_positional_encoding(max_len, d_model)
+positional_encoding = get_positional_encoding(max_len, embd_dim)
 # the information is given below (explanation part)
 plot_positional_encoding_heatmap(positional_encoding)
 # showing that the distance between neighboring time-steps are symmetrical and decays nicely with time.
@@ -6168,8 +6158,8 @@ def positional_encoding(position, d_model):
 
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
-d_model = 512
-pos_encodings = positional_encoding(positions, d_model)
+embd_dim = 512
+pos_encodings = positional_encoding(positions, embd_dim)
 
 # Perform t-SNE manifold learning
 tsne = TSNE(n_components=2, init='pca', random_state=0)
@@ -6194,8 +6184,8 @@ def positional_encoding(position, d_model):
 
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
-d_model = 512
-pos_encodings = positional_encoding(positions, d_model)
+embd_dim = 512
+pos_encodings = positional_encoding(positions, embd_dim)
 
 # Perform t-SNE manifold learning
 tsne = TSNE(n_components=3, init='pca', random_state=0)
@@ -6221,8 +6211,8 @@ def positional_encoding(position, d_model):
 
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
-d_model = 512
-pos_encodings = positional_encoding(positions, d_model)
+embd_dim = 512
+pos_encodings = positional_encoding(positions, embd_dim)
 
 # Perform PCA
 pca = PCA(n_components=3)
@@ -6276,8 +6266,8 @@ def positional_encoding(position, d_model):
 
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
-d_model = 512
-pos_encodings = positional_encoding(positions, d_model)
+embd_dim = 512
+pos_encodings = positional_encoding(positions, embd_dim)
 
 # Perform SVD
 svd = TruncatedSVD(n_components=3)
@@ -6309,8 +6299,8 @@ def positional_encoding(position, d_model):
 
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
-d_model = 512
-pos_encodings = positional_encoding(positions, d_model)
+embd_dim = 512
+pos_encodings = positional_encoding(positions, embd_dim)
 
 # Select three dimensions to plot
 dim1, dim2, dim3 = 0, 1, 2  # Change these to select different dimensions
@@ -6579,3 +6569,7 @@ plot_sine_wave(amplitude, frequency)
 # Transformers in Vision: A Survey https://arxiv.org/pdf/2101.01169.pdf
 # Exploring recent advancements of Transformer based architectures in computer vision
 #
+# https://www.tensorflow.org/text/tutorials/transformer
+# https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
+# https://www.scaler.com/topics/nlp/positional-encoding/
+# https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
