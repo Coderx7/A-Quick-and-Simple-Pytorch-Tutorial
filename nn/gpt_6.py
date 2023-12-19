@@ -2855,8 +2855,8 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # 
 # 
 # 
-# # %%
-#  https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
+# %%
+#! https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
 #
 # lets implement sinusoidal positional embedding 
 # the sinusoidal equation is given in the paper and is as follows: 
@@ -3032,7 +3032,7 @@ import matplotlib.pyplot as plt
 
 # lets draw a heatmap/pseudocolor plot of our positional encodings and see how they look and behave
 # visually: 
-def sinusoidal_positional_encoding(position_count, embd_dim):
+def get_sinusoidal_positional_encoding(position_count, embd_dim):
     assert embd_dim%2==0, "this needs to be an even number, otherwise odd/even count wont match! and we'll face an error"
     pos_vec = np.zeros((position_count, embd_dim))
     # use exp instead of the paper's implementation so its numerically more stable 
@@ -3079,7 +3079,10 @@ def plot_positional_encoding(positional_encoding):
     # play with the values and see how as we near the end of embd, the value seem to become constant!
     # and shows the relationship of pos with our denominator which as i increases the output changes more slowly
     # and as pos increases with increasing i(dim) output changes evern more slowly to the point they all
-    # look like constant.
+    # look like constant. 
+    # also note that  as we increase the i, the periods of the function also increases so when i reaches 
+    # the value of d, a large number of pos vectors are needed to cover the entire period of the functions.
+    # (explained in the latter plots in a moment)
     # use :10, :100, :200, then 100:200, 150:200, etc for embddiing dimension
     # plt.pcolormesh(positional_encoding[:,:200], cmap=cmap)
     # for cmap in plt.colormaps():
@@ -3093,21 +3096,31 @@ def plot_positional_encoding(positional_encoding):
 
 # now lets plot this first with a few positions/embeddings and then much larger numbers
 # in both cases we should see the effect of pos/embd as they increase.
-position_count = 5
-embd_dim = 6
-pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
-print(f'{pos_vec=}')
-plot_positional_encoding(pos_vec)
+def draw_postion_vector_heatmap(position_count, embd_dim, show_position_vec=False):
+    pos_vec = get_sinusoidal_positional_encoding(position_count, embd_dim)
+    if show_position_vec:
+        print(f'{pos_vec=}')
+    plot_positional_encoding(pos_vec)
+
+# test with a small number of positions and embeddings 
+draw_postion_vector_heatmap(position_count=5, embd_dim=6)
+# a bit larger
+draw_postion_vector_heatmap(position_count=20, embd_dim=30)
 #  and now lets see larger pos/embd_size
-position_count = 1000
-embd_dim = 512
-pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
-plot_positional_encoding(pos_vec)
-# with 50x more position to fill as much encoding space as we can
-position_count = 50000
-embd_dim = 512
-pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
-plot_positional_encoding(pos_vec)
+draw_postion_vector_heatmap(position_count=1000, embd_dim=512)
+# lets start with 50x more position to fill as much encoding space as we can
+draw_postion_vector_heatmap(position_count=50_000, embd_dim=512)
+# As we have just seen, the position vector has shorter wavelengths for lower dimensions, 
+# and longer for higher dimensions. as we increase the i, the periods of the function also
+# increases so when when i reaches the value of d, a large number of pos vectors are needed
+# to cover the entire period of the function, this can be seen in the two plots we have here.
+# 
+# !The values of the early positions at higher indexes are almost constant. take the first position
+# in the first plot, and the first 5-10 positions in the second plot for example.  
+# !This can be observed in the first two plot especially in the second plot better, where the colors
+# of columns 15-30 hardly change(its barely visible).as the number of positions increases, this effect diminesh
+# 
+
 
 # Recap about what we can understand from these plots: 
 # so lets expand on this a bit more: 
@@ -3207,47 +3220,94 @@ plot_positional_encoding(pos_vec)
 # performance on tasks like language translation, where understanding both the local syntax and the broader 
 # semantic context is important.
 #
-# from 
-# Function Periods
-# The position vector has shorter wavelengths for lower dimensions. 
-# As i increases, the periods of the function also increase. 
-# When i reaches the value of d, a large number of pos vectors are needed to cover the entire period 
-# of the function. The values of the first 20 positions at higher indexes are almost constant. 
-# This can be observed in the figure below, where the colors of columns 30-50 hardly change.
 
 #%%
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-#
-# this function calculates the Euclidean distance between the positional encoding vectors of 
-# neighboring time-steps and plots these distances.
-# The plot will show that the distances between neighboring time-steps decrease as you move along
-# the time axis, illustrating the decay of positional information over time in the sinusoidal positional
-# encoding scheme.
-def get_positional_encoding(max_len, d_model):
-    pos = np.arange(max_len)[:, np.newaxis]
-    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
-    positional_encoding = np.zeros((max_len, d_model))
+# Now let us get some intuitions by looking at these positional embeddings from another angle.
+# lets try to compare each embedding vector against others and see what we get and whether we can interpret 
+# them or not  (use this between explanations)
+# 
+def get_positional_encoding(position_count, embd_size):
+    positional_encoding = np.zeros((position_count, embd_size))
+    div_term = np.exp(-np.arange(0, embd_size, 2) * (np.log(10000.0) / embd_size))
+    pos = np.arange(position_count)[:, np.newaxis]
     positional_encoding[:, 0::2] = np.sin(pos * div_term)
     positional_encoding[:, 1::2] = np.cos(pos * div_term)
     return positional_encoding
 
+#! this may not be what I want!
+#! This function calculates the Euclidean distance between the positional encoding vectors of 
+# neighboring time-steps and plots these distances.
+# The plot will show that the distances between neighboring time-steps decrease as we move along
+# the time axis, illustrating the decay of positional information over time in the sinusoidal positional
+# encoding scheme.
 def plot_positional_encoding_distances(positional_encoding):
-    distances = np.sum(np.square(positional_encoding[:-1] - positional_encoding[1:]), axis=1)
+    distances = np.square(positional_encoding[0:-1] - positional_encoding[1:])
     plt.plot(distances[:])
     plt.ylabel('Distance')
     plt.xlabel('Time-step/embd dim')
     plt.title('Distance between neighboring time-steps in positional encoding')
     plt.show()
 
-max_len = 50000
-embd_dim = 512
+def plot_positional_encoding_total_distances(positional_encoding):
+    distances = np.sum(np.square(positional_encoding[0:-1] - positional_encoding[1:]),axis=-1)
+    plt.plot(distances[:])
+    plt.ylabel('Distance')
+    plt.xlabel('Time-step/embd dim')
+    plt.title('Distance between neighboring time-steps in positional encoding')
+    plt.show()
 
-positional_encoding = get_positional_encoding(max_len, embd_dim)
-plot_positional_encoding_distances(positional_encoding)
+# now lets see how each position fairs as we get closer to the end of the emebdding dims
+def plot_positional_encoding_distance_total_2d(positional_encoding):
+    # we use square to accentuate the differences
+    distances = np.sum(np.square(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=1)
+    plt.plot(distances)
+    plt.ylabel('Position')
+    plt.xlabel('Position')
+    plt.title('Heatmap of distances between positional encoding vectors')
+    plt.show()
 
-# now if we try to display this as a heatmap, we will get this: 
+from mpl_toolkits.mplot3d import Axes3D
+# this should give us a better view, when viewed in 3d, as we can see, the earlier dimensions are much active
+# but as we get closer to the end dimensions, the distance between dims gets close to zero!
+def plot_positional_encoding_distance_total_3d(positional_encoding, elev=10, azim=40, func='square'):
+    if func == 'square':
+        func = np.square
+    elif func== 'abs':
+        func = np.abs
+    elif func == None:
+        func = lambda x: x 
+        
+    distances = np.sum(func(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=1)
+    fig = plt.figure(figsize=(24,18))
+    ax = fig.add_subplot(111, projection='3d')
+    x = np.arange(distances.shape[0])
+    y = np.arange(distances.shape[1])
+    X, Y = np.meshgrid(x, y)
+    Z = distances[X, Y]
+    ax.plot_surface(X, Y, Z)
+    ax.set_xlabel('Position')
+    ax.set_ylabel('Embeddings')
+    ax.set_zlabel('Distance')
+    ax.set_title('3D plot of distances between positional encoding vectors')
+    # Change the viewing angle
+    # elev sets the elevation angle in the z plane. 
+    # azim sets the azimuth angle in the x,y plane.
+    ax.view_init(elev=elev, azim=azim)  
+    plt.show()
+    
+plot_positional_encoding_distances(get_positional_encoding(1000, 512))
+plot_positional_encoding_distance_total_2d(get_positional_encoding(100, 500))
+plot_positional_encoding_distance_total_3d(get_positional_encoding(100, 50))
+plot_positional_encoding_distance_total_3d(get_positional_encoding(100, 50),azim=10)
+
+# we can use no functions on the differences and simply visualize the raw differences  
+plot_positional_encoding_distance_total_3d(get_positional_encoding(100, 50), func=None)
+plot_positional_encoding_distance_total_3d(get_positional_encoding(100, 50),azim=10, func=None)
+#%%
+# now if we try to display this as a heatmap, we will get a much more intersting result: 
 def plot_positional_encoding_heatmap(positional_encoding):
     distances = np.sum(np.square(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=2)
     sns.heatmap(distances,cmap='Blues')
@@ -3278,11 +3338,10 @@ def plot_positional_encoding_dot_product_heatmap(positional_encoding):
     plt.title('Heatmap of dot product between all pairs of time-steps in positional encoding')
     plt.show()
 
-max_len = 512
+position_count = 512
 # smaller dims shows the shades much better than a larger dim such as 512
 embd_dim = 100
-
-positional_encoding = get_positional_encoding(max_len, embd_dim)
+positional_encoding = get_positional_encoding(position_count, embd_dim)
 # the information is given below (explanation part)
 plot_positional_encoding_heatmap(positional_encoding)
 # showing that the distance between neighboring time-steps are symmetrical and decays nicely with time.
@@ -3291,66 +3350,21 @@ plot_positional_encoding_heatmap(positional_encoding)
 # ship between nearer position is stronger than those far away, and the shades show that this gradually and symetrically
 # decreases. try sin/cos only and see why we use both of them together!
 plot_positional_encoding_dot_product_heatmap(positional_encoding)
-# explanation 
-# Sure, I'd be happy to explain the `plot_positional_encoding_heatmap()` function in detail. Here's what each line of code does:
-# ```python
-# def plot_positional_encoding_heatmap(positional_encoding):
-# ```
-# This line defines the function `plot_positional_encoding_heatmap()`, which takes one argument: `positional_encoding`. The `positional_encoding` argument is expected to be a 2D numpy array containing the positional encoding vectors.
-# ```python
-#     distances = np.sum(np.square(positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]), axis=2)
-# ```
-# This line calculates the Euclidean distance between all pairs of positional encoding vectors. 
-# Here's how it works:
-# - `positional_encoding[:, np.newaxis] - positional_encoding[np.newaxis, :]` computes the difference between 
-#    all pairs of positional encoding vectors. The `np.newaxis` is used to add an extra dimension to the arrays,
-#    allowing numpy to broadcast the subtraction operation across all pairs of vectors.
-# - `np.square(...)` squares each element of the resulting array. This is the first step in the calculation of
-#    the Euclidean distance, which is the square root of the sum of the squares of the differences.
-# - `np.sum(..., axis=2)` sums the squared differences along the last dimension (dimension 2) of the array. 
-#    This completes the calculation of the Euclidean distance.
-# ```python
-#     sns.heatmap(distances)
-# ```
-# This line uses the seaborn library's `heatmap()` function to create a heatmap of the distances. 
-# Each cell in the heatmap corresponds to the distance between a pair of positional encoding vectors.
-# ```python
-#     plt.ylabel('Position')
-#     plt.xlabel('Position')
-# ```
-# These lines set the labels for the y-axis and x-axis of the heatmap to 'Position'.
-# ```python
-#     plt.title('Heatmap of distances between positional encoding vectors')
-# ```
-# This line sets the title of the heatmap to 'Heatmap of distances between positional encoding vectors'.
-# ```python
-#     plt.show()
-# ```
-# This line displays the heatmap. If this line were not included, the heatmap would be created but not displayed.
-# In summary, the `plot_positional_encoding_heatmap()` function calculates the Euclidean distance between all 
-# pairs of positional encoding vectors and displays these distances as a heatmap. The heatmap provides a visual
-# representation of how the positional encoding changes across different positions in the sequence. 
-# The diagonal line in the heatmap represents the distance of a position with itself, which is zero. 
-# The symmetry of the heatmap reflects the fact that the distance from position i to position j is the same as
-# the distance from position j to position i. This symmetry and the structure of the heatmap can provide insights
-# into the nature of the positional encoding scheme used in Transformer models.
-
-
 
 # # Generate x values
-# x = np.linspace(0, 4 * np.pi, 100)
-# # Generate intermediary variable for frequency transition
-# freq = np.linspace(5, 5.5, len(x))
-# # Generate sine waves with varying frequency
-# sine_waves = np.sin(freq * x[:, np.newaxis])
-# # Plotting
-# plt.figure(figsize=(16, 8))
-# for i in range(len(x)):
-#     plt.plot(x, sine_waves[:, i], color='blue', alpha=0.6)
-# plt.xlabel('x')
-# plt.ylabel('Amplitude')
-# plt.title('Transition from Low Frequency to High Frequency - Sine Waves')
-# plt.show()
+x = np.linspace(0, 4 * np.pi, 100)
+# Generate intermediary variable for frequency transition
+freq = np.linspace(5, 5.5, len(x))
+# Generate sine waves with varying frequency
+sine_waves = np.sin(freq * x[:, np.newaxis])
+# Plotting
+plt.figure(figsize=(16, 8))
+for i in range(len(x)):
+    plt.plot(x, sine_waves[:, i], color='blue', alpha=0.6)
+plt.xlabel('x')
+plt.ylabel('Amplitude')
+plt.title('Transition from Low Frequency to High Frequency - Sine Waves')
+plt.show()
 #%%
 # 
 #
