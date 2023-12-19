@@ -3103,41 +3103,52 @@ position_count = 1000
 embd_dim = 512
 pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
 plot_positional_encoding(pos_vec)
+# with 50x more position to fill as much encoding space as we can
+position_count = 50000
+embd_dim = 512
+pos_vec = sinusoidal_positional_encoding(position_count, embd_dim)
+plot_positional_encoding(pos_vec)
 
-# Recap: 
+# Recap about what we can understand from these plots: 
+# so lets expand on this a bit more: 
+
 # wavelength pattern: 
 # We can see clear wave patterns in the plot, which reflects the sinusoidal nature of the encoding. 
 # These waves indicate how different positions along the sequence are represented in the embedding space.
-
+#
 # Frequency Variation: 
-# The frequency of the waves varies across different dimensions of the embedding. 
-# !Lower dimensions may capture longer-range dependencies, while
-# !higher dimensions may focus on shorter-range dependencies.
-
-# Alternating Colors: 
-# Due to the use of sine and cosine functions, you'll notice alternating dark and light bands in
-# the heatmap. This alternation ensures that the model can distinguish between adjacent positions.
+# we saw that the frequency of the waves varies across different dimensions of the embedding. 
+# The lower dimensions may capture shorter-range dependencies, while
+# higher dimensions may focus on longer-range dependencies.( more explaination ahead)
+#
+# !Alternating Colors: 
+# the alternating dark and light bands we see in the heatmap is caused by use of sine and cosine functions.
+# This alternation ensures that the model can distinguish between adjacent positions and each position is
+# uniquly indentifiable.
 # 
 # Positional Diversity: 
-# The heatmap will illustrate how each position in the sequence has a unique representation in 
-# the embedding space. This is crucial for the model to distinguish between tokens based on 
-# their absolute or relative positions.
+# as we just pointed out, the heatmap illustrates this fact by showing how each position in 
+# the sequence has a unique representation in the embedding space. This is crucial for the 
+# model to distinguish between tokens based on their absolute or relative positions.
 
-# In the previous plot, the blue/white stripes represent the values of the positional vectors. 
-# The reason you see fewer changes (less blue/white stripes) towards the end of the plot is due to
-# the nature of the positional encoding scheme used in transformer models. 
-# This scheme uses sine and cosine functions of different frequencies to generate the positional 
-# encoding vectors. 
-# As you move towards higher dimensions, the frequency of these functions decreases,
+# !looking athe plot we see alot of blue/white strips towards the right end of the plot and much
+# less other colors, they seem constant values being repeated.
+# these blue/white stripes represent the values of the positional vectors and the reason 
+# we see fewer changes (less red/white/bule stripes) towards the end of the plot is due to
+# the nature of the positional encoding scheme. 
+# As we move towards higher dimensions, the frequency of these functions decreases,
 # leading to fewer changes in the values and hence fewer stripes in the plot.
-# The stripes at the far end of the embedding dimensions do not represent a single value. 
-# They are many tiny numbers that are simply too small to make a significant difference, 
-# thus they are shown as blue/white for all positions.
 # 
-# The difference in the number of stripes between the 1k plot and the 50,000 positions plot could 
-# be due to the difference in the total number of positions encoded in each plot. A plot with more 
-# positions (like the 50,000 positions plot) would naturally have more stripes as it represents more 
-# positional information.
+# by the way note that the stripes at the far end of the embedding dimensions do not represent
+# a single value they are many tiny numbers that are simply too small to make a significant difference, 
+# and hence they are shown as blue/white for all positions(they are very similar in value so their
+# color ends up indistinguishable for us/looks the same to us).
+# 
+# when increasing the position count, we can see for the same number of embeddings, the plot changes
+# in a way that the number of stripes/ alleged constant values to the far end of the embeddings decreases
+# !The difference between the 1k plot and the 50,000 positions plot could be due to the difference in
+# the total number of positions encoded in each plot. A plot with more positions (like the 50,000 positions
+# plot) would naturally have more stripes as it represents more positional information.
 # The key point to understand from visualizing these positional vectors is how positional information 
 # is encoded in transformer models. It helps us see that the positional encoding scheme can capture the 
 # order of data points in a sequence, which is crucial for tasks like natural language processing where 
@@ -3145,9 +3156,9 @@ plot_positional_encoding(pos_vec)
 # The plot also shows how this positional information varies across different dimensions, providing 
 # insights into the workings of high-dimensional data in machine learning models.
 #
-# Note that the frequency is actually decreasing in this snippet. 
+# Note that the frequency is actually decreasing in our equation as i increases. 
 # This is because the div_term is an exponential decay term, where the base of the exponent is 
-# less than 1. (np.exp(np.arange(0, embd_size, 2)) * -(np.log(10_000.0) / embd_size)). 
+# less than 1. (-np.exp(np.arange(0, embd_size, 2)) * (np.log(10_000.0) / embd_size)). 
 # This means that as you move along the embedding size, the frequency of the sine and cosine terms
 # in the positional encoding decreases. 
 # This is a key aspect of the Transformer’s positional encoding, allowing it to capture both short-term
@@ -3167,19 +3178,20 @@ plot_positional_encoding(pos_vec)
 # (f) is the frequency, and
 # (λ(lambda)) is the wavelength.
 # In the positional encoding scheme used in the Transformer model, 
-# the decreasing frequency can be thought of as an increasing “wavelength” along the dimensions of the positional
-# encoding vector. This means that the positional information encoded by higher dimensions changes more slowly 
-# (longer “wavelength”), allowing the model to capture longer-term dependencies in the data. 
-# Conversely, the positional information encoded by lower dimensions changes more quickly (shorter “wavelength”),
-# enabling the model to capture shorter-term dependencies. 
+# the decreasing frequency can be thought of as an increasing "wavelength" along the dimensions of 
+# the positional encoding vector. This means that the positional information encoded by higher 
+# dimensions changes more slowly (longer "wavelength"), allowing the model to capture longer-term
+# dependencies in the data. 
+# Conversely, the positional information encoded by lower dimensions changes more quickly 
+# (shorter "wavelength"), enabling the model to capture shorter-term dependencies. 
 # This balance allows the model to understand both the local and global structure of the sequence.
-#
-#In the context of Transformer models, 
-# the concept of "longer waveform" is analogous to the slower changing positional encoding values in higher 
-# dimensions. 
-# The positional encoding in Transformer models uses a mix of sine and cosine functions with different frequencies.
-# The frequency of these functions decreases (or the "wavelength" increases) as you move to higher dimensions in 
-# the positional encoding vector. 
+# 
+# More explanation: 
+# Here, the concept of "longer waveform" is analogous to the slower changing positional encoding values
+# in higher dimensions. 
+# The positional encoding in Transformer models uses a mix of sine and cosine functions with different
+# frequencies. The frequency of these functions decreases (or the "wavelength" increases) as you move 
+# to higher dimensions in the positional encoding vector. 
 # This means that for lower dimensions, the positional encoding values change rapidly (short "wavelength"), 
 # allowing the model to capture changes and patterns that occur over short distances in the sequence (short-term 
 # dependencies). 
