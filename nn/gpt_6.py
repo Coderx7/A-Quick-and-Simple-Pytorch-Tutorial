@@ -3538,9 +3538,9 @@ print(f'{logits.shape=} {loss=:.4f}')
 # and now we can train this : 
 device='cpu'
 batch_size = 32
-head_size = 16
-embd_size = 16 
-context_size = 8
+head_size = 16 # 100 of course using bigger sizes result in better numbers, but lets start small and then use larger values 
+embd_size = 16 #100
+context_size = 8 #100
 vocab_size = len(vocab_list)
 max_iter = 5000
 # only to test the effect of bias in k,q,v calculations
@@ -3588,6 +3588,14 @@ print(f'done!')
 input = torch.zeros(size=(1,1)).int()
 output = model.generate(input, 500).squeeze(0).tolist()
 print(f"{''.join(decode(output))}")
+# lets plot them, they maynot look very intresting now, but we try them at the end once more time
+# # and see what we can get out of these visualizations and plots
+# plot_heatmap(model.position_embd.weight.detach(),'position_embeddings')
+# plot_positional_encoding_distances(model.position_embd.weight.detach().numpy())
+# plot_positional_encoding_heatmap(model.position_embd.weight.detach().numpy())
+# plot_positional_encoding_dot_product_heatmap(model.position_embd.weight.detach().numpy())
+# plot_positional_encoding_distance_total_3d(model.position_embd.weight.detach().numpy())
+#%%
 # prints
 #here are a few tries:
 # param count:  3,041
@@ -4055,8 +4063,8 @@ print(f"{''.join(decode(output))}")
 # with just increasing the embedding_size, so playing with parameters even blindly making model bigger
 # seems to give us a boost), so we had improvements, but we still need a long way ahead of us!
 # 
-# Ok, to improve upon our results, there are couple of more things we need to add to our attention 
-# block. if you look at the paper, we'll see a few concepts that we havent talked about or implemented
+# to improve upon our results, there are couple of more things we need to add to our attention 
+# block. if you look at the paper, you'll see a few concepts that we havent talked about or implemented
 # yet, including the feed-forward(position-wise feedforward network) and layernorm, so lets talk about 
 # them.
 # feed-forward network or as its called in the paper,'position-wise feedforward network', is simply
@@ -4542,6 +4550,7 @@ print(f"{''.join(decode(output))}")
 
 # KETILNINCE:
 # There gay his my nefonk
+#
 #
 # as you can see, we got wrose results than before! despite making the network larger, our loss
 # really didnt improve as we expected. 
@@ -5697,7 +5706,7 @@ print(f"{''.join(decode(output))}")
 
 
 #%%
-# this was gpt! lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
+# this was a transformer! lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
 # document completer vs chatgptetc 
 
 #ask chatgpt to write an introduction for each section (and explain someparts as if im 5!)
