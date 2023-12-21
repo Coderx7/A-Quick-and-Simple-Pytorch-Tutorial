@@ -2026,14 +2026,14 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 
 # %%
 #
-# Earlier we mentioned that our implementation of attention so far, is refered to as self-attention, the reason 
-# being the key, query and value vectors are applied on the same input(they use the same source!), hence the name, self attention.
+# Earlier we mentioned that our implementation of attention so far, is refered to as self-attention, becasue 
+# the key, query and value vectors are applied on the same input (they use the same source!), hence the name, self attention.
 # Moreover, we also saw that for our specific case, tokens/nodes can not communicate with the future 
 # nodes becasue we are developing an autoregressive language model, which by definition requires us
 # to make predictions solely based on what has come thus far. 
 # However, in general this constraint can be removed when it's advantageous for all tokens to interact, 
 # such as in usecases like sentiment analysis and machine translation among other examples. 
-# Take sentiment analysis for example, inwhich we want all the tokens to able to communicate with 
+# Take sentiment analysis for example, inwhich we 'want', all the tokens, to able to communicate with 
 # eachother for an accurate analysis. we dont care if a previous token looks at a fture one or not, infact
 # we welcome all interactions between tokens so that it maximizes the chances of revealing as much information
 # as possible to ultimately reach to the right conclusion which determining the overal sentiment.
@@ -2132,21 +2132,17 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # each position, form 0 up to infinity, they have some nice features/attributes that are crucial for our job and they
 # are explained at the end of this document)
 # 
-# To be more specific, as we go further towards the end of the embedding dimensions, (i.e. as i increases) 
-# the frequency for sin/cos argument decreases for each dimension, so the idea is, the network 
-# can, by looking, at the frequencies, figureout, which token has come after which one, and using this, 
-# it can understand the relative posiosions of the tokens involved. ()
-# (the author in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out that 
+# the author in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out that 
 # counting was was a hard problem, and 2 years later they came up with the sinusoidal positioning encoding. 
 # see 
 # https://www.reddit.com/r/learnmachinelearning/comments/9e4j4q/positional_encoding_in_transformer_model/
 # http://fastml.com/introduction-to-pointer-networks/
 # https://www.reddit.com/r/MachineLearning/comments/cttefo/d_positional_encoding_in_transformer/
 # https://arxiv.org/abs/1905.04226 )
-#
-# later works however, showed that such embeddings can be learned and infact BERT did exactly that and opted to use
-# learned positional emebddings instead of the sinusoidal positional encoding used by the original paper.(the original
-# authors also tested with learned embeddings and reported the near identical results,but oppted out to use sinusoidal
+# hence why the chose sinusoidal positional encoding, to act like a counter, giving each token a identifiable indetifier!
+# later works however, showed that such embeddings can be learned and work just as well, infact BERT did exactly that 
+# and opted to use learned positional emebddings instead of the sinusoidal positional encoding used by the original paper.
+# (the original authors also tested with learned embeddings and reported the near identical results,but oppted out to use sinusoidal
 # positional encoding for its ability to model also relative distance)
 # later on, other versions such as rope or rotary positional encoding were introduced to provide relative positional 
 # encoding (better). after that another work AliBi, completely removed the positional embedding and instead used
@@ -2163,10 +2159,13 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # "...it may allow the model to extrapolate to sequence lengths longer than the ones encountered during training."
 #
 # %%
-#Ok positional encoding is good and we need to implement it. so lets do just that but lets also add the 
-# some flexibility to our attention module to allow us to test different configurations. such as with positional
-# encoding, without positional encoding, stuff like that. they may not show much difference using a single head
-# but when later on we add more heads, it can show us how they really affect the performance. 
+#Ok positional encoding is good and we need to implement it. 
+# we can also add some flexibility to our attention module to allow us to test different configurations such as with positional
+# encoding, without positional encoding, stuff like that. But this is not the time now, as they may not show much difference using
+# a single head but when later on we add more heads, that would be a better time as it can show us how they really affect the performance. 
+#
+# For now lets keep it simple. 
+# lets build our language model with the new attention head. 
 # since we are using the the attention head, we need more arguments
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, head_size, device, use_bias_att=False) -> None:
@@ -2251,8 +2250,7 @@ class BigramModelWithAttention(nn.Module):
             # a longer sequence (we are gradually increasing the sequence length from 1 up to
             # max_token_count)
             idxs = torch.cat((idxs,new_idx), dim=-1)
-            
-            
+           
         return idxs
     
 # now lets test this and see if it works 
@@ -2320,6 +2318,8 @@ print(f'done!')
 input = torch.zeros(size=(1,1)).int()
 output = model.generate(input, 500).squeeze(0).tolist()
 print(f"{''.join(decode(output))}")
+# edit, I moved the plots code to the end of the tutorial when I explained positional encoding in depth
+# I plan on usingthe plots on the final version when everything makes more sense and is in one place. 
 # lets plot them, they maynot look very intresting now, but we try them at the end once more time
 # # and see what we can get out of these visualizations and plots
 # plot_heatmap(model.position_embd.weight.detach(),'position_embeddings')
@@ -3583,7 +3583,7 @@ print(f"{''.join(decode(output))}")
 # "Unlike Batch Normalization and Instance Normalization, 
 #  which applies scalar scale and bias for each entire channel/plane with the affine option,
 #  Layer Normalization applies per-element scale and bias with elementwise_affine"
-#! check and expand
+#
 # - LayerNorm: LayerNorm ensures that the mean of each feature across each example is zero and the standard 
 #   deviation is one. It preserves the relative relationships between the features within each example.
 # - BatchNorm: BatchNorm ensures that the mean of each feature across the entire batch is zero and the 
@@ -4437,131 +4437,316 @@ print(f"{''.join(decode(output))}")
 #ask chatgpt to write an introduction for each section (and explain someparts as if im 5!)
 
 # explain what an autoregressive mean and whats an autoregressive model and how its related to transformers, rnns or sequences, in depth
-# An autoregressive model is a type of statistical model where the current value in a sequence depends on the previous values in the same sequence. It assumes that the output is a function of the previous outputs, making it suitable for modeling sequential data.
+# An autoregressive model is a type of statistical model where the current value in a sequence depends on the previous values in the same sequence.
+#  It assumes that the output is a function of the previous outputs, making it suitable for modeling sequential data.
 # In an autoregressive model, the prediction at each time step is conditioned on the previous values. This can be represented mathematically as:
 # y_t = f(y_{t-1}, y_{t-2}, ..., y_{t-n})
-# where y_t is the predicted value at time step t, f is the function that maps the previous values to the current prediction, and n is the order of the autoregressive model (i.e., the number of previous values considered).
-# Autoregressive models have been extensively used in various domains, including time series analysis, speech recognition, natural language processing, and image generation. They are particularly effective for modeling sequential data with temporal dependencies.
+# where y_t is the predicted value at time step t, f is the function that maps the previous values to the current prediction, and n is 
+# the order of the autoregressive model (i.e., the number of previous values considered).
+# Autoregressive models have been extensively used in various domains, including time series analysis, speech recognition, 
+# natural language processing, and image generation. They are particularly effective for modeling sequential data with temporal dependencies.
 # Now, let's discuss the relationship between autoregressive models and transformers, recurrent neural networks (RNNs), and sequences:
+
 # 1. Transformers:
-#    Transformers are a type of neural network architecture that have revolutionized various natural language processing tasks. They are based on the self-attention mechanism, which allows them to model dependencies between different positions in the input sequence. Transformers do not have an inherent autoregressive structure, as they can process all positions of the input sequence in parallel. However, they can be trained in an autoregressive manner using a technique called "masked language modeling" (e.g., in the case of the Transformer-based language model GPT).
+#    Transformers are a type of neural network architecture that have revolutionized various natural language processing tasks. 
+# They are based on the self-attention mechanism, which allows them to model dependencies between different positions in the input sequence.
+#  Transformers do not have an inherent autoregressive structure, as they can process all positions of the input sequence in parallel.
+#  However, they can be trained in an autoregressive manner using a technique called "masked language modeling" 
+# (e.g., in the case of the Transformer-based language model GPT).
 # 2. Recurrent Neural Networks (RNNs):
-#    RNNs are a class of neural networks that are widely used for modeling sequential data. They have a natural autoregressive structure, where the hidden state at each time step depends on the previous hidden states. RNNs can capture temporal dependencies in sequences by propagating information through time. However, RNNs suffer from vanishing or exploding gradients, limiting their ability to capture long-term dependencies effectively.
+#    RNNs are a class of neural networks that are widely used for modeling sequential data. They have a natural autoregressive structure,
+#  where the hidden state at each time step depends on the previous hidden states. RNNs can capture temporal dependencies in sequences by 
+# propagating information through time. However, RNNs suffer from vanishing or exploding gradients, limiting their ability to capture 
+# long-term dependencies effectively.
 # 3. Sequences:
-#    Autoregressive models are commonly used to model sequences, where the prediction at each time step depends on the previous values. This can be applied to various types of sequences, such as time series data, text, audio, or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions or generate new samples.
-# In summary, autoregressive models capture dependencies between previous and current values in a sequence. Transformers, RNNs, and other models can be designed with autoregressive components to model sequences effectively. Transformers, while not inherently autoregressive, can be trained in an autoregressive manner. RNNs have a natural autoregressive structure, allowing them to model sequential data. Autoregressive models are commonly used for modeling various types of sequences, enabling tasks such as prediction, generation, or sequence completion.
+#    Autoregressive models are commonly used to model sequences, where the prediction at each time step depends on the previous values. 
+# This can be applied to various types of sequences, such as time series data, text, audio, or images. By considering the autoregressive
+# nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions 
+# or generate new samples.
+# In summary, autoregressive models capture dependencies between previous and current values in a sequence. Transformers, RNNs, 
+# and other models can be designed with autoregressive components to model sequences effectively. Transformers, while not inherently 
+# autoregressive, can be trained in an autoregressive manner. RNNs have a natural autoregressive structure, allowing them to model 
+# sequential data. Autoregressive models are commonly used for modeling various types of sequences, enabling tasks such as prediction,
+# generation, or sequence completion.
 
 # more exlpanation  for each point : 
 # Certainly! Let's delve deeper into each point:
 # 1. Transformers:
-#    Transformers are a type of neural network architecture that has gained significant attention in natural language processing tasks. Unlike traditional sequential models such as RNNs, transformers are based on the self-attention mechanism. This mechanism allows transformers to capture dependencies between different positions in the input sequence without relying on sequential processing. Thus, transformers do not have an inherent autoregressive structure as they can process all positions of the input sequence in parallel.
-#    However, transformers can be trained in an autoregressive manner using a technique called "masked language modeling." In this approach, during training, the model is fed with the input sequence where some positions are masked out. The model is then trained to predict the original values at the masked positions based on the unmasked context. This autoregressive training allows the model to learn the conditional dependencies between the previous and current positions in the sequence.
+#    Transformers are a type of neural network architecture that has gained significant attention in natural language processing tasks.
+#  Unlike traditional sequential models such as RNNs, transformers are based on the self-attention mechanism. This mechanism allows 
+# transformers to capture dependencies between different positions in the input sequence without relying on sequential processing. 
+# Thus, transformers do not have an inherent autoregressive structure as they can process all positions of the input sequence in parallel.
+#    However, transformers can be trained in an autoregressive manner using a technique called "masked language modeling." 
+# In this approach, during training, the model is fed with the input sequence where some positions are masked out. The model is then 
+# trained to predict the original values at the masked positions based on the unmasked context. This autoregressive training allows
+#  the model to learn the conditional dependencies between the previous and current positions in the sequence.
 # 2. Recurrent Neural Networks (RNNs):
-#    RNNs are a class of neural networks designed to model sequential data. They have a natural autoregressive structure due to their recurrent nature. At each time step, an RNN takes the current input and the previous hidden state as input and produces an output and a new hidden state. The hidden state at each time step encapsulates the information from previous time steps, allowing the model to capture the temporal dependencies within the sequence.
-#    RNNs are effective at modeling sequences with long-term dependencies, as they can propagate information through time. However, RNNs suffer from vanishing or exploding gradients, which can make it challenging for them to capture long-term dependencies effectively. This limitation led to the development of more advanced architectures like LSTMs and GRUs, which are variants of RNNs that address the gradient-related issues.
+#    RNNs are a class of neural networks designed to model sequential data. They have a natural autoregressive structure due to 
+# their recurrent nature. At each time step, an RNN takes the current input and the previous hidden state as input and produces an 
+# output and a new hidden state. The hidden state at each time step encapsulates the information from previous time steps, allowing
+#  the model to capture the temporal dependencies within the sequence.
+#    RNNs are effective at modeling sequences with long-term dependencies, as they can propagate information through time. 
+# However, RNNs suffer from vanishing or exploding gradients, which can make it challenging for them to capture long-term dependencies 
+# effectively. This limitation led to the development of more advanced architectures like LSTMs and GRUs, which are variants of RNNs
+#  that address the gradient-related issues.
 # 3. Sequences:
-#    Autoregressive models are commonly used to model various types of sequences, including time series data, text, audio, or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions or generate new samples.
-#    For example, in time series analysis, autoregressive models such as ARIMA (AutoRegressive Integrated Moving Average) are widely used to predict future values based on past observations. In text generation, autoregressive language models like GPT (Generative Pre-trained Transformer) use the previously generated tokens to predict the next token, allowing for the generation of coherent and contextually relevant text.
-#    Autoregressive models are also employed in image generation tasks, such as PixelCNN, where each pixel is generated based on the previously generated pixels in a row-major or column-major order. This autoregressive approach ensures that the generated image is coherent and structurally meaningful.
-# In summary, while transformers do not have an inherent autoregressive structure, they can be trained in an autoregressive manner using techniques like masked language modeling. RNNs have a natural autoregressive structure, making them suitable for modeling sequential data. Autoregressive models can be applied to various types of sequences and are effective in capturing dependencies and generating coherent predictions or samples.
+#    Autoregressive models are commonly used to model various types of sequences, including time series data, text, audio, 
+# or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate 
+# coherent and contextually relevant predictions or generate new samples.
+#    For example, in time series analysis, autoregressive models such as ARIMA (AutoRegressive Integrated Moving Average) 
+# are widely used to predict future values based on past observations. In text generation, autoregressive language models like 
+# GPT (Generative Pre-trained Transformer) use the previously generated tokens to predict the next token, allowing for the generation 
+# of coherent and contextually relevant text.
+#    Autoregressive models are also employed in image generation tasks, such as PixelCNN, where each pixel is generated based 
+# on the previously generated pixels in a row-major or column-major order. This autoregressive approach ensures that the generated 
+# image is coherent and structurally meaningful.
+# In summary, while transformers do not have an inherent autoregressive structure, they can be trained in an autoregressive 
+# manner using techniques like masked language modeling. RNNs have a natural autoregressive structure, making them suitable for 
+# modeling sequential data. Autoregressive models can be applied to various types of sequences and are effective in capturing dependencies
+#  and generating coherent predictions or samples.
 
 
-# A transformer is a deep learning model architecture introduced in the paper "Attention Is All You Need" by Vaswani et al. in 2017. It was designed as an alternative to recurrent neural networks (RNNs) for tasks like machine translation but has since found applications in various natural language processing (NLP) and computer vision tasks.
-# The key idea behind the transformer architecture is the use of self-attention mechanisms. Instead of relying on recurrent connections, transformers utilize self-attention to capture dependencies between different positions in the input sequence. This allows the model to focus on relevant parts of the input sequence, improving parallelization and reducing the dependency on the sequence length.
+# A transformer is a deep learning model architecture introduced in the paper "Attention Is All You Need" by Vaswani et al. in 2017.
+#  It was designed as an alternative to recurrent neural networks (RNNs) for tasks like machine translation but has since found applications 
+# in various natural language processing (NLP) and computer vision tasks.
+# The key idea behind the transformer architecture is the use of self-attention mechanisms. Instead of relying on recurrent connections,
+#  transformers utilize self-attention to capture dependencies between different positions in the input sequence. This allows the model 
+# to focus on relevant parts of the input sequence, improving parallelization and reducing the dependency on the sequence length.
 # Over the years, transformers have undergone various improvements and variations. Some notable developments include:
-# 1. Transformer-XL: Introduced in 2019, Transformer-XL addressed the limitation of fixed-length context windows in the original transformer. It introduced a recurrence mechanism to allow the model to consider longer-term dependencies.
-# 2. BERT: In 2018, Bidirectional Encoder Representations from Transformers (BERT) revolutionized NLP by pretraining transformers on large amounts of unlabeled text data. BERT models achieved state-of-the-art performance across multiple NLP tasks by fine-tuning on specific downstream tasks.
-# 3. GPT-3: Released in 2020, GPT-3 (Generative Pre-trained Transformer 3) is one of the largest transformer models ever built, with 175 billion parameters. It has demonstrated impressive performance on various language-related tasks, including language translation, text generation, and question-answering.
-# Transformers have found applications in a wide range of tasks, including machine translation, sentiment analysis, text generation, question-answering, image recognition, and more. Their ability to capture long-range dependencies and model context has made them highly effective in these domains.
-# In PyTorch, you can use the `torch.nn.Transformer` module to implement a transformer model. Training a transformer involves several important considerations:
+# 1. Transformer-XL: Introduced in 2019, Transformer-XL addressed the limitation of fixed-length context windows in the original 
+# transformer. It introduced a recurrence mechanism to allow the model to consider longer-term dependencies.
+# 2. BERT: In 2018, Bidirectional Encoder Representations from Transformers (BERT) revolutionized NLP by pretraining transformers 
+# on large amounts of unlabeled text data. BERT models achieved state-of-the-art performance across multiple NLP tasks by fine-tuning 
+# on specific downstream tasks.
+# 3. GPT-3: Released in 2020, GPT-3 (Generative Pre-trained Transformer 3) is one of the largest transformer models ever built,
+#  with 175 billion parameters. It has demonstrated impressive performance on various language-related tasks, including language translation,
+#  text generation, and question-answering.
+# Transformers have found applications in a wide range of tasks, including machine translation, sentiment analysis, text generation,
+#  question-answering, image recognition, and more. Their ability to capture long-range dependencies and model context has made them 
+# highly effective in these domains.
+# In PyTorch, you can use the `torch.nn.Transformer` module to implement a transformer model. Training a transformer involves several
+#  important considerations:
 # 1. Dataset Preparation: Prepare your dataset by tokenizing text inputs, creating input sequences, and generating target sequences.
-# 2. Model Architecture: Design the transformer architecture by specifying the number of encoder and decoder layers, the size of the embedding and hidden layers, and the attention mechanism used.
-# 3. Hyperparameter Tuning: Important hyperparameters to tune include the learning rate, batch size, number of layers, hidden size, and dropout rate. You can experiment with different values and use techniques like grid search or random search to find optimal hyperparameters.
-# 4. Training Loop: Train the model using backpropagation and optimize the model parameters. Monitor the loss and perform gradient updates using an optimizer like Adam.
-# 5. Evaluation: Evaluate the trained model on a separate validation or test set using appropriate metrics for the specific task. Adjust the model and hyperparameters as necessary based on the evaluation results.
-# 6. Regularization Techniques: Apply regularization techniques such as dropout, weight decay, or layer normalization to prevent overfitting and improve generalization.
-# 7. Pretrained Models: Utilize pretrained transformer models like BERT or GPT-3, which have been trained on large amounts of data. Fine-tune these models on your specific task to benefit from their transfer learning capabilities.
-# Remember that training a transformer can be computationally expensive due to the large number of parameters. It is recommended to use GPUs and distributed training techniques to speed up the training process.
-# Overall, transformers have significantly impacted the field of deep learning, especially in NLP tasks. They provide a powerful alternative to traditional recurrent architectures and have achieved state-of-the-art performance in various domains.
+# 2. Model Architecture: Design the transformer architecture by specifying the number of encoder and decoder layers, the size of the 
+# embedding and hidden layers, and the attention mechanism used.
+# 3. Hyperparameter Tuning: Important hyperparameters to tune include the learning rate, batch size, number of layers, hidden size,
+#  and dropout rate. You can experiment with different values and use techniques like grid search or random search to find optimal
+# hyperparameters.
+# 4. Training Loop: Train the model using backpropagation and optimize the model parameters. Monitor the loss and perform gradient 
+# updates using an optimizer like Adam.
+# 5. Evaluation: Evaluate the trained model on a separate validation or test set using appropriate metrics for the specific task. 
+# Adjust the model and hyperparameters as necessary based on the evaluation results.
+# 6. Regularization Techniques: Apply regularization techniques such as dropout, weight decay, or layer normalization to prevent 
+# overfitting and improve generalization.
+# 7. Pretrained Models: Utilize pretrained transformer models like BERT or GPT-3, which have been trained on large amounts of data.
+#  Fine-tune these models on your specific task to benefit from their transfer learning capabilities.
+# Remember that training a transformer can be computationally expensive due to the large number of parameters. It is recommended to 
+# use GPUs and distributed training techniques to speed up the training process.
+# Overall, transformers have significantly impacted the field of deep learning, especially in NLP tasks. They provide a powerful 
+# alternative to traditional recurrent architectures and have achieved state-of-the-art performance in various domains.
 
-# Certainly! Let's dive deeper into the first three paragraphs to provide a more detailed explanation of the transformer architecture, its key idea, and the subsequent developments:
+# Certainly! Let's dive deeper into the first three paragraphs to provide a more detailed explanation of the transformer architecture,
+#  its key idea, and the subsequent developments:
 # 1. Transformer Architecture:
-#    The transformer architecture is a type of neural network model introduced in the paper "Attention Is All You Need". It was primarily designed as an alternative to recurrent neural networks (RNNs) for sequence-to-sequence tasks, such as machine translation. Unlike RNNs, which process sequential data sequentially, transformers operate on the entire input sequence simultaneously. This parallelization allows for more efficient computation and faster training.
-#    The transformer architecture consists of two main components: the encoder and the decoder. The encoder takes the input sequence and maps it into a set of high-dimensional representations, capturing the contextual information of each input element. The decoder then generates the output sequence based on the encoder's representations and the previously generated output elements. The key innovation of the transformer lies in its use of self-attention mechanisms, which enable the model to capture relationships between different positions in the input sequence.
+#    The transformer architecture is a type of neural network model introduced in the paper "Attention Is All You Need". 
+# It was primarily designed as an alternative to recurrent neural networks (RNNs) for sequence-to-sequence tasks, such as machine
+#  translation. Unlike RNNs, which process sequential data sequentially, transformers operate on the entire input sequence simultaneously.
+#  This parallelization allows for more efficient computation and faster training.
+#    The transformer architecture consists of two main components: the encoder and the decoder. The encoder takes the input 
+# sequence and maps it into a set of high-dimensional representations, capturing the contextual information of each input element.
+#  The decoder then generates the output sequence based on the encoder's representations and the previously generated output elements.
+#  The key innovation of the transformer lies in its use of self-attention mechanisms, which enable the model to capture relationships
+# between different positions in the input sequence.
 # 2. Key Idea - Self-Attention Mechanism:
-#    The key idea behind the transformer architecture is the self-attention mechanism. Self-attention allows the model to weigh the importance of different input elements when generating a specific output element. It achieves this by computing attention scores between pairs of input elements, determining how much each element contributes to the representation of another element. These attention scores are then used to compute a weighted sum of the input elements, producing the final output representation.
-#    Self-attention mechanisms enable the model to focus on the most relevant parts of the input sequence, irrespective of their positions. This attention-based approach provides a more flexible and powerful way of modeling dependencies between elements compared to the fixed sequential processing of RNNs. By attending to relevant information in the input sequence, transformers can capture long-range dependencies and produce more accurate representations.
+#    The key idea behind the transformer architecture is the self-attention mechanism. Self-attention allows the model to weigh 
+# he importance of different input elements when generating a specific output element. It achieves this by computing attention 
+# scores between pairs of input elements, determining how much each element contributes to the representation of another element.
+#  These attention scores are then used to compute a weighted sum of the input elements, producing the final output representation.
+#    Self-attention mechanisms enable the model to focus on the most relevant parts of the input sequence, irrespective of their positions.
+#  This attention-based approach provides a more flexible and powerful way of modeling dependencies between elements compared to 
+# the fixed sequential processing of RNNs. By attending to relevant information in the input sequence, transformers can capture 
+# long-range dependencies and produce more accurate representations.
 # 3. Developments and Variations:
-#    Since the introduction of the transformer architecture, several developments and variations have emerged to address specific challenges or improve performance in different tasks. Two notable examples are Transformer-XL and BERT:
-#    - Transformer-XL: Introduced in 2019, Transformer-XL aimed to address the limitation of fixed-length context windows in the original transformer. It introduced a recurrence mechanism, allowing the model to consider longer-term dependencies within the input sequence. This recurrence mechanism, called "relative positional encoding," enables the model to capture context beyond the window size.
-#    - BERT: In 2018, BERT (Bidirectional Encoder Representations from Transformers) made significant advancements in NLP tasks. BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. This pretraining enables the model to learn contextual representations of words and sentences. BERT models can then be fine-tuned on specific downstream tasks, achieving state-of-the-art performance across various NLP benchmarks.
-# These developments highlight the adaptability and versatility of the transformer architecture. Researchers have explored different modifications, improvements, and pretraining techniques to make transformers more effective in specific domains and tasks. The transformer architecture has proven to be a transformative advancement in deep learning, particularly in the field of natural language processing, revolutionizing the way we approach sequence modeling and generation tasks.
+#    Since the introduction of the transformer architecture, several developments and variations have emerged to address specific
+#  challenges or improve performance in different tasks. Two notable examples are Transformer-XL and BERT:
+#    - Transformer-XL: Introduced in 2019, Transformer-XL aimed to address the limitation of fixed-length context windows in the 
+# original transformer. It introduced a recurrence mechanism, allowing the model to consider longer-term dependencies within the 
+# input sequence. This recurrence mechanism, called "relative positional encoding," enables the model to capture context beyond 
+# the window size.
+#    - BERT: In 2018, BERT (Bidirectional Encoder Representations from Transformers) made significant advancements in NLP tasks. 
+# BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. This pretraining 
+# enables the model to learn contextual representations of words and sentences. BERT models can then be fine-tuned on specific 
+# downstream tasks, achieving state-of-the-art performance across various NLP benchmarks.
+# These developments highlight the adaptability and versatility of the transformer architecture. Researchers have explored different 
+# modifications, improvements, and pretraining techniques to make transformers more effective in specific domains and tasks. 
+# The transformer architecture has proven to be a transformative advancement in deep learning, particularly in the field of natural
+#  language processing, revolutionizing the way we approach sequence modeling and generation tasks.
 #
 # explain  more
-#Certainly! Let's delve deeper into the third point, focusing on the developments and variations in transformer architecture, particularly Transformer-XL and BERT:
+#Certainly! Let's delve deeper into the third point, focusing on the developments and variations in transformer architecture, 
+# particularly Transformer-XL and BERT:
 #
 # 1. Transformer-XL:
-#    Transformer-XL is an extension of the original transformer architecture introduced in 2019. It addresses the limitation of fixed-length context windows in the original transformer, which can restrict the model's ability to capture long-range dependencies.
-#    The main innovation of Transformer-XL is the introduction of a recurrence mechanism called "relative positional encoding." In the original transformer, positional encoding provides information about the absolute position of each element in the input sequence. However, it does not explicitly model the relative distances between elements.
-#    Transformer-XL overcomes this limitation by introducing relative positional encoding, which allows the model to capture relative distances between input elements. By considering relative positions, the model can capture longer-term dependencies within the input sequence, exceeding the fixed context window size of the original transformer.
-#    This recurrence mechanism enables Transformer-XL to handle longer sequences and better capture context beyond the fixed window size. It has been particularly effective in tasks that require modeling long-range dependencies, such as language modeling and document understanding.
+#    Transformer-XL is an extension of the original transformer architecture introduced in 2019. It addresses the limitation of 
+# fixed-length context windows in the original transformer, which can restrict the model's ability to capture long-range dependencies.
+#    The main innovation of Transformer-XL is the introduction of a recurrence mechanism called "relative positional encoding." 
+# In the original transformer, positional encoding provides information about the absolute position of each element in the input 
+# sequence. However, it does not explicitly model the relative distances between elements.
+#    Transformer-XL overcomes this limitation by introducing relative positional encoding, which allows the model to capture 
+# relative distances between input elements. By considering relative positions, the model can capture longer-term dependencies 
+# within the input sequence, exceeding the fixed context window size of the original transformer.
+#    This recurrence mechanism enables Transformer-XL to handle longer sequences and better capture context beyond the fixed 
+# window size. It has been particularly effective in tasks that require modeling long-range dependencies, such as language 
+# modeling and document understanding.
 # 2. BERT (Bidirectional Encoder Representations from Transformers):
-#    BERT, introduced in 2018, made significant strides in natural language processing (NLP) tasks by leveraging transformer-based architectures. BERT pioneered the use of unsupervised pretraining followed by supervised fine-tuning, demonstrating remarkable performance across various NLP benchmarks.
-#    BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. During pretraining, a certain percentage of input tokens are randomly masked, and the model is trained to predict the original masked tokens based on the surrounding context. This process allows BERT to learn contextual representations of words and sentences, capturing rich semantic and syntactic information.
-#    After pretraining, BERT models can be fine-tuned on specific downstream tasks with labeled data. This fine-tuning stage involves adding task-specific layers and training the model on the task-specific objective. By leveraging the knowledge learned during pretraining, BERT models achieve state-of-the-art performance on a wide range of NLP tasks, including text classification, named entity recognition, question-answering, and more.
-#    BERT's bidirectional approach, where the model can access both left and right context during pretraining, allows it to capture a deeper understanding of the language. This bidirectional context modeling is achieved through the use of a "masked self-attention" mechanism, where attention is computed not only between different input elements but also between masked and unmasked elements.
-#    BERT has had a profound impact on NLP research and applications, setting new benchmarks and pushing the boundaries of language understanding tasks. It has also paved the way for subsequent models, such as GPT (Generative Pre-trained Transformer) and RoBERTa, which further improved upon the BERT architecture.
-# In summary, Transformer-XL and BERT are notable developments in the transformer architecture. Transformer-XL introduces a recurrence mechanism to capture longer-range dependencies, while BERT leverages unsupervised pretraining followed by supervised fine-tuning to achieve state-of-the-art performance on a range of NLP tasks. These advancements have significantly influenced the field of deep learning and have propelled the transformer architecture to the forefront of NLP research and applications.
+#    BERT, introduced in 2018, made significant strides in natural language processing (NLP) tasks by leveraging transformer-based 
+# architectures. BERT pioneered the use of unsupervised pretraining followed by supervised fine-tuning, demonstrating remarkable 
+# performance across various NLP benchmarks.
+#    BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. During pretraining, 
+# a certain percentage of input tokens are randomly masked, and the model is trained to predict the original masked tokens based on 
+# the surrounding context. This process allows BERT to learn contextual representations of words and sentences, 
+# capturing rich semantic and syntactic information.
+#    After pretraining, BERT models can be fine-tuned on specific downstream tasks with labeled data. This fine-tuning stage involves 
+# adding task-specific layers and training the model on the task-specific objective. By leveraging the knowledge learned during 
+# pretraining, BERT models achieve state-of-the-art performance on a wide range of NLP tasks, including text classification, 
+# named entity recognition, question-answering, and more.
+#    BERT's bidirectional approach, where the model can access both left and right context during pretraining, allows it to capture a 
+# deeper understanding of the language. This bidirectional context modeling is achieved through the use of a "masked 
+# self-attention" mechanism, where attention is computed not only between different input elements but also between masked and unmasked elements.
+#    BERT has had a profound impact on NLP research and applications, setting new benchmarks and pushing the boundaries of language
+#  understanding tasks. It has also paved the way for subsequent models, such as GPT (Generative Pre-trained Transformer) 
+# and RoBERTa, which further improved upon the BERT architecture.
+# In summary, Transformer-XL and BERT are notable developments in the transformer architecture. Transformer-XL introduces a recurrence
+#  mechanism to capture longer-range dependencies, while BERT leverages unsupervised pretraining followed by supervised 
+# fine-tuning to achieve state-of-the-art performance on a range of NLP tasks. These advancements have significantly influenced 
+# the field of deep learning and have propelled the transformer architecture to the forefront of NLP research and applications.
 
 # more explanations 
-# Certainly! Let's delve even deeper into Transformer-XL and BERT, exploring their architecture and the specific innovations they bring to the transformer model:
+# Certainly! Let's delve even deeper into Transformer-XL and BERT, exploring their architecture and the specific innovations they 
+# bring to the transformer model:
 # 1. Transformer-XL:
-#    Transformer-XL is an extension of the original transformer architecture that addresses the limitation of fixed-length context windows. It introduces a recurrence mechanism called "relative positional encoding" to capture longer-range dependencies within the input sequence.
-#    In the original transformer, positional encoding provides information about the absolute positions of elements in the input sequence. However, it does not explicitly model the relative distances between elements. This limitation can lead to difficulties in capturing long-range dependencies, especially when the distance between relevant elements is larger than the fixed context window.
-#    Transformer-XL overcomes this limitation by incorporating memory mechanisms into the transformer architecture. It introduces two types of memories: segment-level recurrence and positional recurrence.
-#    - Segment-Level Recurrence: Transformer-XL maintains a memory of previously seen segments and incorporates this information into the current segment's processing. By doing so, the model can capture dependencies that span across segments, enabling it to consider longer-term context.
-#    - Positional Recurrence: To capture dependencies within a segment, Transformer-XL introduces a recurrence mechanism at the positional level. Instead of processing the segment in a strictly left-to-right manner, it allows information to flow from any position to any other position within the segment. This allows the model to capture longer-range dependencies within the fixed context window.
-#    By incorporating these recurrence mechanisms, Transformer-XL can capture longer-term dependencies both within segments and across segments. This makes it particularly effective for tasks that require modeling long-range context, such as language modeling, where understanding the context beyond a fixed window is crucial.
+#    Transformer-XL is an extension of the original transformer architecture that addresses the limitation of fixed-length context windows.
+#  It introduces a recurrence mechanism called "relative positional encoding" to capture longer-range dependencies within the input sequence.
+#    In the original transformer, positional encoding provides information about the absolute positions of elements in the input sequence.
+#  However, it does not explicitly model the relative distances between elements. This limitation can lead to difficulties in 
+# capturing long-range dependencies, especially when the distance between relevant elements is larger than the fixed context window.
+#    Transformer-XL overcomes this limitation by incorporating memory mechanisms into the transformer architecture. It introduces two types
+#  of memories: segment-level recurrence and positional recurrence.
+#    - Segment-Level Recurrence: Transformer-XL maintains a memory of previously seen segments and incorporates this information into the 
+# current segment's processing. By doing so, the model can capture dependencies that span across segments, enabling it to consider longer-term context.
+#    - Positional Recurrence: To capture dependencies within a segment, Transformer-XL introduces a recurrence mechanism at the positional 
+# level. Instead of processing the segment in a strictly left-to-right manner, it allows information to flow from any position to 
+# any other position within the segment. This allows the model to capture longer-range dependencies within the fixed context window.
+#    By incorporating these recurrence mechanisms, Transformer-XL can capture longer-term dependencies both within segments and across segments. 
+# This makes it particularly effective for tasks that require modeling long-range context, such as language modeling, where 
+# understanding the context beyond a fixed window is crucial.
 # 2. BERT (Bidirectional Encoder Representations from Transformers):
-#    BERT, introduced in 2018, made significant advancements in NLP tasks by leveraging transformer-based architectures. It introduced the concept of unsupervised pretraining followed by supervised fine-tuning, allowing the model to learn rich contextual representations of words and sentences.
+#    BERT, introduced in 2018, made significant advancements in NLP tasks by leveraging transformer-based architectures. It introduced the 
+# concept of unsupervised pretraining followed by supervised fine-tuning, allowing the model to learn rich contextual 
+# representations of words and sentences.
 #    BERT follows a two-step process: pretraining and fine-tuning.
-#    - Pretraining: BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. During pretraining, a certain percentage of input tokens are randomly masked, and the model is trained to predict the original masked tokens based on the surrounding context. By training on this MLM objective, BERT learns to capture deep contextual information and understand the relationships between words.
-#    - Fine-Tuning: After pretraining, BERT models are fine-tuned on specific downstream tasks using labeled data. During fine-tuning, task-specific layers are added on top of the pretrained BERT model, and the entire model is trained on the task-specific objective. Fine-tuning allows BERT to adapt its learned representations to the specific task at hand.
-#    The bidirectional nature of BERT is a key innovation. Unlike the original transformer, which processes input sequentially in one direction, BERT employs a "masked self-attention" mechanism. This mechanism allows the model to access both left and right context during pretraining, providing a deeper understanding of the language.
-#    By leveraging the contextual information learned during pretraining, BERT models achieve remarkable performance across various NLP tasks. The ability to capture rich semantic and syntactic information makes BERT highly effective for tasks such as text classification, named entity recognition, question-answering, and more.
-#    The success of BERT has spurred further developments, with subsequent models like GPT and RoBERTa adopting similar approaches to achieve even better performance on NLP benchmarks.
-# In summary, Transformer-XL introduces recurrence mechanisms to capture longer-range dependencies within the input sequence, while BERT leverages unsupervised pretraining followed by supervised fine-tuning to capture rich contextual representations of words and sentences. These advancements have significantly impacted the field of deep learning, particularly in the realm of NLP, setting new benchmarks and pushing the boundaries of language understanding tasks.
+#    - Pretraining: BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. 
+# During pretraining, a certain percentage of input tokens are randomly masked, and the model is trained to predict the original 
+# masked tokens based on the surrounding context. By training on this MLM objective, BERT learns to capture deep contextual information 
+# and understand the relationships between words.
+#    - Fine-Tuning: After pretraining, BERT models are fine-tuned on specific downstream tasks using labeled data. During fine-tuning,
+#  task-specific layers are added on top of the pretrained BERT model, and the entire model is trained on the task-specific objective.
+#  Fine-tuning allows BERT to adapt its learned representations to the specific task at hand.
+#    The bidirectional nature of BERT is a key innovation. Unlike the original transformer, which processes input sequentially 
+# in one direction, BERT employs a "masked self-attention" mechanism. This mechanism allows the model to access both left and right 
+# context during pretraining, providing a deeper understanding of the language.
+#    By leveraging the contextual information learned during pretraining, BERT models achieve remarkable performance across various NLP tasks.
+#  The ability to capture rich semantic and syntactic information makes BERT highly effective for tasks such as text classification, 
+# named entity recognition, question-answering, and more.
+#    The success of BERT has spurred further developments, with subsequent models like GPT and RoBERTa adopting similar approaches 
+# to achieve even better performance on NLP benchmarks.
+# In summary, Transformer-XL introduces recurrence mechanisms to capture longer-range dependencies within the input sequence, 
+# while BERT leverages unsupervised pretraining followed by supervised fine-tuning to capture rich contextual representations of 
+# words and sentences. These advancements have significantly impacted the field of deep learning, particularly in the realm of NLP, 
+# setting new benchmarks and pushing the boundaries of language understanding tasks.
 
 # transformer in more depth
-# Certainly! Here's an in-depth explanation of transformers, including their underlying idea, how they work, the different versions, and the importance of libraries like Hugging Face:
+# Certainly! Here's an in-depth explanation of transformers, including their underlying idea, how they work, the different versions,
+#  and the importance of libraries like Hugging Face:
 # 1. Underlying Idea:
-#    Transformers are a type of neural network architecture introduced in the paper "Attention Is All You Need" to tackle sequence-to-sequence tasks, such as machine translation. The underlying idea of transformers is to enable parallel processing of the entire input sequence, as opposed to the sequential processing of recurrent neural networks (RNNs).
-#    The key innovation of transformers lies in their use of self-attention mechanisms. Self-attention allows the model to weigh the importance of different input elements when generating a specific output element. By computing attention scores between pairs of input elements, transformers determine how much each element contributes to the representation of another element. This attention-based approach provides a flexible and powerful way of modeling dependencies between elements, capturing long-range relationships effectively.
+#    Transformers are a type of neural network architecture introduced in the paper "Attention Is All You Need" to tackle 
+# sequence-to-sequence tasks, such as machine translation. The underlying idea of transformers is to enable parallel processing of
+#  the entire input sequence, as opposed to the sequential processing of recurrent neural networks (RNNs).
+#    The key innovation of transformers lies in their use of self-attention mechanisms. Self-attention allows the model to 
+# weigh the importance of different input elements when generating a specific output element. By computing attention scores between 
+# pairs of input elements, transformers determine how much each element contributes to the representation of another element.
+#  This attention-based approach provides a flexible and powerful way of modeling dependencies between elements, capturing long-range 
+# relationships effectively.
 # 2. How Transformers Work:
 #    Transformers consist of two main components: the encoder and the decoder. Let's explain their functioning:
-#    - Encoder: The encoder takes the input sequence and maps it into a set of high-dimensional representations. It applies self-attention mechanisms to capture relationships between different positions in the input sequence. The encoder stack typically consists of multiple layers, each containing a self-attention mechanism followed by feed-forward neural networks. The self-attention mechanism allows the encoder to attend to relevant information from the entire input sequence, producing rich representations for each element.
-#    - Decoder: The decoder generates the output sequence based on the encoder's representations and the previously generated output elements. Like the encoder, the decoder also consists of multiple layers, but it additionally includes an attention mechanism that allows it to attend to the encoder's representations. This attention mechanism enables the decoder to focus on the most relevant parts of the input sequence while generating the output sequence step by step.
-#    By leveraging self-attention mechanisms in both the encoder and decoder, transformers can capture the relationships between input and output elements efficiently. This parallel processing of the entire sequence allows transformers to model long-range dependencies and generate accurate representations.
+#    - Encoder: The encoder takes the input sequence and maps it into a set of high-dimensional representations. It applies 
+# self-attention mechanisms to capture relationships between different positions in the input sequence. The encoder stack typically 
+# consists of multiple layers, each containing a self-attention mechanism followed by feed-forward neural networks. 
+# The self-attention mechanism allows the encoder to attend to relevant information from the entire input sequence, producing rich 
+# representations for each element.
+#    - Decoder: The decoder generates the output sequence based on the encoder's representations and the previously generated
+#  output elements. Like the encoder, the decoder also consists of multiple layers, but it additionally includes an attention mechanism 
+# that allows it to attend to the encoder's representations. This attention mechanism enables the decoder to focus on
+#  the most relevant parts of the input sequence while generating the output sequence step by step.
+#    By leveraging self-attention mechanisms in both the encoder and decoder, transformers can capture the relationships
+#  between input and output elements efficiently. This parallel processing of the entire sequence allows transformers to model 
+# long-range dependencies and generate accurate representations.
 # 3. Versions of Transformers:
-#    Since the introduction of the transformer architecture, several versions and variations have emerged to address specific challenges and improve performance in different tasks. Some notable versions include:
-#    - Transformer-XL: Introduced in 2019, Transformer-XL incorporates recurrence mechanisms to capture longer-range dependencies within the input sequence. It introduces segment-level recurrence and positional recurrence to handle longer sequences and context beyond the fixed window size.
-#    - BERT (Bidirectional Encoder Representations from Transformers): BERT revolutionized the field of NLP in 2018. It employs unsupervised pretraining followed by supervised fine-tuning to learn contextual representations of words and sentences. BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. After pretraining, they can be fine-tuned on specific supervised tasks, achieving state-of-the-art performance across various NLP benchmarks.
-#    - GPT (Generative Pre-trained Transformer): GPT models, introduced in 2018, focus on language generation tasks. They adopt a similar pretraining and fine-tuning approach as BERT but use a generative objective during pretraining. GPT models have been successful in tasks like text generation, language translation, and summarization.
-#    - RoBERTa: RoBERTa, introduced in 2019, builds upon BERT's architecture and training methodology. It modifies the training procedure and hyperparameters to achieve better performance. RoBERTa has shown improved results on a wide range of NLP tasks.
-#    These versions highlight the continuous advancements and refinements in the transformer architecture, addressing specific challenges and pushing the boundaries of performance in various domains.
+#    Since the introduction of the transformer architecture, several versions and variations have emerged to address specific 
+# challenges and improve performance in different tasks. Some notable versions include:
+#    - Transformer-XL: Introduced in 2019, Transformer-XL incorporates recurrence mechanisms to capture longer-range dependencies
+#  within the input sequence. It introduces segment-level recurrence and positional recurrence to handle longer sequences and context 
+# beyond the fixed window size.
+#    - BERT (Bidirectional Encoder Representations from Transformers): BERT revolutionized the field of NLP in 2018. 
+# It employs unsupervised pretraining followed by supervised fine-tuning to learn contextual representations of words and sentences.
+#  BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. After pretraining,
+#  they can be fine-tuned on specific supervised tasks, achieving state-of-the-art performance across various NLP benchmarks.
+#    - GPT (Generative Pre-trained Transformer): GPT models, introduced in 2018, focus on language generation tasks. 
+# They adopt a similar pretraining and fine-tuning approach as BERT but use a generative objective during pretraining. GPT models 
+# have been successful in tasks like text generation, language translation, and summarization.
+#    - RoBERTa: RoBERTa, introduced in 2019, builds upon BERT's architecture and training methodology. It modifies the 
+# training procedure and hyperparameters to achieve better performance. RoBERTa has shown improved results on a wide range of NLP tasks.
+#    These versions highlight the continuous advancements and refinements in the transformer architecture, addressing 
+# specific challenges and pushing the boundaries of performance in various domains.
 # 4. Importance of Libraries like Hugging Face:
-#    Hugging Face is a popular open-source library that provides tools and pre-trained models for natural language processing, with a strong focus on transformers. It offers a wide range of pre-trained transformer models, including BERT, GPT, RoBERTa, and many others.
-#    Hugging Face's library simplifies the process of working with transformers, providing easy-to-use APIs and tools for tasks like text classification, named entity recognition, question-answering, and more. It also enables users to fine-tune pre-trained models on specific downstream tasks with minimal effort.
-#    The library plays a crucial role in democratizing access to state-of-the-art transformer models, making them more accessible to researchers, developers, and practitioners. It has become a central hub for sharing, exploring, and utilizing transformer models, fostering rapid progress in the field of NLP.
-# In summary, transformers are neural network architectures that leverage self-attention mechanisms to process input sequences in parallel and capture long-range dependencies effectively. Versions like BERT, GPT, and RoBERTa have further improved upon the original transformer architecture, achieving remarkable results in various NLP tasks. Libraries like Hugging Face have played a vital role in making transformer models more accessible and facilitating their usage in a wide range of applications.The importance of Hugging Face library in the context of transformers cannot be overstated. Hugging Face is an open-source library that provides a comprehensive set of tools and pre-trained models for natural language processing, with a particular focus on transformers.
+#    Hugging Face is a popular open-source library that provides tools and pre-trained models for natural language processing,
+#  with a strong focus on transformers. It offers a wide range of pre-trained transformer models, including BERT, GPT, RoBERTa, 
+# and many others.
+#    Hugging Face's library simplifies the process of working with transformers, providing easy-to-use APIs and tools for tasks
+#  like text classification, named entity recognition, question-answering, and more. It also enables users to fine-tune pre-trained 
+# models on specific downstream tasks with minimal effort.
+#    The library plays a crucial role in democratizing access to state-of-the-art transformer models, making them more 
+# accessible to researchers, developers, and practitioners. It has become a central hub for sharing, exploring, and utilizing 
+# transformer models, fostering rapid progress in the field of NLP.
+# In summary, transformers are neural network architectures that leverage self-attention mechanisms to process input sequences
+#  in parallel and capture long-range dependencies effectively. Versions like BERT, GPT, and RoBERTa have further improved upon 
+# the original transformer architecture, achieving remarkable results in various NLP tasks. Libraries like Hugging Face have played
+#  a vital role in making transformer models more accessible and facilitating their usage in a wide range of applications.
+# The importance of Hugging Face library in the context of transformers cannot be overstated. Hugging Face is an open-source 
+# library that provides a comprehensive set of tools and pre-trained models for natural language processing, with a particular focus on transformers.
 # Here are some key aspects and the relation of Hugging Face to transformers:
-# 1. Pre-trained Models: Hugging Face offers a vast collection of pre-trained transformer models, including BERT, GPT, RoBERTa, and more. These models have been trained on large amounts of text data and have learned rich contextual representations that can be fine-tuned for specific NLP tasks.
-# 2. Model Hub: Hugging Face provides a centralized Model Hub, which serves as a repository for sharing and accessing pre-trained transformer models. Researchers and practitioners can upload their trained models to the Model Hub, making them readily available for the community. This fosters collaboration, knowledge sharing, and enables easy experimentation with the latest transformer models.
-# 3. Tokenizers: Hugging Face provides efficient tokenization libraries that can handle various text processing tasks. Tokenization is a crucial step in transforming raw text data into a format suitable for input to transformer models. Hugging Face's tokenizers support multiple languages and offer customizable options for different tokenization strategies.
-# 4. Model Pipelines: Hugging Face offers high-level model pipelines that simplify the process of using transformer models for specific NLP tasks. These pipelines provide easy-to-use APIs for tasks like text classification, named entity recognition, question-answering, and more. With just a few lines of code, users can leverage pre-trained models and achieve state-of-the-art performance on various NLP benchmarks.
-# 5. Fine-tuning Framework: Hugging Face provides a fine-tuning framework that allows users to adapt pre-trained transformer models to specific downstream tasks. Fine-tuning involves training the pre-trained models on task-specific data to improve their performance on specific NLP tasks. Hugging Face's framework simplifies the fine-tuning process by providing utilities and APIs for efficient model adaptation.
-# 6. Community and Documentation: Hugging Face has a vibrant community of developers, researchers, and NLP enthusiasts. They actively contribute to the library, share their experiences, and provide support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, making it easy for newcomers to get started with transformers and the library.
-# Overall, Hugging Face plays a pivotal role in making transformers more accessible and user-friendly. It provides a platform for sharing, exploring, and utilizing pre-trained models, tokenization tools, model pipelines, and fine-tuning frameworks. The library has become a go-to resource for researchers, developers, and practitioners working with transformers, enabling rapid progress and advancements in the field of NLP.
+# 1. Pre-trained Models: Hugging Face offers a vast collection of pre-trained transformer models, including BERT, GPT, RoBERTa, and more.
+#  These models have been trained on large amounts of text data and have learned rich contextual representations that can be fine-tuned
+#  for specific NLP tasks.
+# 2. Model Hub: Hugging Face provides a centralized Model Hub, which serves as a repository for sharing and accessing pre-trained 
+# transformer models. Researchers and practitioners can upload their trained models to the Model Hub, making them readily available 
+# for the community. This fosters collaboration, knowledge sharing, and enables easy experimentation with the latest transformer models.
+# 3. Tokenizers: Hugging Face provides efficient tokenization libraries that can handle various text processing tasks. Tokenization 
+# is a crucial step in transforming raw text data into a format suitable for input to transformer models. Hugging Face's tokenizers 
+# support multiple languages and offer customizable options for different tokenization strategies.
+# 4. Model Pipelines: Hugging Face offers high-level model pipelines that simplify the process of using transformer models for specific
+#  NLP tasks. These pipelines provide easy-to-use APIs for tasks like text classification, named entity recognition, question-answering, 
+# and more. With just a few lines of code, users can leverage pre-trained models and achieve state-of-the-art performance on various NLP benchmarks.
+# 5. Fine-tuning Framework: Hugging Face provides a fine-tuning framework that allows users to adapt pre-trained transformer models to
+#  specific downstream tasks. Fine-tuning involves training the pre-trained models on task-specific data to improve their performance 
+# on specific NLP tasks. Hugging Face's framework simplifies the fine-tuning process by providing utilities and APIs for efficient model adaptation.
+# 6. Community and Documentation: Hugging Face has a vibrant community of developers, researchers, and NLP enthusiasts. They actively
+#  contribute to the library, share their experiences, and provide support to fellow users. Hugging Face's documentation is comprehensive 
+# and user-friendly, making it easy for newcomers to get started with transformers and the library.
+# Overall, Hugging Face plays a pivotal role in making transformers more accessible and user-friendly. It provides a platform for 
+# sharing, exploring, and utilizing pre-trained models, tokenization tools, model pipelines, and fine-tuning frameworks. The library 
+# has become a go-to resource for researchers, developers, and practitioners working with transformers, enabling rapid 
+# progress and advancements in the field of NLP.
 
 
 # lash attention latest improvements https://arxiv.org/pdf/2205.14135.pdf
@@ -4588,31 +4773,72 @@ print(f"{''.join(decode(output))}")
 #
 # https://python.plainenglish.io/swin-transformer-from-scratch-in-pytorch-31275152bf03
 # about vision transormers 
-# Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, the different versions, and the importance of libraries like Hugging Face:
+# Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, 
+# the different versions, and the importance of libraries like Hugging Face:
 # 1. Underlying Idea:
-#    Vision transformers are a variant of transformers that have been adapted for computer vision tasks. While convolutional neural networks (CNNs) have traditionally been the dominant architecture for image processing, vision transformers aim to explore the effectiveness of transformers in visual tasks. The underlying idea is to apply self-attention mechanisms to capture global dependencies in images and enable parallel processing of the entire image.
-#    The key intuition behind vision transformers is that images can be reshaped into sequences of patches, similar to sentences in natural language processing. These patches are then fed into the transformer model, allowing it to capture relationships between patches and learn meaningful representations.
+#    Vision transformers are a variant of transformers that have been adapted for computer vision tasks.
+#  While convolutional neural networks (CNNs) have traditionally been the dominant architecture for image processing,
+#  vision transformers aim to explore the effectiveness of transformers in visual tasks. The underlying idea is to 
+# apply self-attention mechanisms to capture global dependencies in images and enable parallel processing of the entire image.
+#    The key intuition behind vision transformers is that images can be reshaped into sequences of patches, 
+# similar to sentences in natural language processing. These patches are then fed into the transformer model, 
+# allowing it to capture relationships between patches and learn meaningful representations.
 # 2. How Vision Transformers Work:
-#    Vision transformers consist of an encoder, similar to the original transformer architecture. Let's explain their functioning:
-#    - Patch Extraction: The input image is divided into a set of smaller patches. Each patch represents a local region of the image and is typically represented as a vector.
-#    - Positional Embedding: Similar to transformers in NLP, vision transformers require positional information to capture spatial relationships between patches. Positional embeddings are added to each patch vector to encode its relative position within the image.
-#    - Encoder: The encoder processes the sequence of patch embeddings and performs self-attention operations to model the dependencies between patches. The self-attention mechanism allows each patch to attend to other patches, capturing global relationships in the image. The encoder stack typically consists of multiple layers, each containing self-attention mechanisms and feed-forward neural networks.
-#    - Classification Head: At the end of the encoder, a classification head is added to produce the final output. This head can be a simple linear layer that maps the transformer's output to the desired number of classes for classification tasks.
-#    By leveraging self-attention mechanisms, vision transformers can capture long-range dependencies and global context in images, allowing them to achieve competitive performance on various computer vision tasks.
+#    Vision transformers consist of an encoder, similar to the original transformer architecture. 
+# Let's explain their functioning:
+#    - Patch Extraction: The input image is divided into a set of smaller patches. Each patch represents a 
+# local region of the image and is typically represented as a vector.
+#    - Positional Embedding: Similar to transformers in NLP, vision transformers require positional information 
+# to capture spatial relationships between patches. Positional embeddings are added to each patch vector to encode 
+# its relative position within the image.
+#    - Encoder: The encoder processes the sequence of patch embeddings and performs self-attention operations to 
+# model the dependencies between patches. The self-attention mechanism allows each patch to attend to other patches, 
+# capturing global relationships in the image. The encoder stack typically consists of multiple layers, each containing 
+# self-attention mechanisms and feed-forward neural networks.
+#    - Classification Head: At the end of the encoder, a classification head is added to produce the final output.
+#  This head can be a simple linear layer that maps the transformer's output to the desired number of classes for classification tasks.
+#    By leveraging self-attention mechanisms, vision transformers can capture long-range dependencies and global 
+# context in images, allowing them to achieve competitive performance on various computer vision tasks.
 # 3. Versions of Vision Transformers:
-#    Vision transformers are a relatively new development, and several versions and variations have emerged to explore their effectiveness in different settings. Here are a few notable versions:
-#    - ViT (Vision Transformer): The Vision Transformer introduced in the paper "An Image Is Worth 16x16 Words" is the foundational work in this field. It demonstrated that transformers can achieve competitive performance on image classification tasks when applied to image patches.
-#    - DeiT (Data-efficient Image Transformers): The Data-efficient Image Transformers introduced in the paper "Training ViT Models on Noisy Datasets Improves ImageNet Classification" focused on improving the data efficiency of vision transformers. It introduced techniques such as distillation and noisy student training to achieve state-of-the-art performance even with limited labeled data.
-#    - TNT (Transformer in Transformer): The Transformer in Transformer introduced in the paper "Transformer in Transformer" explores an architecture with multiple layers of transformers. It applies a second-level self-attention mechanism within each transformer layer, allowing for more fine-grained modeling of local and global dependencies.
-#    These versions highlight the ongoing research and exploration in the field of vision transformers, aiming to improve performance, efficiency, and applicability in various computer vision tasks.
+#    Vision transformers are a relatively new development, and several versions and variations have emerged to 
+# explore their effectiveness in different settings. Here are a few notable versions:
+#    - ViT (Vision Transformer): The Vision Transformer introduced in the paper "An Image Is Worth 16x16 Words" 
+# is the foundational work in this field. It demonstrated that transformers can achieve competitive performance 
+# on image classification tasks when applied to image patches.
+#    - DeiT (Data-efficient Image Transformers): The Data-efficient Image Transformers introduced in the paper 
+# "Training ViT Models on Noisy Datasets Improves ImageNet Classification" focused on improving the data efficiency 
+# of vision transformers. It introduced techniques such as distillation and noisy student training to achieve 
+# state-of-the-art performance even with limited labeled data.
+#    - TNT (Transformer in Transformer): The Transformer in Transformer introduced in the paper "Transformer in 
+# Transformer" explores an architecture with multiple layers of transformers. It applies a second-level self-attention 
+# mechanism within each transformer layer, allowing for more fine-grained modeling of local and global dependencies.
+#    These versions highlight the ongoing research and exploration in the field of vision transformers, aiming 
+# to improve performance, efficiency, and applicability in various computer vision tasks.
 # 4. Importance of Libraries like Hugging Face:
-#    Hugging Face, as mentioned in the previous response, is an essential library in the context of vision transformers. It provides tools and resources that facilitate working with vision transformers and accelerate research and development in computer vision. Here's how it relates to vision transformers:
-#    - Pre-trained Models: Hugging Face's Model Hub includes pre-trained vision transformer models like ViT and DeiT. These pre-trained models can be readily used for various computer vision tasks, such as image classification and object detection.
-#    - Transformers Library: Hugging Face's Transformers library, originally focused on NLP, has expanded to include vision transformers as well. It provides a consistent and user-friendly API for working with transformers, including vision transformers. This allows developers and researchers to leverage existing methodologies and tools to work with vision transformer models seamlessly.
-#    - Data Processing and Augmentation: Hugging Face's library also includes utilities for data processing and augmentation specific to computer vision tasks. These tools help prepare and preprocess image data, enabling efficient training and evaluation of vision transformer models.
-#    - Community and Documentation: Hugging Face has a thriving community of researchers, developers, and enthusiasts working in the field of computer vision and transformers. The community actively contributes to the library, shares their experiences, and provides support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, allowing users to quickly understand and utilize vision transformer models.
-#    The availability of pre-trained models, consistent APIs, data processing tools, and a supportive community makes Hugging Face an essential resource for researchers and practitioners working with vision transformers. It simplifies the development and deployment of vision transformer models, fostering rapid progress and advancements in the field of computer vision.
-# In summary, vision transformers adapt the transformer architecture for computervision tasks by dividing images into patches, applying self-attention mechanisms, and capturing global relationships. They have several versions such as ViT, DeiT, and TNT, each exploring different aspects of vision transformer architectures. Libraries like Hugging Face provide pre-trained models, tools for data processing, and a supportive community to facilitate working with vision transformers and accelerate research in computer vision.
+#    Hugging Face, as mentioned in the previous response, is an essential library in the context of vision transformers.
+#  It provides tools and resources that facilitate working with vision transformers and accelerate research and 
+# development in computer vision. Here's how it relates to vision transformers:
+#    - Pre-trained Models: Hugging Face's Model Hub includes pre-trained vision transformer models like ViT and DeiT.
+#  These pre-trained models can be readily used for various computer vision tasks, such as image classification and object detection.
+#    - Transformers Library: Hugging Face's Transformers library, originally focused on NLP, has expanded to include 
+# vision transformers as well. It provides a consistent and user-friendly API for working with transformers, including
+#  vision transformers. This allows developers and researchers to leverage existing methodologies and tools to work
+# with vision transformer models seamlessly.
+#    - Data Processing and Augmentation: Hugging Face's library also includes utilities for data processing and 
+# augmentation specific to computer vision tasks. These tools help prepare and preprocess image data, enabling efficient
+#  training and evaluation of vision transformer models.
+#    - Community and Documentation: Hugging Face has a thriving community of researchers, developers, and enthusiasts
+#  working in the field of computer vision and transformers. The community actively contributes to the library, shares 
+# their experiences, and provides support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, 
+# allowing users to quickly understand and utilize vision transformer models.
+#    The availability of pre-trained models, consistent APIs, data processing tools, and a supportive community makes 
+# Hugging Face an essential resource for researchers and practitioners working with vision transformers. It simplifies 
+# the development and deployment of vision transformer models, fostering rapid progress and advancements in the field of computer vision.
+# In summary, vision transformers adapt the transformer architecture for computervision tasks by dividing images into 
+# patches, applying self-attention mechanisms, and capturing global relationships. They have several versions such as 
+# ViT, DeiT, and TNT, each exploring different aspects of vision transformer architectures. Libraries like Hugging Face 
+# provide pre-trained models, tools for data processing, and a supportive community to facilitate working with vision 
+# transformers and accelerate research in computer vision.
 #
 #
 # https://www.youtube.com/watch?v=2ih6BHD4v3I
@@ -4842,8 +5068,15 @@ ax.set_zlabel('Dimension {}'.format(dim3), fontsize=12)
 fig.colorbar(scatter, ax=ax, label='Position')
 plt.show()
 
-# positional encoding information and explanations:
+####################### START OF POSITIONAL ENCODING IN DEPTH EXPLANATION #####################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
 #%%
+# positional encoding information and explanations:
 # there some attributes concerning positional encodings that are either desirable or critical to have
 # different people developed different intuitions some are more relavent some are less. below I tried to 
 # include some of the main attributes I found to be intestring and critical from different sources and 
@@ -5373,7 +5606,8 @@ plot_sin_cos_frequency(scale=10)
 # providing a more comprehensive representation of positional relationships within a sequence.
 #
 #
-# Question: sin and cos are periodic functions, i.e. they repeat their values, so how is this not a problem in this case? how do they address this issue?
+# Question: sin and cos are periodic functions, i.e. they repeat their values, so how is this not a problem in this case?
+# how do they address this issue?
 #
 # The periodicity could potentially pose a problem if we were to use these functions directly as positional encodings.
 # However, in the context of sinusoidal positional encoding, the periodic nature of sine and cosine functions is actually
@@ -5391,7 +5625,8 @@ plot_sin_cos_frequency(scale=10)
 # Thats why the periodicity of sine and cosine functions is not a problem in sinusoidal positional encoding.
 #
 #
-# !Question: if we used a low frequency with sin, it would provide us with a large range of numbers, wouldnt that alone be enough? (has overlaps with what we covered before)
+# !Question: if we used a low frequency with sin, it would provide us with a large range of numbers, wouldnt that alone be enough?
+# !(has overlaps with what we covered before)
 # Using a low frequency with sine functions can indeed provide us with a larger range of numbers, but it may not be sufficient on
 # its own to capture all the necessary positional information. 
 # In other words, while it can help differentiate between positions, it doesn't take into account the phase or timing of the 
@@ -5409,7 +5644,8 @@ plot_sin_cos_frequency(scale=10)
 # are distinct and can be easily distinguished by the model.
 # 
 #
-#! Question: How could using a low frequency with sine functions alone, lead to potential overlaps or interference between positional encodings?(related to another question beofre)
+#! Question: How could using a low frequency with sine functions alone, lead to potential overlaps or interference between
+#! positional encodings?(related to another question beofre)
 # When using sine functions for positional encoding, the frequency determines how quickly the function oscillates. 
 # A low frequency means that the sine function will complete fewer oscillations over a given range of positions. As a 
 # result, the values of the sine function will change more slowly as the position increases, leading to a larger range 
@@ -5548,15 +5784,19 @@ plot_sin_cos_frequency(scale=10)
 #         the information captured by one does not overlap or interfere with the information captured by the other.
 #     Enhanced Discrimination:
 #         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the 
-# model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes in the other. This separation of information contributes to a more nuanced understanding of the sequence.
+# model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes
+#  in the other. This separation of information contributes to a more nuanced understanding of the sequence.
 #     Mathematical Simplicity:
 #         The orthogonal relationship simplifies mathematical operations involving these components. When combining sine and 
 # cosine components, their orthogonality ensures that their interactions are well-defined and do not introduce complex dependencies.
 # Example:
 # Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability 
-# (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) and persistent themes (captured by cosine) without confusion.
+# (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) 
+# and persistent themes (captured by cosine) without confusion.
 # In summary, orthogonality in the context of sine and cosine functions used in positional encoding ensures independence 
-# between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional encoding scheme in various sequence-related tasks.
+# between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, 
+# and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional 
+# encoding scheme in various sequence-related tasks.
 # 
 #
 #! Important note concerning Cosine and Constant feature analogy: 
@@ -5589,20 +5829,36 @@ plot_sin_cos_frequency(scale=10)
 # Question: is orthogonality in neural networks different or does it refer to the same thing? explain in depth
 #
 # Orthogonality in Neural Networks:
-# In the context of neural networks, orthogonality takes on a slightly different meaning compared to its traditional mathematical definition, but the fundamental idea remains rooted in independence and lack of correlation.
+# In the context of neural networks, orthogonality takes on a slightly different meaning compared to its traditional 
+# mathematical definition, but the fundamental idea remains rooted in independence and lack of correlation.
+# 
 # Weight Orthogonality:
-# In neural networks, weight orthogonality refers to the orthogonal relationships between weight vectors in the weight space. Specifically, it involves ensuring that weight vectors are as orthogonal as possible to each other during training. This concept is particularly relevant in deep learning architectures.
+# In neural networks, weight orthogonality refers to the orthogonal relationships between weight vectors in the weight space.
+#          Specifically, it involves ensuring that weight vectors are as orthogonal as possible to each other during training. 
+#          This concept is particularly relevant in deep learning architectures.
+# 
 # Relevance and Intuition:
 #     Reducing Redundancy and Overfitting:
-#         When weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information. This can help in reducing overfitting, where a model may learn noise or specific training examples rather than general patterns.
+#         When weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information.
+#         This can help in reducing overfitting, where a model may learn noise or specific training examples rather than 
+#         general patterns.
+#     
 #     Facilitating Training:
-#         Orthogonality can aid in a more stable and efficient training process. When weight vectors are orthogonal, updates to one weight vector do not strongly influence others, promoting more independent learning.
+#         Orthogonality can aid in a more stable and efficient training process. When weight vectors are orthogonal, 
+#         updates to one weight vector do not strongly influence others, promoting more independent learning.
+#
 #     Enhancing Representational Capacity:
-#         Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. Each weight vector can capture unique features or aspects of the data without interference from others.
+#         Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. 
+#         Each weight vector can capture unique features or aspects of the data without interference from others.
+#
 #     Generalization and Adaptability:
-#         Similar to the positional encoding example, orthogonality in neural networks enhances the model's ability to generalize and adapt to different patterns in the data. Independent weight vectors allow the model to learn a wide range of features without being overly constrained by correlations.
+#         Similar to the positional encoding example, orthogonality in neural networks enhances the model's ability to 
+#         generalize and adapt to different patterns in the data. Independent weight vectors allow the model to learn a wide 
+#         range of features without being overly constrained by correlations.
+#     
 #     Mitigating Vanishing or Exploding Gradients:
-#         Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation. This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
+#         Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation.
+#         This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
 # Example:
 # Consider a deep neural network processing images. If the weight vectors corresponding to different convolutional 
 # filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of the image, whether 
@@ -5738,17 +5994,32 @@ plot_sin_cos_frequency(scale=10)
 # this is visible in our plot below.
 #
 # sidenote 2: 
-# Q: are sin and cos orthogonal ?
-# Yes, the sine and cosine functions are orthogonal to each other. Two functions are said to be orthogonal if their inner product is zero. The inner product of two functions is defined as the integral of the product of the two functions over a given interval. In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 1
-# Q: but sin(45)==cos(45), how can they be orthogonal with respect to each other when they both produce the same value ?
-# You are correct that the sine and cosine functions have the same value at 45 degrees or pi/4 radians. However, orthogonality of two functions is defined as their inner product being zero. The inner product of two functions is defined as the integral of the product of the two functions over a given interval. In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 
-# 
+# Question: are sin and cos orthogonal?
+# Yes, the sine and cosine functions are orthogonal to each other. Two functions are said to be orthogonal if their
+# inner product is zero. The inner product of two functions is defined as the integral of the product of the two 
+# functions over a given interval. In the case of the sine and cosine functions, their inner product over one period 
+# is zero, which means they are orthogonal.
+#
+# Question: but sin(45)==cos(45), how can they be orthogonal with respect to each other when they both produce the same value ?
+# sine and cosine functions have the same value at 45 degrees or pi/4 radians. However, orthogonality of two functions is 
+# defined as their inner product being zero. 
+# The inner product of two functions is defined as the integral of the product of the two functions over a given interval.
+# In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 
 # 
 # 
 # 
 # 
 # %%
-#! https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation
+############################SINUSOIDAL POSITIONAL EMBEDDING IMPLEMENTATIONS####################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+#
+# 
+#! https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation(might remove it as my own
+# explanation and implemenetations seem to be more intuitive!)
 #
 # lets implement sinusoidal positional embedding 
 # the sinusoidal equation is given in the paper and is as follows: 
@@ -5852,7 +6123,7 @@ def sin_pos_enc_v2(pos, embd_d):
     # note that we are using the step=2, and removed the 2! from 2i term as well
     # this is another form of simplification that doesnt drastically change the 
     # positional embedding (except for the fact that without it the output changes
-    # more slowly and fewer dimensions towards the end get constant looking values) 
+    # more slowly and fewer dimensions towards the end get constant looking values)
     div_term = np.exp(-np.arange(0, embd_d, 2) * (np.log(10_000) / embd_d))
     pos_vec[:, 0::2] = np.sin(pos * div_term)
     pos_vec[:, 1::2] = np.cos(pos * div_term)
