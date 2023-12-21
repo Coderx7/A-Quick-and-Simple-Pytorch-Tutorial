@@ -3797,21 +3797,22 @@ print(f"{''.join(decode(output))}")
 
 #
 # which looks depressing not gonna lie! but its better than the simple bigram model we 
-# built earlier, anyway, can we improve it? certainly! 
+# built earlier, anyway, can we improve it? certainly we can! 
 # for example we could use dropout on our attention! we could use normalization layers
-# and we could use multiple heads instead of just one! which takes us to the next
-# subject which is multi-head attention! which is  really nothing except several normal!
-# attention blocks run in parallell! 
-# so lets implement these and see how much we can improve upon this
+# and we could use multiple heads instead of just one! beside crancking up the numbers obviously!
+# This takes us to the next subject which is multi-head attention! it is really nothing except 
+# several normal! attention blocks run in parallell! 
+# so lets implement this first and see how much we can improve upon this
 #%%
 class MultiHeadAttention(nn.Module):
-    def __init__(self, num_head, head_size, embd_size, context_size,bias_attn=False) -> None:
+    def __init__(self, num_head, head_size, embd_size, context_size, bias_attn=False) -> None:
         super().__init__()
         self.num_head = num_head
         self.head_size = head_size
         # we assume the head_size is already split between the num_heads and thus we dont split
         # it again
         # assert head_size//num_head == 0, f'head_size({head_size}) must be divisable by head_num({num_head})'
+        # 
         # we need to create n heads so lets do it 
         # self.heads = [AttentionHead(context_size, 
         #                             embd_size, 
@@ -3821,12 +3822,13 @@ class MultiHeadAttention(nn.Module):
         # becasue all the modules it contains are properly registered, and will be visible by all 
         # Module methods. which is not the case for python lists (i.e. .parameters() .children(), 
         # .zero_grad, etc, e.g.) and therefore its best to use modulelist instead of pure python lists.
+        # 
         # note that, nn.Sequential cant be used, becasue it runs the modules in succesion
         # i.e. serially, one after the other (feeds the output of the previous module to 
         # the next module, etc) which is not what we want. we want to calculate each head
-        # independetly and aggregate their outputs so, either a python list or torch moudle list
+        # independetly and aggregate their outputs so, either a python list or torch moudlelist
         # can be used
-        # sidenote: this module that we are building, is also known as, masked multi-attention-head
+        # sidenote: this module that we are building, is also known as, a masked multi-attention-head
         # becasue we are using the single-head self-attention which uses a constrain we imposed
         # by masking if you recall that!
         self.heads = torch.nn.ModuleList(AttentionHead(context_size, 
@@ -3837,10 +3839,10 @@ class MultiHeadAttention(nn.Module):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         # note that head_size is usually the embd_size, so it covers the whole 
         # embeddings obviously, and note that each head will work on a portion
-        # of the given head_size, if e.g. we have head_size/embd_size = 16
+        # of the given head_size, if e.g. we have head_size or embd_size = 16
         # if we had 1 head, the head_size would be 16. however if we had 2 heads
         # we had to split the head_size in half for each head, and later on
-        # we had to concat them to get the full-size head_size/embd_size.
+        # we had to concat them to get the full-size head_size or embd_size.
         # therefore here, we need to concat their results along the cols
         # so multi-head-attention is akin to group convolution, and thus the head_size
         # and num_head must align properly.
@@ -3872,8 +3874,7 @@ class BigramModelWithAttention(nn.Module):
         # globally (basically each head gets its share of head_size
         # which is head_size//num_head, but at the end since we have
         # num_head heads, their output makes us the whole head_size) 
-        # ! check -> usually head_size == embd_size so each head works on the 
-        # ! whole embedding 
+        # 
         self.multi_head_attention = MultiHeadAttention(num_head, head_size//num_head, embd_size, context_size,bias_attn)
         # finally the output fc layer 
         self.fc = nn.Linear(head_size, vocab_size)
@@ -3882,7 +3883,6 @@ class BigramModelWithAttention(nn.Module):
         B,T = inputs.shape
         # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
         token_embds = self.token_embeddings(inputs)
-        # dont forget, our positional embd only involves the token position information
         position_embds = self.position_embeddings(torch.arange(T,device=self.device))
         embds_combilned = token_embds + position_embds
         # now lets feed them to our multihead attention block 
@@ -3898,19 +3898,8 @@ class BigramModelWithAttention(nn.Module):
     def generate(self, idxs, max_token_count):
         assert idxs.ndim>1 , f'idxs.ndim({idxs.ndim}) must be 2 (in the form of (B,T))'
         for i in range (max_token_count):
-            # we keep feeding the input to the model and get the next character
-            # but since we use positional embeddings, we are limited to context_size
-            # of tokens at anygiven time to feed the network or we face an error 
-            # so we always tke the last T tokens from our input. we use negative
-            # slicing, so if we have less than context_size, we only grab that many
-            # otherwise, we get an error, becasue obviously at the begining we may 
-            # start from a single token, denoting context_size of 1, while our model
-            # expects like full context_size (e.g. 8 or more)
             idxs_cropped = idxs[:, -self.context_size:]
             logits,_ = self(idxs_cropped)
-            # since we are after the next character only and we have to choose among 
-            # context_size number of tokens, we get the last one and treat it as the next
-            # character to calculate its probablity to sample from 
             logits = logits[:,-1,:] 
             # calulate the probs
             probs = logits.softmax(dim=-1)
@@ -3969,7 +3958,7 @@ for pos in range(max_iter):
     # we ccould also do 
     # optimizers.zero_grad() 
     # but since our optimizer 'only' uses our models parameters, they are basically the same
-    # note we talk about this in more details later which one to use and where later on inshaalah.
+    # note we talk about this in more details later which one to use and where, later on inshaalah.
     
     # do a backward pass 
     loss.backward()
@@ -4058,6 +4047,7 @@ print(f"{''.join(decode(output))}")
 # Wher a and
 # Whesh to wyt wir
 
+#--------------
 # compared to single head attention, with the same hyper parameters, train: 2.4684  val: 2.4759
 # and now we got train: 2.4238  val: 2.433 which is better(we also got train: 2.2713  val: 2.288 
 # with just increasing the embedding_size, so playing with parameters even blindly making model bigger
@@ -4073,7 +4063,7 @@ print(f"{''.join(decode(output))}")
 # so its a linear layer with a relu activation function followed by another linear layer basically. 
 # you may also hear this network be refered to as 'computation after communication' so to speak!
 # signifying the fact that it runs a computation after the attention module.
-# the idea behind this extra addition is simple, to provide a higher representation out of attention work
+# the idea behind this extra operation is simple, to provide a higher representation out of attention work
 # this network, causes every single token to have a nonlinear transformation and achieve a higher abstraction
 # possibly yielding new information benficial to the task. to put it in casual way, it can be seen as though
 # the attention gatheres some stats/information, and this step is akin to looking into it and thinking about it
@@ -4099,8 +4089,6 @@ class BigramModelWithAttention(nn.Module):
         # globally (basically each head gets its share of head_size
         # which is head_size//num_head, but at the end since we have
         # num_head heads, their output makes us the whole head_size) 
-        # ! check -> usually head_size == embd_size so each head works on the 
-        # ! whole embedding 
         self.multi_head_attention = MultiHeadAttention(num_head, head_size//num_head, embd_size, context_size,bias_attn)
         # now let us create the feedforward network, which basically is a linear layer with relu
         # followed by another linear layer! for this so called network, the in_features and out_features
@@ -4132,7 +4120,6 @@ class BigramModelWithAttention(nn.Module):
         B,T = inputs.shape
         # print(f'{inputs.shape=} {self.context_size=} {self.embd_size=}')
         token_embds = self.token_embeddings(inputs)
-        # dont forget, our positional embd only involves the token position information
         position_embds = self.position_embeddings(torch.arange(T,device=self.device))
         embds_combilned = token_embds + position_embds
         # now lets feed them to our multihead attention block 
@@ -4865,23 +4852,23 @@ print(f"{''.join(decode(output))}")
 #  which applies scalar scale and bias for each entire channel/plane with the affine option,
 #  Layer Normalization applies per-element scale and bias with elementwise_affine"
 #! check and expand
-# Layer normalization (LayerNorm) and batch normalization (BatchNorm) are both normalization techniques commonly used in deep learning models. While they aim to normalize the input data, they differ in their operation, goal, and outcome. Here's a detailed comparison:
-# 1. Operation:
-#    - LayerNorm: LayerNorm normalizes the input tensor across the feature dimension (last dimension) independently for each example in the batch. It calculates the mean and variance along the feature dimension and applies a normalization operation.
-#    - BatchNorm: BatchNorm normalizes the input tensor across the batch dimension (first dimension) as well as the feature dimension. It calculates the mean and variance along the batch dimension and applies a normalization operation.
-# 2. Goal:
-#    - LayerNorm: The goal of LayerNorm is to normalize the activations of each individual example in the batch. It aims to reduce the internal covariate shift, helping the network converge faster and generalize better.
-#    - BatchNorm: The goal of BatchNorm is to normalize the activations across the batch dimension. It aims to reduce the effects of internal covariate shift, stabilize the network during training, and improve generalization by reducing overfitting.
-# 3. Outcome:
-#    - LayerNorm: LayerNorm ensures that the mean of each feature across each example is zero and the standard deviation is one. It preserves the relative relationships between the features within each example.
-#    - BatchNorm: BatchNorm ensures that the mean of each feature across the entire batch is zero and the standard deviation is one. It introduces dependencies between examples in the batch during training but can be disabled during inference to allow independent predictions.
-# 4. Applicability:
-#    - LayerNorm: LayerNorm is commonly used in recurrent neural networks (RNNs), such as LSTMs and GRUs, where the normalization is applied along the time steps (sequence length) dimension.
-#    - BatchNorm: BatchNorm is typically used in convolutional neural networks (CNNs) and fully connected layers, where the normalization is applied across the batch dimension.
-# 5. Training vs. Inference:
-#    - LayerNorm: LayerNorm behaves the same during training and inference. It normalizes each example independently, making it suitable for both training and inference.
-#    - BatchNorm: BatchNorm behaves differently during training and inference. During training, it normalizes the activations across the batch dimension. During inference, the statistics (mean and variance) are usually calculated using a running average from the training phase, and normalization is applied based on these fixed statistics.
-# In summary, LayerNorm and BatchNorm are both normalization techniques, but they differ in terms of the dimension over which normalization is applied, the goal of normalization, and the outcome. LayerNorm normalizes each example independently along the feature dimension, while BatchNorm normalizes across the batch dimension as well. They serve different purposes and are commonly used in different types of neural networks.
+# - LayerNorm: LayerNorm ensures that the mean of each feature across each example is zero and the standard 
+#   deviation is one. It preserves the relative relationships between the features within each example.
+# - BatchNorm: BatchNorm ensures that the mean of each feature across the entire batch is zero and the 
+#   standard deviation is one. It introduces dependencies between examples in the batch during training but can
+#   be disabled during inference to allow independent predictions.
+# 
+# - LayerNorm: LayerNorm is commonly used in recurrent neural networks (RNNs), such as LSTMs and GRUs, where
+#   the normalization is applied along the time steps (sequence length) dimension.
+# - BatchNorm: BatchNorm is typically used in convolutional neural networks (CNNs) and fully connected layers,
+#   where the normalization is applied across the batch dimension.
+# 
+# - LayerNorm: LayerNorm behaves the same during training and inference. It normalizes each example independently,
+#   making it suitable for both training and inference.
+# - BatchNorm: BatchNorm behaves differently during training and inference. During training, it normalizes 
+#   the activations across the batch dimension. During inference, the statistics (mean and variance) are usually
+#   calculated using a running average from the training phase, and normalization is applied based on these fixed statistics.
+# 
 
 # the implementation is similar to the batchnormalization, and it does not require calculating running_mean/var
 # we can use the pytorch module just fine, but since its really similar to BN, lets implement it here 
@@ -4921,7 +4908,7 @@ class LayerNorm(nn.Module):
         # what was causing the issue here was this exact issue, since we were calculating the dims dynamically
         # based on the inputs shape, for 2d inputs(ignoring batch) this would work as expected, but for 3d+, 
         # it would aggregate other samples stats and therefore creating the discrepency in the output between 
-        # ours and pytorch's.s 
+        # ours and pytorch's.
         # (we were calculating the mean/var for dims=(1,2) while Pytorch was only calculating it on the last dim, 
         # and hence the difference. (the output  shows that involving other samples adversly affect our output
         # and hence  why BN is not used and instead LN is used.) 
@@ -5309,8 +5296,7 @@ print(f"{''.join(decode(output))}")
 # 
 # now how can we improve more? we implemented the paper, basically we implemented transormer from scratch
 # and what remains is to test with different hyperparameters to see how well it can generate texts similar 
-# to our dataset. (we implemented the decore version, but the encoder as we explained earlier is the same
-# without the constrains! well talk about this in a moment )
+# to our dataset. 
 # so lets increase the model size now and see how much improvement we can get 
 # 
 # %%
@@ -5702,11 +5688,18 @@ print(f"{''.join(decode(output))}")
 # To murde his lands are your counterlands
 # May sworehe for a doubted pawnicless. Alason, though I again:
 # But ha! Farwarrand, gen
-
-
-
+#
+# 
+# this was a transformer!
+# Good job we finally finished implementing every bits of a transformer model. Now as we said earlier
+# lets repeat all of this in a way that allows us to test each section in a more fine-grained manner.
 #%%
-# this was a transformer! lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
+# implement self-attention, mltihead-attention, with skipconnection, ffnet, layernorm, positionalencoding, plotting functions
+# and test them in action
+#
+#
+#%%
+#  lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
 # document completer vs chatgptetc 
 
 #ask chatgpt to write an introduction for each section (and explain someparts as if im 5!)
