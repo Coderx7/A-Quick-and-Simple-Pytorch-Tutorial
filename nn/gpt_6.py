@@ -5077,25 +5077,29 @@ plt.show()
 ###############################################################################################################
 #%%
 # positional encoding information and explanations:
-# there some attributes concerning positional encodings that are either desirable or critical to have
+# There some attributes concerning positional encodings that are either desirable or critical to have
 # different people developed different intuitions some are more relavent some are less. below I tried to 
-# include some of the main attributes I found to be intestring and critical from different sources and 
+# include some of the main attributes I found to be intestring and  or critical from different sources and 
 # tried to briefly expand on them and explain them a bit:
-# I add my corrections as well, so this is not just purely transcription of some sort!
+# I added my corrections as well, so this is not just purely transcription (although some sections are, 
+# usually its clear as the tone of the text changes (I also state the reference if its from somewhere)
+#
+# Explanation P1: 
 # (ref1: https://www.youtube.com/watch?v=1biZfFLPRSY )
 # 1.Every position should have the same identifier regardless of the sequence length or what the input is
 #  so when the input changes, the position embedding remains the same)
 # 
-# 2. since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
+# 2.Since these positinal embeddings push the token/embedding towards a 'specific positional cluster' they should not 
 #  be too large otherwise they will push vectors into very distinct subspaces where the positional similarity
-#   or dismilarity overshadows/overtunes the semantic similarity. 
+#   or dismilarity overshadows/overtunes the semantic similarity.
+# 
 # lets expand on this a little bit more and make it a bit more intuitive.
-# When we plot the token embeddings (after they are learned), you'll notice that tokens/words with similar
+# When we plot the token/word embeddings, you'll notice that tokens/words with similar
 # context are clustered together, you may find queen and king closer to eachother than they are to car, tire etc.
 # and likewise, you'll find car, tire, steering wheel, etc to cluster together.
 # This shows, words used together or in a similar context tend to (and usually do) form a cluster around eachother.
 # 
-# When we add the positional embedding which really is another vectors with some numbers, what happens is
+# When we add the positional embedding which really is another vector of numbers, what happens is
 # that during trainig, the network does the same thing with these new information as well, the queen/king token
 # in the feature space, will be ever-so slightly moved to a distinct subregion where their index refers to.
 # imagine, king is the first token, so it gets closer to the 'first token's cluster, the network creates other clusters
@@ -5105,45 +5109,44 @@ plt.show()
 # the expense of destroying the semantic clusteres previously developed due to similar contexts/etc, thus degrading the
 # performance altogether.
 # as you can imagine, having a too little impact from positional info or lack of any, we will only be left with semantic
-# clusters and lose any kind of incentive for the model to use to make a disntinction between two sequence of the same 
+# clusters and lose any kind of incentive for the model to use, to make a disntinction between two sequence of the same 
 # tokens (becasue there is no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
 #
 #
-# The paper uses something called sinusodal positional encoding, but why? what if we use numbers to 
-# index the positions since we can treat text as a sequence of words coming? so why not count the tokens as
+# The paper uses something called sinusodal positional encoding, to solve this issue by providing positional information. 
+# but why sinusoidal encoding? what if we tried to use numbers to index the positions ?
+# we know we can treat text as a sequence of words coming one after another, so why not count the tokens as
 # we go like 1,2,3,4,etc? 
-# We dont simply becasue, it violates the second requirement of the positional encoding we mentioned just now.
+# We simply dont becasue, it violates the second requirement of the positional encoding we mentioned just now.
 # The change/shift/translation needs to be small and bounded. why? 
 # Think about it for a moment, if the later tokens have larger numbers as position index, then the model assigns more
 # importance to them as apposed to the earlier tokens with smaller numbers. The contribution of later tokens will be 
 # emphasized while the earlier tokens can be just ignored. all positions must be uniform and evenly paced (fixed delta).
-# If the sequence lengths are large enough it hinders the model performance, on the other hand, as the sequence
+# If the sequence lengths are large it hinders the model performance, on the other hand, as the sequence
 # gets longer and longer, larger and larger numbers will be used, which will cause exploding gradients,etc (the majority
-# of weight values are close to zero, we want them to be close to zero to have a stable optimization) and will create
-# a lot of issues in the optimization process. 
+# of weight values are close to zero, we want them to be close to zero to have a stable optimization, compare that to decimal
+# numbers and see how gigantic they are to them!) and will create a lot of issues in the optimization process. 
 # This is why we need them to be bounded and not go to infinity as the sequence gets longer.
-#
-# The paper's authors opted out to use sin/cos becasue they are both bounded to -1,1 and they are 
-# offer inifite range of numbers(periodically result in [-1,1])! 
+# 
+# The paper's authors opted out to use sin/cos becasue among other reasons, they are both bounded to -1,1 and they
+# can offer inifite range of numbers(periodically result in [-1,1] and also using phase-shifting we can control the rate of change)! 
 # This means, it can support any sequence length even up to inifity! (as we can have values between -1 and 1 for infinity)
-# You might think to yourself, something like sogmoid can be used it is bounded to [0,1] right?
-# No, the sigmoid function is a saturating function and the actual range of numbers is pretty limited 
-# especially for larger numbers(test it with 1-10 e.g. and larger numbers!) unlike the sin/cos that has a lot of
+# You might think to yourself, something like sogmoid can be used, it is bounded to [0,1] after all right?
+# No, the sigmoid function is a saturating function and the actual range of usable numbers for us is pretty limited 
+# especially for larger numbers(test it with 1-10 e.g. or larger numbers to see why!) unlike the sin/cos that has a lot of
 # variability for large numbers.
 # Intrestingly, the sin/cos functions have a problem of their own, that being, they are periodic! that is, the same number
 # repeats for different positions! this obvioulsy violates the first requirement of identifiers being unique for each 
 # position! we cant encode two different positions with the same number and viceversa. (imagine your nth token gets reset to 1
 # it will completely mess up the order we so tireslly trying to embed!)
 # The problem stems from their 'frequency'! 
-# if we lower the frequency it means it takes longer to repeat a number twice.
+# if we lower the frequency it means it takes longer to repeat a number twice.(the wavelength gets larger)
 # The higher the frequency the shorter the range of numbers. In other words, The low-frequency sine wave (sin(x))
 # has fewer oscillations within a given range of x, while the high-frequency sine wave (sin(10x) e.g.) has more 
 # rapid oscillations within the same range.
 # The following snippet shows this:
 #
-#
 import matplotlib.pyplot as plt 
-import matplotlib.colors as mcolors
 import numpy as np 
 
 def plot_sin_cos_frequency(scale=5):
@@ -5152,7 +5155,7 @@ def plot_sin_cos_frequency(scale=5):
     # https://www.math.net/sinusoidal
     # we use pi, instead of degrees (0,360) becasue np.sin() uses radian instead of degrees
     x = np.linspace(0, 4*np.pi, 1000)
-    # instead lets draw both for sin and cos
+    # lets do this for sin and cos
     # uncomment this and see how playing with frequency can change the range of numbers available to you
     # freqs = [f(x) for x in [(1/scale)*x, scale*x] for f in [np.sin, np.cos]]
     freqs = [f(x) for x in [x, scale*x] for f in [np.sin, np.cos]]
@@ -5174,24 +5177,21 @@ plot_sin_cos_frequency(scale=10)
 # !the concept of delta-distance (a fixed distance between all locations, bywhich the network can move relatively between tokens)
 # now if we manage to lower the frequency low enough to the point where it gives us a huge, preferably inifinit
 # numbers before the next period starts, that would be like our first suggetsion, linear range of numbers, but bounded!
-# 
-# But the second issue still persists, these numbers still, when added to the embeddings, will push them
-# into specific subregions in the feature space(really this means, they cluster up together somewhere)
-# and we dont want to push this too much, as otherwise the distance between the two adjacent tokens will be overwhelemed
-# by this position and not the semantic between the two adjacent tokens. 
-# we also dont want the difference between two tokens to be too little, as this would cause the semantic distance to 
-# overwhelm/dominate the positional distance/information, basically render it useless! so what should we do? 
-# if we go and use sin only, the adjacent numbers would be close to each other, we need to somehow create a bit 
-# of contrast that shows theres some kind of distance between the two tokens (and by extension others in the sequence)
-# so what do we do? if you look at the plots, you'll notice that, intrestingly we can utilize cos() for this
-# and alternate between them. if we use a low frequency sin/cos for the first token, we can use a higher frequency 
-# sin/cos for the next token, and for the third token, we can use sin again, followed by a cos for the forth and so on 
-# and so forth! the more we increase the frequency, the more different the values we get between two tokens. 
-# note that
-# we create a single positional vector by alternating sin/cos for every feature/dimension of the vector, so if we have d=100,
-# we fill the even indexes using sin() and the odd ones with cos(), this way, we get a unique value for each position
-# !and by increasing the frequency as we go, we make sure .... continue explanation
-# 
+# but it we dont simply do that? this can provide us with an absolute positional information, which should work, but
+# there are two issues, how low should we set the frequency? becasue that affects the generated numbers, if we choose
+# a very low frequency, we might endup with tiny numbers, which would make it hard for the network to properly distinuish
+# between tokens/positions, especially the adjacent ones. we might even, at the extreme end, face underflow issues,
+# the numbers get so tiny, the float cant represent them properly. 
+# these reasons in addition to another intersting attribute that adding a cosine to the mix provides us with, made 
+# the main authors to use the sin/cos pair. the sin/cos pair is used extensively in some engineering fields such as
+# electrical engineering/signal processing, becasue of their desired attributes. for us one of such attributes is
+# they allow the model to have relative positional information in addition to the absolute positional information. 
+# as we see in the a bit later on, sine and cosine waves do different things which comes handy. but lets not get 
+# ahead of oursevlves. one of the main reasons that sin/cos are mixed, is to make each position as unique as it is
+# possible, and avoide duplicates. we start off with a somewhat higher frequency for the first embeddingd imension,
+# and as we go on, we lower the frequency. this way, we dont repeat a number, and the model can distinuish different
+# positions from different wavelengths(high frequency low wavelength, low frequency high wavelength). 
+#  
 #
 #
 # 
