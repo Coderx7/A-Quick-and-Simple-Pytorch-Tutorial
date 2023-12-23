@@ -5127,14 +5127,20 @@ plt.show()
 # of weight values are close to zero, we want them to be close to zero to have a stable optimization, compare that to decimal
 # numbers and see how gigantic they are to them!) and will create a lot of issues in the optimization process. 
 # This is why we need them to be bounded and not go to infinity as the sequence gets longer.
-# 
+# Ok, What about normalizing the numbers based on sequence length ?
+# Good point, this solves our issue by making all numbers fall into a range between 0-1, but it creates 
+# a new one, the same position, can now take different values based on the sequence length. take for example a sequence
+# of 4, if we normalize it, the 3rd position in our sequence of 4, will be (3/4=0.75), but the same position will have a
+# different value  if the sequence length was for exmaple 10 (3/10=0.3)! so this will confuse the model! we dont want this! 
+#
 # The paper's authors opted out to use sin/cos becasue among other reasons, they are both bounded to -1,1 and they
 # can offer inifite range of numbers(periodically result in [-1,1] and also using phase-shifting we can control the rate of change)! 
 # This means, it can support any sequence length even up to inifity! (as we can have values between -1 and 1 for infinity)
-# You might think to yourself, something like sogmoid can be used, it is bounded to [0,1] after all right?
-# No, the sigmoid function is a saturating function and the actual range of usable numbers for us is pretty limited 
-# especially for larger numbers(test it with 1-10 e.g. or larger numbers to see why!) unlike the sin/cos that has a lot of
-# variability for large numbers.
+# You might think to yourself, something like sogmoid can be used as well, it is bounded to [0,1] after all and unlike
+# normalizing crudly, doesnt depend on the sequence length right?
+# Yes but no, the sigmoid function is a saturating function and although it gives us an infinit bounded range, the actual 
+# range of usable numbers for us is pretty limited especially for larger numbers(test it with 1-10 e.g. or larger numbers 
+# to see why!) unlike the sin/cos that has a lot of variability for large numbers.
 # Intrestingly, the sin/cos functions have a problem of their own, that being, they are periodic! that is, the same number
 # repeats for different positions! this obvioulsy violates the first requirement of identifiers being unique for each 
 # position! we cant encode two different positions with the same number and viceversa. (imagine your nth token gets reset to 1
@@ -5198,27 +5204,25 @@ plot_sin_cos_frequency(scale=10)
 # positions from different wavelengths(high frequency low wavelength, low frequency high wavelength). 
 #  
 # Part two of explanation: 
-# this was the first part, lets dive deeper and expand a bit more: 
+# this was the first part, lets dive one level and expand a bit more: 
 # we are going to gradually explain different points, so we dont lose track of the ideas
+# 
 # Previously we just talked about adding positional informations as a vector of numbers, like an embedding
 # and add it to the word embedding for each position. 
 # but we could also simply add the tokens absolute position to the token embedding as an extra dimension. 
 # Why dont we do this instead? 
-# This method has several problems. 
-# 1.As the sequence length incresaes, larger and larger numbers are asinged, this creates
-# a un-intentional bias towards the tokens at the end, apart from that, it can hinder the optimization 
-# process and cause all sorts of problems such as gradient explosion, etc. 
-# also the contribution of the tokens will be different, early tokens would have a minscule impact compared to the 
-# later tokens that have a larger index. 
-# 2.normalizing the values so all numbers fall into a range can mitigate this issue, but it creates 
-# another issue, the same position, can now take different values based on the sequence length. the 3rd position in 
-# a sequence of 4, has a different value (3/4=0.75) compared to a sequence of 10 (3/10=0.3). 
-# this will confuse the model!
-# so this is not a good idea! apart from this, this might clutter up the semantic meaning of the word emebddings
-# if we just append it, other than, if instead of a single dimension, we somehow could encode that number to a vector
-# the same length as the word/token embedding, we would get a better result. 
-# imagine this could give us a positional embedding as apposed to position number/info/hint/condition! with the positional
-# embedding, like word embedding, the network could comeup with relative positional information by itself. 
+# first if we use a normal decimal number, it might mess up the whole training procedure, if we opt out to 
+# learn it, then a single value, maynot be discreptive enough so the model wouldnt have enough capacity to 
+# encode the required positional information, in which case if we increse the embedding size, this would work
+# but we would over burdened us with more overhead, becasue in essence it would be contatenating the positional 
+# embedding to the word/token embedding, which would just increase the overhead (the overhead increaseqs quadradicly
+# in multihead attention just think about it for a moment) and all of this is if we learn it, if we want it precomputed
+# to enjoy the attributes we just stated for sinuidoidal positional embedding, we need to comeup with something to encode
+# the positional information in a single embedding cell or several one, which we just explained about.
+# so in practice we use a separate vector the same size as of word/token embedding, and add them together to get 
+# the benifits we pointed out. (also by having the same dimensionality, we ensure that the positional information 
+# !is not dominated by the token/word information or vice versa and this allows the model to better capture the complex
+# interactions between the token and its position in the sequence.) 
 # like by clustering each position into its own feature subsapce the same way we have this for word embedding which 
 # allows us to do king - man = queen! or queen - woman = king! 
 # do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position, so that 
@@ -5227,11 +5231,8 @@ plot_sin_cos_frequency(scale=10)
 # now if we take this route, we see that the scale needs to be the same, and all positions need to use the same identifier
 # regardless of sequence length so network can actually differentiate between these positions properly.
 # from there, we either learn it, or precompute it. the sin/cos is the pre computed one!
-# what else can we do?
-#
-# this is called absolute position embedding itsl ike sinusodal position embedding that was
-# introduced in the original paper! explain more 
-#
+# 
+# 
 #=============================================================================================
 # section 2 of explanation and my notes 
 # from shaw etal 2018: 
@@ -5411,13 +5412,14 @@ plot_sin_cos_frequency(scale=10)
 # to represent frequencies and phases.
 #
 # side note:
-# The terms "position-dependent" and "position-independent" in this context refer to how the values of the sine
-# and cosine functions change with respect to the input (or position in the sequence).
+# Please note that the terms "position-dependent" and "position-independent" in this context refer to how the values
+# of the sine and cosine functions change with respect to the input (or position in the sequence).
 # The sine function, sin(x), starts at 0 when x=0 and oscillates between -1 and 1 as x increases or 
 # decreases. This means that the output of the sine function is dependent on the position, and it changes as the
 # position changes, hence the term "position-dependent".
 # On the other hand, the cosine function, cos(x), starts at 1 when x=0 and also oscillates between -1 and 1 as 
-# x increases or decreases. However, the key difference is that the cosine function's maximum value occurs at x=0,
+# x increases or decreases. 
+# However, the key difference is that the cosine function's maximum value occurs at x=0,
 # and it decreases from there. This means that the cosine function captures the highest value at the start of the 
 # sequence (position-independent), and then the value changes as the position changes.
 # In the context of positional encoding in transformer models, the alternating pattern of sine and cosine functions
@@ -5427,7 +5429,7 @@ plot_sin_cos_frequency(scale=10)
 # to understand the relative positions of elements in the sequence. 
 #
 #
-# if its not yet clear, lets expand on it a bit more before we get to reset of the discusion here: 
+# if its not yet clear, lets expand on it a bit more before we get to rest of the discusion here: 
 # We know we use sine and cosine functions to encode the position of each element in the sequence and the idea is
 # to provide the model with some information about the relative positions of the elements in the sequence.
 # Now, let's consider a sequence of numbers from 1 to 10. If we apply the sine function to this sequence, we'll get
@@ -5444,12 +5446,12 @@ plot_sin_cos_frequency(scale=10)
 # even positions (0, 2, 4, etc.). This interleaving of sine and cosine functions helps the model to capture different
 # patterns of changes across the sequence, which in turn helps the model to understand the relative positions of
 # the elements in the sequence.
-# note that in practice it doesnt matter if we swap the order of sin/cos, because doing so in the positional encoding
+# 
+# !note that in practice it doesnt matter if we swap the order of sin/cos, because doing so in the positional encoding
 # would not fundamentally change the properties of the encoding. 
 # The sine and cosine functions are phase-shifted versions of each other(cos(x)=sin(x+2π​)).
-# This means that they carry the same information but shifted. and in fact in our implementation and lots of others
-# you'll see this is the case and unlike the original paper, the sin is applied on even indexes, while cosine is
-# applied on the odd indexes. 
+# This means that they carry the same information but shifted and in fact in our implementation and lots of others
+# !you'll see this is the case and unlike the original paper, the sin and cosine are both applied on even indexes,  
 #
 # side note 2 - clarification on constant pattern: 
 # The phrase "constant pattern" might be a bit misleading. so lets elaborate a bit more on it and hopefully clear any
