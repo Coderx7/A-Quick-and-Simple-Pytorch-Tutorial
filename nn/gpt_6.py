@@ -5180,8 +5180,13 @@ plot_sin_cos_frequency(scale=10)
 # but it we dont simply do that? this can provide us with an absolute positional information, which should work, but
 # there are two issues, how low should we set the frequency? becasue that affects the generated numbers, if we choose
 # a very low frequency, we might endup with tiny numbers, which would make it hard for the network to properly distinuish
-# between tokens/positions, especially the adjacent ones. we might even, at the extreme end, face underflow issues,
-# the numbers get so tiny, the float cant represent them properly. 
+# between tokens/positions, especially the adjacent ones. 
+# (imagine if we trained our model on frequency x, and generated k positions, and later at test time, we wanted
+# to use longer sequences, so we had to use a lower frequency, this would generate different set of numbers compared
+# to previous frequency which is not desirable and can mess up our model output (becasue they are added to the word/
+# token embeddings thus a change in positional value can result in the change in output, therefore from this angle
+# this is also important to be consistent))
+# we might even, at the extreme end, face underflow issues, the numbers get so tiny, the float cant represent them properly. 
 # these reasons in addition to another intersting attribute that adding a cosine to the mix provides us with, made 
 # the main authors to use the sin/cos pair. the sin/cos pair is used extensively in some engineering fields such as
 # electrical engineering/signal processing, becasue of their desired attributes. for us one of such attributes is
@@ -5192,15 +5197,17 @@ plot_sin_cos_frequency(scale=10)
 # and as we go on, we lower the frequency. this way, we dont repeat a number, and the model can distinuish different
 # positions from different wavelengths(high frequency low wavelength, low frequency high wavelength). 
 #  
-#
-#
-# 
-# method 1: 
-# For one we can simply add the tokens absolute position to the token embedding as an extra dimension. 
-# this method has several problems. 
-# 1. as the sequence length incresaes, larger and larger numbers are asinged, this creates
-# a nonintentional bias towards the tokens at the end, apart from that, it can hinder the optimization process and
-# cause all sorts of problems such as gradient explosion, etc. 
+# Part two of explanation: 
+# this was the first part, lets dive deeper and expand a bit more: 
+# we are going to gradually explain different points, so we dont lose track of the ideas
+# Previously we just talked about adding positional informations as a vector of numbers, like an embedding
+# and add it to the word embedding for each position. 
+# but we could also simply add the tokens absolute position to the token embedding as an extra dimension. 
+# Why dont we do this instead? 
+# This method has several problems. 
+# 1.As the sequence length incresaes, larger and larger numbers are asinged, this creates
+# a un-intentional bias towards the tokens at the end, apart from that, it can hinder the optimization 
+# process and cause all sorts of problems such as gradient explosion, etc. 
 # also the contribution of the tokens will be different, early tokens would have a minscule impact compared to the 
 # later tokens that have a larger index. 
 # 2.normalizing the values so all numbers fall into a range can mitigate this issue, but it creates 
