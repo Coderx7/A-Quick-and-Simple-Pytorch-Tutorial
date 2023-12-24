@@ -5416,6 +5416,7 @@ plot_sin_cos_frequency(scale=10)
 # encoding would not fundamentally change the properties of the encoding. (more on this later in plotting section) 
 #
 #
+# (this is the first question, theres another one I'll explain later which approaches this from another angle)
 # Question: Why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation 
 # for our task?
 # In some tasks, using only sine functions might be sufficient to capture position-dependent information. 
@@ -5598,26 +5599,23 @@ plot_sin_cos_frequency(scale=10)
 # leading to improved performance in various tasks.
 # 
 #
-# Part2:why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
-# Versatility and Generalization:
-#         Sine for Periodic Patterns: Sine is well-suited for encoding positions with periodic patterns, such as sequences
-#         where certain positions exhibit recurring behaviors or variations.
-#         
-#     Robustness to Shifts:
-#         Shift Invariance: The combination of sine and cosine allows the positional encoding to exhibit a form of shift 
-#         invariance. When a sequence is shifted, the phase relationships between sine and cosine components change 
-#         accordingly, preserving the relative positional information.
-#     Handling Different Time Scales:
-#         Sine for Short-Term Changes: Sine can capture short-term variations or changes that occur with a certain periodicity.
-#         Cosine for Long-Term Stability: Cosine, being constant over time, is suitable for encoding long-term stability or 
-#         features that remain consistent irrespective of position changes.
-#     Reducing Redundancy:
-#         Orthogonality: The orthogonal nature of sine and cosine functions ensures that the information captured by each 
-#          component is independent and non-redundant. This enhances the model's ability to distinguish between different positional 
-#          characteristics.
-#     Adaptability to Varied Sequences:
-#         Handling Diverse Patterns: Many sequences exhibit a mix of periodic and non-periodic changes. The combination of
-#         sine and cosine allows the model to adapt to diverse patterns of positional information.
+# !Part2:(we can add this after the first part as a recap or incorporate this into the previous answer)
+# Why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
+# we previously explained this why a cosine is benificial and why sin alone is not desirable.
+# Heres another take on this subject. 
+# Firts, sine function is well-suited for encoding positions with periodic patterns, such as sequences where certain positions exhibit
+# recurring behaviors or variations.
+# Second, it allows for shift Invariance, the combination of sine and cosine allows the positional encoding to exhibit 
+# a form of shift invariance. When a sequence is shifted, the phase relationships between sine and cosine components 
+# change accordingly, preserving the relative positional information.
+# Third, allows for handling different time scales, that is, sine can capture short-term variations or changes that occur
+# with a certain periodicity. while Cosine, being constant over time, is suitable for encoding long-term stability or 
+# features that remain consistent irrespective of position changes.
+# Fourth, the orthogonal nature of sine and cosine functions ensures that the 
+# information captured by each component is independent and non-redundant. This enhances the model's ability to 
+# distinguish between different positional characteristics and thus it reduces redundancy.
+# Fifth, it allows for handling diverse patterns, that is,  many sequences exhibit a mix of periodic and non-periodic
+# changes. The combination of sine and cosine allows the model to adapt to diverse patterns of positional information.
 # 
 # This approach enables the model to capture a wide range of patterns, both periodic and non-periodic, enhancing its ability
 # to understand and generalize across different sequences and tasks.
@@ -5626,14 +5624,14 @@ plot_sin_cos_frequency(scale=10)
 # 
 # 
 # Example : 
-# Let's adapt the example to use text/word data, making it more intuitive:
+# Let's use an example and hopefully make it more intuitive:
 # Versatility and Generalization:
 #     Sine for Periodic Patterns:
-#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, such as weekly
-#         trends in news coverage.
+#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, 
+# such as weekly trends in news coverage.
 #     Cosine for Constant Features:
-#         Example: Cosine represents features that are constant across different positions, like the consistent presence of certain
-#         keywords, providing a position-independent encoding.
+#         Example: Cosine represents features that are constant across different positions, like the consistent 
+# presence of certain keywords, providing a position-independent encoding.
 # Robustness to Shifts:
 #     Shift Invariance:
 #         Example: Shifting the entire sequence of news headlines (e.g., moving the start of the dataset) changes the phase 
@@ -5660,23 +5658,21 @@ plot_sin_cos_frequency(scale=10)
 # various text sequences and tasks.
 # 
 # Question: what does Orthogonality refer to and how is it relavent or intuitive here? 
-# Orthogonality in the Context of Positional Encoding:
 # In mathematics, orthogonality refers to the relationship between two vectors being perpendicular to each other. 
-# In the context of the positional encoding using sine and cosine functions, orthogonality is a crucial concept that 
-# enhances the effectiveness of the encoding.
-# Let's break down how orthogonality is relevant and intuitive in this scenario:
-#     Independence of Components:
+# but in the context of the positional encoding and using sine and cosine functions, orthogonality is a crucial 
+# concept that enhances the effectiveness of the encoding.
+# Independence of Components:
 #         The sine and cosine functions are orthogonal to each other. This means that the information encoded by the sine
 #         component is independent of the information encoded by the cosine component, and vice versa.
-#     Reducing Redundancy:
+# Reducing Redundancy:
 #         In positional encoding, the goal is to represent various aspects of the sequence in a way that minimizes redundancy. 
 #         If the sine and cosine components were not orthogonal, there might be overlapping information between them, 
 #         diminishing the effectiveness of the encoding.
-#     Distinct Encoding of Features:
+# Distinct Encoding of Features:
 #         The orthogonal nature ensures that each component is responsible for encoding different aspects of the sequence. 
 #         Sine may capture periodic patterns, while cosine encodes constant features. Their orthogonality guarantees that
 #         the information captured by one does not overlap or interfere with the information captured by the other.
-#     Enhanced Discrimination:
+# Enhanced Discrimination:
 #         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the 
 # model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes
 #  in the other. This separation of information contributes to a more nuanced understanding of the sequence.
