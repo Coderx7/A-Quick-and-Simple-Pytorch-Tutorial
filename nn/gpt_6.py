@@ -5204,19 +5204,25 @@ plot_sin_cos_frequency(scale=10)
 # positions from different wavelengths(high frequency low wavelength, low frequency high wavelength). 
 #  
 # Questions: 
-# Part two of explanation: 
-# this was the first part, lets dive one level and expand a bit more: 
-# we are going to gradually explain different points, so we dont lose track of the ideas
+# Now we have a good idea why this works, and its sufficient imho. 
+# from this point onward, I try to provide more intuition about different concepts involved.
+# these intuions come from different prespectives some may be intuitive and some may be streaching the idea a bit too far
+# so I present them all here and hopefully its for the best.: 
+# 
+# lets dive one level deeper and expand a bit more: 
+# we are going to gradually explain different points again with new prespectives, so we dont lose track of the ideas by
+# creating one giant block of text!
 #
 # Previously we just talked about adding positional informations as a vector of numbers, like an embedding
 # and add it to the word embedding for each position. 
 # but we could also simply add the tokens absolute position to the token embedding as an extra dimension. 
 # Why dont we do this instead? 
-# First of if we use a normal decimal number, it might mess up the whole training procedure, if we opt out to 
+#
+# First off if we use a normal decimal number, it might mess up the whole training procedure, if we opt out to 
 # learn it, then a single value, may not be descriptive enough and the model wouldnt have enough capacity to 
 # encode the required positional information into that single number, in which case if we increase the embedding
 # size, this would work but two issues pop up here. 
-# First how large should we take the positional embedding vector so that  we can ensure the positional information
+# First how large should we take the positional embedding vector so that we can ensure the positional information
 # is not dominated by the token/word information or vice versa? if we use a shorter one, the word information may
 # overwhelm the positional information, if we use larger one, it may overwhelem the word information. so we use the
 # same size for both of them. but we do that, would over burdened us with more overhead, becasue in essence we would be 
@@ -5242,16 +5248,16 @@ plot_sin_cos_frequency(scale=10)
 #=============================================================================================
 #=============================================================================================
 # Before we continue, lets review some concepts that come handy when we are explaining some of the 
-# concepts in depth. 
+# concepts in depth from now on: 
 #  
 # reminders about concepts we deal with here: 
 #
-# Question: Whats an embedding intuitively?
+# Whats an embedding?
 # Embeddings can be thought of as a way to represent complex, high-dimensional data in a more simplified, 
 # lower-dimensional space while maintaining meaningful relationships between the data points. 
 # It's like capturing the essence of something intricate in a simpler form that retains its essence or crucial
 # characteristics.
-# We can imagine The embedding in different intuitive ways. Like for example just as a map condenses geographic
+# We can imagine The embedding in different ways. Like for example just as a map condenses geographic
 # information into a flat surface without losing the relative positions of countries/places/etc, embeddings condense
 # data without losing crucial relationships.
 # Or think of it analogus to distilling the essence of a painting into a smaller sketch that still captures the main 
@@ -5263,19 +5269,22 @@ plot_sin_cos_frequency(scale=10)
 # simplifying the complexity of high-dimensional data. It's like summarizing a story without losing its essence or 
 # key plot points.
 # as for practical examples, we have already seen word embeddings, as words represented as vectors in which closer
-# ords in the embedding space often have similar meanings or usage contexts.
+# words in the embedding space often have similar meanings or usage contexts.(we say often becasue this is not 100% all of the times, I guess it was around 75+%
+# as reported by mikolov in their word2vec paper! imnot sure though I need to recheck (!check this))
 # or the image embeddings, inwhich the images are represented in a lower-dimensional space where similar images 
 # are closer together, aiding tasks like image similarity search.
 # 
 #
-# Question: Whats a manifold?:
-# 
-# We can get better intuition about manifolds by visualizing them, and there are a lot of ways of doin this.
+# Whats a manifold?
+# simply put, manifold is a topological space that looks locally like a Euclidean space, meaning that in a small enough region,
+# it resembles a familiar space like a plane. This has some implications for us which we get to rightaway.
+# but before that, what is a manifold really? its really kind of vague!
+# we can get better intuition about manifolds by visualizing them, and there are a lot of ways of doin this.
 # we can picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet, able
 # to take on various shapes within the higher-dimensional space.
 # or we can imagine this rubber sheet to exist within a 3D space, but the manifold itself is a 2D surface. 
 # (The embedding process places data points on this flexible surface.)
-# Apart from these, there are other famous analogies that make this even more intuitive, for example:
+# Apart from these, there are other analogies that make this even more intuitive, for example:
 # Just as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data in a 
 # lower-dimensional space.
 # or if you think of a landscape with hills and valleys, the trails can be seen as the manifold, navigating the 
@@ -5284,8 +5293,8 @@ plot_sin_cos_frequency(scale=10)
 # so to put it simply, a manifold can be seen a flexible, curved surface in a higher-dimensional space, on which, each 
 # point represents a data point. the goal is to position these points on the surface so that the relationships between
 # them are preserved from the original, higher-dimensional data.
-# moreover, the curvature of the manifold reflects the relationships between the data points. Smooth curves indicate 
-# similar relationships, while abrupt turns may represent significant changes in the data.
+# moreover, the curvature of the manifold reflects the relationships between the data points. 
+# Smooth curves indicate similar relationships, while abrupt turns may represent significant changes in the data.
 # In the context of embedding manifolds, it serves as the reduced-dimensional space where data points are positioned
 # after undergoing the embedding process, capturing essential relationships in a more manageable form.
 # !put a bulletpoint version down below as a summary 
@@ -5299,8 +5308,7 @@ plot_sin_cos_frequency(scale=10)
 # Topological Spaces: A manifold is a topological space that looks locally like Euclidean space, meaning that in 
 #     a small enough region, it resembles a familiar space like a plane.
 #     Intrinsic/inherent/underying Properties: It retains certain intrinsic/inherent/underlying properties, such
-#     as local linearity or smoothness, even if 
-#     embedded in a higher-dimensional space.
+#     as local linearity or smoothness, even if embedded in a higher-dimensional space.
 # 
 # Embedding Process:
 #     Dimensionality Reduction: The primary goal is to reduce the dimensions while retaining relevant information. 
@@ -5338,7 +5346,7 @@ plot_sin_cos_frequency(scale=10)
 # How is this addressed in here?
 # we explained this earlier, but here is a more verbose answer anyway.
 # The periodicity could pose a problem if we were to use these functions directly as positional encodings without any changes.
-# But as you know, we are using a specific equation to generates the argument for sin/cos, for our embedding encodings. 
+# But as you know, we are using a specific equation to generate the arguments for sin/cos, for our embedding encodings. 
 # This is in fact how the periodic nature of sine and cosine functions is actually leveraged to address this issue.
 # we encode the position within the sequence using a combination of sine and cosine functions with different frequencies and phases. 
 # The frequency determines how quickly the function oscillates, while the phase determines the starting point of the oscillation.
@@ -5371,12 +5379,13 @@ plot_sin_cos_frequency(scale=10)
 #
 # couple of clarification is needed here. 
 # First of all, the terms "position-dependent" and "position-independent" in this context refer to how the values
-# of the sine and cosine functions change with respect to the input (or position in the sequence).
-# The sine function, sin(x), starts at 0 when x=0 and oscillates between -1 and 1 as x increases or 
-# decreases. This means that the output of the sine function is dependent on the position, and it changes as the
+# of the sine and cosine functions change with respect to the input (or position in the sequence), not that one is
+# position-dependent and the other isnt.
+# The sine function, sin(x), starts at 0 when x=0 and oscillates between -1 and 1 as x increases/decreases. 
+# This means that the output of the sine function is dependent on the position, and it changes as the
 # position changes, hence the term "position-dependent".
 # On the other hand, the cosine function, cos(x), starts at 1 when x=0 and also oscillates between -1 and 1 as 
-# x increases or decreases. 
+# x increases/decreases. 
 # However, the key difference is that the cosine function's maximum value occurs at x=0,
 # and it decreases from there. This means that the cosine function captures the highest value at the start of the 
 # sequence (position-independent), and then the value changes as the position changes.
@@ -5384,8 +5393,7 @@ plot_sin_cos_frequency(scale=10)
 # while the sine function provides variation and differentiation across positions. 
 # This combination helps the model to understand the relative positions of elements in the sequence. 
 #
-#
-# lets expand on it a bit more before we get to rest of the discusion here: 
+# still doesnt make sense? lets expand on it a bit more before we get to rest of the discusion here: 
 # Both the sine and cosine functions are periodic and not constant and they both produce patterns that repeat over time.
 # However, the key difference lies in their starting points and their behavior around zero. The cosine function, cos(x),
 # starts at its maximum value (1) when x=0 and decreases from there, while the sine function, sin(x), starts at 0 when 
@@ -5621,77 +5629,42 @@ plot_sin_cos_frequency(scale=10)
 # to understand and generalize across different sequences and tasks.
 #
 # !note: read the explanation about cosine -constant features at the end (this is not accurate and requires explanation)
+#  
+# # Question: We refer to sine and cosine as orthogonal to eachother, what does Orthogonality refer to here and how
+#   is it relavent or intuitive here basically why do we even care about orthogonality?
 # 
-# 
-# Example : 
-# Let's use an example and hopefully make it more intuitive:
-# Versatility and Generalization:
-#     Sine for Periodic Patterns:
-#         Example: Consider a dataset of daily news headlines. Sine captures the periodicity in topics that recur, 
-# such as weekly trends in news coverage.
-#     Cosine for Constant Features:
-#         Example: Cosine represents features that are constant across different positions, like the consistent 
-# presence of certain keywords, providing a position-independent encoding.
-# Robustness to Shifts:
-#     Shift Invariance:
-#         Example: Shifting the entire sequence of news headlines (e.g., moving the start of the dataset) changes the phase 
-#         relationship between sine and cosine, preserving the relative information despite the shift.
-# Handling Different Time Scales:
-#     Sine for Short-Term Changes:
-#         Example: Sine captures short-term variations like daily fluctuations in the frequency of specific words or topics 
-#         in the news.
-#     Cosine for Long-Term Stability:
-#         Example: Cosine represents long-term stability, such as the overall trend of changes in the prevalence of certain 
-#         themes over the entire dataset.
-# Reducing Redundancy:
-#     Orthogonality:
-#         Example: The orthogonal nature of sine and cosine ensures that the information about daily fluctuations and overall
-#         trends in news coverage is independent, reducing redundancy in the positional encoding.
-# Adaptability to Varied Sequences:
-#     Handling Diverse Patterns:
-#         Example: News headlines often exhibit a mix of periodic patterns (coverage of recurring events) and non-periodic 
-#         variations (unpredictable news events). The combination of sine and cosine allows the model to adapt to these diverse patterns.
-# 
-# In summary, by incorporating both sine and cosine components in the positional encoding of daily news headlines, 
-# the model becomes more versatile. 
-# It can effectively capture both periodic and non-periodic patterns, enabling better generalization and understanding of
-# various text sequences and tasks.
-# 
-# Question: what does Orthogonality refer to and how is it relavent or intuitive here? 
-# In mathematics, orthogonality refers to the relationship between two vectors being perpendicular to each other. 
-# but in the context of the positional encoding and using sine and cosine functions, orthogonality is a crucial 
-# concept that enhances the effectiveness of the encoding.
-# Independence of Components:
-#         The sine and cosine functions are orthogonal to each other. This means that the information encoded by the sine
-#         component is independent of the information encoded by the cosine component, and vice versa.
-# Reducing Redundancy:
-#         In positional encoding, the goal is to represent various aspects of the sequence in a way that minimizes redundancy. 
-#         If the sine and cosine components were not orthogonal, there might be overlapping information between them, 
-#         diminishing the effectiveness of the encoding.
-# Distinct Encoding of Features:
-#         The orthogonal nature ensures that each component is responsible for encoding different aspects of the sequence. 
-#         Sine may capture periodic patterns, while cosine encodes constant features. Their orthogonality guarantees that
-#         the information captured by one does not overlap or interfere with the information captured by the other.
-# Enhanced Discrimination:
-#         Orthogonality enhances the model's ability to discriminate between different positional characteristics. When the 
-# model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently imply changes
-#  in the other. This separation of information contributes to a more nuanced understanding of the sequence.
-#     Mathematical Simplicity:
-#         The orthogonal relationship simplifies mathematical operations involving these components. When combining sine and 
-# cosine components, their orthogonality ensures that their interactions are well-defined and do not introduce complex dependencies.
-# Example:
+# As you may know/remember in mathematics, orthogonality refers to the relationship between two vectors being perpendicular
+# to each other. This concept is very important/crucial in our case as well becasue it enhances the effectiveness of our encoding.
+# Basically when you hear, we say the sine and cosine functions are orthogonal to each other we mean, the information encoded 
+# by the sine component is independent of the information encoded by the cosine component, and vice versa. 
+# (i.e. we have independent components that do separate jobs).
+# In other words, the orthogonal nature ensures that each component is responsible for encoding different aspects of the 
+# sequence. sine may capture periodic patterns, while cosine encodes constant features. their orthogonality guarantees 
+# that the information captured by one does not overlap or interfere with the information captured by the other.
+# (i.e. allows distinct encoding of features)
+# not only that, orthogonality also enhances the model's ability to discriminate between different positional characteristics.
+# when the model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently 
+# imply changes in the other. This separation of information contributes to a more subtle/accurate understanding of the 
+# sequence.(i.e. provides enhanced discrimination)
+# and the orthogonal relationship between them also simplifies the mathematical operations involving these components. 
+# becasue when combining sine and cosine components, their orthogonality ensures that their interactions are well-defined
+# and do not introduce complex dependencies.(provides mathematical simplicity)
+# moreover, in positional encoding, we would like to represent various aspects of the sequence in a way that minimizes 
+# redundancy. if the sine and cosine components were not orthogonal, there might be overlapping information between them, 
+# diminishing the effectiveness of the encoding.
+# example: 
 # Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability 
 # (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) 
 # and persistent themes (captured by cosine) without confusion.
-# In summary, orthogonality in the context of sine and cosine functions used in positional encoding ensures independence 
-# between components, reduces redundancy, allows for distinct encoding of features, enhances discrimination capabilities, 
+# so to recap, orthogonality of sine and cosine functions in positional encoding ensures independence between components,
+# reduction of redundancy, allows for distinct encoding of features and enhances discrimination capabilities 
 # and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional 
 # encoding scheme in various sequence-related tasks.
 # 
 #
 #! Important note concerning Cosine and Constant feature analogy: 
 # I explained this once, but heres another take (I guess this one turned out better! - !repalce the old one with this one)
-# previously we had some remarks concerning cosine and its alleged/supposed role in sinusoidal positional encoding such as: 
+# previously we had some remarks concerning cosine and its supposed role in sinusoidal positional encoding such as: 
 # "Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. 
 #  This helps in capturing position-independent characteristics that may not follow a periodic trend."
 # or 
@@ -5699,16 +5672,16 @@ plot_sin_cos_frequency(scale=10)
 # This needs more clarification as its not entirely accurate and may very well be misunderstood. so lets elaborate:
 # 
 # See both sine and cosine functions are periodic and oscillate between -1 and 1 and neither of them encode "constant" features.
-# The key difference between them is their phase, i.e., where they start from. The sine function sin(x) starts from 0 
-# and goes up to 1, then down to -1, and back to 0 as x increases. This makes it suitable for capturing patterns that 
-# repeat after a certain period, hence why we said something like 'sin captures "periodic patterns"'.
+# The thing is, the key difference between them is their phase, i.e., where they start from. The sine function sin(x) 
+# starts from 0 and goes up to 1, then down to -1, and back to 0 as x increases. This makes it suitable for capturing 
+# patterns that repeat after a certain period, hence why we said something like 'sin captures "periodic patterns"'.
 # The cosine function cos(x), on the other hand, starts from 1 (its maximum value) when x=0, then decreases to -1, and
 # back to 1. This means that for positions close to zero, the cosine-encoded positions will have higher values compared
 # to the sine-encoded positions. This unique characteristic of cosine function is often associated with "constant" or 
 # "baseline" features in the context of positional encoding, but it's important to note that the cosine function is not 
 # "constant" - it also varies with x.
-# Therefore, in the context of positional encoding, the alternating pattern of sine and cosine across dimensions helps the
-# model to capture various frequency patterns and differentiate positions in the sequence. 
+# Therefore, the alternating pattern of sine and cosine across dimensions helps the model to capture various frequency 
+# patterns and differentiate positions in the sequence. 
 # The cosine function's initial high value at position zero provides a kind of "anchor" or "baseline" at the start of 
 # the sequence, while the sine function provides variation and differentiation across positions.
 # So, a more accurate and befitting statement could be: 
@@ -5717,49 +5690,49 @@ plot_sin_cos_frequency(scale=10)
 # may not follow a periodic trend."
 #
 #
+# sidenote/reminder 
 # !(add the basic orthogonality definition and then expand this after)
-# Question: is orthogonality in neural networks different or does it refer to the same thing?
-# When it comes to neural networks, orthogonality takes on a slightly different meaning compared to its traditional 
-# mathematical definition, but the fundamental idea remains rooted in independence and lack of correlation.
+# Question: what does orthogonality in the context of neural networks mean?
+# the definition is not really any different than its traditional mathematical definition, 
+# and the fundamental idea remains the same which simply put, is independence and lack of correlation between components.
+# lets explain it abit more:
+# Definition: 
+#   When we talk about orthogonality in neural networks, we usually mean weight orthogonality, 
+#   which refers to the orthogonal relationships between weight vectors in the weight space. 
+#   to be more specific, it involves ensuring that weight vectors are as orthogonal(independent) as possible to 
+#   each other during the training process(its been particularly relevant in deep learning architectures).
 # 
-# Weight Orthogonality:
-# In neural networks, weight orthogonality refers to the orthogonal relationships between weight vectors in the weight space.
-#          Specifically, it involves ensuring that weight vectors are as orthogonal as possible to each other during training. 
-#          This concept is particularly relevant in deep learning architectures.
-# 
-# Relevance and Intuition:
-#     Reducing Redundancy and Overfitting:
-#         When weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information.
-#         This can help in reducing overfitting, where a model may learn noise or specific training examples rather than 
-#         general patterns.
-#     
-#     Facilitating Training:
-#         Orthogonality can aid in a more stable and efficient training process. When weight vectors are orthogonal, 
-#         updates to one weight vector do not strongly influence others, promoting more independent learning.
+# Reducing Redundancy and Overfitting:
+#   moreover, when weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information.
+#   This can help in reducing overfitting, where a model may learn noise or specific training examples rather than 
+#   the general patterns.
+#       
+# Facilitating Training:
+#    Orthogonality can aid in a more stable and efficient training process becasue when weight vectors are orthogonal, 
+#    updates to one weight vector do not strongly influence others, promoting more independent learning.
 #
-#     Enhancing Representational Capacity:
-#         Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. 
-#         Each weight vector can capture unique features or aspects of the data without interference from others.
+# Enhancing Representational Capacity:
+#    Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. 
+#    Each weight vector can capture unique features or aspects of the data without interference from others.
 #
-#     Generalization and Adaptability:
-#         Similar to the positional encoding example, orthogonality in neural networks enhances the model's ability to 
-#         generalize and adapt to different patterns in the data. Independent weight vectors allow the model to learn a wide 
-#         range of features without being overly constrained by correlations.
+# Generalization and Adaptability:
+#    orthogonality in neural networks enhances the model's ability to generalize and adapt to different patterns in
+#    the data. Independent weight vectors allow the model to learn a wide range of features without being overly 
+#    constrained by correlations.
 #     
-#     Mitigating Vanishing or Exploding Gradients:
-#         Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation.
-#         This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
+# Mitigating Vanishing or Exploding Gradients:
+#    Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation.
+#    This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
 # Example:
-# Consider a deep neural network processing images. If the weight vectors corresponding to different convolutional 
-# filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of the image, whether 
-# it's edges, textures, or higher-level features. This diversity contributes to a more robust and generalizable 
-# representation of the input data.
+# For example, consider a deep neural network processing images. If the weight vectors corresponding to different 
+# convolutional filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of 
+# the image, whether it's edges, textures, or higher-level features. This diversity contributes to a more robust
+# and generalizable representation of the input data.
 #
-# Summary:
-# While the term "orthogonality" may have a different application in neural networks compared to its traditional
-# mathematical context, the core idea remains centered around independence, lack of correlation, and promoting diverse
+# recap/summary:
+# the core idea in orthogonality is centered around independence, lack of correlation, and promoting diverse
 # and efficient learning. In neural networks, weight orthogonality specifically addresses the relationships between 
-# weight vectors, contributing to improved generalization, reduced redundancy, and more effective training.
+# weight vectors, which contribute to improved generalization, reduced redundancy, and more effective training.
 # 
 # !edit this
 # More Explanation : 
@@ -5768,39 +5741,40 @@ plot_sin_cos_frequency(scale=10)
 # meaning within the context of weight matrices. 
 # Let's delve deeper into different aspects of weight orthogonality and its implications :
 # 1. Geometric Perspective:
-#     Traditional Orthogonality: In mathematics, orthogonality between vectors implies a right-angle relationship.
-#     In the context of neural networks, this concept is adapted to the weight space. Weight vectors are considered 
+#     In mathematics, orthogonality between vectors implies a right-angle relationship.
+#     but in the context of neural networks, this concept is adapted to the weight space. weight vectors are considered 
 #     orthogonal if their dot product is close to zero, signifying independence.
 # 
 # 2. Weight Orthogonality:
-#     Defining Weight Orthogonality: In neural networks, weight orthogonality refers to the idea that weight matrices
-#     (collections of weight vectors) are as orthogonal as possible. 
-#     This concept is often applied to weight initialization or regularization techniques.
+#     In neural networks, weight orthogonality refers to the idea that weight matrices
+#     (collections of weight vectors) are as orthogonal as possible.This concept is often applied to weight initialization or regularization techniques.
 # 
-# 3. Reducing Redundancy and Overfitting:
-#     Overfitting Mitigation: When weight vectors are orthogonal, they are less likely to redundantly encode similar 
-#     patterns. This property can mitigate overfitting by encouraging the model to learn distinctive features, reducing
+# 3. Reducing Redundancy and Overfitting(Overfitting Mitigation):
+#     When weight vectors are orthogonal, they are less likely to redundantly encode similar patterns. 
+#     this property can mitigate overfitting by encouraging the model to learn distinctive features, reducing
 #     reliance on specific training examples.
 # 
-# 4. Facilitating Training Stability:
-#     Independent Learning: Orthogonal weight vectors contribute to stable training. Updates to one weight vector have 
-#     less impact on others, promoting more independent learning. This is particularly important in deep networks where
-#     instability in training can be a challenge.
+# 4. Facilitating Training Stability(Independent Learning):
+#     Orthogonal weight vectors contribute to stable training. Updates to one weight vector have less impact on others,
+#     promoting more independent learning. This is particularly important in deep networks where instability in training
+#     can be a challenge.
 # 
-# 5. Enhancing Representational Capacity:
-#     Diverse Representations: Orthogonal weight matrices enhance the network's representational capacity. 
+# 5. Enhancing Representational Capacity(Diverse Representations):
+#     Orthogonal weight matrices enhance the network's representational capacity. 
 #     Each weight vector can specialize in capturing unique features or patterns, allowing the model to learn a rich
 #     and diverse set of representations.
 # 
-# 6. Generalization and Adaptability:
-#     Improved Generalization: Orthogonality fosters better generalization by ensuring that the model can adapt to a wide
+# 6. Generalization and Adaptability(Improved Generalization):
+#     Orthogonality leads to better generalization by ensuring that the model can adapt to a wide
 #     range of patterns. The independence between weight vectors allows the network to handle diverse input data 
-#     effectively.
+#     effectively. (or This is because they can maintain diversity among the features learned by the different neurons, 
+#     preventing any single feature from dominating.)
 # 
-# 7. Mitigating Gradient Issues:
-#     Addressing Gradient Challenges: Orthogonal weight matrices can help mitigate issues like vanishing or exploding 
+# 7. Mitigating Gradient Issues(Addressing Gradient Challenges, Preservation of Gradient Norms):
+#     Orthogonal weight matrices can help mitigate issues like vanishing or exploding 
 #     gradients during backpropagation. This is critical for maintaining a stable gradient flow, especially in deep 
-#     networks.
+#     networks. also orthogonal matrices preserve the norm of the input vectors, which can be beneficial for the 
+#     propagation of gradients during backpropagation.
 # 
 # 8. Example: Image Processing in Convolutional Networks:
 #     Role in Convolutional Filters: Consider a convolutional neural network (CNN) processing images. If the weight 
@@ -5812,20 +5786,8 @@ plot_sin_cos_frequency(scale=10)
 #     Eigenvalue Preservation: Orthogonal matrices have the property of preserving eigenvalues, contributing to 
 #     numerical stability during training and optimization processes.
 # 
-# Improved generalization: Orthogonal matrices can help improve the generalization of deep neural networks.
-# This is because they can maintain diversity among the features learned by the different neurons, 
-# preventing any single feature from dominating.
-# Easier optimization: Networks with orthogonal weights can be easier to train. 
-# This is because orthogonal matrices don’t suffer from vanishing or exploding gradients, 
-# which are common problems in the training of deep networks.
-# Preservation of Gradient Norms: Orthogonal matrices preserve the norm of the input vectors, 
-# which can be beneficial for the propagation of gradients during backpropagation.
 # 
-# In summary, weight orthogonality in neural networks is a multifaceted concept that goes beyond its geometric roots. 
-# It plays a crucial role in shaping the learning dynamics, stability, and generalization capabilities of deep learning
-# models, contributing to the ongoing refinement of training techniques in the field.
-# 
-# 
+#  
 # Question: How do you change frequency for a sin/cos? 
 # changing the frequency involves modifying the rate at which these functions oscillate or complete cycles within a 
 # given interval. 
@@ -5937,12 +5899,12 @@ plot_sin_cos_frequency(scale=10)
 # this blogpost does a very good job at explaining the implementation of the sinusoidal positional encoding
 # and pretty much explains all the questions concerning the formula and why its implemented a certain way. 
 # https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
-# this blog post,does a very good job at explaining the intuitions behind the sinusoidal positional encoding.
+# this blog post,does a good job at explaining the intuitions behind the sinusoidal positional encoding.
 # Ive watched and read alot of videos and explanations on this, some videos(also linked below) are good some
 # not as much, as they say things that are not backed, or the explanation is superficial. 
 # I tried to ask and answer them using different sources I found
 # but these two links that I wrote here, do a good job nonetheless. (however, read the following information aswell.)
-# finally sinusoidal positional embedding is not used anymore (at least widely as far as im aware), instead the learned 
+# finally sinusoidal positional embedding is not used anymore to my knowledge(at least widely as far as im aware), instead the learned 
 # positions are used (this is what we implemented in our example, and BERT uses it, but sinusoidal posintioning had
 # a lot of intresting intuitions and ideas behind it that can give me/you a new prespective and possibly allow you 
 # to learn and comeup with similar improvements knowing the concepts/reasons behind it)
@@ -6241,7 +6203,7 @@ draw_postion_vector_heatmap(position_count=50_000, embd_dim=512)
 # higher dimensions may focus on longer-range dependencies.( more explaination ahead)
 #
 # !Alternating Colors: 
-# the alternating dark and light bands we see in the heatmap is caused by use of sine and cosine functions.
+# the alternating color bands we see in the heatmap is caused by use of sine and cosine functions.
 # This alternation ensures that the model can distinguish between adjacent positions and each position is
 # uniquly indentifiable.
 # 
@@ -6253,18 +6215,19 @@ draw_postion_vector_heatmap(position_count=50_000, embd_dim=512)
 # !looking athe plot we see alot of blue/white strips towards the right end of the plot and much
 # less other colors, they seem constant values being repeated.
 # these blue/white stripes represent the values of the positional vectors and the reason 
-# we see fewer changes (less red/white/bule stripes) towards the end of the plot is due to
+# we see fewer changes (less red/white/bule stripes (when we use RdBu cmap)) towards the end of the plot is due to
 # the nature of the positional encoding scheme. 
-# As we move towards higher dimensions, the frequency of these functions decreases,
+# As we move towards higher dimensions, the frequency of these functions decreases more,
 # leading to fewer changes in the values and hence fewer stripes in the plot.
 # 
 # by the way note that the stripes at the far end of the embedding dimensions do not represent
-# a single value they are many tiny numbers that are simply too small to make a significant difference, 
+# a single value they are many tiny numbers that are simply too small to make a significant difference
+# (and they are very close to each other, after all they change a tiny bit each time), 
 # and hence they are shown as blue/white for all positions(they are very similar in value so their
 # color ends up indistinguishable for us/looks the same to us).
 # 
 # when increasing the position count, we can see for the same number of embeddings, the plot changes
-# in a way that the number of stripes/ alleged constant values to the far end of the embeddings decreases
+# in a way that the number of stripes/ seemingly constant values to the far end of the embeddings decreases
 # !The difference between the 1k plot and the 50,000 positions plot could be due to the difference in
 # the total number of positions encoded in each plot. A plot with more positions (like the 50,000 positions
 # plot) would naturally have more stripes as it represents more positional information.
@@ -6280,14 +6243,13 @@ draw_postion_vector_heatmap(position_count=50_000, embd_dim=512)
 # less than 1. (-np.exp(np.arange(0, embd_size, 2)) * (np.log(10_000.0) / embd_size)). 
 # This means that as you move along the embedding size, the frequency of the sine and cosine terms
 # in the positional encoding decreases. 
-# This is a key aspect of the Transformer’s positional encoding, allowing it to capture both short-term
-# and long-term dependencies in the input sequence. 
+# this allows the model to capture both short-term and long-term dependencies in the input sequence. 
 # The sine and cosine functions provide a way to encode the position with a unique representation 
 # that can capture relative positions and is invariant to the sequence length. 
 # The decreasing frequency ensures that the model can distinguish positions across a wide range of 
 # sequence lengths.
 # 
-# relationship with wavelength:
+# reminder about relationship with wavelength:
 # In the context of waves, frequency and wavelength are inversely related. 
 # As the frequency of a wave increases, the wavelength decreases, and vice versa. 
 # This relationship is governed by the equation:
