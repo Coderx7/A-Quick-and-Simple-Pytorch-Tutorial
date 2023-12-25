@@ -6511,7 +6511,13 @@ frequency = 1.0  # in Hertz
 # Call the function to plot the sine wave
 plot_sine_wave(amplitude, frequency)
 #%% 
-#
+################################### my initial notes/refs/unedited######################################
+# the previous notes have been edited a little bit, but this section not. the reason you see one concept
+# being repeatedly explained/noted is I tried several times using different prespectives/lectures/blogs/etc
+# to explain this to myself, but havent really had the time to consolidate them properly. Itried to provide
+# a somewhat more coherent path of reading what I have found/learned, if you read from top down, you'll get
+# more information, and should be able to read all of these as well and spot where I made a mistake and not.
+# 
 #
 # ----------------------------------
 # !all entries interact with all other entries at the same time, and the order of words/tokens is lost
@@ -6524,7 +6530,7 @@ plot_sine_wave(amplitude, frequency)
 # one paragraph in one language completely and then produce a translation later, the first part doesnt
 # need this as we arent after producing the next word/token, but the second part does, we talk about this in more
 # details later, but for now, we know we want to preserve the order as well. so what do we do?  
-# 
+# (youtube channel link below)
 # there are several ways we can add this positional information, each with its own set of merits and drawbacks
 # for one, we can add a number for each token, like 0 for how, 1 for are, and 2 for you, and so on.
 # but this has several issues, and doesnt work as expected, becasue, suppose we have large number of tokens
@@ -6759,7 +6765,7 @@ plt.plot(pos_vec)
 
 
 # refs: 
-# andrekarpathyis video lecture on gpt : youtube link:
+# Andre karpathy's video lecture on gpt : youtube link:
 # https://timodenk.com/blog/linear-relationships-in-the-transformers-positional-encoding/ (this is really good and many used his intuition to explain this)
 # https://www.youtube.com/watch?v=3mTsYm9qQFA
 # https://www.youtube.com/watch?v=o29P0Kpobz0
