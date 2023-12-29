@@ -480,38 +480,158 @@ class TextGenerator(nn.Module):
         outputs = self.fc(all_states.reshape(-1, self.direction*self.hidden_size))
         return outputs,final_hidden_state
     
-    def generate_text(self, prompt, max_length=100):
-        # lets generate some text. 
-        # this goes like this, we feed our model (self()) something
-        # an empty array or something meaningful like a simple text,
-        # then check what the network produces, take the output, get 
-        # the next token, use its probablity to sample from, 
-        # get the next idx for our token, convert it to str and appened
-        # it and go for the next round until we read max_length. 
+    @torch.no_grad()
+    def sample_text_vanialla(self, max_length=100):
+        # here we are simply generating text, we dont have any input, but for our model to generate
+        # an output we need an output! so we give it a simple single character array of zero!
+        # thats it, we can choose any number other than zero, like 1, 2, ...up to char_length
+        # becasue this number is representing a single character after all
+        prompt=torch.zeros(size=(1,1)).long()
+        # or we could use this isntead, note the [[]], it adds 2 dimensions (make this 2d array with shape=(1,1)
+        # prompt=torch.tensor([[0]]).long()
+        # or use any other characters index like 10
+        # prompt=torch.tensor([[10]]).long()
+        # or even a character code directly! using atoi!
+        # prompt=torch.tensor([[self.atoi[' ']]]).long()
         hidden_state = None
         char_list = []
         for i in range(max_length):
-            # feed the input to the model 
-            one_hot_prompt = torch.nn.functional.one_hot(prompt, self.input_size).float()
+            # now we feed the prompt to the model, note that the input is a single character/digit for a single sequence
+            # and keep repeating this to create new characters. we feed model a charcter and get a new character out!
+            one_hot_prompt = torch.nn.functional.one_hot(prompt.to(self.device), self.input_size).float()
             outputs, hidden_state = self.forward(one_hot_prompt, hidden_state)
             hidden_state = tuple(s.data for s in (hidden_state)) if self.rnn_type =='lstm' else hidden_state.data
+            # apply temperature to the logits (outputs)
+            # outputs = outputs / temperature
             # we want probablities so lets use softmax 
-            preds = outputs.softmax(dim=-1)
-            # we want the next token probablity so we take the last sequence
-            prob = preds[:,-1]
-            # now lets use this to sample , replacement=True, means the same character can be choosen again
-            idx = torch.multinomial(prob, 1, replacement=True)
-            # now lets extract the character str and also feed this back
-            # to the model for the next round
+            probs = outputs.softmax(dim=-1)
+            # now we have bunch of probablities, so which one should we choose? 
+            # we have fed a sequence of 1 0s, and expect the network to give us back a 
+            # new character. so we have 85 classes or characters, 85 probablities to choose from
+            # if we simply grab the highest probablity, that would be a greedy sampling and wouldnt
+            # give us a good output. instead we use sampling, and based on the probablity of each class
+            # try to sample from it, this way, higher probablity classes/characters are more likely to be
+            # selected, while the least likely ones also do get a chance, albeit small, but they get their
+            # chance as well and it will result in a much better output.
+            # we fed our model a single sample of 1 character sequence, so we get (1,85) probablities. 
+            # lets remove the first dimension, and feed it to torch.multinomial for sampling (torch.multinomial
+            # wants 1d array! thats why we remove the first dimension)
+            probs = probs.squeeze(0)
+            # lets use this to sample, replacement=True, means the same character can be choosen again
+            # basically torch.multinomial is the equivalent of numpy.random.choice (indexes, p=probs/probs.sum())
+            idx = torch.multinomial(probs, 1, replacement=True)
+            # now lets extract the character str and also feed this back to the model for the next round
             char_list.append(itoa[idx.item()])
-            # add the new character to the begining of the prompt and remove the last one 
-            prompt = torch.cat((idx.unsqueeze(0), prompt[:,1:]),1)
-        print(''.join(char_list))            
+            # now use this new idx/character to generate the next one 
+            prompt = idx.unsqueeze(0) 
+        print(''.join(char_list))
+    
+    @torch.no_grad()
+    def sample_text_better(self, prompt_str='hi', max_length=100):
+        # basically preferably we want to start with an intial prompt, it can be anything, 
+        # a single \n, ., or space, or an expression, and then we generate the text. 
+        # here are the steps we need to take
+        # convert input str to digits,
+        # convert digits array to one-hot-encoded verctor
+        # feed that to the model, and get its output
+        # our model is seq-seq, which means, given an input seq, we 
+        # generate a sequence in the output.
+        # since we want to keep generating text, we do it "one character" at a time
+        # feed the network one character, get the output, use that character to feed the
+        # network and get the third character, and this goes on until we reach our max_length
+        # so our initial prompt needs to be in a loop so we get its outputs 
+        # then from there we continue with the max_length and generate text
+        # prompt_digits = np.array([atoi[c] for c in prompt_str])
+        hidden_state = None
+        cstr=[]
+        for c in prompt_str:
+            idx = np.array([atoi[c]])
+            idx_one_hot_vec = one_hot_encode(idx, self.input_size)
+            idx_tensor = torch.from_numpy(idx_one_hot_vec).float().to(self.device)
+            outputs, hidden_state = self.forward(idx_tensor, hidden_state)
+            # add the prompt to our character list which will contain all the generated characters
+            cstr.append(c)
             
-# lets test this rnn 
-model = TextGenerator('rnn', input_size=10,output_size=10,hidden_size=5,num_layers=1,is_bidirectional=False)
-print(model(torch.randn(size=(2,3,10)),None))
+        # the conditioning is done now, note that we didnt use the initial prompt
+        # to choose a prediction, we just wanted to condition the model on the existing
+        # sequence, and then when its finished, start generating the actual text
+        for i in range(max_length):
+            # to generate new text, we use the last character from our inital prompt
+            # and kickoff the process. note that we are using cstr to grab the next 
+            # character each time, we start with the last character inserted which 
+            # shows the end of our initial-prompt, use that to generate a new character
+            # which we decode and then store into cstr again, so that when we get the last
+            # inserted character, we are basically using the very last character our model
+            # generated, the hidden_state is also in sync as you can see, we use the hidden
+            # state from previous generation as we are generating new characters. 
+            idx = np.array([atoi[cstr[-1]]])
+            idx_one_hot_vec = one_hot_encode(idx, self.input_size)
+            idx_tensor = torch.from_numpy(idx_one_hot_vec).float().to(self.device)
+            # note that this hidden state is comming from the last
+            # character of the prompt, we just processed
+            outputs, hidden_state = self.forward(idx_tensor, hidden_state)
+            # now we need to calculate the probablities for each characters in the output
+            preds = outputs.softmax(dim=-1)
+            # now we have a list of probablities, to get good output, we grab a few of the
+            # most probable characters and sample from them. 
+            probs, indexes = preds.topk(5, dim=-1)
+            # now that we have topk probs, lets randomly choose between them
+            # before that lets convert them to numpy and use them for our job
+            probs, indexes = tuple(t.cpu().squeeze().data.numpy() for t in (probs, indexes))
+            # print(f'{indexes} {probs}')
+            idx = np.random.choice(indexes, p=probs/probs.sum())
+            # this is our next character!
+            cstr.append(itoa[idx])
+        print(''.join(cstr))
+            
+    # now lets use this with temperature sampling 
+    # this technique allows us to control the randomness of the predictions by scaling the logits 
+    # before applying softmax. Higher values (e.g., 1.0 or above) make the actions more random, 
+    # while lower values (e.g., 0.2) make the actions more deterministic. 
+    # lets create our sampler
+    @torch.no_grad()
+    def sample_text_with_temperature_sampling(self, prompt_str='hi', temperature=0.8, max_length=100, k=5):
+        # like before we first feed the prompt to condition our model and then start generating 
+        # the actual text
+        hidden_state = None 
+        # a list to store our generated text
+        cstr = []
+        if prompt_str is not None: 
+            # lets add our prompt to it right now
+            cstr = list(prompt_str)
+            # now lets condition our model on the initial prompt
+            for c in prompt_str:
+                idx_tensor = torch.from_numpy(one_hot_encode(np.array([atoi[c]]), self.input_size)).float().to(self.device)
+                _, hidden_state = model(idx_tensor, hidden_state)
+        
+        # now lets generate our own text 
+        for i in range(max_length):
+            # grab the last character from or character-list, if theres none use 0 as the begining
+            idx_tensor = torch.from_numpy(one_hot_encode(np.array([atoi[cstr[-1] if cstr else itoa[0]]]), self.input_size)).float().to(self.device)
+            outputs, hidden_state = self.forward(idx_tensor, hidden_state)
+            # lets calculate the probablities , but before that we normalize the logits by the temperature
+            outputs_scaled = outputs/temperature
+            # now we use this scaled outputs to get the probs 
+            preds = outputs_scaled.softmax(dim=-1)
+            # now lets get the topk probablities and randomly choose between them 
+            probs, indexes = preds.topk(k, dim=-1)
+            # since we want to use numpy.random.choice, lets convert them to numpy arrays
+            # also lets squeeze them so the random.choice doesnt complain about it.(they must be 1d arrays)
+            probs, indexes = tuple(t.cpu().squeeze(0).data.numpy() for t in (probs, indexes))
+            # choose an index, with the given probablity (we are making sure the probablities sum to 1)
+            # also note the 'p=' which is for probablity (missing that migh give you headache!) 
+            idx = np.random.choice(indexes, p=probs/probs.sum())
+            # now this is our next character lets add it to our cstr list 
+            cstr.append(itoa[idx])
+        print(''.join(cstr))        
 
+# lets test this rnn 
+
+model = TextGenerator('rnn', input_size=char_length,output_size=char_length,hidden_size=5,num_layers=1,is_bidirectional=False, atoi=atoi, itoa=itoa)
+print(model(torch.randn(size=(2,3,char_length)),None))
+model.sample_text_vanialla()
+model.sample_text_better()
+model.sample_text_with_temperature_sampling()
 # %%
 # now lets train this 
 # for training we need 
@@ -530,7 +650,7 @@ print(model(torch.randn(size=(2,3,10)),None))
 # but for the sake of simplicty we use once-hot-encoded vectors for now. 
 input_size = char_length
 output_size = char_length
-hidden_size = 512
+hidden_size = 100
 rnn_type = 'lstm'
 # we want sequences made of this many characters
 sequence_length = 30
@@ -716,54 +836,8 @@ for epoch in range(epochs):
 hidden_state = None
 char_list = []
 max_length = 100
-prompt = torch.zeros(size=(1,sequence_length),device=device).long()
-model.generate_text(prompt)
-#%%
-def predict(model, input, hidden_states=None, topk=None):
-    model.eval()
-    itoa = model.itoa
-    atoi = model.atoi 
-    # print(char2int)
-    # convert input string into corrosponding ids
-    input =  np.array([atoi[input]]).reshape(1,-1)
-    one_hot_vec = torch.from_numpy(one_hot_encode(input, char_length)).float().to(device)
-    output, hidden_states = model(one_hot_vec, hidden_states)
-    # print(f'{one_hot_vec.shape=}')
-    # print(f'{output.shape=}')
-    output = torch.nn.functional.softmax(output,dim=-1)
-    # print(f'softmax-output.shape={output.shape}')
-    # now our output has probabilities for each sequence/timestep
-    # we will choose the highest one here 
-    # if topk==None:
-    #     indexes = output.topk(np.arrange(char_length))
-    # else:
-    probs, indexes = output.topk(k=topk, dim=-1)
-    print(f'{indexes.shape=}')
-    print(f'{probs.shape=}')
-    indexes = indexes.cpu().data.numpy().squeeze()
-    probs = probs.cpu().data.numpy().squeeze()
-    print(f'{indexes.shape=}')
-    print(f'{probs.shape=}')
-    char = np.random.choice(indexes,p=probs/probs.sum())
-    return itoa[char], hidden_states
-
-def sample(model, size=10, prime='hello there'):
-    
-    chars = [ch.lower() for ch in prime]
-    h = None
-    # prime = prime.lower()
-    # print(unique_chars)
-    for ch in prime:
-        o,h = predict(model, ch, h,topk=5)
-    chars.append(ch)
-
-    for c in range(size):
-        o, h = predict(model,chars[-1],h,topk=5)
-        chars.append(o) 
-
-    return ''.join(chars)
-
-print(sample(model, size=200,prime='\n'))
+prompt = torch.zeros(size=(1,1),device=device).long()
+model.sample_text_vanialla(prompt)
 #%%
 # lets create our sampler
 @torch.no_grad()
@@ -832,7 +906,7 @@ sample_text(model,' ')
 # while lower values (e.g., 0.2) make the actions more deterministic. 
 # lets create our sampler
 @torch.no_grad()
-def sample_text_with_temperature_sampling(model, prompt_str='hi', temperature=0.8, sequence_length=30, max_length=100, k=5):
+def sample_text_with_temperature_sampling(model, prompt_str='hi', temperature=0.8, max_length=100, k=5):
     # like before we first feed the prompt to condition our model and then start generating 
     # the actual text
     hidden_state = None 
@@ -872,62 +946,42 @@ sample_text_with_temperature_sampling(model,' ',temperature=0.8)
 # test with temperature sampling 
 # this technique allows us to control the randomness of the predictions by scaling the logits 
 # before applying softmax.
-hidden_state = None
-char_list = []
-max_length = 100
-# Higher values (e.g., 1.0 or above) make the actions more random, 
-# while lower values (e.g., 0.2) make the actions more deterministic. 
-temperature = 0.8
-# an intial prompt with all zeros create garbage output, random characters, 
-# lets use something meaningful
-prompt = 'The'
-# for c in prompt:
-#     idx = atoi[c]
-#     one_hot_enc = torch.from_numpy(one_hot_encode(np.array([idx]),char_length)).float().to(device)
-#     print(f'{one_hot_enc.shape=}')
-#     output, hidden_state = model(one_hot_enc.reshape(1,1,-1), hidden_state)
-    # char_list.append(c)
-    
-# prompt = torch.zeros(size=(1,sequence_length),device=device).long()
-prompt = torch.from_numpy(np.array([[atoi[c] for c in prompt]])).long().to(device)
-print(f'{prompt.shape=}')
-for i in range(max_length):
-    # feed the input to the model
-    one_hot_prompt = torch.nn.functional.one_hot(prompt, char_length).float()
-    # print(f'{one_hot_prompt.shape=}')
-    outputs, hidden_state = model(one_hot_prompt, hidden_state)
-    hidden_state = tuple(s.data for s in (hidden_state)) if model.rnn_type =='lstm' else hidden_state.data
-    # apply temperature to the logits (outputs)
-    # scaled_outputs = outputs / temperature
-    # we want probablities so lets use softmax 
-    # preds = scaled_outputs.softmax(dim=-1)
-    # we want the next token probablity so we take the last sequence
-    # which represents the probabilities of the next token given the current sequence.
-    preds = outputs.softmax(dim=-1)
-    # prob = preds[:,-1]
-    # now lets use this to sample , replacement=True, means the same character can be choosen again
-    probs, indexes = preds.topk(k=5, dim=-1)
-    indexes = indexes.cpu().data.squeeze()
-    probs = probs.cpu().data.squeeze()
-    print(f'{indexes.shape=}')
-    print(f'{probs.shape=}')
-    for index, prob in zip(indexes,probs):
-        # print(f'{index} {prob}')
-        # idx = torch.random.c(index,p=prob/prob.sum())
-        idx = torch.multinomial(prob, num_samples=1).to(device)
-        # idx = torch.multinomial(prob, 1, replacement=True)
-        # now lets extract the character str and also feed this back
-        # to the model for the next round
+def vanilla_sampling(model, prompt_array, temperature = 0.8, max_length=100):
+    hidden_state = None
+    char_list = []
+    for i in range(max_length):
+        # feed the input to the model, note that the input is a single character/digit for a single sequence
+        one_hot_prompt = torch.nn.functional.one_hot(prompt_array, char_length).float()
+        outputs, hidden_state = model(one_hot_prompt, hidden_state)
+        hidden_state = tuple(s.data for s in (hidden_state)) if model.rnn_type =='lstm' else hidden_state.data
+        # apply temperature to the logits (outputs)
+        # outputs = outputs / temperature
+        # we want probablities so lets use softmax 
+        probs = outputs.softmax(dim=-1)
+        # now we have bunch of probablities, so which one should we choose? 
+        # we have fed a sequence of 1 0s, and expect the network to give us back a 
+        # new character. so we have 85 classes or characters, 85 probablities to choose from
+        # if we simply grab the highest probablity, that would be a greedy sampling and wouldnt
+        # give us a good output. instead we use sampling, and based on the probablity of each class
+        # try to sample from it, this way, higher probablity classes/characters are more likely to be
+        # selected, while the least likely ones also do get a chance, albeit small, but they get their
+        # chance as well and it will result in a much better output.
+        # we fed our model a single sample of 1 character sequence, so we get (1,85) probablities. 
+        # lets remove the first dimension, and feed it to torch.multinomial for sampling (torch.multinomial
+        # wants 1d array! thats why we remove the first dimension)
+        probs = probs.squeeze(0)
+        # lets use this to sample, replacement=True, means the same character can be choosen again
+        # basically torch.multinomial is the equivalent of numpy.random.choice (indexes, p=probs/probs.sum())
+        idx = torch.multinomial(probs, 1, replacement=True)
+        # now lets extract the character str and also feed this back to the model for the next round
         char_list.append(itoa[idx.item()])
-        # print(f'{prompt.shape=} {idx.shape=}')
-        # add the new character to the begining of the prompt and remove the last one 
-        # print(f'{prompt=}')
-        # print(f'{prompt[:,1:]=}')
-        # print(f'{idx.shape=}')
-        prompt = torch.cat((idx.unsqueeze(0), prompt[:,1:]), 1)
-
-print(''.join(char_list))
-
+        # now use this new idx/character to generate the next one 
+        prompt_array = idx.unsqueeze(0) 
+    print(''.join(char_list))
+    
+# lets create a single sequence single character/digit prompt and feed it to our network
+prompt = torch.zeros(size=(1, 1),device=device).long()
+vanilla_sampling(model, prompt)
 #%%
 # using beam search for text generationg 
 # another improvement we can use to generate better text, is to use of a beam search strategy 
