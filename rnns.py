@@ -527,6 +527,87 @@ class TextGenerator(nn.Module):
         print(''.join(char_list))
     
     @torch.no_grad()
+    def sample_text_vanialla_with_temperature(self, temperature=0.8, topk=5, max_length=100):
+        # in this version, lets add temperature sampling and instead of a single probablity
+        # lets use topk probablities, basically the idea is, instead of sampling among all characters
+        # /classes, lets grab the top k classes/characters and randomly choose one of them. this way
+        # we should get much better results, becasue obviously we are choosing from most probably outcomes
+        # than a bunch of likely and unlikely outcome whch happens by default when we look all the characters
+        # /classes in the output
+        # everything stays the same excep the probablities section, before we feed probablities to multinomial
+        # so see there
+        prompt=torch.zeros(size=(1,1)).long()
+        # or we could use this isntead, note the [[]], it adds 2 dimensions (make this 2d array with shape=(1,1)
+        # prompt=torch.tensor([[0]]).long()
+        # or use any other characters index like 10
+        # prompt=torch.tensor([[10]]).long()
+        # or even a character code directly! using atoi!
+        # prompt=torch.tensor([[self.atoi[' ']]]).long()
+        hidden_state = None
+        char_list = []
+        for i in range(max_length):
+            # now we feed the prompt to the model, note that the input is a single character/digit for a single sequence
+            # and keep repeating this to create new characters. we feed model a charcter and get a new character out!
+            one_hot_prompt = torch.nn.functional.one_hot(prompt.to(self.device), self.input_size).float()
+            outputs, hidden_state = self.forward(one_hot_prompt, hidden_state)
+            hidden_state = tuple(s.data for s in (hidden_state)) if self.rnn_type =='lstm' else hidden_state.data
+            # apply temperature to the logits (outputs)
+            outputs = outputs / temperature
+            # we want probablities so lets use softmax 
+            probs = outputs.softmax(dim=-1)
+            # now we have bunch of probablities, so which one should we choose? 
+            # we have fed a sequence of 1 0s, and expect the network to give us back a 
+            # new character. so we have 85 classes or characters, 85 probablities to choose from
+            # if we simply grab the highest probablity, that would be a greedy sampling and wouldnt
+            # give us a good output. or previous try was to use sampling, and based on the probablity of 
+            # each class try to sample from it, this way, higher probablity classes/characters are more likely to be
+            # selected, while the least likely ones also do get a chance, albeit small, but they get their
+            # chance as well and it will result in a much better output.
+            # but right now, we want to sample from topk and not all 85 characters/classes. 
+            # we fed our model a single sample of 1 character sequence, so we get (1,85) probablities. 
+            # so lets grab top k probablities 
+            probs, indexes = probs.topk(topk, dim=-1)
+            # now we have our probs, what remains is to normalize these so that they all add to 1, making them
+            # new probablities (i.e. imagine we grabed topk=3, and we got back 0.33, 0.21, 0.19, clearly they 
+            # dont sum to 1, if we want to treat them as true probablities (they represent the original ouput probablities),
+            # we need to normalize them, becasue we want to select from them based on their probability in this 
+            # list (imagine they are raw logits and we want to convert them to probablity!) when we do this we 
+            # see that the first item has 0.33/0.73=0.45, 0.21/0.73=0.28, 0.19/0.73=0.26, now we can easily sample
+            # from this and it represents the original probablity much better) (otherwise they will be treated as weights
+            # and create bias towards the larger numbers/weight(I explaned it in a moment)) 
+            # lets remove the first dimension, and feed it to torch.multinomial for sampling (torch.multinomial
+            # wants 1d array onlt! thats why we remove the first dimension)
+            probs.squeeze_(0)
+            # while we are at it lets remove the first dimension from indexes as well
+            indexes.squeeze_(0)
+            # normalize the probs 
+            probs = probs/probs.sum(dim=-1)
+            # now lets use this to sample, replacement=True, means the same character can be choosen again
+            # basically torch.multinomial is the equivalent of numpy.random.choice (indexes, p=probs/probs.sum())
+            # also note that, the output of multinomial is 0 to k, but we need their actual indexes they represent
+            # so to get the actual class indexes, we use the indexes (i.e. the idx multinomial returns is relative
+            # to the probablities/weights we feed it, to get the actual output indexes our model generated we need
+            # to look into indexes)
+            # side note: torch.multinomial, works with weights as well. that is we dont necessarily need to renormalize
+            # our probablities, if we were to feed them as is, it would work as well and multinomial would treat them
+            # as weights.(weights dont need to between 0 and 1, so decimal numbers like 10,12,3 can be considered as 
+            # weights. however they must not be negative!)
+            # but since we are dealing with probablities, its a good thing to do so. 
+            # why? becasue when we are dealing with a subset of probabilities (the top-k probabilities here),
+            # we are essentially creating a new probability distribution from these probabilities, and the sum of 
+            # all probabilities in a probability distribution must equal 1.
+            # If we didn't normalize the top-k probabilities, the torch.multinomial would still work, but the 
+            # probabilities wouldnt be accurate. it would treat the unnormalized probabilities as weights, 
+            # and the sampling would be biased towards the larger weights. by normalizing the probabilities, 
+            # we ensure that the sampling is proportional to the original probabilities.
+            idx = indexes[torch.multinomial(probs, 1, replacement=True)]
+            # now lets extract the character str and also feed this back to the model for the next round
+            char_list.append(itoa[idx.item()])
+            # now use this new idx/character to generate the next one 
+            prompt = idx.unsqueeze(0) 
+        print(''.join(char_list))
+
+    @torch.no_grad()
     def sample_text_better(self, prompt_str='hi', max_length=100):
         # basically preferably we want to start with an intial prompt, it can be anything, 
         # a single \n, ., or space, or an expression, and then we generate the text. 
@@ -630,6 +711,7 @@ class TextGenerator(nn.Module):
 model = TextGenerator('rnn', input_size=char_length,output_size=char_length,hidden_size=5,num_layers=1,is_bidirectional=False, atoi=atoi, itoa=itoa)
 print(model(torch.randn(size=(2,3,char_length)),None))
 model.sample_text_vanialla()
+model.sample_text_vanialla_with_temperature(topk=5)
 model.sample_text_better()
 model.sample_text_with_temperature_sampling()
 # %%
@@ -650,7 +732,7 @@ model.sample_text_with_temperature_sampling()
 # but for the sake of simplicty we use once-hot-encoded vectors for now. 
 input_size = char_length
 output_size = char_length
-hidden_size = 100
+hidden_size = 500
 rnn_type = 'lstm'
 # we want sequences made of this many characters
 sequence_length = 30
@@ -815,7 +897,7 @@ for epoch in range(epochs):
         loss.backward()
          # also since we face gradient explosion, lets clip the gradients!
         #! why? fix this issue I dontlike gradient clipping, this is more for rnn (lstm works well by default)
-        # torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), max_norm=5)
+        torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), max_norm=5)
         optimizer.step()
     
         if i%interval==0:
@@ -852,12 +934,11 @@ for epoch in range(epochs):
 
         print(f'val-loss: {total_val_loss//val_batch_cnt:.4f}')
                     
-# %%
-hidden_state = None
-char_list = []
-max_length = 100
-prompt = torch.zeros(size=(1,1),device=device).long()
-model.sample_text_vanialla(prompt)
+#%%
+model.sample_text_vanialla()
+# model.sample_text_better(prompt_str='\n')
+# model.sample_text_with_temperature_sampling(prompt_str='\n',temperature=0.8)
+model.sample_text_vanialla_with_temperature(topk=5, temperature=0.8)
 #%%
 # lets create our sampler
 @torch.no_grad()
