@@ -732,7 +732,7 @@ model.sample_text_with_temperature_sampling()
 # but for the sake of simplicty we use once-hot-encoded vectors for now. 
 input_size = char_length
 output_size = char_length
-hidden_size = 500
+hidden_size = 200
 rnn_type = 'lstm'
 # we want sequences made of this many characters
 sequence_length = 30
@@ -742,7 +742,7 @@ direction = 2 if bidirectional else 1
 dropout = 0.3
 vanilla_rnn_act = 'tanh'
 batch_size = 128
-epochs = 60
+epochs = 80
 interval = 400
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = TextGenerator(rnn_type=rnn_type, 
@@ -935,9 +935,9 @@ for epoch in range(epochs):
         print(f'val-loss: {total_val_loss//val_batch_cnt:.4f}')
                     
 #%%
-model.sample_text_vanialla()
+# model.sample_text_vanialla()
 # model.sample_text_better(prompt_str='\n')
-# model.sample_text_with_temperature_sampling(prompt_str='\n',temperature=0.8)
+model.sample_text_with_temperature_sampling(prompt_str='\n',temperature=0.8)
 model.sample_text_vanialla_with_temperature(topk=5, temperature=0.8)
 #%%
 # lets create our sampler
@@ -1044,6 +1044,37 @@ def sample_text_with_temperature_sampling(model, prompt_str='hi', temperature=0.
         
 sample_text_with_temperature_sampling(model,' ',temperature=0.8)
 #%%
+@torch.no_grad()
+def sample_text_with_beam_search(model, prompt_str='hi', max_length=100, k=5, beam_width=3):
+    hidden_states = [None] * beam_width
+    sequences = [[c] for c in prompt_str*beam_width]
+    print(f'{sequences}')
+    scores = torch.zeros(beam_width, 1).to(device)
+
+    for i in range(max_length):
+        all_candidates = []
+        for j, seq in enumerate(sequences):
+            idx_tensor = torch.from_numpy(one_hot_encode(np.array([atoi[seq[-1]]]), char_length)).float().to(device)
+            outputs, hidden_states[j] = model(idx_tensor, hidden_states[j])
+            logits = outputs.log_softmax(dim=-1)
+            topk_log_probs, topk_indexes = logits.topk(k, dim=-1)
+            topk_scores = scores[j] + topk_log_probs.squeeze(0)
+            for l in range(k):
+                all_candidates.append((topk_scores[l], topk_indexes[0][l], j, seq + [itoa[topk_indexes[0][l].item()]]))
+
+        ordered = sorted(all_candidates, key=lambda tup:tup[0], reverse=True)
+        sequences = []
+        scores = torch.zeros(beam_width, 1).to(device)
+        for j in range(beam_width):
+            scores[j] = ordered[j][0]
+            sequences.append(ordered[j][-1])
+            if j != ordered[j][2]:
+                hidden_states[j] = hidden_states[ordered[j][2]]
+
+    print(''.join(sequences[0]))
+    
+sample_text_with_beam_search(model)
+#%%
 # test with temperature sampling 
 # this technique allows us to control the randomness of the predictions by scaling the logits 
 # before applying softmax.
@@ -1099,6 +1130,11 @@ def beam_search(model, initial_prompt, sequence_length, beam_width, max_length):
         all_candidates = []
 
         for sequence, prob in sequences:
+            # negative indices in Python are used to count from the end of the sequence. So, -sequence_length
+            # is a negative index that refers to the element sequence_length places from the end of the sequence.
+            # therefore, sequence[-sequence_length:] means “all elements in sequence starting from sequence_length
+            # places from the end of the sequence to the end of the sequence”. In other words, it selects the 
+            # last sequence_length elements from the sequence
             prompt = torch.tensor(sequence[-sequence_length:]).unsqueeze(0).to(device)
             one_hot_prompt = torch.nn.functional.one_hot(prompt, char_length).float()
             outputs, hidden_state = model(one_hot_prompt, hidden_state)
