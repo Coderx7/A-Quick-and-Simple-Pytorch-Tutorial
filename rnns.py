@@ -750,40 +750,26 @@ for epoch in range(epochs):
         # in torch!
         
         outputs, hidden_state = model(data, hidden_state)
-        # get the data only, we dont want this operation recorded in computaional graph!
-        # why you may ask?
-        # by default, pytorch frees up some resources after we call .backward() to compute the gradients.
-        # This is usually what we want because it saves memory, but it can lead to problems if weare 
-        # trying to backpropagate through the same part of the computation graph more than once.
-        # in our case, we are trying to use the same hidden_state across multiple iterations of our loop.
+        # detach hidden_state from the computation graph, why you may ask?
+        # there are two reasons, one technical/implementation related and the other is conceptual.
+        # from a technical point of view, by default, pytorch frees up some resources after we call 
+        # .backward() to compute the gradients. This is usually what we want because it saves memory,
+        # but it can lead to problems if we are trying to backpropagate through the same part of the
+        # computation graph more than once.
+        # in our case, we are trying to use the 'same' hidden_state across multiple iterations of our loop.
         # when we call .backward(), pytorch "forgets" some of the intermediate values used to compute 
         # hidden_state, so we cant use it for backpropagation again in the next iteration.
         # One way to fix this issue is to detach the hidden_state from its history at each step. 
         # This prevents pytorch from trying to backpropagate through the same hidden_state multiple times.
         # .detach() creates a tensor that shares the same data but does not require gradients, effectively
-        # cutting off hidden_state from its history. This allows us to use the same hidden_state across 
+        # cutting off hidden_state from its history. This allows us to use the same hidden_state variable across 
         # multiple iterations without running into the error we would be seeing if we werent to do this.
         # we could also use .data() attribute and get the same benifit. 
         # since lstm has two hiddenstates, we need to use both states data
-        # also note that we dont reset the hidden states at each iteration becasue our data are related. 
-        # in other words,  in many sequence generation tasks, especially when the sequences are related 
-        # or part of the same text, like our case, it’s beneficial to preserve the hidden state across 
-        # sequences. This allows the model to maintain some context or "memory" from one sequence to the
-        # next. and hence why we are using this trick! to retain the hiddenstate values from previous 
-        # sequence, and use it for the next one. 
-        # recap and notes:  
-        # If our sequences are independent (e.g., different sentences or documents), it’s common to reset 
-        # the hidden state at the start of each new sequence. This is because the context from the previous
-        # sequence may not be relevant for the current sequence.
-        # If our sequences are related (e.g., different parts of the same text), we might want to preserve
-        # the hidden state across sequences. This allows the model to maintain some context from one sequence
-        # to the next.
-        # If our sequences are very long, we might run into issues with vanishing or exploding gradients. 
-        # In this case, it can be beneficial to reset the hidden state periodically, even if the sequences 
-        # are related.
-        # also a note concerning detaching and backpropagation and training 
-        # in the case of an LSTM (or any RNN really), detaching the hidden state doesn't pose any issues in training.
-        # simply becasue, if you remember, the very purpose of a hidden state in an LSTM is to maintain a kind of 
+        # 
+        # 2. from the conceptual point of view, note that in the case of an LSTM (or any RNN really), detaching
+        # the hidden state doesn't pose any issues in training.
+        # why? simply becasue, if you remember, the very purpose of a hidden state in an LSTM is to maintain a kind of 
         # "memory" of the past inputs in the sequence. When we are training an LSTM (or any rnn for that matter), 
         # on a sequence, we typically don't need or want this memory to extend beyond the current sequence. 
         # By detaching the hidden state at the end of each sequence (or at each time step, depending on our usecase),
@@ -795,6 +781,24 @@ for epoch in range(epochs):
         # so, while detach() does prevent the detached tensors from being modified during backpropagation, 
         # in this case, it’s actually what we want. It allows the LSTM to learn from each sequence independently, 
         # which is typically what we want when training on sequence data.
+        # 
+        # also note that we dont reset the hidden states at each iteration becasue our data is related. 
+        # in other words,  in many sequence generation tasks, especially when the sequences are related 
+        # or are part of the same text, like our case, it’s beneficial to preserve the hidden state across 
+        # sequences. This allows the model to maintain some context or "memory" from one sequence to the
+        # next. and hence why we are using this trick to retain the hiddenstate values from previous 
+        # sequence, and use it for the next one. 
+        # recap and notes:  
+        # If our sequences are independent (e.g., different sentences or documents), it’s common to reset 
+        # the hidden state at the start of each new sequence. This is because the context from the previous
+        # sequence may not be relevant for the current sequence.
+        # If our sequences are related (e.g., different parts of the same text), we might want to preserve
+        # the hidden state across sequences. This allows the model to maintain some context from one sequence
+        # to the next.
+        # If our sequences are very long, we might run into issues with vanishing or exploding gradients. 
+        # In this case, it can be beneficial to reset the hidden state periodically, even if the sequences 
+        # are related.
+        # 
         if rnn_type == 'lstm':
             hidden_state = tuple(state.detach() for state in hidden_state)
         else:
