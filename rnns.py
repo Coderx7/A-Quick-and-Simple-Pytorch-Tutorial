@@ -700,6 +700,8 @@ c_hidden_state = torch.zeros_like(hidden_state,device=device)
 hidden_state = (hidden_state,c_hidden_state) if rnn_type=='lstm' else hidden_state
 # it would have been easier to just set hidden_state=None and that would work
 # for all variants of the rnn. anyway lets continue
+backprop_truncation_interval = 4
+
 # before we go we also need to have train/val splits so we can test our model
 # performance. 
 train_ratio = 0.8
@@ -779,6 +781,20 @@ for epoch in range(epochs):
         # If our sequences are very long, we might run into issues with vanishing or exploding gradients. 
         # In this case, it can be beneficial to reset the hidden state periodically, even if the sequences 
         # are related.
+        # also a note concerning detaching and backpropagation and training 
+        # in the case of an LSTM (or any RNN really), detaching the hidden state doesn't pose any issues in training.
+        # simply becasue, if you remember, the very purpose of a hidden state in an LSTM is to maintain a kind of 
+        # "memory" of the past inputs in the sequence. When we are training an LSTM (or any rnn for that matter), 
+        # on a sequence, we typically don't need or want this memory to extend beyond the current sequence. 
+        # By detaching the hidden state at the end of each sequence (or at each time step, depending on our usecase),
+        #  we are essentially telling pytorch to treat each sequence (or time step) as independent from the others
+        # during backpropagation. 
+        # This allows the LSTM to update its weights based on each individual sequence, rather than trying to backpropagate
+        # errors all the way back through every sequence it’s seen, which could lead to issues like exploding or vanishing
+        # gradients.
+        # so, while detach() does prevent the detached tensors from being modified during backpropagation, 
+        # in this case, it’s actually what we want. It allows the LSTM to learn from each sequence independently, 
+        # which is typically what we want when training on sequence data.
         if rnn_type == 'lstm':
             hidden_state = tuple(state.detach() for state in hidden_state)
         else:
