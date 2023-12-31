@@ -248,7 +248,6 @@ for i in range(iteration):
 # anyway lets dive in
 # lets use a text dataset for this, we use http://www.gutenberg.org/files/1399/1399-0.txt'
 import sys, os
-print(f'{dir()}')
 print(f'{os.path.basename(__file__)}')
 with open('/media/hossein/SSD1/code_dl/corpus.txt') as file: 
     corpus_raw = file.read()
@@ -256,8 +255,8 @@ with open('/media/hossein/SSD1/code_dl/corpus.txt') as file:
 print(f'{repr(corpus_raw[:100])}')
 # in order to get better performance we need to do a few preprocessings, 
 # one of them is to remove punctuations, the other is to make everything lowercase
-# and the list goes on.
-# lets keep the letter cases as they are and only remove the punctuations. 
+# and the list goes on. lowercasing doesnt really do much, so 
+# lets keep the letter cases as they are and only remove the punctuations.
 # lets remove the punctuations to make things easier for our model 
 # and get a better generation down the road, for this we use str.translate 
 # with str.maketrans to remove all punctuations from the dataset. 
@@ -526,10 +525,10 @@ class TextGenerator(nn.Module):
             prompt = idx.unsqueeze(0) 
         print(''.join(char_list))
     
-    @torch.no_grad()
-    def sample_text_vanialla_with_temperature(self, temperature=0.8, topk=5, max_length=100):
-        # in this version, lets add temperature sampling and instead of a single probablity
-        # lets use topk probablities, basically the idea is, instead of sampling among all characters
+    @torch.no_grad()#added this version later, after I wrote the two other numpy based version below
+    def sample_text_vanialla_with_temperature_with_topk_sampling(self, temperature=0.8, topk=5, max_length=100):
+        # in this version, lets add temperature along with topk sampling and instead of a single probablity
+        # we use top k probablities, basically the idea is, instead of sampling among all characters
         # /classes, lets grab the top k classes/characters and randomly choose one of them. this way
         # we should get much better results, becasue obviously we are choosing from most probably outcomes
         # than a bunch of likely and unlikely outcome whch happens by default when we look all the characters
@@ -711,7 +710,7 @@ class TextGenerator(nn.Module):
 model = TextGenerator('rnn', input_size=char_length,output_size=char_length,hidden_size=5,num_layers=1,is_bidirectional=False, atoi=atoi, itoa=itoa)
 print(model(torch.randn(size=(2,3,char_length)),None))
 model.sample_text_vanialla()
-model.sample_text_vanialla_with_temperature(topk=5)
+model.sample_text_vanialla_with_temperature_with_topk_sampling(topk=5)
 model.sample_text_better()
 model.sample_text_with_temperature_sampling()
 # %%
@@ -733,9 +732,20 @@ model.sample_text_with_temperature_sampling()
 input_size = char_length
 output_size = char_length
 hidden_size = 200
+# rnn trains the slowest, and requires much more epoch to get low loss, and 
+# requires gradient clipping after some seq_length k while
+# lstm, trains much faster, requires less epoch, and no gradient clipping
+# rnn got 4 runs to get a training loss=2.7461 and val loss=2.0000 while
+#lstm gets it right the first time, its much more stable
+# with seq_length=60, rnn tr/vl loss drops to 2.3894/2.0000 on the first run
+# and on after 4 runs the best it gets is 2.1047/1.0000 (80 epochs)
+# lstm gets 1.22/1.00 in 30 epochs!(1.19/1 in epoch 79), gru performs similarly
+# to lstm but quickly diverges around epoch 20, signaling the lr might be too high so
+# when decayed eevry 10 epochs(instead of 20) it got 1.37/1.00 @epoch30-all the way to 80
+# gru works better than rnn, lstm works much better than gru but is heavier
 rnn_type = 'lstm'
 # we want sequences made of this many characters
-sequence_length = 30
+sequence_length = 60
 num_layers = 2
 bidirectional = False 
 direction = 2 if bidirectional else 1
@@ -761,7 +771,7 @@ model = TextGenerator(rnn_type=rnn_type,
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
 # each 20 step/epoch, lower the learning rate by 10 times
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
 # note that model.to() changes the model in place (basically any nn.Module)
 # we can also do model = model.to(device), its prefectly fine.
@@ -782,8 +792,6 @@ c_hidden_state = torch.zeros_like(hidden_state,device=device)
 hidden_state = (hidden_state,c_hidden_state) if rnn_type=='lstm' else hidden_state
 # it would have been easier to just set hidden_state=None and that would work
 # for all variants of the rnn. anyway lets continue
-backprop_truncation_interval = 4
-
 # before we go we also need to have train/val splits so we can test our model
 # performance. 
 train_ratio = 0.8
@@ -846,7 +854,7 @@ for epoch in range(epochs):
         # .detach() creates a tensor that shares the same data but does not require gradients, effectively
         # cutting off hidden_state from its history. This allows us to use the same hidden_state variable across 
         # multiple iterations without running into the error we would be seeing if we werent to do this.
-        # we could also use .data() attribute and get the same benifit. 
+        # we could also use .data attribute and get the same benifit. 
         # since lstm has two hiddenstates, we need to use both states data
         # 
         # 2. from the conceptual point of view, note that in the case of an LSTM (or any RNN really), detaching
@@ -884,7 +892,7 @@ for epoch in range(epochs):
         if rnn_type == 'lstm':
             hidden_state = tuple(state.detach() for state in hidden_state)
         else:
-            hidden_state = hidden_state.data()
+            hidden_state = hidden_state.data
         # calculate the loss 
         # print(f'{outputs.shape=}\n{label.shape=}')
         # if we print the outputs shape we'll see that the first two dimensions are merged
@@ -895,9 +903,12 @@ for epoch in range(epochs):
         # clear the gradients and do a backprop
         optimizer.zero_grad()
         loss.backward()
-         # also since we face gradient explosion, lets clip the gradients!
-        #! why? fix this issue I dontlike gradient clipping, this is more for rnn (lstm works well by default)
-        torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), max_norm=5)
+         # also since we might face gradient explosion, we might want to clip the gradients! to remedy that
+         # but I havent faced one yet, with vanila rnn, this is more of a headache with rnn (lstm works well
+         # by default usually but its susciptible as well, but much less compared to vanila rnn)
+        #  anyway if that happened and we got nans/etc try this first, and note that gradient clipping itself
+        # may hinder training if not set properly!
+        # torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), max_norm=5)
         optimizer.step()
     
         if i%interval==0:
@@ -937,113 +948,18 @@ for epoch in range(epochs):
 #%%
 # model.sample_text_vanialla()
 # model.sample_text_better(prompt_str='\n')
-model.sample_text_with_temperature_sampling(prompt_str='\n',temperature=0.8)
-model.sample_text_vanialla_with_temperature(topk=5, temperature=0.8)
+model.sample_text_with_temperature_sampling(prompt_str='hello',temperature=0.8)
+model.sample_text_vanialla_with_temperature_with_topk_sampling(topk=5, temperature=0.8)
 #%%
-# lets create our sampler
-@torch.no_grad()
-def sample_text(model, prompt_str='hi', max_length=100):
-    # basically preferably we want to start with an intial prompt, it can be anything, 
-    # a single \n, ., or space, or an expression, and then we generate the text. 
-    # here are the steps we need to take
-    # convert input str to digits,
-    # convert digits array to one-hot-encoded verctor
-    # feed that to the model, and get its output
-    # our model is seq-seq, which means, given an input seq, we 
-    # generate a sequence in the output.
-    # since we want to keep generating text, we do it "one character" at a time
-    # feed the network one character, get the output, use that character to feed the
-    # network and get the third character, and this goes on until we reach our max_length
-    # so our initial prompt needs to be in a loop so we get its outputs 
-    # then from there we continue with the max_length and generate text
-    # prompt_digits = np.array([atoi[c] for c in prompt_str])
-    hidden_state = None
-    cstr=[]
-    for c in prompt_str:
-        idx = np.array([atoi[c]])
-        idx_one_hot_vec = one_hot_encode(idx, char_length)
-        idx_tensor = torch.from_numpy(idx_one_hot_vec).float().to(device)
-        outputs, hidden_state = model(idx_tensor, hidden_state)
-        # add the prompt to our character list which will contain all the generated characters
-        cstr.append(c)
-        
-    # the conditioning is done now, note that we didnt use the initial prompt
-    # to choose a prediction, we just wanted to condition the model on the existing
-    # sequence, and then when its finished, start generating the actual text
-    for i in range(max_length):
-        # to generate new text, we use the last character from our inital prompt
-        # and kickoff the process. note that we are using cstr to grab the next 
-        # character each time, we start with the last character inserted which 
-        # shows the end of our initial-prompt, use that to generate a new character
-        # which we decode and then store into cstr again, so that when we get the last
-        # inserted character, we are basically using the very last character our model
-        # generated, the hidden_state is also in sync as you can see, we use the hidden
-        # state from previous generation as we are generating new characters. 
-        idx = np.array([atoi[cstr[-1]]])
-        idx_one_hot_vec = one_hot_encode(idx, char_length)
-        idx_tensor = torch.from_numpy(idx_one_hot_vec).float().to(device)
-        # note that this hidden state is comming from the last
-        # character of the prompt, we just processed
-        outputs, hidden_state = model(idx_tensor, hidden_state)
-        # now we need to calculate the probablities for each characters in the output
-        preds = outputs.softmax(dim=-1)
-        # now we have a list of probablities, to get good output, we grab a few of the
-        # most probable characters and sample from them. 
-        probs, indexes = preds.topk(5, dim=-1)
-        # now that we have topk probs, lets randomly choose between them
-        # before that lets convert them to numpy and use them for our job
-        probs, indexes = tuple(t.cpu().squeeze().data.numpy() for t in (probs, indexes))
-        # print(f'{indexes} {probs}')
-        idx = np.random.choice(indexes, p=probs/probs.sum())
-        # this is our next character!
-        cstr.append(itoa[idx])
-    print(''.join(cstr))
-        
-sample_text(model,' ')
-#%%
-# now lets use this with temperature sampling 
-# this technique allows us to control the randomness of the predictions by scaling the logits 
-# before applying softmax. Higher values (e.g., 1.0 or above) make the actions more random, 
-# while lower values (e.g., 0.2) make the actions more deterministic. 
-# lets create our sampler
-@torch.no_grad()
-def sample_text_with_temperature_sampling(model, prompt_str='hi', temperature=0.8, max_length=100, k=5):
-    # like before we first feed the prompt to condition our model and then start generating 
-    # the actual text
-    hidden_state = None 
-    # a list to store our generated text
-    cstr = []
-    if prompt_str is not None: 
-        # lets add our prompt to it right now
-        cstr = list(prompt_str)
-        # now lets condition our model on the initial prompt
-        for c in prompt_str:
-            idx_tensor = torch.from_numpy(one_hot_encode(np.array([atoi[c]]), char_length)).float().to(device)
-            _, hidden_state = model(idx_tensor, hidden_state)
-    
-    # now lets generate our own text 
-    for i in range(max_length):
-        # grab the last character from or character-list, if theres none use 0 as the begining
-        idx_tensor = torch.from_numpy(one_hot_encode(np.array([atoi[cstr[-1] if cstr else itoa[0]]]),char_length)).float().to(device)
-        outputs, hidden_state = model(idx_tensor, hidden_state)
-        # lets calculate the probablities , but before that we normalize the logits by the temperature
-        outputs_scaled = outputs/temperature
-        # now we use this scaled outputs to get the probs 
-        preds = outputs_scaled.softmax(dim=-1)
-        # now lets get the topk probablities and randomly choose between them 
-        probs, indexes = preds.topk(k, dim=-1)
-        # since we want to use numpy.random.choice, lets convert them to numpy arrays
-        # also lets squeeze them so the random.choice doesnt complain about it.(they must be 1d arrays)
-        probs, indexes = tuple(t.cpu().squeeze(0).data.numpy() for t in (probs, indexes))
-        # choose an index, with the given probablity (we are making sure the probablities sum to 1)
-        # also note the 'p=' which is for probablity (missing that migh give you headache!) 
-        idx = np.random.choice(indexes, p=probs/probs.sum())
-        # now this is our next character lets add it to our cstr list 
-        cstr.append(itoa[idx])
-    print(''.join(cstr))
-        
-sample_text_with_temperature_sampling(model,' ',temperature=0.8)
-#%%
+# ! fix this
+# using beam search for text generationg 
+# another improvement we can use to generate better text, is to use of a beam search strategy 
+# unlike greedy decoding, which selects the most probable next token at each step, beam search
+# maintains a set of the k most probable sequences at each step. This can often lead to better
+# results, as it allows the model to avoid getting stuck in local optima.
+# in our implementation below, beam_width is the number of sequences to keep at each step. 
+# a larger beam_width will increase the chances of finding a good sequence, but it will also
+# increase the computational cost.
 @torch.no_grad()
 def sample_text_with_beam_search(model, prompt_str='hi', max_length=100, k=5, beam_width=3):
     hidden_states = [None] * beam_width
@@ -1115,49 +1031,6 @@ def vanilla_sampling(model, prompt_array, temperature = 0.8, max_length=100):
 prompt = torch.zeros(size=(1, 1),device=device).long()
 vanilla_sampling(model, prompt)
 #%%
-# using beam search for text generationg 
-# another improvement we can use to generate better text, is to use of a beam search strategy 
-# unlike greedy decoding, which selects the most probable next token at each step, beam search
-# maintains a set of the k most probable sequences at each step. This can often lead to better
-# results, as it allows the model to avoid getting stuck in local optima.
-# in our implementation below, beam_width is the number of sequences to keep at each step. 
-# a larger beam_width will increase the chances of finding a good sequence, but it will also
-# increase the computational cost.
-def beam_search(model, initial_prompt, sequence_length, beam_width, max_length):
-    sequences = [[list(initial_prompt), 1.0]]  # list of [sequence, probability]
-
-    for _ in range(max_length):
-        all_candidates = []
-
-        for sequence, prob in sequences:
-            # negative indices in Python are used to count from the end of the sequence. So, -sequence_length
-            # is a negative index that refers to the element sequence_length places from the end of the sequence.
-            # therefore, sequence[-sequence_length:] means “all elements in sequence starting from sequence_length
-            # places from the end of the sequence to the end of the sequence”. In other words, it selects the 
-            # last sequence_length elements from the sequence
-            prompt = torch.tensor(sequence[-sequence_length:]).unsqueeze(0).to(device)
-            one_hot_prompt = torch.nn.functional.one_hot(prompt, char_length).float()
-            outputs, hidden_state = model(one_hot_prompt, hidden_state)
-            hidden_state = tuple(s.data for s in (hidden_state)) if model.rnn_type =='lstm' else hidden_state.data
-            preds = outputs.softmax(dim=-1)
-            top_probs, top_idxs = preds[:,-1].topk(beam_width)
-
-            for i in range(beam_width):
-                new_sequence = sequence + [top_idxs[0][i].item()]
-                new_prob = prob * top_probs[0][i].item()
-                all_candidates.append([new_sequence, new_prob])
-
-        # keep only the top sequences according to their total probability
-        ordered = sorted(all_candidates, key=lambda tup:tup[1], reverse=True)
-        sequences = ordered[:beam_width]
-
-    return sequences
-
-# usage
-initial_prompt = [itoa[i] for i in prompt.squeeze().tolist()]
-sequences = beam_search(model, initial_prompt, sequence_length, beam_width=3, max_length=100)
-# print the most probable sequence
-print(''.join([itoa[i] for i in sequences[0][0]]))
 
 
 #%%
