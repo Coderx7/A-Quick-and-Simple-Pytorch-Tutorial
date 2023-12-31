@@ -266,6 +266,29 @@ print(f'{repr(corpus_raw[:100])}')
 # with nothing (basically removing them)
 # look at the str.maketrans('', '', string.punctuation), the first two arguments are empty 
 # strings and the third argument is string.punctuation, which includes all punctuation characters.
+# side note: 
+# The impact of removing punctuation and capital letters on the performance of LSTM models or any text generation
+# models can vary depending on the specific task and dataset¹.
+# 1. Text Normalization: Removing punctuation and converting all text to lowercase (known as "normalization")
+#    can simplify the dataset and reduce the size of the vocabulary that the model needs to learn. 
+#    This can make the model training process faster and more efficient¹.
+# 2. Context Preservation: On the other hand, punctuation and capitalization often carry important contextual
+#    information. For instance, they can indicate the start and end of sentences, or distinguish between proper
+#    nouns and common nouns¹. Removing them might result in loss of this information, which could potentially 
+#    degrade the performance of the model, especially for tasks that rely heavily on sentence structure and 
+#    grammar¹.
+# 3. Task Specific: Some tasks might benefit from normalization more than others. For example, in sentiment 
+#    analysis, punctuation and capitalization might not be as important as the actual words used. But in tasks
+#    like Named Entity Recognition (NER), capitalization can provide important clues about which words are 
+#    proper nouns¹.
+# 4. Language Specific: The impact can also vary depending on the language. For instance, in English, 
+#    capitalization is used to start sentences and for proper nouns. But in German, all nouns are capitalized.
+#    So, the same preprocessing step might have different effects on different languages¹.
+# Therefore, it's not a one-size-fits-all answer. It's generally a good idea to experiment with different preprocessing steps, including normalization, and see what works best for your specific task and dataset¹. It's also worth noting that modern NLP models, including LSTMs, are often capable of handling raw text data with minimal preprocessing².
+# Source: Conversation with Bing, 12/31/2023
+# (1) Capitalization and punctuation restoration: a survey. https://link.springer.com/article/10.1007/s10462-021-10051-x.
+# (2) Enhancing LSTM Models with Self-attention and Stateful Training - Springer. https://link.springer.com/chapter/10.1007/978-3-030-82193-7_14.
+# (3) How does Punctuation Affect Neural Models in Natural Language Inference. https://aclanthology.org/2020.pam-1.15.pdf.
 import string
 corpus_new = corpus_raw.translate(str.maketrans('','',string.punctuation))
 print(f'{repr(corpus_new[:100])}')
