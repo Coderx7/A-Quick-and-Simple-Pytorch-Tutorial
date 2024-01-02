@@ -12,6 +12,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt 
 # for punctuation related chores, like removing punctuations, etc
 import string
+from tqdm import tqdm
 
 # we will be using a dataset for reviews, which is bunch of comments with a label in a separate file
 # which specifies each comment as positive or negative.
@@ -162,13 +163,19 @@ def pad_input(input_dataset, max_len=200, pad_right=True):
     arr = np.zeros(shape=(len(input_dataset), max_len), dtype=np.int32)
     for i in range(len(input_dataset)):
         seq_len = len(input_dataset[i])
+        # we have two options, to pad the begining or the end of the sequence
+        # the padding on the begining is called pre-padding and the padding on
+        # the end of the sequence is post-padding. which one to use depends on 
+        # our usecase.
         if pad_right:
             arr[i,:seq_len] = input_dataset[i][:max_len]
         else:
             arr[i,-seq_len:] = input_dataset[i][:max_len]
     return arr 
-
-comments_digitized = pad_input(comments_digitized,max_len=150,pad_right=1)
+# note that choosing a high max length where the majority of sequences are not that long
+# will result in very bad result, as the sequence will be filled with more zeros than 
+# the actual data, or it will contain just more zeros that make the model struggle 
+comments_digitized = pad_input(comments_digitized,max_len=100,pad_right=1)
 print(f'{comments_digitized[0]}')
 
 # now its time to create our dataset. since our data is in numpy format
@@ -205,7 +212,7 @@ training_dataset = data.TensorDataset(torch.from_numpy(trainig_data), torch.from
 val_dataset = data.TensorDataset(torch.from_numpy(val_data), torch.from_numpy(val_label))
 test_dataset = data.TensorDataset(torch.from_numpy(test_data), torch.from_numpy(test_label))
 
-batch_size = 32
+batch_size = 128
 num_worker = 8
 training_dataloader = data.DataLoader(training_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,num_workers=num_worker)
 val_dataloader = data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,num_workers=num_worker)
@@ -254,7 +261,9 @@ print(f'{len(wtoi)}')
 model = SentimentLSTM(len(wtoi),hidden_size=100, embd_size=20, num_layers=1, bidirectional=True)
 output = model(features.long(),None)
 print(f'{output[0].shape}')
-#%% 
+#%%
+print(f'{len(training_dataloader)=} {len(val_dataloader)=}') 
+#%%
 # ok we make our model , now lets train it 
 vocab_size = len(wtoi)+1 # becasue of 0 
 embd_size = 100
@@ -263,8 +272,8 @@ num_layers = 1
 drp = 0.3
 bidirectional = False
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-epochs = 60
-# interval=1000
+epoches = 100
+interval=312
 model = SentimentLSTM(vocab_size, 
                       hidden_size, 
                       embd_size, 
@@ -275,46 +284,97 @@ optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=20, gamma=0.1)
 criterion = nn.BCELoss()
 
+
+print(f'{device=}')
+print(f'{epoches=}')
+print(f'{num_layers=}')
+print(f'{embd_size=}')
+print(f'{hidden_size=}')
+
 model.to(device)
-for epoch in range(epochs):
+for epoch in range(epoches):
     hidden_state = None 
-    losses = 0
+    losses = []
     model.train()
-    for i, (data, labels) in enumerate(training_dataloader):
+    accs = []
+    for i, (data, labels) in tqdm(enumerate(training_dataloader)):
         
-        data, label = (t.to(device) for t in (data,label))
+        data, labels = (t.to(device) for t in (data,labels))
+        if hidden_state and hidden_state[0].size(0)!=data.size(0):
+                hidden_state =None
         output, hidden_state = model(data, hidden_state)
         hidden_state = tuple(h.detach() for h in hidden_state)
-        
-        # now lets calculate loss 
-        loss = criterion(output, labels.view(*output.shape))
-        # 
+        # now lets calculate loss
+        labels = labels.view(*output.shape).float()
+        loss = criterion(output, labels)
         optimizer.zero_grad()
         loss.backward()
-        losses += loss.item()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
         optimizer.step()
-    
+        # calculate loss and accuracy
+        losses.append(loss.item())
+        accs.append(((output>0.5).float()== labels).float().mean().item())
+        
+    # calculate train_accuracy and loss 
+    train_acc = np.mean(accs)
+    train_loss = np.mean(losses)
     # after each epoch update lr
     scheduler.step()
     # run validation 
     with torch.no_grad():
         model.eval()
         hidden_state = None
-        for data, label in val_dataloader:
-            data, label = (t.to(device) for t in (data,label))
+        accs = []
+        losses=[]
+        for data, labels in tqdm(val_dataloader):
+            data, labels = (t.to(device) for t in (data,labels))
+            if hidden_state and hidden_state[0].size(0)!=data.size(0):
+                hidden_state =None
             output, hidden_state = model(data, hidden_state)
             hidden_state = tuple(h.detach() for h in hidden_state)
-        
-            # now lets calculate loss 
-            loss = criterion(output, labels.view(*output.shape))
+            # now lets calculate loss and accuracy 
+            labels = labels.view(*output.shape).float()
+            losses.append(criterion(output, labels).item())
+            accs.append(torch.eq((output>0.5).float(), labels).float().mean().item())
             
+        val_acc = np.mean(accs)
+        val_loss = np.mean(losses)
+    print(f'{epoch+1}/{epoches}) train-loss: {train_loss:.4f} train-accuacy: {train_acc:.2f} val loss: {val_loss:.4f} val-acc: {val_acc:.2f}')
+
+# %%
+# now lets test this on the testset 
+with torch.no_grad():
+    model.eval()
+    hidden_state = None
+    accs = []
+    losses=[]
+    for data, labels in tqdm(val_dataloader):
+        data, labels = (t.to(device) for t in (data,labels))
+        if hidden_state and hidden_state[0].size(0)!=data.size(0):
+            hidden_state =None
+        output, hidden_state = model(data, hidden_state)
+        hidden_state = tuple(h.detach() for h in hidden_state)
+        # now lets calculate loss and accuracy 
+        labels = labels.view(*output.shape).float()
+        losses.append(criterion(output, labels).item())
+        accs.append(((output>0.5).float()== labels).float().mean().item())
         
-    print(f'{epoch+1}/{epochs})loss: {losses/data.size(0):.4f}')
-    
-    
+    test_acc = np.mean(accs)
+    test_loss = np.mean(losses)
+print(f'train-loss: {train_loss:.4f} train-accuacy: {train_acc:.2f} test-loss: {test_loss:.4f} test-acc: {test_acc:.2f}')
+#%% ok now lets use some text and see if it works properly 
+def classify_text(input="damn it, it was aweful!"):
+    print(f'text: {input}')
+    # first lets tokenize our input text and convert them into digits 
+    # before that lets normalize our input, lets remove all the punctuations
+    input = input.translate(str.maketrans('','',string.punctuation)).lower()
+    sequence = conver_to_int(input)
+    # now lets padd it and then feed it to our model
+    sequence_padded = pad_input(np.array([sequence]),200)
+    # convert to tensor 
+    sequence_tensor = torch.from_numpy(sequence_padded).to(next(model.parameters()).device)
+    # feed into the model 
+    output,_ = model(sequence_tensor,None)
+    print("output: ","positive" if output[0]>0.5 else 'negative')
 
-
-
-
-
-
+classify_text('the worst movie I have seen; acting was terrible and I want my money back. This movie had bad acting and the dialogue was slow.')
