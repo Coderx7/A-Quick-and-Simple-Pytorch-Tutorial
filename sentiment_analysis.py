@@ -225,7 +225,7 @@ print(labels)
 #%% 
 # now lets implement our model 
 class SentimentLSTM(nn.Module):
-    def __init__(self, vocab_size, hidden_size=200, embd_size=100,num_layers=1, dropout_ratio=0.0, bidirectional=False) -> None:
+    def __init__(self, vocab_size, hidden_size=200, embd_size=130,num_layers=1, dropout_ratio=0.0, bidirectional=False) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.embd_size = embd_size
@@ -266,13 +266,13 @@ print(f'{len(training_dataloader)=} {len(val_dataloader)=}')
 #%%
 # ok we make our model , now lets train it 
 vocab_size = len(wtoi)+1 # becasue of 0 
-embd_size = 100
-hidden_size = 200
-num_layers = 1
-drp = 0.3
-bidirectional = False
+embd_size = 300
+hidden_size = 300
+num_layers = 2
+drp = 0.1 # only applies if we have more than 2 lstm layers
+bidirectional = True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-epoches = 100
+epoches = 30
 interval=312
 model = SentimentLSTM(vocab_size, 
                       hidden_size, 
@@ -281,7 +281,7 @@ model = SentimentLSTM(vocab_size,
                       dropout_ratio=drp, 
                       bidirectional=bidirectional)
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=20, gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=10, gamma=0.1)
 criterion = nn.BCELoss()
 
 
@@ -341,7 +341,6 @@ for epoch in range(epoches):
         val_loss = np.mean(losses)
     print(f'{epoch+1}/{epoches}) train-loss: {train_loss:.4f} train-accuacy: {train_acc:.2f} val loss: {val_loss:.4f} val-acc: {val_acc:.2f}')
 
-# %%
 # now lets test this on the testset 
 with torch.no_grad():
     model.eval()
@@ -370,11 +369,11 @@ def classify_text(input="damn it, it was aweful!"):
     input = input.translate(str.maketrans('','',string.punctuation)).lower()
     sequence = conver_to_int(input)
     # now lets padd it and then feed it to our model
-    sequence_padded = pad_input(np.array([sequence]),200)
+    sequence_padded = pad_input(np.array([sequence]),130)
     # convert to tensor 
     sequence_tensor = torch.from_numpy(sequence_padded).to(next(model.parameters()).device)
     # feed into the model 
     output,_ = model(sequence_tensor,None)
     print("output: ","positive" if output[0]>0.5 else 'negative')
 
-classify_text('the worst movie I have seen; acting was terrible and I want my money back. This movie had bad acting and the dialogue was slow.')
+classify_text('it was awefully wonderfully badly good')
