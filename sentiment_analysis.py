@@ -225,7 +225,7 @@ print(labels)
 #%% 
 # now lets implement our model 
 class SentimentLSTM(nn.Module):
-    def __init__(self, vocab_size, hidden_size=200, embd_size=130,num_layers=1, dropout_ratio=0.0, bidirectional=False) -> None:
+    def __init__(self, vocab_size, hidden_size=200, embd_size=130,num_layers=1, fcdrpout=0.0,lstm_dropout_ratio=0.0, bidirectional=False) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.embd_size = embd_size
@@ -234,13 +234,13 @@ class SentimentLSTM(nn.Module):
         self.num_layers = num_layers
         self.bidirection = bidirectional
         self.direction = 2 if self.bidirection else 1 
-        self.drpout_ratio = dropout_ratio
-        
+        self.drpout_ratio = lstm_dropout_ratio
+        self.dropout = nn.Dropout(fcdrpout)
         self.embd = nn.Embedding(vocab_size, embedding_dim=embd_size)
         self.rnn = nn.LSTM(embd_size,  
                            hidden_size=hidden_size,
                            num_layers= num_layers, 
-                           dropout=dropout_ratio,
+                           dropout=lstm_dropout_ratio,
                            batch_first=True,
                            bidirectional = bidirectional
                            )
@@ -249,6 +249,7 @@ class SentimentLSTM(nn.Module):
     def forward(self, input, hidden_size):
         embd = self.embd(input)
         outputs, final_hiddenstate = self.rnn(embd, hidden_size)
+        outputs = self.dropout(outputs)
         # lets use the outputs, reshape it so the fc doesnt complain 
         output = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # becasue we want a 0 or 1 at the end so we use sigmoid, reshape to its original form
@@ -263,13 +264,14 @@ output = model(features.long(),None)
 print(f'{output[0].shape}')
 #%%
 print(f'{len(training_dataloader)=} {len(val_dataloader)=}') 
-#%%
 # ok we make our model , now lets train it 
 vocab_size = len(wtoi)+1 # becasue of 0 
-embd_size = 300
+# with embd=1000,hiddensize=300,1 layer and 30 epochs, we get acc of 0.78
+embd_size = 500
 hidden_size = 300
-num_layers = 2
-drp = 0.1 # only applies if we have more than 2 lstm layers
+num_layers = 1
+fcdropout=0.1
+lstm_drpout = 0.1 # only applies if we have more than 2 lstm layers
 bidirectional = True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 epoches = 30
@@ -278,9 +280,10 @@ model = SentimentLSTM(vocab_size,
                       hidden_size, 
                       embd_size, 
                       num_layers=num_layers,
-                      dropout_ratio=drp, 
+                      fcdrpout=fcdropout,
+                      lstm_dropout_ratio=lstm_drpout, 
                       bidirectional=bidirectional)
-optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=10, gamma=0.1)
 criterion = nn.BCELoss()
 
@@ -377,3 +380,197 @@ def classify_text(input="damn it, it was aweful!"):
     print("output: ","positive" if output[0]>0.5 else 'negative')
 
 classify_text('it was awefully wonderfully badly good')
+#%%
+# now we could do all of this using huggingface transformers library with just two lines of code!
+# transformers have many layers of abstraction which we can choose to use, but right now
+# we use its pipeline method that makes life easier for us! 
+# we will explain about HuggingFace in details in a separate session inshaalah.
+# we will be using , after installing you need to restart the kernel
+!pip install --upgrade transformers
+#%% 
+# lets import transformer's pipeline 
+from transformers import pipeline 
+# for sentiment analysis, we will be using text-classification type , we can choose
+# a base model to use, but if we dont provide one, a default one will be used instead
+# four files will be downloaded, a config file, a model weight file (usually in safetensor format)
+# a tokenizer.config file and finally a vocab.txt file. by default it will download the
+# distilbert-base-uncased-finetuned-sst-2-english and revision af0f99b (https://huggingface.co/distilbert-base-uncased-finetuned-sst-2-english)
+# but we can choose any model we want from the huggingface hub. we'll see that in a moment as well
+# side note: uncased in the model name, means, theres no distinction between uppercase or lowercase
+# sequences, becasue the input is converted into lowercase anyway!
+# sidenote 2: distilbert is a smaller, faster, and cheaper version of bert that retains 
+# most of its accuracy and used extensively as well. 
+# sidenote3: although distilbert is a smaller version of bert, we cant go blindly use it 
+# with Bert(see below example, where we directly us the class abstraction to do this example)
+# sidenote4: read the Risks, Limitations and Biases section of the distilbert model (its informative!)
+classifier = pipeline('text-classification')
+# we feed it list of sequences, and it will return the type of text we fed it 
+comments = ["i guess it was ok?!", "this was awesome!","oh my God, it was aweful!hate it!"]
+outputs = classifier(comments)
+print(*outputs,sep='\n')
+#%%
+# the pipeline gives us a lot of felexibility and allows us to implement many applications
+# such as text-generation, text-classification(like sentiment analysis), question-answering, 
+# summarization, translation, and named-entity-recognition(ner) as well. like what we saw here
+# we simply provide the task type and the model we want (or use the default) and thats it
+# we're ready to go on. 
+# but lets use transformers module in another way. after all it provides many different levels
+# of abstraction we can use. 
+# lets do text-classification again using highlevel api this time: 
+# Hugging Face Transformers library provides a wide range of pre-trained models that 
+# we can use for text classification tasks. 
+# Here are some of the best models for text classification:
+# 1. **BERT (Bidirectional Encoder Representations from Transformers)**: 
+#      BERT is a transformer-based model that was pre-trained using a large corpus 
+#      of text. It's particularly effective for tasks that require understanding the
+#      context of both the left and right side of a word⁴.
+# 2. **RoBERTa (Robustly Optimized BERT Pretraining Approach)**: 
+#      RoBERTa is a variant of BERT that uses a different pre-training approach and 
+#      has been shown to outperform BERT on several tasks⁴.
+# 3. **XLNet**: 
+#      XLNet is another transformer-based model that outperforms BERT on several 
+#      benchmarks. It uses a permutation-based training strategy which allows it 
+#      to learn from the context of all words in a sentence, rather than just the
+#      words to its left or right².
+# 4. **GPT-2 (Generative Pretrained Transformer 2)**: 
+#      While GPT-2 is primarily used for text generation tasks, it can also be 
+#      fine-tuned for text classification tasks².
+# 5. **DistilBERT**: 
+#      DistilBERT is a smaller, faster, and cheaper version of BERT that retains 
+#      most of its accuracy⁵.
+# Remember, the choice of model depends on your specific use case and the resources you have available. You might need to experiment with different models to see which one works best for your task. Also, keep in mind that these models typically require a significant amount of computational resources and may take a long time to train¹..
+# Source: Conversation with Bing, 1/3/2024
+# (1) Transformers for Multilabel Classification | Towards Data Science. https://towardsdatascience.com/transformers-for-multilabel-classification-71a1a0daf5e1.
+# (2) Text generation strategies - Hugging Face. https://huggingface.co/docs/transformers/generation_strategies.
+# (3) How to Build a Text Classification Model Using HuggingFace Transformers .... https://heartbeat.comet.ml/how-to-build-a-text-classification-model-using-huggingface-transformers-and-comet-4d40236e8f84.
+# (4) Text classification - Hugging Face. https://huggingface.co/docs/transformers/tasks/sequence_classification.
+# (5) Models - Hugging Face. https://huggingface.co/models.
+# (6) linkedin.com. https://www.linkedin.com/company/huggingface. 
+# so we are going to use Bert here 
+# first lets import bert related classes from transformers, 
+# when doing so, note that there are separate classes for each task (one for sequence classification
+# one for question-answering, another one for summarization, etc) 
+# for our case, we need a tokenizer and a model for sequence classification, and since
+# we used distilbert in the previous example, lets use that here as well. we can choose anyother
+# models, like BERT('bert-base-uncased'), Roberta('roberta-base') ,gpt2('gpt2),xla('xlnet-base-cased') etc as well.
+from transformers import DistilBertForSequenceClassification,DistilBertTokenizer
+
+# lets grab a a tokenizer model first 
+tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
+# now lets create our sequence-classifier 
+model = DistilBertForSequenceClassification.from_pretrained("distilbert-base-uncased",num_labels=2)
+
+# note that we need to finetune this or otherwise it wont work properly!
+# That’s correct. Pre-trained models like DistilBertForSequenceClassification are trained on a 
+# large corpus of text data in an unsupervised manner, learning to understand the structure of 
+# the language. However, they don’t know anything about specific tasks like sentiment analysis, 
+# named entity recognition, or question answering.
+# to use these models for a specific task, we need to fine-tune them on a labeled dataset for that
+# task. During fine-tuning, the model learns how to apply its general understanding of the language 
+# to the specific task.
+# So, if you want to use DistilBertForSequenceClassification for sentiment analysis, you would need
+# to fine-tune it on a sentiment analysis dataset first. This involves training the model on your 
+# dataset, where the inputs are the tokenized texts and the targets are the sentiment labels.
+# After fine-tuning, the model will be able to take a piece of text as input and output a 
+# prediction for the sentiment of that text.
+comment ="bad"
+# lets grab the tokenized sequence. note that we signal it to return the tokens as a tensor and not a list
+# the result is a dictionary containing the tokens, and other needed information for
+# the model to work properly.
+token_information = tokenizer(comment, return_tensors='pt')
+print(f'{token_information=}')
+# now feed the required information to the model. 
+# the output is a SequenceClassifierOutput object
+with torch.no_grad():
+    model.eval()
+    output =  model(**token_information)
+    print(f'{output}')
+    # to get the output we want, we simply use the logits attribute and itakes its softmax
+    outputs = output.logits.softmax(dim=-1)
+    # since we want classes, we take the argmax, and thats it
+    # the 0,1 selects negative or positive. clever huh? :d simple if-else would suffice as well but I felt like doing this:d
+    result = ["positive","negative","neuteral"][outputs.argmax()]
+    print(F'outputs:{result}')
+#%% 
+# if for somereason we didnt want to use the pretarined model like this, we can instantiate the
+# classes, each class requires a config 
+# import transformers
+# # the defaults are just fine, unless, we want to create a different variant of distilbert
+# # and train from scratch
+# distilbert_cfg = transformers.DistilBertConfig()
+# # now we can create a new bert model and train it 
+# model = transformers.DistilBertModel(distilbert_cfg)
+# and this applies to other models as well. 
+#%% side note 2 : 
+# to finetune the sequence classifier on our own dataset, we do sth like this : 
+# from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast
+# from torch.utils.data import DataLoader
+# import torch
+
+# # Load pre-trained model and tokenizer
+# tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+# model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
+
+# Prepare your dataset in form of lists/feed it to tokenizer, get the data
+# convert the labes to tensors, and use dataloader to do train the model using crossentropy
+# .....
+# texts = ["Replace this with your text"]  # Replace this with your actual texts
+# labels = [0]  # Replace this with your actual labels
+
+# # Tokenize your data
+# inputs = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
+# inputs['labels'] = torch.tensor(labels)
+
+# # Create a DataLoader
+# data_loader = DataLoader(inputs, batch_size=16)
+
+# # Define a loss function and an optimizer
+# loss_fn = torch.nn.CrossEntropyLoss()
+# optimizer = torch.optim.Adam(model.parameters(),lr=0.1)
+
+# # Train the model
+# for epoch in range(10):  # Number of epochs
+#     for batch in data_loader:
+#         optimizer.zero_grad()
+#         outputs = model(**batch)
+#         loss = loss_fn(outputs.logits, batch['labels'])
+#         loss.backward()
+#         optimizer.step()
+# This script loads a pre-trained DistilBERT model and tokenizer, prepares the input
+# data, tokenizes the data, creates a DataLoader, defines a loss function and an 
+# optimizer, and finally trains the model.
+# Remember to replace `"Replace this with your text"` and `[0]` with your actual 
+# texts and labels. Also, note that this is a simplified example and in a 
+# real-world scenario, you would need to split your data into training and 
+# validation sets, implement early stopping, save the best model, etc.
+# You can replace `'distilbert-base-uncased'` with any other pre-trained model
+# available in the Hugging Face Transformers library, depending on your specific
+# requirements and resources. Each model has its own strengths and weaknesses,
+# so you might need to experiment to see which one works best for your specific task.
+
+#%% 
+# if we want to create our own sequence classifier for example without using these classes
+# we simply grab the base distilbertModel, and then add a classifier head at the end 
+# and train it on our dataset. thats it, we should cover these all in detail in another
+# session inshaallah.
+
+#side note for text-classification this introductory video is good https://www.youtube.com/watch?v=BqvDHdOwCY4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
