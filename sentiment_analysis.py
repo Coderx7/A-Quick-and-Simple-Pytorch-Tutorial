@@ -403,7 +403,7 @@ from transformers import pipeline
 # sidenote3: although distilbert is a smaller version of bert, we cant go blindly use it 
 # with Bert(see below example, where we directly us the class abstraction to do this example)
 # sidenote4: read the Risks, Limitations and Biases section of the distilbert model (its informative!)
-classifier = pipeline('text-classification')
+classifier = pipeline('text-classification',device='cuda')
 # we feed it list of sequences, and it will return the type of text we fed it 
 comments = ["i guess it was ok?!", "this was awesome!","oh my God, it was aweful!hate it!"]
 outputs = classifier(comments)
@@ -412,7 +412,7 @@ print(*outputs,sep='\n')
 # the pipeline gives us a lot of felexibility and allows us to implement many applications
 # such as text-generation, text-classification(like sentiment analysis), question-answering, 
 # summarization, translation, and named-entity-recognition(ner) as well. like what we saw here
-# we simply provide the task type and the model we want (or use the default) and thats it
+# we simply provide the task type and the model we want (or use the default if thats ok) and thats it
 # we're ready to go on. 
 # but lets use transformers module in another way. after all it provides many different levels
 # of abstraction we can use. 
@@ -453,43 +453,197 @@ print(*outputs,sep='\n')
 # for our case, we need a tokenizer and a model for sequence classification, and since
 # we used distilbert in the previous example, lets use that here as well. we can choose anyother
 # models, like BERT('bert-base-uncased'), Roberta('roberta-base') ,gpt2('gpt2),xla('xlnet-base-cased') etc as well.
-from transformers import DistilBertForSequenceClassification,DistilBertTokenizer
-
-# lets grab a a tokenizer model first 
+from transformers import DistilBertForSequenceClassification,DistilBertTokenizer,Trainer, TrainingArguments
+import torch 
+# we need a model and its tokenizer 
 tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
-# now lets create our sequence-classifier 
+# when instantiating our model, we need to specify the number of classes/labels for our task
+# becasue the distilbert-base-uncased is just trained on a large corpus of text and is not aware
+# of our specific task. by default the number of label is set as two, but this should not make you 
+# assume, they mean anything! 
+# side note: 
+# The DistilBERT model, including `DistilBertForSequenceClassification`, is a transformer-based model
+# that has been pre-trained on a large corpus of English text. By default, without any fine-tuning,
+# it's good for understanding the semantic meaning of English language text¹. 
+# This understanding comes from its training on a large-scale language modeling task, where it learns
+# to predict the next word in a sentence. This allows the model to learn an effective representation of
+# the language, capturing the context of words and phrases, and understanding the relationships between 
+# different parts of a sentence¹.
+# However, while the base DistilBERT model can understand text, it doesn't perform any specific task by 
+# itself. The `DistilBertForSequenceClassification` variant is designed for sequence classification tasks,
+# but it needs to be fine-tuned on a specific task to perform well¹. 
+# So, if we want to use the model without fine-tuning, we could use it to extract meaningful features from
+# text, which could then be used as input for other machine learning models or tasks. 
+# But for most NLP tasks (like text classification, sentiment analysis, question answering, etc.), we would 
+# typically fine-tune the model on your specific task¹.
+# Source: Conversation with Bing, 1/4/2024
+# (1) DistilBERT - Hugging Face. https://huggingface.co/docs/transformers/model_doc/distilbert.
+# (2) time series - why take the first hidden state for sequence .... https://stackoverflow.com/questions/60087613/why-take-the-first-hidden-state-for-sequence-classification-distilbertforsequen.
+# (3) DistilBERT Sequence Classification - Spark NLP. https://sparknlp.org/2021/11/21/distilbert_sequence_classifier_sst2_en.html.
+# (4) DistilBERT — transformers 2.11.0 documentation - Hugging Face. https://huggingface.co/transformers/v2.11.0/model_doc/distilbert.html.
+# so we do just that!
+# sidenote: 
+# when we set the num_labels, the weights and biases for pre_classifier and classifier layers will
+# be re-initialized and we will get a message like this as headsup:
+# "Some weights of DistilBertForSequenceClassification were not initialized from the model checkpoint 
+# at distilbert-base-uncased and are newly initialized:
+# ['pre_classifier.weight', 'classifier.weight', 'pre_classifier.bias', 'classifier.bias']"
+# note that the 'pre_classifier' is a linear layer that reduces dimensionality before the classification step,
+# and the 'classifier' is the final linear layer that maps the output of the 'pre_classifier' to the
+# number of labels in your task. These layers are task-specific, so their weights are typically initialized
+# randomly and then fine-tuned on our specific task so we are fine!
 model = DistilBertForSequenceClassification.from_pretrained("distilbert-base-uncased",num_labels=2)
-
-# note that we need to finetune this or otherwise it wont work properly!
-# That’s correct. Pre-trained models like DistilBertForSequenceClassification are trained on a 
+# we need to finetune this or otherwise it wont work properly!
+# Pre-trained models like DistilBertForSequenceClassification are trained on a 
 # large corpus of text data in an unsupervised manner, learning to understand the structure of 
 # the language. However, they don’t know anything about specific tasks like sentiment analysis, 
-# named entity recognition, or question answering.
+# named entity recognition, or question answering by default.
 # to use these models for a specific task, we need to fine-tune them on a labeled dataset for that
 # task. During fine-tuning, the model learns how to apply its general understanding of the language 
 # to the specific task.
-# So, if you want to use DistilBertForSequenceClassification for sentiment analysis, you would need
-# to fine-tune it on a sentiment analysis dataset first. This involves training the model on your 
+# So, if we want to use DistilBertForSequenceClassification for sentiment analysis, we would need
+# to fine-tune it on a sentiment analysis dataset first. This involves training the model on our 
 # dataset, where the inputs are the tokenized texts and the targets are the sentiment labels.
 # After fine-tuning, the model will be able to take a piece of text as input and output a 
 # prediction for the sentiment of that text.
-comment ="bad"
-# lets grab the tokenized sequence. note that we signal it to return the tokens as a tensor and not a list
-# the result is a dictionary containing the tokens, and other needed information for
-# the model to work properly.
-token_information = tokenizer(comment, return_tensors='pt')
-print(f'{token_information=}')
-# now feed the required information to the model. 
-# the output is a SequenceClassifierOutput object
+
+#%%
+import torch
+# create the dataset 
+reviews_raw = open('/media/hossein/SSD1/code_dl/reviews.txt').read().splitlines()
+review_lbl_raw = open('/media/hossein/SSD1/code_dl/labels.txt').read().lower().splitlines()
+labels = [1 if lbl == 'positive' else 0 for lbl in review_lbl_raw]
+# convert into torch tensor
+labels = torch.tensor(labels)
+# lets inspect them 
+print(f'{reviews_raw[:3]}')
+print(f'{review_lbl_raw[:3]}')
+print(f'{labels[:3]}')
+
+# now we have our dataset, lets feed it to our model
+# here are the steps we need to take
+# 1.create the dataset
+# 2.tokenize the input 
+# 3.feed the model 
+# train it!
+from torch.utils.data import Dataset,DataLoader
+# for creating the dataset, we dont need to do anything special, we just need to use
+# the tokenizer and use the tokenized input instead. tokenizer object returns a dictionary
+# which then we use to select what we are intrested in among other things which are :
+#1.key
+class ReviewDataset(Dataset):
+    def __init__(self, data_raw, labels_tensor, tokenizer, train_ratio=0.8,split='train') -> None:
+        super().__init__()
+        self.data_raw = data_raw
+        self.labels_raw = labels_tensor
+        self.tokenizer = tokenizer
+        self.train_ratio = train_ratio
+        self.split = split
+        # lets split the data into train-test-val 
+        train_len = int(train_ratio * len(self.data_raw))
+        remaining_data = self.data_raw[train_len:]
+        remaining_labels = labels_tensor[train_len:]
+        val_test_ratio = 0.5
+        val_len = int(val_test_ratio * len(remaining_data))
+        if split == 'train':
+            self.data = self.tokenizer(self.data_raw[:train_len], truncation=True, padding=True) 
+            self.labels = labels_tensor[:train_len]
+        elif split=='val':
+            self.data = self.tokenizer(remaining_data[:val_len], truncation=True, padding=True)
+            self.labels = remaining_labels[:val_len]
+        elif split=='test':
+            self.data = self.tokenizer(remaining_data[val_len:], truncation=True, padding=True)
+            self.labels = remaining_labels[val_len:]
+        else:
+            raise Exception(f'Undefined split specified ("{split}")')
+        
+    def __getitem__(self, index):
+        # self.data is a dictionary where each key-value pair corresponds to a specific type of input 
+        # (like input_ids, attention_mask, etc.) and the value is a list of encoded values for all 
+        # examples in the dataset.
+        # so the data here has only two keys, the input_ids which contains all the data and the attention_mask
+        # which contains the attention mask for the paddings in the input.
+        # side note: 
+        # the attention_mask is a binary tensor indicating the position of the padded indices so that
+        # the model does not attend to them. This is important because the attention mechanism should 
+        # not treat padding tokens as input. 
+        # For example, if our input sequence is [CLS] I love Baboli movies [SEP] [PAD] [PAD], we dont want to
+        # attend to the [PAD] tokens. So, we set an attention_mask that has the same length as the input_ids
+        # tensor, with 1 for real tokens and 0 for padding tokens.
+        # recall that in transformers, attention masks are used in the self-attention mechanism of the model.
+        # They are used to prevent the model from "cheating" when the model is being trained on a specific task.
+        # For instance, in a translation task, we do not want the model to have access to future tokens when 
+        # predicting the current token.
+        # In practice, the attention mask is passed to the model as an argument along with the input sequences. 
+        # The model then uses this mask to apply the attention mechanism only to the non-padded elements of the 
+        # sequence.
+        item = {key: torch.tensor(val[index]) for key, val in self.data.items()}
+        item['labels'] = torch.tensor(self.labels[index])
+        return item
+    
+    def __len__(self):
+        return len(self.labels)
+
+# now lets test this
+train_dataset = ReviewDataset(reviews_raw, labels, tokenizer = tokenizer, train_ratio=0.8, split='train')
+val_dataset = ReviewDataset(reviews_raw, labels, tokenizer = tokenizer, train_ratio=0.8, split='val')
+test_dataset = ReviewDataset(reviews_raw, labels, tokenizer = tokenizer, train_ratio=0.8, split='test')
+print(f'{len(train_dataset)=:,}')
+print(f'{len(val_dataset)=:,}')
+print(f'{len(test_dataset)=:,}')
+# print(f'{test_dataset.data.keys()}')
+
+#%%
+# now lets get ready to train our model. transformers offer high level api for training as well 
+# we need Trainer and TrainingArguments
+from transformers import Trainer, TrainingArguments
+
+epochs = 5
+batch_size = 16
+batch_size_val = 64
+
+# we set the train arguments through trainingArguments!
+# we dont need dataloaders, as its taken care of automatically by the transformers library itself
+training_arguments = TrainingArguments('/media/hossein/SSD1/code_dl/results_output/',
+                                       do_train=True, 
+                                       do_eval=True,
+                                       num_train_epochs=epochs,
+                                       per_device_train_batch_size=batch_size,
+                                       per_device_eval_batch_size=batch_size_val,
+                                       weight_decay=0.01,
+                                       warmup_steps=500,
+                                       logging_dir='/media/hossein/SSD1/code_dl/logs/')
+trainer = Trainer(model=model, 
+                  args=training_arguments, 
+                  train_dataset=train_dataset,
+                  eval_dataset=val_dataset)
+
+#%%
+# to run the training we simply call .train(), it will run both train and evaluate validation for us 
+#
+# sidenote: transformers trainer uses gpu when available automatically, if we need to run it with cpu
+# in the trainerarguments, we simply set no_cuda=True. 
+trainer.train()
+# and test it
+trainer.evaluate(test_dataset)
+
+#%%
+comment ="such a weird feeling of grandios masterpiece of a failure"
+# lets grab the tokenized sequence. note that we made it to return the tokens as a tensor and not a list
+# The result is a dictionary containing the tokens (in input_ids and attention masks for paddings)
+device='cuda'
+comment_tokens = tokenizer(comment, return_tensors='pt', truncation=True, padding=True)
+comment_tokens = {name: tensor.to(device) for name, tensor in comment_tokens.items()}
 with torch.no_grad():
     model.eval()
-    output =  model(**token_information)
+    model.cuda()
+    output =  model(**comment_tokens)
     print(f'{output}')
     # to get the output we want, we simply use the logits attribute and itakes its softmax
     outputs = output.logits.softmax(dim=-1)
     # since we want classes, we take the argmax, and thats it
     # the 0,1 selects negative or positive. clever huh? :d simple if-else would suffice as well but I felt like doing this:d
-    result = ["positive","negative","neuteral"][outputs.argmax()]
+    result = ["negative","positive"][outputs.argmax()]
     print(F'outputs:{result}')
 #%% 
 # if for somereason we didnt want to use the pretarined model like this, we can instantiate the
@@ -503,11 +657,15 @@ with torch.no_grad():
 # and this applies to other models as well. 
 #%% side note 2 : 
 # to finetune the sequence classifier on our own dataset, we do sth like this : 
-# from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast
-# from torch.utils.data import DataLoader
-# import torch
+from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast, Trainer, TrainingArguments
+from torch.utils.data import DataLoader
+import torch
+# if our dataset is available on huggingface dataset hub, we can use this to load it
+# but for now we are going to use our own, so we dont use it in our case, but show to 
+# use it anyway for reference later on
+# from datasets import load_dataset
 
-# # Load pre-trained model and tokenizer
+# Load the pre-trained model and its tokenizer
 # tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 # model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
 
@@ -536,6 +694,7 @@ with torch.no_grad():
 #         loss = loss_fn(outputs.logits, batch['labels'])
 #         loss.backward()
 #         optimizer.step()
+#
 # This script loads a pre-trained DistilBERT model and tokenizer, prepares the input
 # data, tokenizes the data, creates a DataLoader, defines a loss function and an 
 # optimizer, and finally trains the model.
