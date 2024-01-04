@@ -502,6 +502,11 @@ class TextGenerator(nn.Module):
         outputs = self.fc(all_states.reshape(-1, self.direction*self.hidden_size))
         return outputs,final_hidden_state
     
+    # for text generation read this article : https://huggingface.co/docs/transformers/generation_strategies 
+    # its a good and fairly up to date on some of the most common techniques. we already implemented
+    # some of the more common ones, like multinomial/sampling, topk sampling, temperature sampling
+    # but havent used conrtasive sampling which is used heavily, or beamsearch, etc
+    # todo: add these as well
     @torch.no_grad()
     def sample_text_vanialla(self, max_length=100):
         # here we are simply generating text, we dont have any input, but for our model to generate
@@ -1058,29 +1063,4 @@ vanilla_sampling(model, prompt)
 
 #%%
 # # use embedding
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
 
