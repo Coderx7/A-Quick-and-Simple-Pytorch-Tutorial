@@ -24,8 +24,8 @@ print(f'{len(comments_raw)=:,}') #25,000
 print(f'{len(labels_raw)=:,}')   #25000,
 # so we've got 25k comments 
 # lets read afew
-for comment,label in zip(comments_raw[:3], labels_raw[:3]):
-    print(f'{comment:.35}... is {label}')
+for comments,label in zip(comments_raw[:3], labels_raw[:3]):
+    print(f'{comments:.35}... is {label}')
 # now lets do some normalization on our datasets, so that its simpler and the model find it easier
 # to optimize, work around. we can start by removing the punctuations
 # lets use translate. it requires a dictionary of what to lookfor and replace with what! we make
@@ -628,11 +628,11 @@ trainer.train()
 trainer.evaluate(test_dataset)
 
 #%%
-comment ="such a weird feeling of grandios masterpiece of a failure"
+comments =["such a weird feeling of grandios masterpiece","such a weird feeling of grandios masterpiece of a failure"]
 # lets grab the tokenized sequence. note that we made it to return the tokens as a tensor and not a list
 # The result is a dictionary containing the tokens (in input_ids and attention masks for paddings)
 device='cuda'
-comment_tokens = tokenizer(comment, return_tensors='pt', truncation=True, padding=True)
+comment_tokens = tokenizer(comments, return_tensors='pt', truncation=True, padding=True)
 comment_tokens = {name: tensor.to(device) for name, tensor in comment_tokens.items()}
 with torch.no_grad():
     model.eval()
@@ -643,9 +643,47 @@ with torch.no_grad():
     outputs = output.logits.softmax(dim=-1)
     # since we want classes, we take the argmax, and thats it
     # the 0,1 selects negative or positive. clever huh? :d simple if-else would suffice as well but I felt like doing this:d
-    result = ["negative","positive"][outputs.argmax()]
+    result = ["negative" if l == 0 else "positive" for l in outputs.argmax(dim=-1)]
     print(F'outputs:{result}')
+
 #%% 
+import numpy as np
+# of course we can use the pytorch to do the finetuning and training 
+# we have everything we need, we just need to create bunch of dataloaders and start the training loop 
+# and feed the  model, the input_ids, attention_masks and thats it! 
+print(trainer.model)
+train_dl = DataLoader(train_dataset, batch_size=16, shuffle=True, pin_memory=True, num_workers=8)
+val_dl = DataLoader(val_dataset, batch_size=128, pin_memory=True, num_workers=8)
+test_dl = DataLoader(test_dataset, batch_size=128, pin_memory=True, num_workers=8)
+interval = 100
+epoches = 5
+# Define a loss function and an optimizer
+loss_fn = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(),lr=0.001)
+# Train the model
+for epoch in range(epoches):  # Number of epochs
+    losses = []
+    accs = []
+    for i,batch in enumerate(train_dl):
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        labels = batch['labels']
+        input_ids, attention_mask, labels = (t.to(device) for t in (input_ids, attention_mask,labels))
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        
+        optimizer.zero_grad()
+        loss = outputs.loss
+        loss.backward()
+        optimizer.step()
+        
+        losses.append(loss.item())
+        accs.append((outputs.logits.argmax(dim=-1)==labels).float().mean().cpu().item())
+        if i%interval==0:
+            acc = (outputs.logits.argmax(dim=-1) == labels).float().mean()
+            print(f'epoch:{epoch} iter: {i}/{len(train_dl)} loss:{loss:.4f} acc={acc*100:.2f}') 
+               
+    print(f'epoch:{epoch} loss-avg:{np.mean(losses):.4f} acc-avg={np.mean(accs)*100:.2f}')
+#%%
 # if for somereason we didnt want to use the pretarined model like this, we can instantiate the
 # classes, each class requires a config 
 # import transformers
@@ -655,57 +693,6 @@ with torch.no_grad():
 # # now we can create a new bert model and train it 
 # model = transformers.DistilBertModel(distilbert_cfg)
 # and this applies to other models as well. 
-#%% side note 2 : 
-# to finetune the sequence classifier on our own dataset, we do sth like this : 
-from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast, Trainer, TrainingArguments
-from torch.utils.data import DataLoader
-import torch
-# if our dataset is available on huggingface dataset hub, we can use this to load it
-# but for now we are going to use our own, so we dont use it in our case, but show to 
-# use it anyway for reference later on
-# from datasets import load_dataset
-
-# Load the pre-trained model and its tokenizer
-# tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
-# model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
-
-# Prepare your dataset in form of lists/feed it to tokenizer, get the data
-# convert the labes to tensors, and use dataloader to do train the model using crossentropy
-# .....
-# texts = ["Replace this with your text"]  # Replace this with your actual texts
-# labels = [0]  # Replace this with your actual labels
-
-# # Tokenize your data
-# inputs = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
-# inputs['labels'] = torch.tensor(labels)
-
-# # Create a DataLoader
-# data_loader = DataLoader(inputs, batch_size=16)
-
-# # Define a loss function and an optimizer
-# loss_fn = torch.nn.CrossEntropyLoss()
-# optimizer = torch.optim.Adam(model.parameters(),lr=0.1)
-
-# # Train the model
-# for epoch in range(10):  # Number of epochs
-#     for batch in data_loader:
-#         optimizer.zero_grad()
-#         outputs = model(**batch)
-#         loss = loss_fn(outputs.logits, batch['labels'])
-#         loss.backward()
-#         optimizer.step()
-#
-# This script loads a pre-trained DistilBERT model and tokenizer, prepares the input
-# data, tokenizes the data, creates a DataLoader, defines a loss function and an 
-# optimizer, and finally trains the model.
-# Remember to replace `"Replace this with your text"` and `[0]` with your actual 
-# texts and labels. Also, note that this is a simplified example and in a 
-# real-world scenario, you would need to split your data into training and 
-# validation sets, implement early stopping, save the best model, etc.
-# You can replace `'distilbert-base-uncased'` with any other pre-trained model
-# available in the Hugging Face Transformers library, depending on your specific
-# requirements and resources. Each model has its own strengths and weaknesses,
-# so you might need to experiment to see which one works best for your specific task.
 
 #%% 
 # if we want to create our own sequence classifier for example without using these classes
