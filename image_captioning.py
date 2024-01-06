@@ -98,18 +98,129 @@ class CustomDataset(Dataset):
 # the idea is simple, we need a model to get the image features,
 # we then feed these features to an lstm and that lstm produces 
 # the sequence.
-# the only thing to note here, is that, our image features, act
-# as the first hiddent_state to the lstm, followed by a start token so 
-# it that the lstm starts generating the actual description sequence token
-# by token until end token is met for example.
+# !there are two ways of doing this. 
+# the first way you may see is to use image features as the initial hidden-state,
+# that is, our image features, act as the first hiddent_state to the lstm, 
+# followed by a start token so that the lstm starts generating the actual
+# description sequence token by token until end token is met for example.
 # you may also see, some people use a linear projection before feeding the cnn features
 # to the lstm hidden_state.(that is use alinear layer before lstm, this way we can decouple
 # the dimensions of our cnn features, and hidden_state size which is a good thing)
 # its a good technique and we use it here as well.
+# the second way is that the image-features are fed as the first timestep of the input
+# description, and then fed the result to the lstm. in this case, the imagefeature
+# is simply prepended to the sequence, and the last token is also removed so the number
+# of tokens match the original token.
+# in this scenario, a linear layer is also used to decouple the imagefeature size
+# from the embedding size(thats used to encode the tokens). 
+# we will implement both methods and see how they differ in results and which one 
+# is better.
 # sidenote, usually lstm with attention is used to maximize the performance, but
 # we only use the lstm to keep things simple, as ultimately we will be testing with
 # transformers that have superior performance compared to lstm variant anyway.
+# I order to have better management over our code, its better to separate our encoder
+# and decoder parts and then use them as standalone modules in our actual model. 
+# this allows us to be able to use different implementations/strategies for either of them
+# and easily test them, play with them.
+#! write encoder 
+class Encoder(nn.Module):
+    def __init__(self, embd_size, projection_size=4096) -> None:
+        super().__init__()
+        
+        # our encoder is a vision model, pretrained on imagenet, we remove the classifier and
+        # feed the features/flattened of course, to our lstm
+        self.model = models.resnet50(pretrained=True)
+        # before we remove the last layer, lets grab the penultimate dimension which will become
+        # our input_size for our lstm model
+        self.penultimate_dim = self.model.fc.in_features
+        # lets remove the classifier at the end, the output is (1,2048,1,1) for a batch of 1 image
+        self.model = nn.Sequential(*list(self.model.children())[:-1])
+        if projection_size:
+            # instead of using a simple linear layer to match the lstm embdsize/hiddensize
+            # in the decoder, we go for a linear projection to get better performance 
+            self.ln = nn.Sequential(nn.Linear(self.penultimate_dim, projection_size),
+                                    nn.Linear(projection_size, embd_size))
+        else:
+            self.ln = nn.Linear(self.penultimate_dim, embd_size)
+    
+    def forward(self, imgs):
+        # feed the input and flatten the features
+        features = self.model(imgs).view(imgs.size(0), -1)
+        features = self.ln(features)
+        return features
 
+#! write decoder
+class Decoder(nn.Module):
+    def __init__(self, vocab_size, embd_size, hidden_size, num_layers=1, bidirectional=False, dropout=0.0, itow={}, wtoi={}, method='INPUT') -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.bidirectional = bidirectional
+        self.direction = 2 if bidirectional else 1
+        # dictionaries for int to word and word to int tokens.
+        self.itow = itow
+        self.wtoi = wtoi
+        # which method to use, use imagefeatures as input, or initial hidden_state
+        self.method = method
+        # lets create an embedding layer first 
+        self.embd = nn.Embedding(vocab_size, embd_size)
+        # now the lstm
+        self.decoder = nn.LSTM(input_size=embd_size,
+                               hidden_size=hidden_size, 
+                               num_layers=num_layers,
+                               dropout=dropout,
+                               bidirectional=bidirectional,
+                               batch_first=True)
+        # and a final classifier, note that since we may be using bidirectional lstm
+        # we need to make sure the first dimension takes that into account as well.
+        self.fc = nn.Linear(self.direction*self.hidden_size, self.vocab_size)
+
+    def forward(self, img_features, sequences, hidden_states=None):
+        # feed the sequences to embds 
+        embds = self.embd(sequences)
+        if self.method.lower() == 'input':
+            # add the img_features to the sequence as the first timestep/token(start token)
+            # and remove the end token, 
+            # extra-explanation: 
+            # we add a single dimension at dim=1 so we have the
+            # (batch,seq,features) for our img_features instead of (batch, features), we then 
+            # concat it along the second dim (i.e. the sequence/timestep dim) which is 1, and
+            # since its a single token its 1 obviously!
+            input_seq = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
+            outputs, final_hiddenstate = self.decoder(input_seq, hidden_states)
+        else:
+            # use the img_features as the initial hidden_state
+            # since we may be using bidirectional and more than 1 layers, we must make the
+            # hidden_states match the shape ((D*num_layers),Batch,Features)
+            # if we didnt use use multilayer or bidirectional lstm, sth as simple as 
+            # hiddenstate = (img_features.unsqueeze(0), torch.zeros_like(img_features).unsqueeze(0))
+            # would work becasue it satisfies the (1,b,f) features as (numlayers=1 and direction=1)
+            # anyway, the following codesnippet works for all cases nevertheless.
+            h_0 = torch.stack([img_features for _ in range(self.direction*self.num_layers)])
+            c_0 = torch.stack([img_features.new_zeros(*img_features.shape) for _ in range(self.direction*self.num_layers)])
+            hidden_states = (h_0, c_0)
+            outputs, final_hiddenstate = self.decoder(embds,hidden_states)
+        # and finally lets calculate the class probablities, also note that we need
+        # to reshape outputs so the dims are compatible with our fc. 
+        # note that, -1 merges the batch and sequence dimensions, and the out_features dim
+        # becomes compatible with our fc layer 
+        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction)).softmax(dim=-1)
+        # and finally reshape the output back to (batch, seq, features) form
+        outputs = outputs.view(*sequences.shape,-1)
+        return outputs, final_hiddenstate
+
+enc = Encoder(512)
+dec = Decoder(vocab_size=100, embd_size=512, hidden_size=514,num_layers=2, bidirectional=True, method='input')
+x_img = torch.randn(size=(2,3,224,224))
+x_des = torch.randint(0,100,size=(2,30))
+out_feats = enc(x_img)
+outputs,_ = dec(out_feats, x_des)
+print(f'{out_feats.shape=}')
+print(f'{outputs.shape=}')
+#%%
 class EncoderDecoderCaptionist(nn.Module):
     def __init__(self, embd_size, hidden_size, projection_size, num_layers, bidirectional, lstm_drpout ) -> None:
         super().__init__()
@@ -199,7 +310,8 @@ class EncoderDecoderCaptionist(nn.Module):
         print(f'{final_hiddenstate[0].shape=}')
         # lets calculate the classes
         outputs = self.fc(outputs.reshape(-1, self.hidden_size * self.direction))
-        outputs = outputs.softmax(dim=-1).view(imgs.size(0), -1) 
+        # reshape to b,seq,feats
+        outputs = outputs.softmax(dim=-1).view(*descriptions.shape,-1) 
                
         # final_hiddenstate is not needed, but we pass it anyway!
         return outputs, final_hiddenstate
