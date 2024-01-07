@@ -59,21 +59,28 @@
 import math 
 import random
 import time
+import os
+import glob
 import numpy as np
+import json
+import string
+import itertools
+# lets import PIL to read images compatibe with torchvision
+import PIL.Image as Image
+import matplotlib.pyplot as plt 
+import tqdm
+
+
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pack_padded_sequence 
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 # since we want to use vision models 
 import torchvision
-from torchvision import models, transforms
+from torchvision import io, models, transforms
 # lets use bert tokenizer and skip creating the tokenization process ourselves!
 from transformers import BertTokenizer
-# lets import PIL to read images compatibe with torchvision
-from PIL.Image import Image
-import matplotlib.pyplot as plt 
-import tqdm
 
 # our first step is to prepare the dataset
 # note that since coco dataset is relatively large (more than 20+GB), we instead use the mini version
@@ -212,6 +219,7 @@ class Decoder(nn.Module):
         outputs = outputs.view(*sequences.shape,-1)
         return outputs, final_hiddenstate
 
+    
 enc = Encoder(512)
 dec = Decoder(vocab_size=100, embd_size=512, hidden_size=514,num_layers=2, bidirectional=True, method='input')
 x_img = torch.randn(size=(2,3,224,224))
@@ -330,40 +338,207 @@ class EncoderDecoderCaptionist(nn.Module):
         return self.tokenizer.decode(ids_batch.tolist())
 
 # now lets test this 
-text = ["this is a test thats something random!?!.","second text"]
+single_text = ["this is a test thats something random!?!.","second text"]
 model = EncoderDecoderCaptionist(embd_size=300, hidden_size=512,
                                  projection_size=2186,
                                  num_layers=2,
                                  bidirectional=True,
                                  lstm_drpout=0.3)
 x = torch.randn(size=(2,3,224,224))
-tokens = model.stoi(text)
+tokens = model.stoi(single_text)
 output,_ = model(x,tokens)
 print(f'{output.shape}')
 argmax = output.argmax(-1)
-print(argmax)
-model.itos(argmax)
+print(argmax.shape)
+print(model.itos(argmax))
+
 #%%
+# now lets use our training set and create our vocab, and the dataset itself.
+# if you look at the mscoco (which by  the way stands for MicroSoft Common Objects in COntext)
+# anyway what we are intrested in is captions. the captions are json files, and organized into
+# several fields, under the info field, we have, description, license, images and annotations,
+# sub fields respectively. 
+# under images, we have informations related to each image, and under annotations, we have captions
+# for each image organized in a list of dictionary items, each entery has a image_id, id and caption keys
+# with respective information. 
+
+coco_root = '/media/hossein/SSD/mscoco_dataset/'
+annotation_dir = 'annotations_trainval2017/annotations'
+captions_train_fname = 'captions_train2017.json'
+captions_val_fname = 'captions_val2017.json'
+# image folders
+train_dir = 'train2017'
+val_dir = 'val2017'
+with open(os.path.join(coco_root,annotation_dir,captions_train_fname),'r') as f:
+    # note we use load() to load the file, not loads, s stands for string, its used
+    # to read a json in string form and parses it to a python object. so when we work
+    # with files, we always use load!
+    annotations_train = json.load(f)
+with open(os.path.join(coco_root,annotation_dir,captions_val_fname),'r') as f:
+    annotations_val = json.load(f)
+    
+# we could also do this oneliner instead. either way its fine.(note that the first approach is prefered
+# becsaue if an exception occurs, it gracefully closes the file handle, whereas in our second approach 
+# below, if we were to face an exception, the file handler would stay open indefinitely!)
+# captions_train = json.loads(open(os.path.join(coco_root,annotation_dir,captions_train_fname)).read())
+# captions_val = json.loads(open(os.path.join(coco_root,annotation_dir,captions_val_fname)).read())
+captions_train = annotations_train["annotations"]
+captions_val = annotations_val["annotations"]
+print(f'{captions_train[:3]}')
+print(f'{captions_val[:3]}')
+# now to create our vocabulary we need to read both of these texts and extract the words.
+# insetad of simpling merging the two, we can use itertools.chain!
+# all_captions = captions_train+captions_val
+# print(len(all_captions))
+#
+
+# print(string.punctuation)
+all_captions = []
+for row in itertools.chain(captions_train,captions_val):
+    caption_normalized = row['caption'].translate(str.maketrans('','',string.punctuation))
+    all_captions.append(caption_normalized)
+    
+assert len(all_captions) == len(captions_train) + len(captions_val), 'size mismatch'
+print(f'{len(all_captions)}')
+# lets view couple of captions 
+print(*all_captions[:3],sep='\n')
+# good. now lets tokenize our captions and build our vocab and dictionaries 
+words = set(word 
+            for caption in all_captions 
+            for word in caption.split())
+
+print(f'{len(words):,}')
+# now lets create our dictionaries
+# start off with some special tokens
+itow = dict(enumerate(["<start>","<end>","<unk>"]))
+# and then add the rest
+itow.update(enumerate(words,start=3))
+wtoi = {v:k for k,v in itow.items()}
+print(f'{itow=}')
+print(f'{wtoi=}')
+# now lets create conversion methods for ease of use 
+def words_to_idxs(input_text):
+    normalized = input_text.translate(str.maketrans('','',string.punctuation))
+    #add special tokens to our input 
+    normalized = f"{itow[0]} {normalized} {itow[1]}"
+    # if a word is not in our vocabulary, encode it with <unk> symbol
+    return [wtoi.get(word, wtoi["<unk>"]) for word in normalized.split()]
+
+def idxs_to_words(input_idxs):
+    return [itow[idx] for idx in input_idxs]
+
+print(words_to_idxs("Hello world! this is a test baby"))
+print(idxs_to_words(words_to_idxs("Hello world! this is a test baby")))
+#%%
+# now lets consolidate all of that as a single class for easier use!
+class Tokenizer():
+    def __init__(self, train_captions, val_captions) -> None:
+        
+        all_captions = []
+        for row in itertools.chain(train_captions, val_captions):
+            caption_normalized = row['caption'].translate(str.maketrans('','',string.punctuation))
+            all_captions.append(caption_normalized)
+        
+        assert len(all_captions) == len(train_captions) + len(val_captions), 'size mismatch'
+        
+        words = set(word 
+                    for caption in all_captions 
+                    for word in caption.split())
+        # since we plan on padding our input with 0s, it would be better to set 0 as the end
+        # so we dont mess up the semantics
+        self.itow = dict(enumerate(["<end>","<start>","<unk>"]))
+        self.itow.update(enumerate(words, start=3))
+        self.wtoi = {v:k for k,v in self.itow.items()}
+
+    def __len__(self):
+        return len(self.wtoi)
+        
+    def encode(self, input_text):
+        normalized = input_text.translate(str.maketrans('','',string.punctuation))
+        normalized = f"{self.itow[0]} {normalized} {self.itow[1]}"
+        # if a word is not in our vocabulary, encode it with <unk> symbol
+        return [self.wtoi.get(word, self.wtoi["<unk>"]) for word in normalized.split()]
+
+    def batch_encode(self, input_text_batch):
+        return [self.encode(text) for text in input_text_batch]
+    
+    def decode(self, input_idxs):
+        return [self.itow[idx] for idx in input_idxs]
+    
+    def batch_decode(self, input_idxs_batch):
+        return [self.decode(idx) for idx in input_idxs_batch]
+        
+
+tokenizer = Tokenizer(captions_train, captions_val)
+single_text = "Hello world! this is a test baby"
+batch_text = ["this wasnt a dog in a park!", "that was definitely a dog in the park!"]
+
+print(tokenizer.encode(single_text))
+print(tokenizer.decode(tokenizer.encode(single_text)))
+
+print(*tokenizer.batch_encode(batch_text), sep='\n')
+print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text)), sep='\n')
+
+idxs = tokenizer.encode(single_text)
+print(f'{idxs}')
+idxs_padded = F.pad(torch.tensor(idxs), pad=[0,100-len(idxs)],mode='constant',value=0)
+print(f'{idxs_padded}')
+
+#%%
+# we created our tokenizer, dictionaries, conversion functions for wtoi and itow.
+# we now need to create our dataset and then start training! so lets consolidate everything
+# in our dataset and call it a day
+class COCODataset(nn.Module):
+    def __init__(self, coco_root, annotation_dir, train_imgs_dir='train2017', val_imgs_dir='val2017', split='train', tokenizer=None, transformations=transforms.ToTensor()) -> None:
+        super().__init__()
+        self._coco_root = coco_root
+        self._annotation_dir = annotation_dir
+        self._captions_train_fname = 'captions_train2017.json'
+        self._captions_val_fname = 'captions_val2017.json'
+        self._train_dir = train_imgs_dir
+        self._val_dir = val_imgs_dir
+        self.split = split
+        self.tokenizer = tokenizer
+        self.transformations = transformations
+        
+        # captions_fname = captions_train_fname if 'train' in split else captions_val_fname
+        self.img_list = []
+        if split.lower() == 'train':
+            captions_fname = self._captions_train_fname
+            self.imgs_folder = self._train_dir
+            
+        if split.lower() == 'val':
+            captions_fname = self._captions_val_fname
+            self.imgs_folder = self._val_dir
+            
+        else:
+            raise Exception(f"unknown split'{split}' entered!")
+        
+        with open(os.path.join(coco_root,annotation_dir,captions_fname),'r') as f:
+                self.annotations = json.load(f)
+                self.captions = self.annotations["annotations"]
+
+        # read the images 
+        self.img_list = list(glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg")))
+    
+    
+    def __getitem__(self, index):
+        img = Image.open(self.img_list[index]).convert('RGB')
+        img = self.transformations(img)
+        caption = self.captions[index]
+        # tokenize the caption and return the padded, numpy/torch version
+        idxs = torch.tensor(tokenizer.encode(caption))
+        # note that usually we dont return the padded sequence from the dataset
+        # its the dataloader's job to create a batch of sequences, and if some 
+        # have different lengths, to make them work using sth like padding.
+        # we do that using the colate_fn argument and pass a function that handles
+        # this
+        # idxs = pad_sequence(idxs,batch_first=True)
+        return img, idxs 
+            
+    def __len__(self):
+        return len(self.img_list)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# %%
