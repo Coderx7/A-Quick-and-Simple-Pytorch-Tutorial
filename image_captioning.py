@@ -61,10 +61,12 @@ import random
 import time
 import os
 import glob
+import pathlib
 import numpy as np
 import json
 import string
 import itertools
+from collections import Counter
 # lets import PIL to read images compatibe with torchvision
 import PIL.Image as Image
 import matplotlib.pyplot as plt 
@@ -431,7 +433,12 @@ print(words_to_idxs("Hello world! this is a test baby"))
 print(idxs_to_words(words_to_idxs("Hello world! this is a test baby")))
 #%%
 # now lets consolidate all of that as a single class for easier use!
+# also since we are dealing with sequences with different length we 
+# would want to add the logic to our tokenizer so we can use that 
+# anywhere we require it
+
 class Tokenizer():
+           
     def __init__(self, train_captions, val_captions) -> None:
         
         all_captions = []
@@ -441,12 +448,20 @@ class Tokenizer():
         
         assert len(all_captions) == len(train_captions) + len(val_captions), 'size mismatch'
         
+        self.min_length, self.max_length, self.seq_stats = self._calculate_caption_statistics(all_captions)
+        
         words = set(word 
                     for caption in all_captions 
                     for word in caption.split())
         # since we plan on padding our input with 0s, it would be better to set 0 as the end
         # so we dont mess up the semantics
-        self.itow = dict(enumerate(["<end>","<start>","<unk>"]))
+        # special symbols for normalizing our sequences. we define them like this so in case
+        # we wanted to change them anywhere in our code, we would be able to easily do so 
+        # without any issues.
+        self._start = '<start>'
+        self._end = '<end>'
+        self._unknown = '<unk>'
+        self.itow = dict(enumerate([self._end, self._start, self._unknown]))
         self.itow.update(enumerate(words, start=3))
         self.wtoi = {v:k for k,v in self.itow.items()}
 
@@ -455,9 +470,9 @@ class Tokenizer():
         
     def encode(self, input_text):
         normalized = input_text.translate(str.maketrans('','',string.punctuation))
-        normalized = f"{self.itow[0]} {normalized} {self.itow[1]}"
+        normalized = f"{self.itow[self.wtoi[self._start]]} {normalized} {self.itow[self.wtoi[self._end]]}"
         # if a word is not in our vocabulary, encode it with <unk> symbol
-        return [self.wtoi.get(word, self.wtoi["<unk>"]) for word in normalized.split()]
+        return [self.wtoi.get(word, self.wtoi[self._unknown]) for word in normalized.split()]
 
     def batch_encode(self, input_text_batch):
         return [self.encode(text) for text in input_text_batch]
@@ -468,7 +483,14 @@ class Tokenizer():
     def batch_decode(self, input_idxs_batch):
         return [self.decode(idx) for idx in input_idxs_batch]
         
-
+    def _calculate_caption_statistics(self, all_captions):
+        # lets calculate max and min seq_length
+        all_captions_length = [len(caption.split()) for caption in all_captions]
+        min_len = min(all_captions_length)
+        max_len = max(all_captions_length)
+        seq_lengths = Counter(all_captions_length)
+        return min_len, max_len, seq_lengths
+    
 tokenizer = Tokenizer(captions_train, captions_val)
 single_text = "Hello world! this is a test baby"
 batch_text = ["this wasnt a dog in a park!", "that was definitely a dog in the park!"]
@@ -484,12 +506,68 @@ print(f'{idxs}')
 idxs_padded = F.pad(torch.tensor(idxs), pad=[0,100-len(idxs)],mode='constant',value=0)
 print(f'{idxs_padded}')
 
+print(f'{tokenizer.min_length=}')
+print(f'{tokenizer.max_length=}')
+print('most common lengths:\n(length : # of sequences)',*tokenizer.seq_stats.most_common(10),sep='\n')
+# displaying them gives us a better understanding of which length is more common
+# we see that the overwhelming majority of sequences have 8-10/11 length
+# sidenote: 
+# also note that here we used plt.bar function to do this 
+# becasue the plt.hist is used to plot the histogram of 
+# our dataset, which automatically divides the data into
+# bins and counts the number of data points in each bin.
+# However, in our case, we already have the counts of each
+# sequence length (from the Counter object), so we don’t 
+# need to count the data points again.
+# The plt.bar function is more appropriate in this case 
+# because it allows us to create a bar plot from two lists:
+# one representing the x-coordinates (sequence lengths) and
+# the other representing the heights of the bars (counts).
+# if we were starting with a raw list of sequence lengths like
+# all_captions_length list in our _calculate_caption_statistics
+# and we wanted to count how many sequences have each length 
+# (i.e., we didn’t already have a Counter object), then 
+# plt.hist would be the right tool to use. 
+# It would automatically sort the sequence lengths into bins
+# (which we could specify), count the sequences in each bin, 
+# and plot the histogram.
+# 
+# !side note 2:
+# related to english by the way
+# the phrase “how many sequences have each length” might be a bit confusing. 
+# at least it was to me and I said to myself, would it not be better to have 
+# had writen it as "how many sequences have the same length?
+# it happens it wouldnt mean the same. you know the first one is obviously 
+# intended to mean "for each possible length, how many sequences have that length".
+# in other words, it’s counting the number of sequences that have a length of 1,
+# then the number of sequences that have a length of 2, and so on.
+# the second phrase "how many sequences have the same length” is slightly different.
+# This would typically be used in a context where we have a specific length in mind
+# and we want to know how many sequences are that long.
+# For example, if we have a length of 5 in mind, we would say/ask
+# "how many sequences have the same length" to find out how many sequences are 5 units long.
+# But if we want to know the counts for all possible lengths, we would ask 
+# "how many sequences have each length".
+# 
+plt.bar(list(tokenizer.seq_stats.keys()), tokenizer.seq_stats.values())
+plt.xlabel('sequences length')
+plt.ylabel('counts')
+# if we were to use histogram it would look like sth like this 
+# plt.hist(all_seq_lengths, bins=(range(1, max(all_seq_lengths)+2)), align='left', rwidth=0.8)
+# plt.xlabel('sequence length')
+# plt.ylabel('count')
+# the first argument is self explanetory, bins=range(1, max(seq_lengths)+2) ensures 
+# that there is a bin for each integer length from 1 to the maximum sequence length,
+# and align='left' aligns the bins with their left edges for a better more intuitive display.
+# and finally the rwidth=0.8 parameter makes the bars slightly narrower than the bins
+# for a better visual effect.
 #%%
 # we created our tokenizer, dictionaries, conversion functions for wtoi and itow.
 # we now need to create our dataset and then start training! so lets consolidate everything
 # in our dataset and call it a day
 class COCODataset(nn.Module):
-    def __init__(self, coco_root, annotation_dir, train_imgs_dir='train2017', val_imgs_dir='val2017', split='train', tokenizer=None, transformations=transforms.ToTensor()) -> None:
+        
+    def __init__(self, coco_root, annotation_dir, train_imgs_dir='train2017', val_imgs_dir='val2017', split='train', tokenizer=None, transformations=transforms.Compose([transforms.Resize((224,224)),transforms.ToTensor()])) -> None:
         super().__init__()
         self._coco_root = coco_root
         self._annotation_dir = annotation_dir
@@ -506,39 +584,129 @@ class COCODataset(nn.Module):
         if split.lower() == 'train':
             captions_fname = self._captions_train_fname
             self.imgs_folder = self._train_dir
-            
-        if split.lower() == 'val':
+        elif split.lower() == 'val':
             captions_fname = self._captions_val_fname
             self.imgs_folder = self._val_dir
-            
         else:
             raise Exception(f"unknown split'{split}' entered!")
         
         with open(os.path.join(coco_root,annotation_dir,captions_fname),'r') as f:
                 self.annotations = json.load(f)
+                # self.caption is a list of dictionaries that each belong to an image
+                # we are intersted in the caption and image-id fields of each dictionary
+                # in this list
                 self.captions = self.annotations["annotations"]
 
-        # read the images 
-        self.img_list = list(glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg")))
-    
+        # instead of reading the images into a list like this
+        # self.img_list = list(glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg")))
+        # instead we create a dictionary so we can grab the image by name, becasue our captions and
+        # images are related, and the annotation dictionary, has a field for image-id and caption text
+        # therefore we grab the image-id from annotations dictionary and look it up in the images dictionary
+        self.img_dict = {int(pathlib.Path(f).stem):f for f in glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg"))}
     
     def __getitem__(self, index):
-        img = Image.open(self.img_list[index]).convert('RGB')
+        img_id = self.captions[index]["image_id"]
+        img = Image.open(self.img_dict[img_id]).convert('RGB')
         img = self.transformations(img)
-        caption = self.captions[index]
         # tokenize the caption and return the padded, numpy/torch version
+        caption = self.captions[index]['caption']
         idxs = torch.tensor(tokenizer.encode(caption))
-        # note that usually we dont return the padded sequence from the dataset
+        # note that usually we dont return the padded/truncated sequence from the dataset
         # its the dataloader's job to create a batch of sequences, and if some 
-        # have different lengths, to make them work using sth like padding.
+        # have different lengths, to make them work using sth like padding/truncation.
         # we do that using the colate_fn argument and pass a function that handles
-        # this
+        # these kinds of stuff
         # idxs = pad_sequence(idxs,batch_first=True)
         return img, idxs 
             
     def __len__(self):
-        return len(self.img_list)
+        return len(self.img_dict)
 
+dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='train')
+dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='val')
 
+def show_image(img,caption):
+    plt.imshow(img.permute(1,2,0).numpy())
+    plt.title(tokenizer.decode(caption.tolist()))
 
+print(f'{len(dt_train)=}')
+print(f'{len(dt_val)=}')
+img,caption = dt_train[1]
+img_val,caption_val = dt_val[1]
+show_image(img, caption)
+show_image(img_val, caption_val)
+
+#%%
+# now lets create our colate_fn function to do sequence management, padd,trunctaion etc 
+def normalize_sequences(image_caption_list):
+    # note that we could go on and add truncation and padding to our tokenizer
+    # so it gave us the truncated,padded sequence when encoding. truncation for
+    # sequences that exceed a specific max_length we specify based on our findings
+    # about our dataset statistics, and padding for sequences that are below our
+    # max_length, so ultimately we have sequences of the same length.
+    # but pytorch offers functions called pad_sequence and pack_padded_sequence
+    # using these we can padd our sequences, and pack them as a batch, pytorch
+    # automatically sorts everything our, it will padd the sequences based on the 
+    # longest sequence, and later on using pack_padded_sequence, it allows the pytorch
+    # to only process the actual sequences, by remving the paddings and hence we dont 
+    # need to do much. 
+    # since theres a huge discrepency between the maximum sequence length and the majority
+    # of sequences, we have to do some truncation, so a single sequence or a select few dont
+    # result in lots of paddings for the rest of the sequences. but thene again if pack_padded_sequence
+    # allows torch to remove the padding and only porcess the actual tokens, then this should not
+    # matter, and without truncation we should be good(the only reason for truncation would be to
+    # preserve memory then and not performance hit (when the number of padding increases too much
+    # and overwhemels the actual data, it hinders the learning. so if the padding length is the same
+    # as the actual data or close to it, then this is not good for the model and we need to remove
+    # the padding somehow. this seems not to be an issue when using pack_padded_sequence though))
+    # 
+    # Now lets implement this function 
+    # the output of our dataset is an image,caption pair, and dataloader grabs couple of them
+    # as a list, so the input to our colate_function is a list of whatever our dataset returns
+    # we need to separate the images and create a batch for images, and a separate batch for the
+    # captions. 
+    # before that, we need to take care of our captions, since our image, captions are related and
+    # are a pair, we cant simply grab the images, make a batch of it first and then get captions, 
+    # becasue we need to do some processing which involves sorting the sequences first
+    # in order to use pad_sequence feature in pytorch. it requires the sequences to be sorted 
+    # in decending order based on their length. 
+    image_caption_list.sort(key=lambda data: len(data[1]), reverse=True)
+    # now lets split the images and captions 
+    images, captions = zip(*image_caption_list)
+    # now lets create a batch of images (simply stack them all)
+    images = torch.stack(images,dim=0)
+    # now lets padd our seqeunces 
+    # our caption is simply a list of numbers, so we need to convert it to a tensor 
+    # not only that, we also need to provide all the captions as list, so we simply
+    # create a list of tensors representing our captions. now varying length of each
+    # caption doesnt pose an error (becasue we are using a python list) and the pad_sequence
+    # takes care of padding the tensors and making them all the same size.
+    captions = [torch.tensor(caption) for caption in captions]
+    captions = pad_sequence(captions, batch_first=True, padding_value=0)
+    return images, captions
+# lets test 
+dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
+dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
+
+print(f'{len(dl_train)=}')
+print(f'{len(dl_val)=}')
+imgs,captions = next(iter(dl_train))
+imgs_val,captions_val = next(iter(dl_val))
+plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0).numpy())
+plt.show()
+plt.imshow(torchvision.utils.make_grid(imgs_val).permute(1,2,0).numpy())
+print(f'{captions.shape}')
+print(f'{captions=}')
+print(f'{captions_val.shape}')
+print(f'{captions_val=}')
+# as you can see, the caption tensors are padded based on the largest sequence in that batch
+# which is a great feature to have as sequences will usually have the least amount of padding
+# and it changes dynamically based on each batch!
 # %%
+# now we have everything in place lets write our training loop
+# we need 
+# model
+# optimizer
+# criterion 
+# scheduler
+# 
