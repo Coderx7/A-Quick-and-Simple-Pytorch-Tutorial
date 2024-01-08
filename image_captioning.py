@@ -212,10 +212,13 @@ class Decoder(nn.Module):
         # and finally lets calculate the class probablities, also note that we need
         # to reshape outputs so the dims are compatible with our fc. 
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
-        # becomes compatible with our fc layer 
-        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction)).softmax(dim=-1)
+        # becomes compatible with our fc layer
+        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally reshape the output back to (batch, seq, features) form
+        # note that we dont use softmax here, as we are planning to use crossentropy
+        # and crossentropy expects logits, and applies the softamx itself
         outputs = outputs.view(*sequences.shape,-1)
+        # return the outputs logits and final_hiddensate
         return outputs, final_hiddenstate
 
     
@@ -361,10 +364,9 @@ class EncoderDecoderImageCaption2(nn.Module):
         print(f'{final_hiddenstate[0].shape=}')
         # lets calculate the classes
         outputs = self.fc(outputs.reshape(-1, self.hidden_size * self.direction))
-        # reshape to b,seq,feats
-        outputs = outputs.softmax(dim=-1).view(*descriptions.shape,-1) 
-               
-        # final_hiddenstate is not needed, but we pass it anyway!
+        # reshape the outputs logits to b,seq,feats
+        outputs = outputs.view(*descriptions.shape,-1) 
+        # return the outputs logits. final_hiddenstate is not needed, but we pass it anyway!
         return outputs, final_hiddenstate
 
     def stoi(self, text_list):
@@ -771,7 +773,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 epochs = 1
 interval = 100
-batch_size = 64
+batch_size = 32
 num_workers = 8
 
 # data loaders
@@ -805,8 +807,25 @@ for epoch in range(epochs):
     accs = []
     for i,(imgs,captions) in tqdm(enumerate(dl_train)):
         imgs,captions = tuple(t.to(device) for t in (imgs, captions))
-        outputs,_ = model(imgs, captions, hidden_states) 
-        loss = criterion(outputs, captions)
+        outputs,_ = model(imgs, captions, hidden_states)
+        # print(f'{outputs.argmax(dim=-1).shape=}')
+        # print(f'{captions.shape=}')
+        # print(f'{captions}')
+        # 
+        # since we have our input in the form of (Batch,Timesteps,Classes),
+        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
+        loss = criterion(outputs.permute(0,2,1), captions)
+        # we could also do a reshape and offer both outputs as 2d tensors (and therefore
+        # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
+        # it contains (B,T,C) and our captions/labels contains (B,T).
+        # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
+        # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
+        # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
+        # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
+        # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
+        # if we are doing multi-class classification problem (which we are, but with sequences)
+        # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
+        # print(f'{loss=}')
         losses.append(loss.item())
         accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
         
@@ -824,8 +843,13 @@ for epoch in range(epochs):
         accs=[]
         for i,(imgs,captions) in tqdm(enumerate(dl_val)):
             imgs,captions = tuple(t.to(device) for t in (imgs, captions))
-            outputs,_ = model(imgs, captions, hidden_states) 
+            outputs,_ = model(imgs, captions, hidden_states)
+            # since we have our input in the form of (Batch,Timesteps,Classes),
+            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+            loss = criterion(outputs.permute(0,2,1), captions)
             losses.append(loss.item())
             accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
             
         print(f'{epoch}/{epochs} val-loss: {np.mean(losses):.4f} val-Accuray: {np.mean(accs)*100:.2f}')
+
+# %%
