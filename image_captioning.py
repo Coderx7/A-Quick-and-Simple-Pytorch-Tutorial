@@ -1,4 +1,4 @@
-# in the name of God the most compassionate the most merciful 
+#%% in the name of God the most compassionate the most merciful 
 # in this section we will be looking at the image captioning 
 # and see how we can implement this using an LSTM and later on 
 # a transformer model. 
@@ -55,7 +55,6 @@
 # so a cnn for the images, and an lstm for the descrption part would do the trick.
 # later on we will go transformers and use transformer based models for both parts.
 # lets import the required modules
-#%%
 import math 
 import random
 import time
@@ -70,7 +69,7 @@ from collections import Counter
 # lets import PIL to read images compatibe with torchvision
 import PIL.Image as Image
 import matplotlib.pyplot as plt 
-import tqdm
+from tqdm import tqdm
 
 
 import torch 
@@ -160,7 +159,8 @@ class Encoder(nn.Module):
 
 #! write decoder
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, embd_size, hidden_size, num_layers=1, bidirectional=False, dropout=0.0, itow={}, wtoi={}, method='INPUT') -> None:
+    
+    def __init__(self, vocab_size, embd_size, hidden_size, num_layers=1, bidirectional=False, dropout=0.0, method='INPUT') -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.embd_size = embd_size
@@ -169,9 +169,6 @@ class Decoder(nn.Module):
         self.dropout = dropout
         self.bidirectional = bidirectional
         self.direction = 2 if bidirectional else 1
-        # dictionaries for int to word and word to int tokens.
-        self.itow = itow
-        self.wtoi = wtoi
         # which method to use, use imagefeatures as input, or initial hidden_state
         self.method = method
         # lets create an embedding layer first 
@@ -231,7 +228,51 @@ outputs,_ = dec(out_feats, x_des)
 print(f'{out_feats.shape=}')
 print(f'{outputs.shape=}')
 #%%
-class EncoderDecoderCaptionist(nn.Module):
+# now lets create our main model and use these blocks 
+class EncoderDecoderImageCaption(nn.Module):
+    
+    def __init__(self,vocab_size, encoder_projection_size=4096, embd_size=512, hidden_size=512,
+                 num_layers=1, decoder_dropout=0.0, bidirectional=False, method='input') -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embd_size = embd_size
+        self.hidden_size = hidden_size
+        self.encoder_projection_size = encoder_projection_size
+        self.num_layers = num_layers
+        self.decoder_dropout = decoder_dropout
+        self.bidirectional = bidirectional
+        self.method = method
+        self.encoder = Encoder(self.embd_size, self.encoder_projection_size)
+        self.decoder = Decoder(self.vocab_size, 
+                               self.embd_size,
+                               self.hidden_size, 
+                               self.num_layers,
+                               self.bidirectional,
+                               self.decoder_dropout, 
+                               self.method)
+    
+    def forward(self, imgs, captions, hidden_states):
+        image_features = self.encoder(imgs)
+        outputs, hidden_states = self.decoder(image_features, captions, hidden_states)
+        return outputs, hidden_states
+# lets test
+x_img = torch.randn(size=(2,3,224,224))
+x_captions = torch.randint(0,100,size=(2,30))
+model = EncoderDecoderImageCaption(encoder_projection_size=4096,
+                                   vocab_size=100,
+                                   embd_size=512,
+                                   hidden_size=514,
+                                   num_layers=2,
+                                   decoder_dropout=0.0,
+                                   bidirectional=True,
+                                   method='input')
+
+outputs,_ = model(x_img, x_captions,None)
+print(f'{outputs.shape=}')
+#%%
+# this is the initial model I wrote when I didnt have the dataset yet and wanted to use 
+# a off the shelf tokenizer and vocab. everythings is the same except for the tokenizer
+class EncoderDecoderImageCaption2(nn.Module):
     def __init__(self, embd_size, hidden_size, projection_size, num_layers, bidirectional, lstm_drpout ) -> None:
         super().__init__()
         
@@ -341,7 +382,7 @@ class EncoderDecoderCaptionist(nn.Module):
 
 # now lets test this 
 single_text = ["this is a test thats something random!?!.","second text"]
-model = EncoderDecoderCaptionist(embd_size=300, hidden_size=512,
+model = EncoderDecoderImageCaption2(embd_size=300, hidden_size=512,
                                  projection_size=2186,
                                  num_layers=2,
                                  bidirectional=True,
@@ -464,6 +505,7 @@ class Tokenizer():
         self.itow = dict(enumerate([self._end, self._start, self._unknown]))
         self.itow.update(enumerate(words, start=3))
         self.wtoi = {v:k for k,v in self.itow.items()}
+        self.vocab_size = len(self.wtoi)
 
     def __len__(self):
         return len(self.wtoi)
@@ -567,7 +609,16 @@ plt.ylabel('counts')
 # in our dataset and call it a day
 class COCODataset(nn.Module):
         
-    def __init__(self, coco_root, annotation_dir, train_imgs_dir='train2017', val_imgs_dir='val2017', split='train', tokenizer=None, transformations=transforms.Compose([transforms.Resize((224,224)),transforms.ToTensor()])) -> None:
+    def __init__(self, coco_root, 
+                 annotation_dir,
+                 train_imgs_dir='train2017',
+                 val_imgs_dir='val2017',
+                 split='train',
+                 tokenizer=None,
+                 # simply used resize(224,224) for testing purposes, see the test you'll see
+                 transformations=transforms.Compose([transforms.Resize((224,224)),
+                                                     transforms.ToTensor()]
+                                                    )) -> None:
         super().__init__()
         self._coco_root = coco_root
         self._annotation_dir = annotation_dir
@@ -610,14 +661,14 @@ class COCODataset(nn.Module):
         img = self.transformations(img)
         # tokenize the caption and return the padded, numpy/torch version
         caption = self.captions[index]['caption']
-        idxs = torch.tensor(tokenizer.encode(caption))
+        caption_idxs = torch.tensor(tokenizer.encode(caption))
         # note that usually we dont return the padded/truncated sequence from the dataset
         # its the dataloader's job to create a batch of sequences, and if some 
         # have different lengths, to make them work using sth like padding/truncation.
         # we do that using the colate_fn argument and pass a function that handles
-        # these kinds of stuff
-        # idxs = pad_sequence(idxs,batch_first=True)
-        return img, idxs 
+        # these kinds of stuff, so the dataset need to return the actual data it contains,
+        # batching chores are offloaded to the dataloader.
+        return img, caption_idxs 
             
     def __len__(self):
         return len(self.img_dict)
@@ -709,4 +760,72 @@ print(f'{captions_val=}')
 # optimizer
 # criterion 
 # scheduler
-# 
+project_size = 4096
+embd_size = 512 
+hidden_size = 512
+num_layers = 1
+dropout = 0.0
+bidirectional=False
+method = 'input' # or hidden_state
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+epochs = 1
+interval = 100
+batch_size = 64
+num_workers = 8
+
+# data loaders
+dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
+dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
+
+model = EncoderDecoderImageCaption(tokenizer.vocab_size, 
+                                   project_size, 
+                                   embd_size=embd_size,
+                                   decoder_dropout=dropout, 
+                                   bidirectional=bidirectional,
+                                   method=method)
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=20, gamma=0.1)
+criterion = nn.CrossEntropyLoss()
+
+
+
+model.to(device)
+
+print(f'{device=}')
+print(f'{epochs=}')
+print(f'{len(dl_train)=}')
+print(f'{len(dl_val)=}')
+
+for epoch in range(epochs):
+    
+    model.train()
+    hidden_states = None
+    losses = []
+    accs = []
+    for i,(imgs,captions) in tqdm(enumerate(dl_train)):
+        imgs,captions = tuple(t.to(device) for t in (imgs, captions))
+        outputs,_ = model(imgs, captions, hidden_states) 
+        loss = criterion(outputs, captions)
+        losses.append(loss.item())
+        accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        if i%interval==0:
+            print(f'{epoch}/{epochs} loss: {np.mean(losses):.4f} Accuray: {np.mean(accs)*100:.2f}')
+        
+    scheduler.step()
+    with torch.no_grad():
+        model.eval()
+        losses=[]
+        accs=[]
+        for i,(imgs,captions) in tqdm(enumerate(dl_val)):
+            imgs,captions = tuple(t.to(device) for t in (imgs, captions))
+            outputs,_ = model(imgs, captions, hidden_states) 
+            losses.append(loss.item())
+            accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+            
+        print(f'{epoch}/{epochs} val-loss: {np.mean(losses):.4f} val-Accuray: {np.mean(accs)*100:.2f}')
