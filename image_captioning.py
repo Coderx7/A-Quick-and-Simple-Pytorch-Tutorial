@@ -83,6 +83,8 @@ from torchvision import io, models, transforms
 # lets use bert tokenizer and skip creating the tokenization process ourselves!
 from transformers import BertTokenizer
 
+from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simplenetv1_5m_m2
+
 # our first step is to prepare the dataset
 # note that since coco dataset is relatively large (more than 20+GB), we instead use the mini version
 # which can be downloaded from : https://github.com/giddyyupp/coco-minitrain
@@ -132,15 +134,28 @@ class CustomDataset(Dataset):
 # and easily test them, play with them.
 #! write encoder 
 class Encoder(nn.Module):
-    def __init__(self, embd_size, projection_size=4096) -> None:
+    def __init__(self, backend, embd_size, projection_size=4096) -> None:
         super().__init__()
         
+        self.backend = backend.lower()
         # our encoder is a vision model, pretrained on imagenet, we remove the classifier and
-        # feed the features/flattened of course, to our lstm
-        self.model = models.resnet50(pretrained=True)
-        # before we remove the last layer, lets grab the penultimate dimension which will become
-        # our input_size for our lstm model
-        self.penultimate_dim = self.model.fc.in_features
+        if 'resnet' in self.backend:
+            # feed the features/flattened of course, to our lstm
+            self.model = models.resnet50(pretrained=True)
+            # before we remove the last layer, lets grab the penultimate dimension which will become
+            # our input_size for our lstm model
+            self.penultimate_dim = self.model.fc.in_features
+
+        elif 'simplenet' in self.backend:
+            # self.encoder = torch.hub.load("coderx7/simplenet_pytorch", "simplenetv1_9m_m1", pretrained=True)
+            self.model = simplenetv1_5m_m2(pretrained=True)
+            # before we remove the last layer, lets grab the penultimate dimension which will become
+            # our input_size for our lstm model
+            self.penultimate_dim = self.model.classifier.in_features*7*7
+
+        else:
+            raise Exception('unknown model')
+        
         # lets remove the classifier at the end, the output is (1,2048,1,1) for a batch of 1 image
         self.model = nn.Sequential(*list(self.model.children())[:-1])
         if projection_size:
@@ -222,7 +237,7 @@ class Decoder(nn.Module):
         return outputs, final_hiddenstate
 
     
-enc = Encoder(512)
+enc = Encoder('resnet',512)
 dec = Decoder(vocab_size=100, embd_size=512, hidden_size=514,num_layers=2, bidirectional=True, method='input')
 x_img = torch.randn(size=(2,3,224,224))
 x_des = torch.randint(0,100,size=(2,30))
@@ -234,10 +249,11 @@ print(f'{outputs.shape=}')
 # now lets create our main model and use these blocks 
 class EncoderDecoderImageCaption(nn.Module):
     
-    def __init__(self,vocab_size, encoder_projection_size=4096, embd_size=512, hidden_size=512,
+    def __init__(self,vocab_size, encoder_backend='resnet', encoder_projection_size=4096, embd_size=512, hidden_size=512,
                  num_layers=1, decoder_dropout=0.0, bidirectional=False, method='input') -> None:
         super().__init__()
         self.vocab_size = vocab_size
+        self.encoder_backend = encoder_backend.lower()
         self.embd_size = embd_size
         self.hidden_size = hidden_size
         self.encoder_projection_size = encoder_projection_size
@@ -245,7 +261,7 @@ class EncoderDecoderImageCaption(nn.Module):
         self.decoder_dropout = decoder_dropout
         self.bidirectional = bidirectional
         self.method = method
-        self.encoder = Encoder(self.embd_size, self.encoder_projection_size)
+        self.encoder = Encoder(self.encoder_backend,self.embd_size, self.encoder_projection_size)
         self.decoder = Decoder(self.vocab_size, 
                                self.embd_size,
                                self.hidden_size, 
@@ -253,6 +269,12 @@ class EncoderDecoderImageCaption(nn.Module):
                                self.bidirectional,
                                self.decoder_dropout, 
                                self.method)
+        
+        # disable gradients for the encoder part, becasue its job is to give us img features
+        # and it doesnt need to change, the lstm/decoder part however, needs to be updated though
+        # so lets effectively freeze our encoder!(this consumes less vram and improves performance as well)
+        for module in self.encoder.modules():
+            module.requires_grad_(False)
     
     def forward(self, imgs, captions, hidden_states):
         image_features = self.encoder(imgs)
@@ -261,7 +283,8 @@ class EncoderDecoderImageCaption(nn.Module):
 # lets test
 x_img = torch.randn(size=(2,3,224,224))
 x_captions = torch.randint(0,100,size=(2,30))
-model = EncoderDecoderImageCaption(encoder_projection_size=4096,
+model = EncoderDecoderImageCaption(encoder_backend='simplenet', 
+                                   encoder_projection_size=4096,
                                    vocab_size=100,
                                    embd_size=512,
                                    hidden_size=514,
@@ -276,9 +299,9 @@ print(f'{outputs.shape=}')
 # this is the initial model I wrote when I didnt have the dataset yet and wanted to use 
 # a off the shelf tokenizer and vocab. everythings is the same except for the tokenizer
 class EncoderDecoderImageCaption2(nn.Module):
-    def __init__(self, embd_size, hidden_size, projection_size, num_layers, bidirectional, lstm_drpout ) -> None:
+    def __init__(self, encoder_modelname, embd_size, hidden_size, projection_size, num_layers, bidirectional, lstm_drpout ) -> None:
         super().__init__()
-        
+        self.encoder_modelname = encoder_modelname
         self.embd_size = embd_size
         self.hidden_size = hidden_size
         self.projection_size = projection_size
@@ -295,14 +318,32 @@ class EncoderDecoderImageCaption2(nn.Module):
         # i had issues accessing tiktoken vocabs so I instead went for transformers tokenizers
         # self.tokenizer = tiktoken.get_encoding('gpt2')
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        
         # our encoder is a vision model, pretrained on imagenet, we remove the classifier and
         # feed the features/flattened of course, to our lstm
-        self.encoder = models.resnet50(pretrained=True)
-        # before we remove the last layer, lets grab the penultimate dimension which will become
-        # our input_size for our lstm model
-        encoder_output_dim = self.encoder.fc.in_features
+        if 'resnet' in self.encoder_modelname.lower():
+            self.encoder = models.resnet50(pretrained=True)
+            # before we remove the last layer, lets grab the penultimate dimension which will become
+            # our input_size for our lstm model
+            encoder_output_dim = self.encoder.fc.in_features
+        
+        elif 'simplenet' in self.encoder_modelname.lower():
+            # self.encoder = torch.hub.load("coderx7/simplenet_pytorch", "simplenetv1_9m_m1", pretrained=True)
+            self.encoder = simplenetv1_5m_m2(pretrained=True)
+            # before we remove the last layer, lets grab the penultimate dimension which will become
+            # our input_size for our lstm model
+            encoder_output_dim = self.encoder.classifier.in_features*7*7
+
+        else:
+            raise Exception('unknown model')
+            
         # lets remove the classifier at the end, the output is (1,2048,1,1) for a batch of 1 image
         self.encoder = nn.Sequential(*[child for child in self.encoder.children()][:-1])
+        # lets set the encoder's gradient to 0 
+        for module in self.encoder.modules():
+            module.requires_grad_(False)
+            
+        # print(self.encoder(torch.randn(size=(1,3,224,224))).shape)
         # now lets add the decoder part
         # we may need a vocab, tokenizer to convert our text to tensors and train the lstm
         # so we are going to use tiktoken for tokenization and use its vocab
@@ -384,7 +425,7 @@ class EncoderDecoderImageCaption2(nn.Module):
 
 # now lets test this 
 single_text = ["this is a test thats something random!?!.","second text"]
-model = EncoderDecoderImageCaption2(embd_size=300, hidden_size=512,
+model = EncoderDecoderImageCaption2(encoder_modelname='simplenet',embd_size=300, hidden_size=512,
                                  projection_size=2186,
                                  num_layers=2,
                                  bidirectional=True,
@@ -762,32 +803,53 @@ print(f'{captions_val=}')
 # optimizer
 # criterion 
 # scheduler
-project_size = 4096
+encoder_backend = 'simplenet'
+project_size = 2048
 embd_size = 512 
-hidden_size = 512
-num_layers = 1
-dropout = 0.0
+hidden_size = 300
+num_layers = 2
+dropout = 0.1
 bidirectional=False
 method = 'input' # or hidden_state
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-epochs = 1
+epochs = 20
 interval = 100
-batch_size = 32
+batch_size = 96
 num_workers = 8
+
+transformations_train = transforms.Compose([
+    transforms.Resize(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])])
+
+transformations_val = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='train', transformations=transformations_train)
+dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='val', transformations=transformations_val)
 
 # data loaders
 dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
 dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
 
-model = EncoderDecoderImageCaption(tokenizer.vocab_size, 
-                                   project_size, 
+model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
+                                   encoder_backend=encoder_backend,
+                                   encoder_projection_size=project_size, 
                                    embd_size=embd_size,
                                    decoder_dropout=dropout, 
                                    bidirectional=bidirectional,
                                    method=method)
+
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=20, gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
 criterion = nn.CrossEntropyLoss()
 
 
@@ -798,13 +860,13 @@ print(f'{device=}')
 print(f'{epochs=}')
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
-
+print(f'{tokenizer.vocab_size=:,}')
 for epoch in range(epochs):
     
     model.train()
     hidden_states = None
-    losses = []
-    accs = []
+    losses_train = []
+    accs_train = []
     for i,(imgs,captions) in tqdm(enumerate(dl_train)):
         imgs,captions = tuple(t.to(device) for t in (imgs, captions))
         outputs,_ = model(imgs, captions, hidden_states)
@@ -826,30 +888,43 @@ for epoch in range(epochs):
         # if we are doing multi-class classification problem (which we are, but with sequences)
         # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
         # print(f'{loss=}')
-        losses.append(loss.item())
-        accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+        losses_train.append(loss.item())
+        accs_train.append((outputs.argmax(dim=-1)==captions).float().mean().item())
         
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         
         if i%interval==0:
-            print(f'{epoch}/{epochs} loss: {np.mean(losses):.4f} Accuray: {np.mean(accs)*100:.2f}')
-        
+            print(f'{epoch}/{epochs} iter:{i}/{len(dl_train)} loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.6f}')
+    
+    # update the lr    
     scheduler.step()
+    
     with torch.no_grad():
         model.eval()
-        losses=[]
-        accs=[]
+        losses_val=[]
+        accs_val=[]
         for i,(imgs,captions) in tqdm(enumerate(dl_val)):
             imgs,captions = tuple(t.to(device) for t in (imgs, captions))
             outputs,_ = model(imgs, captions, hidden_states)
             # since we have our input in the form of (Batch,Timesteps,Classes),
             # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
             loss = criterion(outputs.permute(0,2,1), captions)
-            losses.append(loss.item())
-            accs.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+            losses_val.append(loss.item())
+            accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
             
-        print(f'{epoch}/{epochs} val-loss: {np.mean(losses):.4f} val-Accuray: {np.mean(accs)*100:.2f}')
+    print(f'{epoch}/{epochs} '
+          f'train-loss: {np.mean(accs_train):.4f} '
+          f'train-Accuracy: {np.mean(accs_train)*100:.2f} '
+          f'val-loss: {np.mean(losses_val):.4f} '
+          f'val-Accuray: {np.mean(accs_val)*100:.2f}')
+# %%
+# lets test this and see how it works 
+img = ''
+
+#%%
+# import torch.hub as hub 
+# simplenet = hub.load("coderx7/simplenet_pytorch", "simplenetv1_9m_m1", pretrained=True)
 
 # %%
