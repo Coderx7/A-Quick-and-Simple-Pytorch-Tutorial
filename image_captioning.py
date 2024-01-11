@@ -71,12 +71,15 @@ import PIL.Image as Image
 import matplotlib.pyplot as plt 
 from tqdm import tqdm
 
+# for BLEU score
+import nltk
+from nltk.translate.bleu_score import sentence_bleu,corpus_bleu
 
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, unpack_sequence, unpad_sequence
 # since we want to use vision models 
 import torchvision
 from torchvision import io, models, transforms
@@ -90,21 +93,10 @@ from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simp
 # which can be downloaded from : https://github.com/giddyyupp/coco-minitrain
 # or directly from : https://ln5.sync.com/dl/0324da1d0/rmi7abjx-2dj4ktii-d9jcwgc5-s7fwwrb7
 # its around 4.6GB
-#
-# we need to normalize the images the way the base model was trained
-# and we also need to normalize our descriptions/text, tokenize them etc
-class CustomDataset(Dataset):
-    def __init__(self, root, split='train') -> None:
-        super().__init__()
-        
-    
-    def __getitem__(self, index):
-        pass
+# !edit: ok, I downloaded the coco dataset and used the 2017 version here. 
+# the minicoco was for detection I guess!  
 
-    def __len__(self):
-        pass 
-
-#now that our dataset is ok, lets attend to our model. 
+# lets first see how the model should work.
 # the idea is simple, we need a model to get the image features,
 # we then feed these features to an lstm and that lstm produces 
 # the sequence.
@@ -116,8 +108,8 @@ class CustomDataset(Dataset):
 # you may also see, some people use a linear projection before feeding the cnn features
 # to the lstm hidden_state.(that is use alinear layer before lstm, this way we can decouple
 # the dimensions of our cnn features, and hidden_state size which is a good thing)
-# its a good technique and we use it here as well.
-# the second way is that the image-features are fed as the first timestep of the input
+# its a good technique and we use it here as well. this approach gives us the best results by far.
+# the second(older) way is that the image-features are fed as the first timestep of the input
 # description, and then fed the result to the lstm. in this case, the imagefeature
 # is simply prepended to the sequence, and the last token is also removed so the number
 # of tokens match the original token.
@@ -175,7 +167,7 @@ class Encoder(nn.Module):
 #! write decoder
 class Decoder(nn.Module):
     
-    def __init__(self, vocab_size, embd_size, hidden_size, num_layers=1, bidirectional=False, dropout=0.0, method='INPUT') -> None:
+    def __init__(self, vocab_size, embd_size, hidden_size, num_layers=1, bidirectional=False, dropout=0.0, method='HIDDEN_STATE') -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.embd_size = embd_size
@@ -202,7 +194,7 @@ class Decoder(nn.Module):
     def forward(self, img_features, sequences, hidden_states=None):
         # feed the sequences to embds 
         embds = self.embd(sequences)
-        if self.method.lower() == 'input':
+        if 'input' in self.method.lower():
             # add the img_features to the sequence as the first timestep/token(start token)
             # and remove the end token, 
             # extra-explanation: 
@@ -210,20 +202,48 @@ class Decoder(nn.Module):
             # (batch,seq,features) for our img_features instead of (batch, features), we then 
             # concat it along the second dim (i.e. the sequence/timestep dim) which is 1, and
             # since its a single token its 1 obviously!
+            # 
             input_seq = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
             outputs, final_hiddenstate = self.decoder(input_seq, hidden_states)
+        
+        elif 'hidden_state' in self.method.lower():
+            # note that since at test time we want to be able to generate description
+            # we need to keep generating tokens to produce the final sentence. 
+            # recall that lstm is nothing but a loop over input sequences
+            # so if we feed it an input of a single sequence, it will gives us
+            # a single sequence output, one token in, one token out!
+            # if we want a sentence, it means either we need to feed it
+            # an input sentnce or keep feeding it a new token and get a
+            # new output until we get our sentence. 
+            # obviously when we are doing eval at test, we dont have any input
+            # sentence, we have a single image, and we want to create a
+            # sentence for the given image. so we give it the start token
+            # and use the networks output which is a single token, feed
+            # it again as the new token, along with the hidden_state from
+            # the previous step, and produce a new token, and keep repeat
+            #ing this until we  reach our sentence length. this is why here we check
+            # and only use the image-features wheh hidden_state is None signifying
+            # its the initial hidden_state, for the case where its not None, 
+            # it means, we are at test time and trying to generate a description
+            # for a given image, and we already passed the input image, once
+            # and we are in the process of generating the next tokens.
+            # dont wory, the inclusion of this 'if statement' doesnt have much
+            # impact on the performance.
+            if hidden_states is None:
+                # use the img_features as the initial hidden_state - this gives us by far the best results
+                # since we may be using bidirectional and more than 1 layers, we must make the
+                # hidden_states match the shape ((D*num_layers),Batch,Features)
+                # if we didnt use use multilayer or bidirectional lstm, sth as simple as 
+                # hiddenstate = (img_features.unsqueeze(0), torch.zeros_like(img_features).unsqueeze(0))
+                # would work becasue it satisfies the (1,b,f) features as (numlayers=1 and direction=1)
+                # anyway, the following codesnippet works for all cases nevertheless.
+                h_0 = torch.stack([img_features for _ in range(self.direction*self.num_layers)])
+                c_0 = torch.stack([img_features.new_zeros(*img_features.shape) for _ in range(self.direction*self.num_layers)])
+                hidden_states = (h_0, c_0)
+            outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+            
         else:
-            # use the img_features as the initial hidden_state
-            # since we may be using bidirectional and more than 1 layers, we must make the
-            # hidden_states match the shape ((D*num_layers),Batch,Features)
-            # if we didnt use use multilayer or bidirectional lstm, sth as simple as 
-            # hiddenstate = (img_features.unsqueeze(0), torch.zeros_like(img_features).unsqueeze(0))
-            # would work becasue it satisfies the (1,b,f) features as (numlayers=1 and direction=1)
-            # anyway, the following codesnippet works for all cases nevertheless.
-            h_0 = torch.stack([img_features for _ in range(self.direction*self.num_layers)])
-            c_0 = torch.stack([img_features.new_zeros(*img_features.shape) for _ in range(self.direction*self.num_layers)])
-            hidden_states = (h_0, c_0)
-            outputs, final_hiddenstate = self.decoder(embds,hidden_states)
+            raise Exception(f"unknown method used ({self.method})")
         # and finally lets calculate the class probablities, also note that we need
         # to reshape outputs so the dims are compatible with our fc. 
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
@@ -237,7 +257,7 @@ class Decoder(nn.Module):
         return outputs, final_hiddenstate
 
     
-enc = Encoder('resnet',512)
+enc = Encoder('simplenet',512)
 dec = Decoder(vocab_size=100, embd_size=512, hidden_size=514,num_layers=2, bidirectional=True, method='input')
 x_img = torch.randn(size=(2,3,224,224))
 x_des = torch.randint(0,100,size=(2,30))
@@ -249,7 +269,7 @@ print(f'{outputs.shape=}')
 # now lets create our main model and use these blocks 
 class EncoderDecoderImageCaption(nn.Module):
     
-    def __init__(self,vocab_size, encoder_backend='resnet', encoder_projection_size=4096, embd_size=512, hidden_size=512,
+    def __init__(self,vocab_size, encoder_backend='simplenet', encoder_projection_size=4096, embd_size=512, hidden_size=512,
                  num_layers=1, decoder_dropout=0.0, bidirectional=False, method='input') -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -280,6 +300,29 @@ class EncoderDecoderImageCaption(nn.Module):
         image_features = self.encoder(imgs)
         outputs, hidden_states = self.decoder(image_features, captions, hidden_states)
         return outputs, hidden_states
+    
+    def generate_caption(self, pil_image, transformations_val, max_length, tokenizer_obj, topk=3):
+        with torch.no_grad():
+            model.eval()
+            hidden_states = None
+            output_str = []
+            caption_str = "a"
+            device = next(self.parameters()).device
+            image_features = self.encoder(transformations_val(pil_image).unsqueeze(0).to(device))
+            for i in range(max_length):
+                caption = torch.tensor(tokenizer_obj.encode(caption_str, False), device=device).view(1,-1).long()
+                outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
+                # grab topk words
+                probs, indexes = outputs.softmax(dim=-1).topk(k=topk, dim=-1)
+                probs = probs.view(probs.size(-1))
+                indexes = indexes.view(indexes.size(-1))
+                output_k = indexes[torch.multinomial(probs/probs.sum(dim=-1),1, replacement=True)]
+                caption_str = tokenizer_obj.decode([output_k.item()])[0]
+                output_str.append(caption_str)
+                # print(caption_str)
+        return ' '.join(output_str)
+            
+    
 # lets test
 x_img = torch.randn(size=(2,3,224,224))
 x_captions = torch.randint(0,100,size=(2,30))
@@ -545,7 +588,9 @@ class Tokenizer():
         self._start = '<start>'
         self._end = '<end>'
         self._unknown = '<unk>'
-        self.itow = dict(enumerate([self._end, self._start, self._unknown]))
+        self.special_tokens = [self._end, self._start, self._unknown]
+        
+        self.itow = dict(enumerate(self.special_tokens))
         self.itow.update(enumerate(words, start=3))
         self.wtoi = {v:k for k,v in self.itow.items()}
         self.vocab_size = len(self.wtoi)
@@ -553,14 +598,20 @@ class Tokenizer():
     def __len__(self):
         return len(self.wtoi)
         
-    def encode(self, input_text):
+    def encode(self, input_text, add_special_tokens=True):
+        # if we recieve any special tokens, just return their code, they are probably
+        # the initial token for text-generation at test time
+        if input_text in self.special_tokens:
+            return self.wtoi[input_text]
+        
         normalized = input_text.translate(str.maketrans('','',string.punctuation))
-        normalized = f"{self.itow[self.wtoi[self._start]]} {normalized} {self.itow[self.wtoi[self._end]]}"
+        if add_special_tokens:
+            normalized = f"{self.itow[self.wtoi[self._start]]} {normalized} {self.itow[self.wtoi[self._end]]}"
         # if a word is not in our vocabulary, encode it with <unk> symbol
         return [self.wtoi.get(word, self.wtoi[self._unknown]) for word in normalized.split()]
 
-    def batch_encode(self, input_text_batch):
-        return [self.encode(text) for text in input_text_batch]
+    def batch_encode(self, input_text_batch, add_special_tokens=True):
+        return [self.encode(text,add_special_tokens) for text in input_text_batch]
     
     def decode(self, input_idxs):
         return [self.itow[idx] for idx in input_idxs]
@@ -803,6 +854,9 @@ print(f'{captions_val=}')
 # optimizer
 # criterion 
 # scheduler
+# a measure/score for how good our captions is (i.e use BLEU)
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'simplenet'
 project_size = 2048
 embd_size = 512 
@@ -810,9 +864,8 @@ hidden_size = 300
 num_layers = 2
 dropout = 0.1
 bidirectional=False
-method = 'input' # or hidden_state
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+method = 'hidden_state' # or hidden_state or input (ht gets 99.69% while input achieves 69.0%)
 epochs = 20
 interval = 100
 batch_size = 96
@@ -847,26 +900,55 @@ model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
                                    decoder_dropout=dropout, 
                                    bidirectional=bidirectional,
                                    method=method)
-
+model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
 criterion = nn.CrossEntropyLoss()
 
+# calculate blue score
+def calculate_bleu_score(ref_caps, gen_caps):
+    # convert list of idxs to list of words in each batch
+    refs = tokenizer.batch_decode(ref_caps)
+    gens = tokenizer.batch_decode(gen_caps)
+    # remove special tokens so we have a list of sentences, basically a batch of sentences
+    # instead of batch of token indexes.
+    refs = [' '.join(ref).replace("<start>","").replace("<end>","") for ref in refs]
+    gens = [' '.join(gen).replace("<start>","").replace("<end>","") for gen in gens]
+    # print([[ref.split()] for ref in refs[:3]])
+    # print([gen.split() for gen in gens[:3]])
+    # calculate the bleu 
+    return corpus_bleu([[ref.split()] for ref in refs],
+                       [gen.split() for gen in gens])
 
-
-model.to(device)
 
 print(f'{device=}')
 print(f'{epochs=}')
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
 print(f'{tokenizer.vocab_size=:,}')
+#
+# sidenote:
+# for evaluating the accuracy of our model, we can use accuracy, but thats not really
+# helpful, instead a metric called BLEU which stands for (Bilingual Evaluation Understudy)
+# is used. 
+# the BLEU score measures the similarity between the generated caption and the 
+# reference captions, which are the ground truth. It does this by calculating 
+# the n-gram overlap between the generated caption and the reference captions.
+# An n-gram is a contiguous sequence of n items from a given sample of text or
+# speech.
+# The BLEU score lies between 0 and 1. A score of 1 means that the generated 
+# caption perfectly matches one of the reference captions, while a score of 0 
+# means there’s no overlap. A score of 0.6 or 0.7 is considered very good, as
+# even two humans would likely come up with different sentence variants for a
+# problem, and would rarely achieve a perfect match
+
 for epoch in range(epochs):
     
     model.train()
     hidden_states = None
     losses_train = []
     accs_train = []
+    bleu_scores = []
     for i,(imgs,captions) in tqdm(enumerate(dl_train)):
         imgs,captions = tuple(t.to(device) for t in (imgs, captions))
         outputs,_ = model(imgs, captions, hidden_states)
@@ -890,6 +972,8 @@ for epoch in range(epochs):
         # print(f'{loss=}')
         losses_train.append(loss.item())
         accs_train.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+        bleu_scores.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
+        
         
         optimizer.zero_grad()
         loss.backward()
@@ -897,7 +981,7 @@ for epoch in range(epochs):
         
         if i%interval==0:
             print(f'{epoch}/{epochs} iter:{i}/{len(dl_train)} loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.6f}')
-    
+            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
     # update the lr    
     scheduler.step()
     
@@ -905,6 +989,7 @@ for epoch in range(epochs):
         model.eval()
         losses_val=[]
         accs_val=[]
+        bleu_scores_val = []
         for i,(imgs,captions) in tqdm(enumerate(dl_val)):
             imgs,captions = tuple(t.to(device) for t in (imgs, captions))
             outputs,_ = model(imgs, captions, hidden_states)
@@ -913,18 +998,53 @@ for epoch in range(epochs):
             loss = criterion(outputs.permute(0,2,1), captions)
             losses_val.append(loss.item())
             accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
-            
+            # only calculate on validation, becasue its an expensive/time-consuming operation!
+            bleu_scores_val.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
+
     print(f'{epoch}/{epochs} '
-          f'train-loss: {np.mean(accs_train):.4f} '
-          f'train-Accuracy: {np.mean(accs_train)*100:.2f} '
-          f'val-loss: {np.mean(losses_val):.4f} '
-          f'val-Accuray: {np.mean(accs_val)*100:.2f}')
+          f'train-loss/acc: {np.mean(accs_train):.4f}/{np.mean(accs_train)*100:.2f} '
+          f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+    print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
 # %%
+# so using the image features as the initial hidden_states, 
+# we managed to achiev a very high accuracy as shown below:
+# 13/20 train-loss: 1.0000 train-Accuracy: 100.00 val-loss: 0.0468 val-Accuray: 99.67
+# it was also considerably faster to converge than using the image features
+# as the first sequence of the input.
+# 
 # lets test this and see how it works 
-img = ''
+img = './pretty_mage1.jpeg'
+img2 = './pretty_mage2.jpeg'
+img3 = './pretty_mage3.jpeg'
+img = Image.open(img).convert('RGB')
 
+def generate_caption(model, pil_image, transformations_val, max_length, tokenizer:Tokenizer ):
+    
+    with torch.no_grad():
+        model.eval()
+
+        hidden_states = None
+        output_str = []
+        caption_str = "a"
+        device = next(model.parameters()).device
+        image_features = model.encoder(transformations_val(pil_image).unsqueeze(0).to(device))
+        for i in range(max_length):
+            caption = torch.tensor(tokenizer.encode(caption_str, False), device=device).view(1,-1).long()
+            outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
+            # grab topk words
+            probs, indexes = outputs.softmax(dim=-1).topk(k=3,dim=-1)
+            probs = probs.view(probs.size(-1))
+            indexes = indexes.view(indexes.size(-1))
+            output_k = indexes[torch.multinomial(probs/probs.sum(dim=-1),1, replacement=True)]
+            caption_str = tokenizer.decode([output_k.item()])[0]
+            output_str.append(caption_str)
+            print(caption_str)
+            
+    return ' '.join(output_str)
+
+generate_caption(model, img, transformations_val, max_length=10, tokenizer=tokenizer)
 #%%
-# import torch.hub as hub 
-# simplenet = hub.load("coderx7/simplenet_pytorch", "simplenetv1_9m_m1", pretrained=True)
-
 # %%
+# in the name of God, the most compassionate the most merciful
+# simple vanilla RNN implementation 
+
