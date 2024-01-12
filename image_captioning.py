@@ -878,8 +878,8 @@ def normalize_sequences(image_caption_list):
     # start-of-sequence token (which is <start> ), then we're effectively removing it. 
     # This could be a problem because our model needs this token to know where each caption
     # begins. so instead we directly create, inputs and labels here and then pad them
-    input_captions  = [torch.tensor(caption[:-1]) for caption in captions]
-    target_captions = [torch.tensor(caption[1:]) for caption in captions]
+    input_captions  = [caption[:-1] for caption in captions]
+    target_captions = [caption[1:] for caption in captions]
     input_captions  = pad_sequence(input_captions, batch_first=True, padding_value=0)
     target_captions = pad_sequence(target_captions, batch_first=True, padding_value=0)
     return images, input_captions, target_captions
