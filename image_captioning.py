@@ -250,9 +250,39 @@ class Decoder(nn.Module):
         # to reshape outputs so the dims are compatible with our fc. 
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
         # !becomes compatible with our fc layer
+        # why not simply using 
+        # outputs = self.fc(outputs)
         #! why did I do all of this? why?
-        # outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
-        outputs = self.fc(outputs)
+        #! explanation : 
+        # note that pytorch’' nn.Linear layers can accept inputs of more than two dimensions. 
+        # they apply the linear transformation to the last dimension and consider all other 
+        # dimensions as part of the batch.
+        # for example, if we have an input tensor of shape (batch_size,seq_len, num_features),
+        # nn.Linear will apply the same linear transformation to every feature vector across 
+        # both the batch_size and seq_len dimensions.
+        # However, the reshaping operation outputs.reshape(-1, self.hidden_size*self.direction)
+        # is often used when we want to connect the output of an LSTM to a fully connected layer
+        # and we care about the individual outputs at each time step.
+        # Without the reshape, nn.Linear would apply the same transformation to the outputs at
+        # each time step, effectively treating each time step as part of the batch. 
+        # This is fine if we only care about the final output of your LSTM, but if we want to 
+        # make predictions based on each time step (like in sequence-to-sequence models), we 
+        # would need to reshape our outputs before passing them to the fully connected layer.
+        # as for our specific case, in image captioning, our target is a sequence of words 
+        # (the caption), and we are using a word at each time step as the target for our 
+        # models prediction at that time step. If we dont reshape the outputs, the fully 
+        # connected layer (nn.Linear) will treat the sequence length dimension as part of
+        # the batch, and it will output a prediction for each time step. This is fine if we
+        # are only interested in the final output of our LSTM, but in image captioning, we 
+        # are typically interested in the output at each time step.
+        # by reshaping the LSTM outputs to be 2D (with shape (batch_size * seq_len, hidden_dim)),
+        # we are treating each time step as a separate data point. 
+        # This allows our model to make a separate prediction for each word in the caption, 
+        # which is what we want in a task like image captioning. if you comment the following 
+        # two lines and instead use a outputs =self.fc(outputs) and train the model you'll see
+        # the convergance rate is slower and we get lower accuracy compared to now (reshaping here)
+        # ! needs another test to verify this is the case
+        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally reshape the output back to (batch, seq, features) form
         # note that we dont use softmax here, as we are planning to use crossentropy
         # and crossentropy expects logits, and applies the softamx itself
@@ -945,7 +975,46 @@ model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
-criterion = nn.CrossEntropyLoss()
+# ignore the paddings in the loss 
+# sidenote:
+# the ignore_index argument in CrossEntropyLoss allows us to specify a target value that is
+# ignored when computing the loss. basically when calculating the loss, any target value that
+# equals the ignore_index is not considered. this is particularly useful in tasks like sequence
+# generation or segmentation, where our sequences or images can be of different lengths or sizes,
+# and we've used padding to make all sequences or images the same size.
+# For example, in our case which is image captioning, we often pad your sequences with a special 
+# <pad> token so that all sequences in a batch have the same length. However, we don’t want our 
+# model to learn to predict the <pad> token, so you can set ignore_index to the index of the <pad>
+# token in our vocabulary. This way, the <pad> tokens will be ignored when calculating the loss.
+# and hopefully we get better results cuz our model can now pay more attention to what matters!
+# side note 2 concerinig pack_padded_sequence
+# even if we're using pack_padded_sequence with our LSTM, we still want to use ignore_index with
+# our loss function to make sure we are not computing the loss with respect to the <pad> tokens
+# in our target sequence. 
+# when we use pack_padded_sequence before feeding our sequences into an LSTM, pytorch internally
+# ignores the padding while computing the outputs and hence the gradients. 
+# This means that the LSTM won’t consider the <pad> tokens during backpropagation, which is exactly
+# what we want.
+# However, when we compute the loss using something like CrossEntropyLoss, we're comparing the LSTM's
+# output at each time step to our target sequence. If our target sequence has <pad> tokens 
+# (which it likely will, since our input sequence had them), then we'll be computing the loss
+# with respect to these <pad> tokens unless we tell our loss function to ignore them. 
+# sidenote 3: also note that, when we add this, we may see our accuracy drops drastically
+# what used to be around 50,60% at the first few iterations (let alone epochs) now is down
+# to 19,22%. 
+# the drop in accuracy after adding ignore_index might be due to the change in the way accuracy 
+# is calculated. Before, when we didn’t use ignore_index, the <pad> tokens were likely considered 
+# in the accuracy calculation. Since the model often correctly predicts <pad> tokens (because there 
+# are so many of them), this can artificially inflate the accuracy.
+# When we added ignore_index, the <pad> tokens were ignored in the accuracy calculation. 
+# This means only the "real" tokens are considered, which can lead to a more realistic 
+# (and often lower) accuracy.
+# So, while it might seem concerning to see a drop in accuracy, this new accuracy is likely a
+# more accurate reflection of our model's performance. 
+# It’s important to remember that accuracy isn't everything, especially in tasks like language
+# modeling or image captioning. Other metrics like BLEU or METEOR can provide a more holistic 
+# view of your model’s performance.
+criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer._pad])
 
 # calculate blue score
 def calculate_bleu_score(ref_caps, gen_caps):
@@ -1017,8 +1086,7 @@ for epoch in range(epochs):
         losses_train.append(loss.item())
         accs_train.append((outputs.argmax(dim=-1)==target_cap_train).float().mean().item())
         bleu_scores.append(calculate_bleu_score(target_cap_train.tolist(), outputs.argmax(dim=-1).tolist()))
-        
-        
+                
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1043,8 +1111,8 @@ for epoch in range(epochs):
             loss = criterion(outputs.permute(0,2,1), target_cap_val)
             losses_val.append(loss.item())
             accs_val.append((outputs.argmax(dim=-1)==target_cap_val).float().mean().item())
-            # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
-            # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+            print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
+            print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
             bleu_scores_val.append(calculate_bleu_score(target_cap_val.tolist(), outputs.argmax(dim=-1).tolist()))
