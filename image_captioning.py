@@ -616,9 +616,14 @@ class Tokenizer():
     def decode(self, input_idxs):
         return [self.itow[idx] for idx in input_idxs]
     
-    def batch_decode(self, input_idxs_batch):
-        return [self.decode(idx) for idx in input_idxs_batch]
+    def batch_decode(self, input_idxs_batch, token_list=True):
+        if token_list:
+            return [self.decode(idx) for idx in input_idxs_batch]
+        def f(x): [' '.join(self.decode(x)).replace(k) for k in self.special_tokens][0]
         
+        return [' '.join(self.decode(idx)).replace(self._start,"").replace(self._end,"") 
+                    for idx in input_idxs_batch]
+                
     def _calculate_caption_statistics(self, all_captions):
         # lets calculate max and min seq_length
         all_captions_length = [len(caption.split()) for caption in all_captions]
@@ -635,7 +640,7 @@ print(tokenizer.encode(single_text))
 print(tokenizer.decode(tokenizer.encode(single_text)))
 
 print(*tokenizer.batch_encode(batch_text), sep='\n')
-print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text)), sep='\n')
+print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text),False), sep='\n')
 
 idxs = tokenizer.encode(single_text)
 print(f'{idxs}')
@@ -862,10 +867,10 @@ project_size = 2048
 embd_size = 512 
 hidden_size = 300
 num_layers = 2
-dropout = 0.1
+dropout = 0.3
 bidirectional=False
 
-method = 'hidden_state' # or hidden_state or input (ht gets 99.69% while input achieves 69.0%)
+method = 'input' # or hidden_state or input (ht gets 99.69% while input achieves 69.0%)
 epochs = 20
 interval = 100
 batch_size = 96
@@ -980,7 +985,7 @@ for epoch in range(epochs):
         optimizer.step()
         
         if i%interval==0:
-            print(f'{epoch}/{epochs} iter:{i}/{len(dl_train)} loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.6f}')
+            print(f'{epoch}/{epochs} iter:{i}/{len(dl_train)} loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
             print(f'BLEU score: {np.mean(bleu_scores):.4f}')
     # update the lr    
     scheduler.step()
@@ -998,14 +1003,43 @@ for epoch in range(epochs):
             loss = criterion(outputs.permute(0,2,1), captions)
             losses_val.append(loss.item())
             accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+            print(f'labels: {tokenizer.batch_decode(captions[:3].tolist())}')
+            print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist())}')
+            
             # only calculate on validation, becasue its an expensive/time-consuming operation!
             bleu_scores_val.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
 
-    print(f'{epoch}/{epochs} '
-          f'train-loss/acc: {np.mean(accs_train):.4f}/{np.mean(accs_train)*100:.2f} '
-          f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-    print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+        print(f'{epoch}/{epochs} '
+            f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
+            f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+        print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
 # %%
+with torch.no_grad():
+        model.eval()
+        losses_val=[]
+        accs_val=[]
+        bleu_scores_val = []
+        for i,(imgs,captions) in tqdm(enumerate(dl_val)):
+            imgs,captions = tuple(t.to(device) for t in (imgs, captions))
+            outputs,_ = model(imgs, captions, hidden_states)
+            # since we have our input in the form of (Batch,Timesteps,Classes),
+            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+            loss = criterion(outputs.permute(0,2,1), captions)
+            losses_val.append(loss.item())
+            accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
+            print(f'labels: {tokenizer.batch_decode(captions[:3].tolist(),False)}')
+            print(f'output:',*tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),False),sep='\n')
+            
+            # only calculate on validation, becasue its an expensive/time-consuming operation!
+            bleu_scores_val.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
+
+print(f'{epoch}/{epochs} '
+        f'train-loss/acc: {np.mean(accs_train):.4f}/{np.mean(accs_train)*100:.2f} '
+        f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+
+
+#%%
 # so using the image features as the initial hidden_states, 
 # we managed to achiev a very high accuracy as shown below:
 # 13/20 train-loss: 1.0000 train-Accuracy: 100.00 val-loss: 0.0468 val-Accuray: 99.67
@@ -1013,36 +1047,53 @@ for epoch in range(epochs):
 # as the first sequence of the input.
 # 
 # lets test this and see how it works 
+
+def generate_caption(model, pil_image, trans, max_length, tokenizer:Tokenizer,topk=3 ):
+    plt.imshow(pil_image)
+    # plt.imshow(trans(pil_image).permute(1,2,0).numpy())
+    plt.show()
+    with torch.no_grad():
+        model.eval()
+        hidden_states = None
+        output_lst = []
+        caption_str = tokenizer._start
+        device = next(model.parameters()).device
+        image_features = model.encoder(trans(pil_image).unsqueeze(0).to(device))
+        print(f'{image_features.shape=}')
+        caption = torch.tensor(tokenizer.encode(caption_str, False), device=device).view(1,-1).long()
+        
+        for i in range(max_length):
+            outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
+            # grab topk words
+            probs, indexes = outputs.softmax(dim=-1).topk(k=topk,dim=-1)
+            probs = probs.view(probs.size(-1))
+            indexes = indexes.view(indexes.size(-1))
+            idx = indexes[torch.multinomial(probs.softmax(dim=-1),1, replacement=True)]
+            caption_str = tokenizer.decode([idx.item()])[0]
+            if caption_str != tokenizer._start: 
+                output_lst.append(caption_str)
+            caption = torch.tensor(idx.item(), device=device).view(1,-1).long()
+    return ' '.join(output_lst)
+
 img = './pretty_mage1.jpeg'
 img2 = './pretty_mage2.jpeg'
 img3 = './pretty_mage3.jpeg'
-img = Image.open(img).convert('RGB')
+#A couple of baseball player standing on a field.
+img4='/media/hossein/SSD/mscoco_dataset/val2017/000000000872.jpg'
+img5='/media/hossein/SSD/mscoco_dataset/val2017/000000001000.jpg'
 
-def generate_caption(model, pil_image, transformations_val, max_length, tokenizer:Tokenizer ):
-    
-    with torch.no_grad():
-        model.eval()
+trans = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
-        hidden_states = None
-        output_str = []
-        caption_str = "a"
-        device = next(model.parameters()).device
-        image_features = model.encoder(transformations_val(pil_image).unsqueeze(0).to(device))
-        for i in range(max_length):
-            caption = torch.tensor(tokenizer.encode(caption_str, False), device=device).view(1,-1).long()
-            outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
-            # grab topk words
-            probs, indexes = outputs.softmax(dim=-1).topk(k=3,dim=-1)
-            probs = probs.view(probs.size(-1))
-            indexes = indexes.view(indexes.size(-1))
-            output_k = indexes[torch.multinomial(probs/probs.sum(dim=-1),1, replacement=True)]
-            caption_str = tokenizer.decode([output_k.item()])[0]
-            output_str.append(caption_str)
-            print(caption_str)
-            
-    return ' '.join(output_str)
+image = Image.open(img4)
+generate_caption(model, image, trans, max_length=20, tokenizer=tokenizer,topk=3)
 
-generate_caption(model, img, transformations_val, max_length=10, tokenizer=tokenizer)
+
+
 #%%
 # %%
 # in the name of God, the most compassionate the most merciful
