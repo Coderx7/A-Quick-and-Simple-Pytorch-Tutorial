@@ -563,7 +563,7 @@ print(idxs_to_words(words_to_idxs("Hello world! this is a test baby")))
 # also since we are dealing with sequences with different length we 
 # would want to add the logic to our tokenizer so we can use that 
 # anywhere we require it
-
+from functools import reduce
 class Tokenizer():
            
     def __init__(self, train_captions, val_captions) -> None:
@@ -588,16 +588,21 @@ class Tokenizer():
         self._start = '<start>'
         self._end = '<end>'
         self._unknown = '<unk>'
-        self.special_tokens = [self._end, self._start, self._unknown]
+        # since we later pad our input, we want to make sure we can differentiate between
+        # our actual values and pads(initially I used 0 for end, and pads, but then changed
+        # my mind to make it more obvious)
+        self._pad = '<pad>'
+        self.special_tokens = (self._pad, self._start, self._end, self._unknown)
         
         self.itow = dict(enumerate(self.special_tokens))
-        self.itow.update(enumerate(words, start=3))
+        # incase we add new special tokens, lets dynamically update the counts
+        self.itow.update(enumerate(words, start=len(self.special_tokens)+1))
         self.wtoi = {v:k for k,v in self.itow.items()}
         self.vocab_size = len(self.wtoi)
 
     def __len__(self):
         return len(self.wtoi)
-        
+
     def encode(self, input_text, add_special_tokens=True):
         # if we recieve any special tokens, just return their code, they are probably
         # the initial token for text-generation at test time
@@ -616,13 +621,14 @@ class Tokenizer():
     def decode(self, input_idxs):
         return [self.itow[idx] for idx in input_idxs]
     
-    def batch_decode(self, input_idxs_batch, token_list=True):
-        if token_list:
-            return [self.decode(idx) for idx in input_idxs_batch]
-        def f(x): [' '.join(self.decode(x)).replace(k) for k in self.special_tokens][0]
-        
-        return [' '.join(self.decode(idx)).replace(self._start,"").replace(self._end,"") 
-                    for idx in input_idxs_batch]
+    def batch_decode(self, input_idxs_batch, use_text=True):
+        # def f(x):
+        #     x_str = ' '.join(self.decode(x))
+        #     for k in self.special_tokens:
+        #         x_str = x_str.replace(k,"")
+        #     return x_str
+        f = lambda x: reduce(lambda text, token: text.replace(token, ""), self.special_tokens, ' '.join(self.decode(x)))
+        return [f(idx) if use_text else self.decode(idx) for idx in input_idxs_batch]
                 
     def _calculate_caption_statistics(self, all_captions):
         # lets calculate max and min seq_length
@@ -640,7 +646,7 @@ print(tokenizer.encode(single_text))
 print(tokenizer.decode(tokenizer.encode(single_text)))
 
 print(*tokenizer.batch_encode(batch_text), sep='\n')
-print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text),False), sep='\n')
+print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text)), sep='\n')
 
 idxs = tokenizer.encode(single_text)
 print(f'{idxs}')
@@ -831,7 +837,12 @@ def normalize_sequences(image_caption_list):
     # create a list of tensors representing our captions. now varying length of each
     # caption doesnt pose an error (becasue we are using a python list) and the pad_sequence
     # takes care of padding the tensors and making them all the same size.
-    captions = [torch.tensor(caption) for caption in captions]
+    # 
+    # important note: note that our labels/captions are always shifted one token to the right
+    # so the network learns the sequence one after the other, other wise, at generation
+    # it will suck! while at training it seemingly achieves 100% really quick! so 
+    # in nlp tasks where we create text as output, the labels are always one token ahead!
+    captions = [torch.tensor(caption)[1:] for caption in captions]
     captions = pad_sequence(captions, batch_first=True, padding_value=0)
     return images, captions
 # lets test 
@@ -869,8 +880,13 @@ hidden_size = 300
 num_layers = 2
 dropout = 0.3
 bidirectional=False
-
-method = 'input' # or hidden_state or input (ht gets 99.69% while input achieves 69.0%)
+# (hidden_state gets 99.69% while input achieves 69.0% without bidirectional,
+# if you enable bidirectional, then input's accuracy goes to 99.6 as well)
+# the input version has a hartime learingg unless we enable bidirection
+# but this doesnt mean its learning properly, it does reduce the loss drastically
+# but at the expense of generating nonsense at test time. so we use no bidirectional
+# in image captioning
+method = 'hidden_state' # hidden_state or input 
 epochs = 20
 interval = 100
 batch_size = 96
@@ -985,7 +1001,7 @@ for epoch in range(epochs):
         optimizer.step()
         
         if i%interval==0:
-            print(f'{epoch}/{epochs} iter:{i}/{len(dl_train)} loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
+            print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
             print(f'BLEU score: {np.mean(bleu_scores):.4f}')
     # update the lr    
     scheduler.step()
@@ -1003,8 +1019,8 @@ for epoch in range(epochs):
             loss = criterion(outputs.permute(0,2,1), captions)
             losses_val.append(loss.item())
             accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
-            print(f'labels: {tokenizer.batch_decode(captions[:3].tolist())}')
-            print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist())}')
+            # print(f'labels: {tokenizer.batch_decode(captions[:3].tolist())}')
+            # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist())}')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
             bleu_scores_val.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
@@ -1027,8 +1043,8 @@ with torch.no_grad():
             loss = criterion(outputs.permute(0,2,1), captions)
             losses_val.append(loss.item())
             accs_val.append((outputs.argmax(dim=-1)==captions).float().mean().item())
-            print(f'labels: {tokenizer.batch_decode(captions[:3].tolist(),False)}')
-            print(f'output:',*tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),False),sep='\n')
+            print(f'labels: {tokenizer.batch_decode(captions[:3].tolist())}')
+            print(f'output:',*tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist()),sep='\n')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
             bleu_scores_val.append(calculate_bleu_score(captions.tolist(), outputs.argmax(dim=-1).tolist()))
@@ -1047,7 +1063,6 @@ print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(b
 # as the first sequence of the input.
 # 
 # lets test this and see how it works 
-
 def generate_caption(model, pil_image, trans, max_length, tokenizer:Tokenizer,topk=3 ):
     plt.imshow(pil_image)
     # plt.imshow(trans(pil_image).permute(1,2,0).numpy())
@@ -1090,7 +1105,7 @@ trans = transforms.Compose([
 ])
 
 image = Image.open(img4)
-generate_caption(model, image, trans, max_length=20, tokenizer=tokenizer,topk=3)
+generate_caption(model, image, trans, max_length=9, tokenizer=tokenizer,topk=1)
 
 
 
@@ -1099,3 +1114,25 @@ generate_caption(model, image, trans, max_length=20, tokenizer=tokenizer,topk=3)
 # in the name of God, the most compassionate the most merciful
 # simple vanilla RNN implementation 
 
+
+for epoch in range(epochs):
+    model.train()
+    hidden_states = None
+    losses_train = []
+    accs_train = []
+    for (imgs,captions) in enumerate(dl_train):
+        imgs,captions = tuple(t.to(device) for t in (imgs, captions))
+        outputs,_ = model(imgs, captions, hidden_states)
+        loss = criterion(outputs.permute(0,2,1), captions)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    # update the lr    
+    scheduler.step()
+    with torch.no_grad():
+        model.eval()
+        for i,(imgs,captions) in enumerate(dl_val):
+            imgs,captions = tuple(t.to(device) for t in (imgs, captions))
+            outputs,_ = model(imgs, captions, hidden_states)
+            loss = criterion(outputs.permute(0,2,1), captions)
+       
