@@ -154,7 +154,8 @@ class Encoder(nn.Module):
             # instead of using a simple linear layer to match the lstm embdsize/hiddensize
             # in the decoder, we go for a linear projection to get better performance 
             self.ln = nn.Sequential(nn.Linear(self.penultimate_dim, projection_size),
-                                    nn.Linear(projection_size, embd_size))
+                                    nn.Linear(projection_size, embd_size)
+                                   )
         else:
             self.ln = nn.Linear(self.penultimate_dim, embd_size)
     
@@ -190,6 +191,7 @@ class Decoder(nn.Module):
         # and a final classifier, note that since we may be using bidirectional lstm
         # we need to make sure the first dimension takes that into account as well.
         self.fc = nn.Linear(self.direction*self.hidden_size, self.vocab_size)
+        self.ln= nn.LayerNorm(self.direction*self.hidden_size)
 
     def forward(self, img_features, sequences, hidden_states=None):
         # feed the sequences to embds 
@@ -202,9 +204,8 @@ class Decoder(nn.Module):
             # (batch,seq,features) for our img_features instead of (batch, features), we then 
             # concat it along the second dim (i.e. the sequence/timestep dim) which is 1, and
             # since its a single token its 1 obviously!
-            # 
-            input_seq = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
-            outputs, final_hiddenstate = self.decoder(input_seq, hidden_states)
+            embds = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
+            outputs, final_hiddenstate = self.decoder(embds, hidden_states)
         
         elif 'hidden_state' in self.method.lower():
             # note that since at test time we want to be able to generate description
@@ -231,6 +232,9 @@ class Decoder(nn.Module):
             # impact on the performance.
             if hidden_states is None:
                 # use the img_features as the initial hidden_state.
+                # instead of feeding the image features as the first input to the LSTM, we
+                # can use the image features to initialize the hidden state of the LSTM. 
+                # this allows the LSTM to carry the image information through its internal state.
                 # since we may be using bidirectional and more than 1 layers, we must make the
                 # hidden_states match the shape ((D*num_layers),Batch,Features)
                 # if we didnt use use multilayer or bidirectional lstm, sth as simple as 
@@ -239,15 +243,17 @@ class Decoder(nn.Module):
                 # anyway, the following codesnippet works for all cases nevertheless.
                 h_0 = torch.stack([img_features for _ in range(self.direction*self.num_layers)])
                 c_0 = torch.stack([img_features for _ in range(self.direction*self.num_layers)])
+                # works better than simply using zeros
                 # c_0 = torch.stack([img_features.new_zeros(*img_features.shape) for _ in range(self.direction*self.num_layers)])
-
                 hidden_states = (h_0, c_0)
             outputs, final_hiddenstate = self.decoder(embds, hidden_states)
-            
+
         else:
             raise Exception(f"unknown method used ({self.method})")
-        # and finally lets calculate the class probablities, also note that we need
-        # to reshape outputs so the dims are compatible with our fc. 
+        
+        # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+        outputs = self.ln(outputs.reshape(-1, self.hidden_size*self.direction))
+        # and finally lets calculate the class probablities
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
         # !becomes compatible with our fc layer
         # why not simply using 
@@ -281,6 +287,31 @@ class Decoder(nn.Module):
         # which is what we want in a task like image captioning. if you comment the following 
         # two lines and instead use a outputs =self.fc(outputs) and train the model you'll see
         # the convergance rate is slower and we get lower accuracy compared to now (reshaping here)
+        # note that its true if we reshape the outputs to 2D, pass them through the fc layer,
+        # and then reshape them back to 3D, the final shape of the outputs will be the same 
+        # as if we had directly passed the 3D outputs through the fc layer.
+        # However, the values within the tensor may not be the same. This is because the fully connected layer applies a linear transformation, and this transformation is applied independently to each 2D slice of the input when the input is 3D. When you manually reshape the tensor to 2D before passing it through the fully connected layer, you’re changing which elements of the tensor are grouped together in these 2D slices.
+        # So while the shape of the output tensor may be the same in both cases, the semantics of the operation are different. In the first case (reshaping to 2D and then back to 3D), you’re treating each time step of each sample as a separate data point. In the second case (directly using the 3D outputs), you’re treating each time step as part of the batch.
+        # lets make this more elaborate with an intuiitive example 
+        # let’s consider an image captioning scenario.
+        # suppose we have a batch of 2 images, and we're using an LSTM to generate captions
+        # for these images. lets say the LSTM generates the following output sequences 
+        # (after reshaping and passing through the fully connected layer):
+        # image 1: "A cat on a sofa", "A dog in a park"
+        # image 2: "A man riding a bike", "A woman holding an umbrella"
+        # if we reshape these outputs to 2D before passing them through the fc layer
+        # (outputs.reshape(-1, self.hidden_size*self.direction)), the fully connected 
+        # layer will treat each time step of each sample as a separate data point. 
+        # so, it will make a separate prediction for each word in the caption. 
+        # This is what we want here.
+        # however, if we directly use the 3D outputs in the linear layer without reshaping,
+        # the linear layer will apply the same transformation to the outputs at each time step,
+        # effectively treating each time step as part of the batch. This could potentially mix
+        # information between different images and their corresponding captions in the batch,
+        # which is not desirable.
+        # in other words, reshaping the outputs to 2D before passing them through the fully 
+        # connected layer ensures that the model generates a separate caption for each image,
+        # without mixing information between different images and captions in the batch. 
         # ! needs another test to verify this is the case
         outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally reshape the output back to (batch, seq, features) form
@@ -290,13 +321,18 @@ class Decoder(nn.Module):
         # return the outputs logits and final_hiddensate
         return outputs, final_hiddenstate
 
-    
+
 enc = Encoder('simplenet',512)
-dec = Decoder(vocab_size=100, embd_size=512, hidden_size=514,num_layers=2, bidirectional=True, method='input')
+dec = Decoder(vocab_size=100, 
+              embd_size=512,
+              hidden_size=512,
+              num_layers=2, 
+              bidirectional=True, 
+              method='hidden_state')
 x_img = torch.randn(size=(2,3,224,224))
 x_des = torch.randint(0,100,size=(2,30))
 out_feats = enc(x_img)
-outputs,_ = dec(out_feats, x_des)
+outputs,_ = dec(out_feats, x_des, None)
 print(f'{out_feats.shape=}')
 print(f'{outputs.shape=}')
 #%%
@@ -315,7 +351,9 @@ class EncoderDecoderImageCaption(nn.Module):
         self.decoder_dropout = decoder_dropout
         self.bidirectional = bidirectional
         self.method = method
-        self.encoder = Encoder(self.encoder_backend,self.embd_size, self.encoder_projection_size)
+        self.encoder = Encoder(self.encoder_backend,
+                               self.embd_size, 
+                               self.encoder_projection_size)
         self.decoder = Decoder(self.vocab_size, 
                                self.embd_size,
                                self.hidden_size, 
@@ -364,11 +402,11 @@ model = EncoderDecoderImageCaption(encoder_backend='simplenet',
                                    encoder_projection_size=4096,
                                    vocab_size=100,
                                    embd_size=512,
-                                   hidden_size=514,
+                                   hidden_size=512,
                                    num_layers=2,
                                    decoder_dropout=0.0,
                                    bidirectional=True,
-                                   method='input')
+                                   method='hidden_state')
 
 outputs,_ = model(x_img, x_captions,None)
 print(f'{outputs.shape=}')
@@ -889,17 +927,17 @@ dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=normali
 
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
-imgs_train, input_cap_train, target_cap_train = next(iter(dl_train))
-imgs_val,input_cap_val,target_cap_val = next(iter(dl_val))
-plt.imshow(torchvision.utils.make_grid(imgs_train).permute(1,2,0).numpy())
+imgs, captions, targets = next(iter(dl_train))
+imgs,captions,targets = next(iter(dl_val))
+plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0).numpy())
 plt.show()
-plt.imshow(torchvision.utils.make_grid(imgs_val).permute(1,2,0).numpy())
-print(f'{input_cap_train.shape,target_cap_train.shape}')
-print(f'{input_cap_train,target_cap_train=}')
-print(f'{input_cap_val.shape}')
-print(f'{input_cap_val=}')
-print(*tokenizer.batch_decode(input_cap_val.tolist(),remove_special_tokens=False),sep='\n')
-print(*tokenizer.batch_decode(target_cap_val.tolist(),remove_special_tokens=False),sep='\n')
+plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0).numpy())
+print(f'{captions.shape,targets.shape}')
+print(f'{captions,targets=}')
+print(f'{captions.shape}')
+print(f'{captions=}')
+print(*tokenizer.batch_decode(captions.tolist(),remove_special_tokens=False),sep='\n')
+print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep='\n')
 # as you can see, the caption tensors are padded based on the largest sequence in that batch
 # which is a great feature to have as sequences will usually have the least amount of padding
 # and it changes dynamically based on each batch!
@@ -914,14 +952,18 @@ print(*tokenizer.batch_decode(target_cap_val.tolist(),remove_special_tokens=Fals
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'simplenet'
-project_size = 2048
-embd_size = 512 
-hidden_size = 300
+project_size = 2048 # this affects the output a lot!
+# when using hidden_state the embedding_size and hidden_size must be the same
+# as our image_features are used as initial hidden_states so should match
+# for input mode, they can be different as they are fed as the initial token of
+# the embeddings.
+embd_size = 1024
+hidden_size = 1024
 num_layers = 2
 dropout = 0.1
 bidirectional=False
-# (hidden_state gets 99.69% while input achieves 69.0% without bidirectional,
-# if you enable bidirectional, then input's accuracy goes to 99.6 as well)
+# (hidden_state gets 28% while input achieves 20.0% without bidirectional,
+# if you enable bidirectional, then input's accuracy goes to 50/60%as well)
 # the input version has a hardtime learing unless we enable bidirection
 # but this doesnt mean its learning properly, it does reduce the loss drastically
 # but at the expense of generating nonsense at test time. so we use no bidirectional
@@ -955,20 +997,33 @@ transformations_val = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
 ])
 
-dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='train', transformations=transformations_train)
-dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='val', transformations=transformations_val)
+dt_train = COCODataset(coco_root,annotation_dir,
+                       tokenizer=tokenizer, split='train',
+                       transformations=transformations_train)
+
+dt_val = COCODataset(coco_root,annotation_dir,
+                     tokenizer=tokenizer, split='val',
+                     transformations=transformations_val)
 
 # data loaders
-dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
-dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, num_workers=num_workers, collate_fn=normalize_sequences)
+dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, 
+                      pin_memory=True, num_workers=num_workers, 
+                      collate_fn=normalize_sequences)
+
+dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, 
+                    num_workers=num_workers, 
+                    collate_fn=normalize_sequences)
 
 model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
                                    encoder_backend=encoder_backend,
                                    encoder_projection_size=project_size, 
                                    embd_size=embd_size,
+                                   hidden_size=hidden_size,
+                                   num_layers=num_layers,
                                    decoder_dropout=dropout, 
                                    bidirectional=bidirectional,
                                    method=method)
@@ -999,10 +1054,10 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, ga
 # output at each time step to our target sequence. If our target sequence has <pad> tokens 
 # (which it likely will, since our input sequence had them), then we'll be computing the loss
 # with respect to these <pad> tokens unless we tell our loss function to ignore them. 
-# sidenote 3: also note that, when we add this, we may see our accuracy drops drastically
+# sidenote 3: also note that, when we add this, we may see our accuracy drop drastically
 # what used to be around 50,60% at the first few iterations (let alone epochs) now is down
 # to 19,22%. 
-# the drop in accuracy after adding ignore_index might be due to the change in the way accuracy 
+# the drop in accuracy after adding ignore_index is due to the change in the way accuracy 
 # is calculated. Before, when we didn’t use ignore_index, the <pad> tokens were likely considered 
 # in the accuracy calculation. Since the model often correctly predicts <pad> tokens (because there 
 # are so many of them), this can artificially inflate the accuracy.
@@ -1037,7 +1092,10 @@ print(f'{epochs=}')
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
 print(f'{tokenizer.vocab_size=:,}')
-print(f'params: {sum(p.numel() for p in model.parameters()):,}')
+print(f'num_layers = {model.num_layers}')
+print(f'{model.embd_size=}')
+print(f'{model.hidden_size=}')
+print(f'params = {sum(p.numel() for p in model.decoder.parameters()):,}')
 #
 # sidenote:
 # for evaluating the accuracy of our model, we can use accuracy, but thats not really
@@ -1062,16 +1120,16 @@ for epoch in range(epochs):
     accs_train = []
     bleu_scores = []
     hidden_states = None
-    for i,(imgs_train,input_cap_train,target_cap_train) in tqdm(enumerate(dl_train)):
-        imgs_train, input_cap_train, target_cap_train = tuple(t.to(device) for t in (imgs_train, input_cap_train,target_cap_train))
-        outputs,_ = model(imgs_train, input_cap_train, hidden_states)
+    for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
+        imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+        outputs,_ = model(imgs, captions, hidden_states)
         # print(f'{outputs.argmax(dim=-1).shape=}')
         # print(f'{captions.shape=}')
         # print(f'{captions}')
         # 
         # since we have our input in the form of (Batch,Timesteps,Classes),
         # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
-        loss = criterion(outputs.permute(0,2,1), target_cap_train)
+        loss = criterion(outputs.permute(0,2,1), targets)
         # we could also do a reshape and offer both outputs as 2d tensors (and therefore
         # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
         # it contains (B,T,C) and our captions/labels contains (B,T).
@@ -1084,8 +1142,8 @@ for epoch in range(epochs):
         # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
         # print(f'{loss=}')
         losses_train.append(loss.item())
-        accs_train.append((outputs.argmax(dim=-1)==target_cap_train).float().mean().item())
-        bleu_scores.append(calculate_bleu_score(target_cap_train.tolist(), outputs.argmax(dim=-1).tolist()))
+        accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
                 
         optimizer.zero_grad()
         loss.backward()
@@ -1103,19 +1161,19 @@ for epoch in range(epochs):
         accs_val=[]
         bleu_scores_val = []
         hidden_states = None
-        for i,(imgs_val, input_cap_val, target_cap_val) in tqdm(enumerate(dl_val)):
-            imgs_val, input_cap_val, target_cap_val = tuple(t.to(device) for t in (imgs_val, input_cap_val,target_cap_val))
-            outputs,_ = model(imgs_val, input_cap_val, hidden_states)
+        for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+            imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+            outputs,_ = model(imgs, captions, hidden_states)
             # since we have our input in the form of (Batch,Timesteps,Classes),
             # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
-            loss = criterion(outputs.permute(0,2,1), target_cap_val)
+            loss = criterion(outputs.permute(0,2,1), targets)
             losses_val.append(loss.item())
-            accs_val.append((outputs.argmax(dim=-1)==target_cap_val).float().mean().item())
-            print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
-            print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+            accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+            # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
+            # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
-            bleu_scores_val.append(calculate_bleu_score(target_cap_val.tolist(), outputs.argmax(dim=-1).tolist()))
+            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
 
         print(f'{epoch}/{epochs} '
             f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
@@ -1123,29 +1181,29 @@ for epoch in range(epochs):
         print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
 # %%
 with torch.no_grad():
-        model.eval()
-        losses_val=[]
-        accs_val=[]
-        bleu_scores_val = []
-        hidden_states = None
-        for i,(imgs_val, input_cap_val, target_cap_val) in tqdm(enumerate(dl_val)):
-            imgs_val, input_cap_val, target_cap_val = tuple(t.to(device) for t in (imgs_val, input_cap_train,target_cap_train))
-            outputs,_ = model(imgs_val, input_cap_val, hidden_states)
-            # since we have our input in the form of (Batch,Timesteps,Classes),
-            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
-            loss = criterion(outputs.permute(0,2,1), target_cap_val)
-            losses_val.append(loss.item())
-            accs_val.append((outputs.argmax(dim=-1)==target_cap_val).float().mean().item())
-            # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
-            print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
-            
-            # only calculate on validation, becasue its an expensive/time-consuming operation!
-            bleu_scores_val.append(calculate_bleu_score(target_cap_val.tolist(), outputs.argmax(dim=-1).tolist()))
+    model.eval()
+    losses_val=[]
+    accs_val=[]
+    bleu_scores_val = []
+    hidden_states = None
+    for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+        imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+        outputs,_ = model(imgs, captions, hidden_states)
+        # since we have our input in the form of (Batch,Timesteps,Classes),
+        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+        loss = criterion(outputs.permute(0,2,1), targets)
+        losses_val.append(loss.item())
+        accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        print(f'labels: {tokenizer.batch_decode(targets[:3].tolist(),remove_special_tokens=False)}')
+        print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+        
+        # only calculate on validation, becasue its an expensive/time-consuming operation!
+        bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
 
-        print(f'{epoch}/{epochs} '
-            f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
-            f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-        print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+    print(f'{epoch}/{epochs} '
+        f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
+        f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+    print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
 
 #%%
 # so using the image features as the initial hidden_states, 
@@ -1199,7 +1257,7 @@ trans = transforms.Compose([
 ])
 
 image = Image.open(img3)
-generate_caption(model, image, trans, max_length=100, tokenizer=tokenizer,topk=3)
+generate_caption(model, image, trans, max_length=200, tokenizer=tokenizer,topk=1)
 #%%
 torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
 
@@ -1215,10 +1273,10 @@ for epoch in range(epochs):
     hidden_states = None
     losses_train = []
     accs_train = []
-    for (imgs_train,input_cap_train,target_cap_train) in enumerate(dl_train):
-        imgs_train,input_cap_train,target_cap_train = tuple(t.to(device) for t in (imgs_train, input_cap_train,target_cap_train))
-        outputs,_ = model(imgs_train, input_cap_train,target_cap_train, hidden_states)
-        loss = criterion(outputs.permute(0,2,1), input_cap_train,target_cap_train)
+    for (imgs,captions,targets) in enumerate(dl_train):
+        imgs,captions,targets = tuple(t.to(device) for t in (imgs, captions,targets))
+        outputs,_ = model(imgs, captions,targets, hidden_states)
+        loss = criterion(outputs.permute(0,2,1), captions,targets)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1226,8 +1284,8 @@ for epoch in range(epochs):
     scheduler.step()
     with torch.no_grad():
         model.eval()
-        for i,(imgs_train,input_cap_train,target_cap_train) in enumerate(dl_val):
-            imgs_train,input_cap_train,target_cap_train = tuple(t.to(device) for t in (imgs_train, input_cap_train,target_cap_train))
-            outputs,_ = model(imgs_train, input_cap_train,target_cap_train, hidden_states)
-            loss = criterion(outputs.permute(0,2,1), input_cap_train,target_cap_train)
+        for i,(imgs,captions,targets) in enumerate(dl_val):
+            imgs,captions,targets = tuple(t.to(device) for t in (imgs, captions,targets))
+            outputs,_ = model(imgs, captions,targets, hidden_states)
+            loss = criterion(outputs.permute(0,2,1), captions,targets)
        
