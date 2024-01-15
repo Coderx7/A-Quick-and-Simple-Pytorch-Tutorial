@@ -126,42 +126,45 @@ from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simp
 # and easily test them, play with them.
 #! write encoder 
 class Encoder(nn.Module):
-    def __init__(self, backend, embd_size, projection_size=4096) -> None:
+    def __init__(self, backend_name, embd_size, projection_size=4096) -> None:
         super().__init__()
         
-        self.backend = backend.lower()
+        self.backend_name = backend_name.lower()
         # our encoder is a vision model, pretrained on imagenet, we remove the classifier and
-        if 'resnet' in self.backend:
+        if 'res' in self.backend_name:
             # feed the features/flattened of course, to our lstm
-            self.model = models.resnet50(pretrained=True)
+            self.backend = models.resnet50(pretrained=True)
             # before we remove the last layer, lets grab the penultimate dimension which will become
             # our input_size for our lstm model
-            self.penultimate_dim = self.model.fc.in_features
-
-        elif 'simplenet' in self.backend:
+            self.penultimate_dim = self.backend.fc.in_features
+            # lets remove the classifier at the end, the output is (1,2048,1,1) for a batch of 1 image
+            self.backend = nn.Sequential(*list(self.backend.children())[:-1])
+        
+        elif 'simp' in self.backend_name:
             # self.encoder = torch.hub.load("coderx7/simplenet_pytorch", "simplenetv1_9m_m1", pretrained=True)
-            self.model = simplenetv1_5m_m2(pretrained=True)
+            self.backend = simplenetv1_5m_m2(pretrained=True)
             # before we remove the last layer, lets grab the penultimate dimension which will become
             # our input_size for our lstm model
-            self.penultimate_dim = self.model.classifier.in_features*7*7
-
+            self.penultimate_dim = self.backend.classifier.in_features*49
+            self.backend = nn.Sequential(self.backend.features,
+                                        nn.AdaptiveMaxPool2d(7))
+            # print(f'{self.backend=} {self.penultimate_dim=}')
         else:
             raise Exception('unknown model')
-        
-        # lets remove the classifier at the end, the output is (1,2048,1,1) for a batch of 1 image
-        self.model = nn.Sequential(*list(self.model.children())[:-1])
+
         if projection_size:
             # instead of using a simple linear layer to match the lstm embdsize/hiddensize
             # in the decoder, we go for a linear projection to get better performance 
             self.ln = nn.Sequential(nn.Linear(self.penultimate_dim, projection_size),
-                                    nn.Linear(projection_size, embd_size)
+                                    nn.Linear(projection_size, embd_size),
                                    )
         else:
             self.ln = nn.Linear(self.penultimate_dim, embd_size)
     
     def forward(self, imgs):
         # feed the input and flatten the features
-        features = self.model(imgs).view(imgs.size(0), -1)
+        features = self.backend(imgs).view(imgs.size(0), -1)
+        # print(f'{features.shape=}')
         features = self.ln(features)
         return features
 
@@ -191,7 +194,7 @@ class Decoder(nn.Module):
         # and a final classifier, note that since we may be using bidirectional lstm
         # we need to make sure the first dimension takes that into account as well.
         self.fc = nn.Linear(self.direction*self.hidden_size, self.vocab_size)
-        self.ln= nn.LayerNorm(self.direction*self.hidden_size)
+        # self.ln= nn.LayerNorm(self.direction*self.hidden_size)
 
     def forward(self, img_features, sequences, hidden_states=None):
         # feed the sequences to embds 
@@ -252,7 +255,7 @@ class Decoder(nn.Module):
             raise Exception(f"unknown method used ({self.method})")
         
         # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
-        outputs = self.ln(outputs.reshape(-1, self.hidden_size*self.direction))
+        # outputs = self.ln(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally lets calculate the class probablities
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
         # !becomes compatible with our fc layer
@@ -313,7 +316,7 @@ class Decoder(nn.Module):
         # connected layer ensures that the model generates a separate caption for each image,
         # without mixing information between different images and captions in the batch. 
         # ! needs another test to verify this is the case
-        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
+        outputs = F.relu(self.fc(outputs.reshape(-1, self.hidden_size*self.direction)))
         # and finally reshape the output back to (batch, seq, features) form
         # note that we dont use softmax here, as we are planning to use crossentropy
         # and crossentropy expects logits, and applies the softamx itself
@@ -322,7 +325,7 @@ class Decoder(nn.Module):
         return outputs, final_hiddenstate
 
 
-enc = Encoder('simplenet',512)
+enc = Encoder('simple',512)
 dec = Decoder(vocab_size=100, 
               embd_size=512,
               hidden_size=512,
@@ -354,6 +357,7 @@ class EncoderDecoderImageCaption(nn.Module):
         self.encoder = Encoder(self.encoder_backend,
                                self.embd_size, 
                                self.encoder_projection_size)
+        
         self.decoder = Decoder(self.vocab_size, 
                                self.embd_size,
                                self.hidden_size, 
@@ -393,8 +397,8 @@ class EncoderDecoderImageCaption(nn.Module):
                 output_str.append(caption_str)
                 # print(caption_str)
         return ' '.join(output_str)
-            
-    
+
+
 # lets test
 x_img = torch.randn(size=(2,3,224,224))
 x_captions = torch.randint(0,100,size=(2,30))
@@ -829,6 +833,10 @@ class COCODataset(nn.Module):
         self.img_dict = {int(pathlib.Path(f).stem):f for f in glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg"))}
     
     def __getitem__(self, index):
+        #! note that there are multiple captions for the same image! which we need to account for!
+        # !the easiest way would be to use the mscoco api module and the pytorch's dataset version
+        # !we can leave this as is, as an example, but for the actual implementation go for the correct dataset!
+        # !note check the captions and make sure, all annotations are retrieved for the same image id!
         img_id = self.captions[index]["image_id"]
         img = Image.open(self.img_dict[img_id]).convert('RGB')
         img = self.transformations(img)
@@ -844,7 +852,9 @@ class COCODataset(nn.Module):
         return img, caption_idxs 
             
     def __len__(self):
-        return len(self.img_dict)
+        # note that there are several captions per image, so we use captions length
+        # to get a much more accurate depiction of our data
+        return len(self.captions)
 
 dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='train')
 dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='val')
@@ -921,6 +931,7 @@ def normalize_sequences(image_caption_list):
     input_captions  = pad_sequence(input_captions, batch_first=True, padding_value=0)
     target_captions = pad_sequence(target_captions, batch_first=True, padding_value=0)
     return images, input_captions, target_captions
+
 # lets test 
 dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
 dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
@@ -957,8 +968,8 @@ project_size = 2048 # this affects the output a lot!
 # as our image_features are used as initial hidden_states so should match
 # for input mode, they can be different as they are fed as the initial token of
 # the embeddings.
-embd_size = 1024
-hidden_size = 1024
+embd_size = 512
+hidden_size = 512
 num_layers = 2
 dropout = 0.1
 bidirectional=False
@@ -982,7 +993,7 @@ bidirectional=False
 method = 'hidden_state' # hidden_state or input 
 epochs = 20
 interval = 100
-batch_size = 96
+batch_size = 64
 num_workers = 8
 
 transformations_train = transforms.Compose([
@@ -1089,6 +1100,8 @@ def calculate_bleu_score(ref_caps, gen_caps):
 
 print(f'{device=}')
 print(f'{epochs=}')
+print(f'{model.method=}')
+print(f'{model.encoder_backend=}')
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
 print(f'{tokenizer.vocab_size=:,}')
@@ -1144,11 +1157,11 @@ for epoch in range(epochs):
         losses_train.append(loss.item())
         accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
         bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
-                
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
+
         if i%interval==0:
             print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
             print(f'BLEU score: {np.mean(bleu_scores):.4f}')
@@ -1253,39 +1266,17 @@ trans = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
 ])
 
-image = Image.open(img3)
-generate_caption(model, image, trans, max_length=200, tokenizer=tokenizer,topk=1)
+image = Image.open(img1)
+generate_caption(model, image, trans, max_length=200, tokenizer=tokenizer,topk=3)
 #%%
-torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
+# torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
 
 
 #%%
 # %%
 # in the name of God, the most compassionate the most merciful
-# simple vanilla RNN implementation 
-
-
-for epoch in range(epochs):
-    model.train()
-    hidden_states = None
-    losses_train = []
-    accs_train = []
-    for (imgs,captions,targets) in enumerate(dl_train):
-        imgs,captions,targets = tuple(t.to(device) for t in (imgs, captions,targets))
-        outputs,_ = model(imgs, captions,targets, hidden_states)
-        loss = criterion(outputs.permute(0,2,1), captions,targets)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    # update the lr    
-    scheduler.step()
-    with torch.no_grad():
-        model.eval()
-        for i,(imgs,captions,targets) in enumerate(dl_val):
-            imgs,captions,targets = tuple(t.to(device) for t in (imgs, captions,targets))
-            outputs,_ = model(imgs, captions,targets, hidden_states)
-            loss = criterion(outputs.permute(0,2,1), captions,targets)
-       
+      
