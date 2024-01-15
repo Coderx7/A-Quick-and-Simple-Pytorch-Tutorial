@@ -652,8 +652,12 @@ class Tokenizer():
         assert len(all_captions) == len(train_captions) + len(val_captions), 'size mismatch'
         
         self.min_length, self.max_length, self.seq_stats = self._calculate_caption_statistics(all_captions)
-        
-        words = set(word 
+        #! make the whole words lowercase before creating the vocabs! this should drastically
+        #! lower our vocabsize and thus model parameters and also improve performance hopefully!
+        # by default we have 37,937 words, but if
+        # we use .lower() we'll get 29,629 words.
+        # thats around 8k fewer words/classes
+        words = set(word.lower()
                     for caption in all_captions 
                     for word in caption.split())
         # since we plan on padding our input with 0s, it would be better to set 0 as the end
@@ -713,7 +717,7 @@ class Tokenizer():
 tokenizer = Tokenizer(captions_train, captions_val)
 single_text = "Hello world! this is a test baby"
 batch_text = ["this wasnt a dog in a park!", "that was definitely a dog in the park!"]
-
+print(f'{tokenizer.vocab_size=:,}')
 print(tokenizer.encode(single_text))
 print(tokenizer.decode(tokenizer.encode(single_text)))
 
@@ -1102,8 +1106,8 @@ print(f'{device=}')
 print(f'{epochs=}')
 print(f'{model.method=}')
 print(f'{model.encoder_backend=}')
-print(f'{len(dl_train)=}')
-print(f'{len(dl_val)=}')
+print(f'{len(dl_train)=:,}')
+print(f'{len(dl_val)=:,}')
 print(f'{tokenizer.vocab_size=:,}')
 print(f'num_layers = {model.num_layers}')
 print(f'{model.embd_size=}')
@@ -1135,33 +1139,39 @@ for epoch in range(epochs):
     hidden_states = None
     for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
         imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
-        outputs,_ = model(imgs, captions, hidden_states)
-        # print(f'{outputs.argmax(dim=-1).shape=}')
-        # print(f'{captions.shape=}')
-        # print(f'{captions}')
-        # 
-        # since we have our input in the form of (Batch,Timesteps,Classes),
-        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
-        loss = criterion(outputs.permute(0,2,1), targets)
-        # we could also do a reshape and offer both outputs as 2d tensors (and therefore
-        # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
-        # it contains (B,T,C) and our captions/labels contains (B,T).
-        # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
-        # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
-        # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
-        # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
-        # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
-        # if we are doing multi-class classification problem (which we are, but with sequences)
-        # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
-        # print(f'{loss=}')
-        losses_train.append(loss.item())
-        accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
-        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+        try:
+            outputs,_ = model(imgs, captions, hidden_states)
+            # print(f'{outputs.argmax(dim=-1).shape=}')
+            # print(f'{captions.shape=}')
+            # print(f'{captions}')
+            # 
+            # since we have our input in the form of (Batch,Timesteps,Classes),
+            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
+            # print(f'{outputs.shape=} {captions.shape=}')
+            loss = criterion(outputs.permute(0,2,1), targets)
+            # we could also do a reshape and offer both outputs as 2d tensors (and therefore
+            # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
+            # it contains (B,T,C) and our captions/labels contains (B,T).
+            # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
+            # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
+            # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
+            # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
+            # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
+            # if we are doing multi-class classification problem (which we are, but with sequences)
+            # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
+            # print(f'{loss=}')
+            #! make the whole words lowercase before creating the vocabs! this should drastically
+            #! lower our vocabsize and thus model parameters and also improve performance hopefully!
+            losses_train.append(loss.item())
+            accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+            bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        except RuntimeError as ex:
+            print(f'{ex}')
+            
         if i%interval==0:
             print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
             print(f'BLEU score: {np.mean(bleu_scores):.4f}')
