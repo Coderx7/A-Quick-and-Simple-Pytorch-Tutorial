@@ -676,7 +676,7 @@ class Tokenizer():
         
         self.itow = dict(enumerate(self.special_tokens))
         # incase we add new special tokens, lets dynamically update the counts
-        self.itow.update(enumerate(words, start=len(self.special_tokens)+1))
+        self.itow.update(enumerate(words, start=len(self.special_tokens)))
         self.wtoi = {v:k for k,v in self.itow.items()}
         self.vocab_size = len(self.wtoi)
 
@@ -715,6 +715,7 @@ class Tokenizer():
         return min_len, max_len, seq_lengths
     
 tokenizer = Tokenizer(captions_train, captions_val)
+print(f'{tokenizer.itow=}')
 single_text = "Hello world! this is a test baby"
 batch_text = ["this wasnt a dog in a park!", "that was definitely a dog in the park!"]
 print(f'{tokenizer.vocab_size=:,}')
@@ -853,6 +854,7 @@ class COCODataset(nn.Module):
         # we do that using the colate_fn argument and pass a function that handles
         # these kinds of stuff, so the dataset need to return the actual data it contains,
         # batching chores are offloaded to the dataloader.
+        # print(f'{index}: {img_id}-{caption_idxs.shape}-{img.shape}')
         return img, caption_idxs 
             
     def __len__(self):
@@ -964,6 +966,8 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # criterion 
 # scheduler
 # a measure/score for how good our captions is (i.e use BLEU)
+# enable debugging
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'simplenet'
@@ -1101,7 +1105,6 @@ def calculate_bleu_score(ref_caps, gen_caps):
     return corpus_bleu([[ref.split()] for ref in refs],
                        [gen.split() for gen in gens])
 
-
 print(f'{device=}')
 print(f'{epochs=}')
 print(f'{model.method=}')
@@ -1132,52 +1135,46 @@ print(f'params = {sum(p.numel() for p in model.decoder.parameters()):,}')
 for epoch in range(epochs):
     
     model.train()
-    # hidden_states = None
     losses_train = []
     accs_train = []
     bleu_scores = []
     hidden_states = None
     for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
         imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
-        try:
-            outputs,_ = model(imgs, captions, hidden_states)
-            # print(f'{outputs.argmax(dim=-1).shape=}')
-            # print(f'{captions.shape=}')
-            # print(f'{captions}')
-            # 
-            # since we have our input in the form of (Batch,Timesteps,Classes),
-            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
-            # print(f'{outputs.shape=} {captions.shape=}')
-            loss = criterion(outputs.permute(0,2,1), targets)
-            # we could also do a reshape and offer both outputs as 2d tensors (and therefore
-            # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
-            # it contains (B,T,C) and our captions/labels contains (B,T).
-            # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
-            # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
-            # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
-            # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
-            # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
-            # if we are doing multi-class classification problem (which we are, but with sequences)
-            # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
-            # print(f'{loss=}')
-            #! make the whole words lowercase before creating the vocabs! this should drastically
-            #! lower our vocabsize and thus model parameters and also improve performance hopefully!
-            losses_train.append(loss.item())
-            accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
-            bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+        outputs,_ = model(imgs, captions, hidden_states)
+        # print(f'{outputs.argmax(dim=-1).shape=}')
+        # print(f'{captions.shape=}')
+        # print(f'{captions}')
+        # 
+        # since we have our input in the form of (Batch,Timesteps,Classes),
+        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
+        # print(f'{outputs.shape=} {captions.shape=}')
+        loss = criterion(outputs.permute(0,2,1), targets)
+        # we could also do a reshape and offer both outputs as 2d tensors (and therefore
+        # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
+        # it contains (B,T,C) and our captions/labels contains (B,T).
+        # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
+        # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
+        # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
+        # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
+        # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
+        # if we are doing multi-class classification problem (which we are, but with sequences)
+        # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
+        # print(f'{loss=}')
+        losses_train.append(loss.item())
+        accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        except RuntimeError as ex:
-            print(f'{ex}')
-            
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
         if i%interval==0:
             print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
             print(f'BLEU score: {np.mean(bleu_scores):.4f}')
     # update the lr    
     scheduler.step()
-    
+
     with torch.no_grad():
         model.eval()
         losses_val=[]
