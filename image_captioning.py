@@ -3,11 +3,11 @@
 # and see how we can implement this using an LSTM and later on 
 # a transformer model. 
 # to give you a short summary of what we are dealing with here,
-# image captioning is a subfield of artificial intelligence that 
+# I need to say that image captioning is a subfield of ai that 
 # intersects computer vision and natural language processing. 
-# The objective is to develop models that can generate human-like
+# The objective here is to develop a model that can generate human-like
 # textual descriptions for visual input, such as images or videos. 
-# This task is non-trivial, as it requires the model to understand 
+# This is a hard task as it requires the model to understand 
 # both the content and context of the visual input, and express that
 # understanding in natural language.
 # we have come a long way since the early attempts at this task. 
@@ -19,32 +19,24 @@
 # corresponding captions. This combination, often referred to as an 
 # encoder-decoder framework, has been the backbone of many state-of-the-art
 # image captioning models.
-# in recent years, the trend has shifted towards end-to-end trainable models 
-# and the use of attention mechanisms. Attention allows the model to weigh the
+# in recent years, however, the trend has shifted towards end-to-end trainable models 
+# and the use of attention mechanisms. Attention if you recall, allows the model to weigh the
 # importance of different features when generating each word in the caption, 
-# leading to more accurate and contextually relevant captions. The introduction 
-# of Transformer architectures, which rely entirely on self-attention mechanisms,
-# further improved the performance of image captioning systems.
+# leading to more accurate and contextually relevant captions. 
+# The introduction of Transformer architectures, which rely entirely on
+# self-attention mechanisms, further improved the performance of image captioning systems.
 # The latest trend in image captioning is the use of vision-language pre-training.
 # In this approach, models are pre-trained on large-scale image-text datasets, and
 # then fine-tuned for the image captioning task. This has led to state-of-the-art 
 # performance on several benchmark datasets.
 # in short: 
-# This is an intriguing area of artificial intelligence that intersects computer vision
-# and natural language processing. The goal is to create models that can generate 
-# human-like textual descriptions for visual input, such as images or videos.
-# This task is challenging as it requires the model to understand both the content
-# and context of the visual input, and express that understanding in natural language. 
-# From early template-based methods to the current state-of-the-art Transformer models,
-# the journey of image captioning has been marked by significant milestones and continues
-# to be an active area of research.
 # so now that we have the introduction out of the way, we need to implement one. 
 # we need datasets. we can create one ourselves, or we can use the common ones out there
 # we chose the latter one, to both familiarize ourseleves with such datasets and then
 # with the new information we can build ours the way we want it, if these datasets dont cut it!
-# MS-COCO with 120K images, Conceptual Captions with 3.3 million images scarped from the web,
-# and The Remote Sensing Image Captioning Dataset (RSICD) with 10K+ images are some of the most
-# commond atasest used for image captioning. 
+# MS-COCO with 120K images(118k,5k for trainval), Conceptual Captions with 3.3 million images 
+# scarped from the web, Flicker8K, PascalVOC(very old), and The Remote Sensing Image Captioning 
+# Dataset (RSICD) with 10K+ images are some of the most common datasest used for image captioning. 
 # we will be using MS-COCO as its easier and can be used offline. ConceptualCaptions dataset
 # has image-url, description pair, which works fine if you have stable internet connection,
 # or want to save 5m images (2.2 labeled, and 3.3 unlabled) images on you hdd. 
@@ -94,7 +86,7 @@ from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simp
 # or directly from : https://ln5.sync.com/dl/0324da1d0/rmi7abjx-2dj4ktii-d9jcwgc5-s7fwwrb7
 # its around 4.6GB
 # !edit: ok, I downloaded the coco dataset and used the 2017 version here. 
-# the minicoco was for detection I guess!  
+# the minicoco was for detection I guess!
 
 # lets first see how the model should work.
 # the idea is simple, we need a model to get the image features,
@@ -109,6 +101,7 @@ from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simp
 # to the lstm hidden_state.(that is use alinear layer before lstm, this way we can decouple
 # the dimensions of our cnn features, and hidden_state size which is a good thing)
 # its a good technique and we use it here as well. this approach gives us the best results by far.
+# 
 # the second(older) way is that the image-features are fed as the first timestep of the input
 # description, and then fed the result to the lstm. in this case, the imagefeature
 # is simply prepended to the sequence, and the last token is also removed so the number
@@ -120,7 +113,7 @@ from simplenet import simplenetv1_9m_m1,simplenetv1_9m_m2,simplenetv1_5m_m1,simp
 # sidenote, usually lstm with attention is used to maximize the performance, but
 # we only use the lstm to keep things simple, as ultimately we will be testing with
 # transformers that have superior performance compared to lstm variant anyway.
-# I order to have better management over our code, its better to separate our encoder
+# In order to have better management over our code, its better to separate our encoder
 # and decoder parts and then use them as standalone modules in our actual model. 
 # this allows us to be able to use different implementations/strategies for either of them
 # and easily test them, play with them.
@@ -146,9 +139,9 @@ class Encoder(nn.Module):
             # before we remove the last layer, lets grab the penultimate dimension which will become
             # our input_size for our lstm model
             self.penultimate_dim = self.backend.classifier.in_features*49
-            self.backend = nn.Sequential(self.backend.features,
-                                        nn.AdaptiveMaxPool2d(7))
-            # print(f'{self.backend=} {self.penultimate_dim=}')
+            # self.backend = nn.Sequential(self.backend.features,
+            #                             nn.AdaptiveMaxPool2d(7))
+            self.backend = nn.Sequential(*list(self.backend.children())[:-1])
         else:
             raise Exception('unknown model')
 
@@ -164,7 +157,6 @@ class Encoder(nn.Module):
     def forward(self, imgs):
         # feed the input and flatten the features
         features = self.backend(imgs).view(imgs.size(0), -1)
-        # print(f'{features.shape=}')
         features = self.ln(features)
         return features
 
@@ -191,6 +183,8 @@ class Decoder(nn.Module):
                                dropout=dropout,
                                bidirectional=bidirectional,
                                batch_first=True)
+        
+        # self.drpout = nn.Dropout(self.dropout)
         # and a final classifier, note that since we may be using bidirectional lstm
         # we need to make sure the first dimension takes that into account as well.
         self.fc = nn.Linear(self.direction*self.hidden_size, self.vocab_size)
@@ -199,7 +193,7 @@ class Decoder(nn.Module):
     def forward(self, img_features, sequences, hidden_states=None):
         # feed the sequences to embds 
         embds = self.embd(sequences)
-        if 'input' in self.method.lower():
+        if self.method.lower() in ['in','inp','input']:
             # add the img_features to the sequence as the first timestep/token(start token)
             # and remove the end token, 
             # extra-explanation: 
@@ -208,9 +202,9 @@ class Decoder(nn.Module):
             # concat it along the second dim (i.e. the sequence/timestep dim) which is 1, and
             # since its a single token its 1 obviously!
             embds = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
-            outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+            # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
         
-        elif 'hidden_state' in self.method.lower():
+        elif self.method.lower() in ['h','ht','hidden','hidden_state']:
             # note that since at test time we want to be able to generate description
             # we need to keep generating tokens to produce the final sentence. 
             # recall that lstm is nothing but a loop over input sequences
@@ -249,21 +243,20 @@ class Decoder(nn.Module):
                 # works better than simply using zeros
                 # c_0 = torch.stack([img_features.new_zeros(*img_features.shape) for _ in range(self.direction*self.num_layers)])
                 hidden_states = (h_0, c_0)
-            outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+            # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
 
         else:
             raise Exception(f"unknown method used ({self.method})")
         
-        # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+        outputs, final_hiddenstate = self.decoder(embds, hidden_states)
         # outputs = self.ln(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally lets calculate the class probablities
         # note that, -1 merges the batch and sequence dimensions, and the out_features dim
-        # !becomes compatible with our fc layer
+        # becomes compatible with our fc layer
         # why not simply using 
         # outputs = self.fc(outputs)
         #! why did I do all of this? why?
-        #! explanation : 
-        # note that pytorch’' nn.Linear layers can accept inputs of more than two dimensions. 
+        # note that pytorch's nn.Linear layers can accept inputs of more than two dimensions. 
         # they apply the linear transformation to the last dimension and consider all other 
         # dimensions as part of the batch.
         # for example, if we have an input tensor of shape (batch_size,seq_len, num_features),
@@ -316,7 +309,7 @@ class Decoder(nn.Module):
         # connected layer ensures that the model generates a separate caption for each image,
         # without mixing information between different images and captions in the batch. 
         # ! needs another test to verify this is the case
-        outputs = F.relu(self.fc(outputs.reshape(-1, self.hidden_size*self.direction)))
+        outputs =self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally reshape the output back to (batch, seq, features) form
         # note that we dont use softmax here, as we are planning to use crossentropy
         # and crossentropy expects logits, and applies the softamx itself
@@ -657,7 +650,7 @@ class Tokenizer():
         # by default we have 37,937 words, but if
         # we use .lower() we'll get 29,629 words.
         # thats around 8k fewer words/classes
-        words = set(word.lower()
+        words = set(word
                     for caption in all_captions 
                     for word in caption.split())
         # since we plan on padding our input with 0s, it would be better to set 0 as the end
@@ -698,13 +691,13 @@ class Tokenizer():
     def batch_encode(self, input_text_batch, add_special_tokens=True):
         return [self.encode(text,add_special_tokens) for text in input_text_batch]
     
-    def decode(self, input_idxs):
-        return [self.itow[idx] for idx in input_idxs]
-    
-    def batch_decode(self, input_idxs_batch, use_text=True, remove_special_tokens=True):
+    def decode(self, input_idxs, to_str=False, remove_special_tokens=False):
         token_list = self.special_tokens if remove_special_tokens else []
-        f = lambda x: reduce(lambda text, token: text.replace(token, ""), token_list, ' '.join(self.decode(x)))
-        return [f(idx) if use_text else self.decode(idx) for idx in input_idxs_batch]
+        output_list = [word for idx in input_idxs if (word:=self.itow[idx]) not in token_list]
+        return ' '.join(output_list) if to_str else output_list
+    
+    def batch_decode(self, input_idxs_batch, to_str=False, remove_special_tokens=False):
+        return [self.decode(idx, to_str, remove_special_tokens) for idx in input_idxs_batch]
                 
     def _calculate_caption_statistics(self, all_captions):
         # lets calculate max and min seq_length
@@ -723,10 +716,11 @@ print(tokenizer.encode(single_text))
 print(tokenizer.decode(tokenizer.encode(single_text)))
 
 print(*tokenizer.batch_encode(batch_text), sep='\n')
-print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text),remove_special_tokens=False), sep='\n')
+print(*tokenizer.batch_decode(tokenizer.batch_encode(batch_text),to_str=True, remove_special_tokens=False), sep='\n')
 
 idxs = tokenizer.encode(single_text)
 print(f'{idxs}')
+# pad the input with max-length 0f 100. i.e. anything less than 100, will be padded with 0s
 idxs_padded = F.pad(torch.tensor(idxs), pad=[0,100-len(idxs)],mode='constant',value=0)
 print(f'{idxs_padded}')
 
@@ -838,10 +832,7 @@ class COCODataset(nn.Module):
         self.img_dict = {int(pathlib.Path(f).stem):f for f in glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg"))}
     
     def __getitem__(self, index):
-        #! note that there are multiple captions for the same image! which we need to account for!
-        # !the easiest way would be to use the mscoco api module and the pytorch's dataset version
-        # !we can leave this as is, as an example, but for the actual implementation go for the correct dataset!
-        # !note check the captions and make sure, all annotations are retrieved for the same image id!
+        # note that there are multiple captions for the same image! which we need to account for!
         img_id = self.captions[index]["image_id"]
         img = Image.open(self.img_dict[img_id]).convert('RGB')
         img = self.transformations(img)
@@ -854,12 +845,10 @@ class COCODataset(nn.Module):
         # we do that using the colate_fn argument and pass a function that handles
         # these kinds of stuff, so the dataset need to return the actual data it contains,
         # batching chores are offloaded to the dataloader.
-        # print(f'{index}: {img_id}-{caption_idxs.shape}-{img.shape}')
         return img, caption_idxs 
-            
+
     def __len__(self):
         # note that there are several captions per image, so we use captions length
-        # to get a much more accurate depiction of our data
         return len(self.captions)
 
 dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenizer, split='train')
@@ -867,10 +856,10 @@ dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenize
 
 def show_image(img,caption):
     plt.imshow(img.permute(1,2,0).numpy())
-    plt.title(tokenizer.decode(caption.tolist()))
+    plt.title(tokenizer.decode(caption.tolist(),True,True))
 
-print(f'{len(dt_train)=}')
-print(f'{len(dt_val)=}')
+print(f'{len(dt_train)=:,}')
+print(f'{len(dt_val)=:,}')
 img,caption = dt_train[1]
 img_val,caption_val = dt_val[1]
 show_image(img, caption)
@@ -970,7 +959,7 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-encoder_backend = 'simplenet'
+encoder_backend = 'resnet'
 project_size = 2048 # this affects the output a lot!
 # when using hidden_state the embedding_size and hidden_size must be the same
 # as our image_features are used as initial hidden_states so should match
@@ -1000,7 +989,7 @@ bidirectional=False
 # lead to overfitting, especially if the amount of training data is limited.
 method = 'hidden_state' # hidden_state or input 
 epochs = 20
-interval = 100
+interval = 500
 batch_size = 64
 num_workers = 8
 
@@ -1214,8 +1203,8 @@ with torch.no_grad():
         loss = criterion(outputs.permute(0,2,1), targets)
         losses_val.append(loss.item())
         accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
-        print(f'labels: {tokenizer.batch_decode(targets[:3].tolist(),remove_special_tokens=False)}')
-        print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+        print(f'labels: {tokenizer.batch_decode(targets[:3].tolist(),to_str=True, remove_special_tokens=False)}')
+        print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),to_str=True, remove_special_tokens=False)}')
         
         # only calculate on validation, becasue its an expensive/time-consuming operation!
         bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
@@ -1233,34 +1222,40 @@ with torch.no_grad():
 # as the first sequence of the input.
 # 
 # lets test this and see how it works 
-def generate_caption(model, pil_image, trans, max_length, tokenizer:Tokenizer,topk=3 ):
-    plt.imshow(pil_image)
-    # plt.imshow(trans(pil_image).permute(1,2,0).numpy())
+def generate_caption(model, img_list, trans, max_length, tokenizer:Tokenizer,topk=3 ):
+    fig,axs = plt.subplots(1,len(img_list),sharex='none',sharey='none')
+    for i in range(len(img_list)):
+        axs[i].imshow(img_list[i])
     plt.show()
+    img_captions=[]
+    
     with torch.no_grad():
-        model.eval()
-        hidden_states = None
-        output_lst = []
-        caption_str = tokenizer._start
-        device = next(model.parameters()).device
-        image_features = model.encoder(trans(pil_image).unsqueeze(0).to(device))
-        print(f'{image_features.shape=}')
-        caption = torch.tensor(tokenizer.encode(caption_str, False), device=device).view(1,-1).long()
-        
-        for i in range(max_length):
-            outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
-            # grab topk words
-            probs, indexes = outputs.softmax(dim=-1).topk(k=topk,dim=-1)
-            probs = probs.view(probs.size(-1))
-            indexes = indexes.view(indexes.size(-1))
-            idx = indexes[torch.multinomial(probs.softmax(dim=-1),1, replacement=True)]
-            caption_str = tokenizer.decode([idx.item()])[0]
-            # if caption_str != tokenizer._start: 
-            output_lst.append(caption_str)
-            caption = torch.tensor(idx.item(), device=device).view(1,-1).long()
-            if caption_str == tokenizer._end:
-                break
-    return ' '.join(output_lst)
+        for img in img_list:
+            model.eval()
+            hidden_states = None
+            output_lst = []
+            caption_str = tokenizer._start
+            device = next(model.parameters()).device
+
+            image_features = model.encoder(trans(img).unsqueeze(0).to(device))
+            caption = torch.tensor(tokenizer.encode(caption_str, False), device=device).view(1,-1).long()
+
+            for i in range(max_length):
+                outputs, hidden_states = model.decoder(image_features, caption, hidden_states)
+                # grab topk words
+                probs, indexes = outputs.softmax(dim=-1).topk(k=topk,dim=-1)
+                probs = probs.view(probs.size(-1))
+                indexes = indexes.view(indexes.size(-1))
+                idx = indexes[torch.multinomial(probs.softmax(dim=-1),1, replacement=True)]
+                caption_str = tokenizer.decode([idx.item()])[0]
+                # if caption_str != tokenizer._start: 
+                output_lst.append(caption_str)
+                caption = torch.tensor(idx.item(), device=device).view(1,-1).long()
+                if caption_str == tokenizer._end:
+                    break
+            img_captions.append(' '.join(output_lst))
+
+        return img_captions
 
 img1 = './pretty_mage1.jpeg'
 img2 = './pretty_mage2.jpeg'
@@ -1277,8 +1272,8 @@ trans = transforms.Compose([
                          std=[0.229, 0.224, 0.225]),
 ])
 
-image = Image.open(img1)
-generate_caption(model, image, trans, max_length=200, tokenizer=tokenizer,topk=3)
+images = [Image.open(img) for img in [img1, img2,img3,img4,img5]]
+generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=3)
 #%%
 # torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
 
