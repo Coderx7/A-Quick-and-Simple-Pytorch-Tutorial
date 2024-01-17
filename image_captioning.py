@@ -885,9 +885,9 @@ class OurColateFN():
         self.end_idx = end_token
 
     def __call__(self, batch):
-        return self.normalize_sequences(batch)
+        return self._normalize_sequences(batch)
     
-    def normalize_sequences(self, caption_list):
+    def _normalize_sequences(self, caption_list):
         # note that we could go on and add truncation and padding to our tokenizer
         # so it gave us the truncated,padded sequence when encoding. truncation for
         # sequences that exceed a specific max_length we specify based on our findings
@@ -958,7 +958,7 @@ class OurColateFN():
         return images, input_captions, target_captions
     
 # now lets test 
-trunc_len = 10
+trunc_len = 15
 end_token = tokenizer.encode(tokenizer._end)
 dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
 dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
@@ -979,11 +979,7 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # as you can see, the caption tensors are padded based on the largest sequence in that batch
 # which is a great feature to have as sequences will usually have the least amount of padding
 # and it changes dynamically based on each batch!
-# %%
-lst = list(range(8))
-lst2 = list(range(20))
-trunc=15
-lst2+[5]
+
 #%%
 # now we have everything in place lets write our training loop
 # we need 
@@ -1015,6 +1011,7 @@ project_size = 2048 # this affects the output a lot!
 # as our image_features are used as initial hidden_states so should match
 # for input mode, they can be different as they are fed as the initial token of
 # the embeddings.
+end_token=tokenizer.encode(tokenizer._end)
 embd_size = 512
 hidden_size = 512
 num_layers = 2
@@ -1050,12 +1047,17 @@ bidirectional=False
 #! used relu before outputs comes out of lstm, 20.68, bad text genertion and semantic understanding
 #! > no relu + with layernorm(took 4:19:53 to finish 20 epochs.) -> achieved 25.27%
 #! use 29k vocab with default/or best config to see how much .lower affects performance
-#! now lets use truncation and set it based on the majority of sequence length
+#! now lets use truncation and set it based on the majority of sequence length > 35.44
+# the truncation not only boosted our accuracy by nearly 10%! 
+# it also lowered our vram consumption from 9Gig down to 3.9gig! 
+# and it lowered the training time (down to ~3:30 hours)
+trunc_len=15
 method = 'ht' # hidden_state or input 
 epochs = 20
 interval = 500
 batch_size = 64
 num_workers = 8
+
 
 transformations_train = transforms.Compose([
     transforms.Resize(224),
@@ -1084,11 +1086,11 @@ dt_val = COCODataset(coco_root,annotation_dir,
 # data loaders
 dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, 
                       pin_memory=True, num_workers=num_workers, 
-                      collate_fn=normalize_sequences)
+                      collate_fn=OurColateFN(trunc_len,end_token))
 
 dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, 
                     num_workers=num_workers, 
-                    collate_fn=normalize_sequences)
+                    collate_fn=OurColateFN(trunc_len,end_token))
 
 model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
                                    encoder_backend=encoder_backend,
@@ -1153,6 +1155,7 @@ def calculate_bleu_score(ref_caps, gen_caps):
 
 print(f'{device=}')
 print(f'{epochs=}')
+print(f'{trunc_len=}')
 print(f'{model.method=}')
 print(f'{model.encoder_backend=}')
 print(f'{len(dl_train)=:,}')
@@ -1246,6 +1249,10 @@ for epoch in range(epochs):
             f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
             f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
         print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+
+hours, rem = divmod(time.time() - start, 3600)
+minutes, seconds = divmod(rem, 60)
+print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
 # %%
 with torch.no_grad():
     model.eval()
