@@ -637,7 +637,7 @@ print(idxs_to_words(words_to_idxs("Hello world! this is a test baby")))
 from functools import reduce
 class Tokenizer():
            
-    def __init__(self, train_captions, val_captions) -> None:
+    def __init__(self, train_captions, val_captions, use_lower=True) -> None:
         
         all_captions = []
         for row in itertools.chain(train_captions, val_captions):
@@ -652,7 +652,7 @@ class Tokenizer():
         # by default we have 37,937 words, but if
         # we use .lower() we'll get 29,629 words.
         # thats around 8k fewer words/classes
-        words = set(word
+        words = set(word.lower() if use_lower else word
                     for caption in all_captions 
                     for word in caption.split())
         # since we plan on padding our input with 0s, it would be better to set 0 as the end
@@ -1003,9 +1003,9 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # need more embedding features/dims, hidden_state size, or even data  to begin with , 
 # we might need dropout if we overfit there as well.
 
-
+tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-encoder_backend = 'resnet'
+encoder_backend = 'resnet' # resent50 works the best, simplenet is just there as another test model
 project_size = 2048 # this affects the output a lot!
 # when using hidden_state the embedding_size and hidden_size must be the same
 # as our image_features are used as initial hidden_states so should match
@@ -1014,7 +1014,7 @@ project_size = 2048 # this affects the output a lot!
 end_token=tokenizer.encode(tokenizer._end)
 embd_size = 512
 hidden_size = 512
-num_layers = 2
+num_layers = 1
 dropout = 0.1
 bidirectional=False
 # (hidden_state gets 28% while input achieves 20.0% without bidirectional,
@@ -1050,7 +1050,16 @@ bidirectional=False
 #! now lets use truncation and set it based on the majority of sequence length > 35.44
 # the truncation not only boosted our accuracy by nearly 10%! 
 # it also lowered our vram consumption from 9Gig down to 3.9gig! 
-# and it lowered the training time (down to ~3:30 hours)
+# and it lowered the training time (down to ~4:00 hours)
+#! now using smaller vocab by using .lower() as the default ->
+# the vram usage is at 3.7Gb, the trainig is faster becasue the # params is 10m less!
+#(43m vs 34.5m! ), and the accuracy is higher right off the bat, (at 2 epochs 34.15 vs 35.52)
+# ultimately it finished at 36.79% at 20 epochs. (time elapsed: 03:57:13.65)
+# However, the description generation quality is not as good as the cased version(that is when we use all cases) the uncased version(.lower() version)
+# in my opinion, it starts all the sentences with <unk>, which seems to be needing early stopping
+# or a bit more regularization or training time. 
+#! now lets use simplenet and 1 lstm layer
+# achieves higher accuracy but 
 trunc_len=15
 method = 'ht' # hidden_state or input 
 epochs = 20
@@ -1344,10 +1353,23 @@ trans = transforms.Compose([
 ])
 
 images = [Image.open(img) for img in [img1, img2,img3,img4,img5]]
-generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=1)
+generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=3)
 #%%
 # torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
-# 
+# training log : 35% valacc 
+# device='cuda'
+# epochs=20
+# trunc_len=15
+# model.method='ht'
+# model.encoder_backend='resnet'
+# len(dl_train)=9,247
+# len(dl_val)=391
+# tokenizer.vocab_size=37,937
+# num_layers = 2
+# model.embd_size=512
+# model.hidden_size=512
+# params = 43,087,921
+
 #%%
 # %%
 # in the name of God, the most compassionate the most merciful
