@@ -53,6 +53,7 @@ import time
 import os
 import glob
 import pathlib
+from typing import Any
 import numpy as np
 import json
 import string
@@ -188,6 +189,7 @@ class Decoder(nn.Module):
         # and a final classifier, note that since we may be using bidirectional lstm
         # we need to make sure the first dimension takes that into account as well.
         self.fc = nn.Linear(self.direction*self.hidden_size, self.vocab_size)
+        # didnt affect or affects the performance by a little bit only-removed for faster training
         # self.ln= nn.LayerNorm(self.direction*self.hidden_size)
 
     def forward(self, img_features, sequences, hidden_states=None):
@@ -309,7 +311,7 @@ class Decoder(nn.Module):
         # connected layer ensures that the model generates a separate caption for each image,
         # without mixing information between different images and captions in the batch. 
         # ! needs another test to verify this is the case
-        outputs =self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
+        outputs = self.fc(outputs.reshape(-1, self.hidden_size*self.direction))
         # and finally reshape the output back to (batch, seq, features) form
         # note that we dont use softmax here, as we are planning to use crossentropy
         # and crossentropy expects logits, and applies the softamx itself
@@ -726,7 +728,9 @@ print(f'{idxs_padded}')
 
 print(f'{tokenizer.min_length=}')
 print(f'{tokenizer.max_length=}')
-print('most common lengths:\n(length : # of sequences)',*tokenizer.seq_stats.most_common(10),sep='\n')
+top_num=15
+print(f'most common lengths({top_num}):\n(length : # of sequences)',
+      *tokenizer.seq_stats.most_common(top_num),sep='\n')
 # displaying them gives us a better understanding of which length is more common
 # we see that the overwhelming majority of sequences have 8-10/11 length
 # sidenote: 
@@ -836,9 +840,9 @@ class COCODataset(nn.Module):
         img_id = self.captions[index]["image_id"]
         img = Image.open(self.img_dict[img_id]).convert('RGB')
         img = self.transformations(img)
-        # tokenize the caption and return the padded, numpy/torch version
+        # tokenize the caption and return it
         caption = self.captions[index]['caption']
-        caption_idxs = torch.tensor(tokenizer.encode(caption))
+        caption_idxs = tokenizer.encode(caption)
         # note that usually we dont return the padded/truncated sequence from the dataset
         # its the dataloader's job to create a batch of sequences, and if some 
         # have different lengths, to make them work using sth like padding/truncation.
@@ -856,7 +860,7 @@ dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, tokenizer=tokenize
 
 def show_image(img,caption):
     plt.imshow(img.permute(1,2,0).numpy())
-    plt.title(tokenizer.decode(caption.tolist(),True,True))
+    plt.title(tokenizer.decode(caption,True,True))
 
 print(f'{len(dt_train)=:,}')
 print(f'{len(dt_val)=:,}')
@@ -867,69 +871,97 @@ show_image(img_val, caption_val)
 
 #%%
 # now lets create our colate_fn function to do sequence management, padd,trunctaion etc 
-def normalize_sequences(image_caption_list):
-    # note that we could go on and add truncation and padding to our tokenizer
-    # so it gave us the truncated,padded sequence when encoding. truncation for
-    # sequences that exceed a specific max_length we specify based on our findings
-    # about our dataset statistics, and padding for sequences that are below our
-    # max_length, so ultimately we have sequences of the same length.
-    # but pytorch offers functions called pad_sequence and pack_padded_sequence
-    # using these we can padd our sequences, and pack them as a batch, pytorch
-    # automatically sorts everything our, it will padd the sequences based on the 
-    # longest sequence, and later on using pack_padded_sequence, it allows the pytorch
-    # to only process the actual sequences, by remving the paddings and hence we dont 
-    # need to do much. 
-    # since theres a huge discrepency between the maximum sequence length and the majority
-    # of sequences, we have to do some truncation, so a single sequence or a select few dont
-    # result in lots of paddings for the rest of the sequences. but thene again if pack_padded_sequence
-    # allows torch to remove the padding and only porcess the actual tokens, then this should not
-    # matter, and without truncation we should be good(the only reason for truncation would be to
-    # preserve memory then and not performance hit (when the number of padding increases too much
-    # and overwhemels the actual data, it hinders the learning. so if the padding length is the same
-    # as the actual data or close to it, then this is not good for the model and we need to remove
-    # the padding somehow. this seems not to be an issue when using pack_padded_sequence though))
-    # 
-    # Now lets implement this function 
-    # the output of our dataset is an image,caption pair, and dataloader grabs couple of them
-    # as a list, so the input to our colate_function is a list of whatever our dataset returns
-    # we need to separate the images and create a batch for images, and a separate batch for the
-    # captions. 
-    # before that, we need to take care of our captions, since our image, captions are related and
-    # are a pair, we cant simply grab the images, make a batch of it first and then get captions, 
-    # becasue we need to do some processing which involves sorting the sequences first
-    # in order to use pad_sequence feature in pytorch. it requires the sequences to be sorted 
-    # in decending order based on their length. 
-    image_caption_list.sort(key=lambda data: len(data[1]), reverse=True)
-    # now lets split the images and captions 
-    images, captions = zip(*image_caption_list)
-    # now lets create a batch of images (simply stack them all)
-    images = torch.stack(images,dim=0)
-    # now lets padd our seqeunces 
-    # our caption is simply a list of numbers, so we need to convert it to a tensor 
-    # not only that, we also need to provide all the captions as list, so we simply
-    # create a list of tensors representing our captions. now varying length of each
-    # caption doesnt pose an error (becasue we are using a python list) and the pad_sequence
-    # takes care of padding the tensors and making them all the same size.
-    # 
-    # important note: note that our labels/captions are always shifted one token to the left
-    # so the network learns the sequence one after the other, other wise, at generation
-    # it will suck! while at training it seemingly achieves 100% really quick! so 
-    # in nlp tasks where we create text as output, the labels are always one token ahead!
-    # if we were to only create the label, like this and remove the first token, we would have
-    # an issue. because we are creating the caption tensors with torch.tensor(caption[1:]).
-    # This will remove the first token from each caption. If the first token is a special 
-    # start-of-sequence token (which is <start> ), then we're effectively removing it. 
-    # This could be a problem because our model needs this token to know where each caption
-    # begins. so instead we directly create, inputs and labels here and then pad them
-    input_captions  = [caption[:-1] for caption in captions]
-    target_captions = [caption[1:] for caption in captions]
-    input_captions  = pad_sequence(input_captions, batch_first=True, padding_value=0)
-    target_captions = pad_sequence(target_captions, batch_first=True, padding_value=0)
-    return images, input_captions, target_captions
+# since our colate_fn has a new argument, we simply use a lambda to apply our argument
+# like collate_fn=lambda batch: normalize_sequences(batch))
+# 
+# side note: lambda doesnt work for DDP(distributed data parallel training) and instead we
+# can use a functor. we can also simply create a class with a __call__() method and use the
+# class object instead. 
+# since we have more arguments now, like truncation length, end token, and maybe more later
+# lets implemenet this as a functor! 
+class OurColateFN():
+    def __init__(self, truncation_length, end_token) -> None:
+        self.truncation_length = truncation_length
+        self.end_idx = end_token
 
-# lets test 
-dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
-dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=normalize_sequences)
+    def __call__(self, batch):
+        return self.normalize_sequences(batch)
+    
+    def normalize_sequences(self, caption_list):
+        # note that we could go on and add truncation and padding to our tokenizer
+        # so it gave us the truncated,padded sequence when encoding. truncation for
+        # sequences that exceed a specific max_length we specify based on our findings
+        # about our dataset statistics, and padding for sequences that are below our
+        # max_length, so ultimately we have sequences of the same length.
+        # but pytorch offers functions called pad_sequence and pack_padded_sequence
+        # using these we can padd our sequences, and pack them as a batch, pytorch
+        # automatically sorts everything our, it will padd the sequences based on the 
+        # longest sequence, and later on using pack_padded_sequence, it allows the pytorch
+        # to only process the actual sequences, by remving the paddings and hence we dont 
+        # need to do much. 
+        # since theres a huge discrepency between the maximum sequence length and the majority
+        # of sequences, we have to do some truncation, so a single sequence or a select few dont
+        # result in lots of paddings for the rest of the sequences. but thene again if pack_padded_sequence
+        # allows torch to remove the padding and only porcess the actual tokens, then this should not
+        # matter, and without truncation we should be good(the only reason for truncation would be to
+        # preserve memory then and not performance hit (when the number of padding increases too much
+        # and overwhemels the actual data, it hinders the learning. so if the padding length is the same
+        # as the actual data or close to it, then this is not good for the model and we need to remove
+        # the padding somehow. this seems not to be an issue when using pack_padded_sequence though))
+        # 
+        # Now lets implement this function 
+        # the output of our dataset is an image,caption pair, and dataloader grabs couple of them
+        # as a list, so the input to our colate_function is a list of whatever our dataset returns
+        # we need to separate the images and create a batch for images, and a separate batch for the
+        # captions. 
+        # before that, we need to take care of our captions, since our image, captions are related and
+        # are a pair, we cant simply grab the images, make a batch of it first and then get captions, 
+        # becasue we need to do some processing which involves sorting the sequences first
+        # in order to use pad_sequence feature in pytorch. it requires the sequences to be sorted 
+        # in decending order based on their length. 
+        caption_list.sort(key=lambda data: len(data[1]), reverse=True)
+        # now lets split the images and captions 
+        images, captions = zip(*caption_list)
+        # now lets create a batch of images (simply stack them all)
+        images = torch.stack(images,dim=0)
+        # now lets padd our seqeunces 
+        # our caption is simply a list of numbers, so we need to convert it to a tensor 
+        # not only that, we also need to provide all the captions as list, so we simply
+        # create a list of tensors representing our captions. now varying length of each
+        # caption doesnt pose an error (becasue we are using a python list) and the pad_sequence
+        # takes care of padding the tensors and making them all the same size.
+        # 
+        # important note: note that our labels/captions are always shifted one token to the left
+        # so the network learns the sequence one after the other, other wise, at generation
+        # it will suck! while at training it seemingly achieves 100% really quick! so 
+        # in nlp tasks where we create text as output, the labels are always one token ahead!
+        # if we were to only create the label, like this and remove the first token, we would have
+        # an issue. because we are creating the caption tensors with torch.tensor(caption[1:]).
+        # This will remove the first token from each caption. If the first token is a special 
+        # start-of-sequence token (which is <start> ), then we're effectively removing it. 
+        # This could be a problem because our model needs this token to know where each caption
+        # begins. so instead we directly create, inputs and labels here and then pad them
+        
+        # lets grab up to truncation_length items only, the smaller sequences will later be padded
+        # and the larger ones wont have any paddings, and thus all will have the same length hopefully
+        input_captions  = [torch.tensor(caption[:self.truncation_length][:-1]) for caption in captions]
+        # note that for targets, we need to have the <end> at the end of our sequence
+        # since we are truncating now, we need to assure the last token is <end>
+        # target_captions = [caption[:truncation_length][1:] for caption in captions]
+        target_captions = [torch.tensor(caption[:self.truncation_length][1:-1] + [self.end_idx])
+                           if caption[:self.truncation_length][-1] != self.end_idx 
+                           else torch.tensor(caption[:self.truncation_length][1:]) 
+                           for caption in captions]
+        
+        input_captions  = pad_sequence(input_captions, batch_first=True, padding_value=0)
+        target_captions = pad_sequence(target_captions, batch_first=True, padding_value=0)
+        return images, input_captions, target_captions
+    
+# now lets test 
+trunc_len = 10
+end_token = tokenizer.encode(tokenizer._end)
+dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
+dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
 
 print(f'{len(dl_train)=}')
 print(f'{len(dl_val)=}')
@@ -948,6 +980,11 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # which is a great feature to have as sequences will usually have the least amount of padding
 # and it changes dynamically based on each batch!
 # %%
+lst = list(range(8))
+lst2 = list(range(20))
+trunc=15
+lst2+[5]
+#%%
 # now we have everything in place lets write our training loop
 # we need 
 # model
@@ -957,6 +994,19 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # a measure/score for how good our captions is (i.e use BLEU)
 # enable debugging
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+
+# side note concerining the quality of the description and its relationship with encoder/decoder
+# How to know how to imporve the result further? 
+# when we see the model creates gramatically correct yet semantically wrong descriptions
+# it means the language modeling part(i.e. decoder part) is developed properly but the 
+# image features part(i.e. encoder part) or the utilization of it is not good enough
+# so we would pay more attention to the encoder part, using better model, enhancing its
+# quality, etc, or the merging of the features, how we feed those features to our decoder
+# etc. if we see our decoder gives us hints about the image yet the grammer is wrong or not
+# formed properly then the issue lies at the decoder and language modeling part, we eighter
+# need more embedding features/dims, hidden_state size, or even data  to begin with , 
+# we might need dropout if we overfit there as well.
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'resnet'
@@ -971,23 +1021,37 @@ num_layers = 2
 dropout = 0.1
 bidirectional=False
 # (hidden_state gets 28% while input achieves 20.0% without bidirectional,
-# if you enable bidirectional, then input's accuracy goes to 50/60%as well)
+# if you enable bidirectional, then input's accuracy goes to 50/60%)
 # the input version has a hardtime learing unless we enable bidirection
 # but this doesnt mean its learning properly, it does reduce the loss drastically
 # but at the expense of generating nonsense at test time. so we use no bidirectional
-# in image captioning. using bidirectional lstm has 3 issues: 
-# Exposure Bias: During training, the model is fed the ground truth captions, 
+# in image captioning unless maybe if we use it in the middle, in an encoder type of thing for
+# the decoder section(imagine our decoder is split into an encoder/decoder submodule itself)
+# otherwise we will face issues during training and really not learn much useful features.
+# bidirection leads to 3 kinds of issues:
+# Exposure Bias: During training, our model is fed the ground truth captions, 
 # so it always has the correct previous words when predicting the next word. 
 # But during inference, the model feeds its own predictions as input for the 
 # next time step. If the model makes a mistake, this error can propagate and
 # affect the prediction of subsequent words, leading to poor performance.
-# Inconsistency between Training and Inference: In training, a BiLSTM can use 
+# Inconsistency between training and inference: in training, a bi-LSTM can use 
 # future information (i.e., words that come later in the caption). But during 
 # inference, when generating a caption word by word, future words are unknown.
 # This discrepancy can lead to a drop in performance at test time.
 # Overfitting: BiLSTMs have more parameters than unidirectional LSTMs, which can
 # lead to overfitting, especially if the amount of training data is limited.
-method = 'hidden_state' # hidden_state or input 
+# !also the 'input' method has a hard time developing a proper language model, probably
+# !becasue the way image features are fed /utilized along side other input-langauge related
+# !features, the scale difference, distribution difference, might make this hard for the 
+# lstm to utilize the information properly.
+# so we get the best performance usng image-features as initial hidden_states. (it achieves 
+# 26% in ht mode, while it only achieves 19% for input mode)
+#! without relu we achieved 26%acc
+#! used relu before outputs comes out of lstm, 20.68, bad text genertion and semantic understanding
+#! > no relu + with layernorm(took 4:19:53 to finish 20 epochs.) -> achieved 25.27%
+#! use 29k vocab with default/or best config to see how much .lower affects performance
+#! now lets use truncation and set it based on the majority of sequence length
+method = 'ht' # hidden_state or input 
 epochs = 20
 interval = 500
 batch_size = 64
@@ -1082,17 +1146,10 @@ criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer._pad])
 # calculate blue score
 def calculate_bleu_score(ref_caps, gen_caps):
     # convert list of idxs to list of words in each batch
-    refs = tokenizer.batch_decode(ref_caps)
-    gens = tokenizer.batch_decode(gen_caps)
-    # remove special tokens so we have a list of sentences, basically a batch of sentences
-    # instead of batch of token indexes.
-    refs = [' '.join(ref).replace("<start>","").replace("<end>","") for ref in refs]
-    gens = [' '.join(gen).replace("<start>","").replace("<end>","") for gen in gens]
-    # print([[ref.split()] for ref in refs[:3]])
-    # print([gen.split() for gen in gens[:3]])
+    refs = tokenizer.batch_decode(ref_caps,remove_special_tokens=True)
+    gens = tokenizer.batch_decode(gen_caps,remove_special_tokens=True)
     # calculate the bleu 
-    return corpus_bleu([[ref.split()] for ref in refs],
-                       [gen.split() for gen in gens])
+    return corpus_bleu([[ref] for ref in refs], [gen for gen in gens])
 
 print(f'{device=}')
 print(f'{epochs=}')
@@ -1105,6 +1162,7 @@ print(f'num_layers = {model.num_layers}')
 print(f'{model.embd_size=}')
 print(f'{model.hidden_size=}')
 print(f'params = {sum(p.numel() for p in model.decoder.parameters()):,}')
+start = time.time()
 #
 # sidenote:
 # for evaluating the accuracy of our model, we can use accuracy, but thats not really
@@ -1214,6 +1272,11 @@ with torch.no_grad():
         f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
     print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
 
+
+hours, rem = divmod(time.time() - start, 3600)
+minutes, seconds = divmod(rem, 60)
+print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
+
 #%%
 # so using the image features as the initial hidden_states, 
 # we managed to achiev a very high accuracy as shown below:
@@ -1255,6 +1318,7 @@ def generate_caption(model, img_list, trans, max_length, tokenizer:Tokenizer,top
                     break
             img_captions.append(' '.join(output_lst))
 
+        print(*img_captions,sep='\n')
         return img_captions
 
 img1 = './pretty_mage1.jpeg'
@@ -1273,11 +1337,10 @@ trans = transforms.Compose([
 ])
 
 images = [Image.open(img) for img in [img1, img2,img3,img4,img5]]
-generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=3)
+generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=1)
 #%%
 # torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
-
-
+# 
 #%%
 # %%
 # in the name of God, the most compassionate the most merciful
