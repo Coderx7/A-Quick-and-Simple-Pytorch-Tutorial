@@ -204,7 +204,10 @@ class Decoder(nn.Module):
             # concat it along the second dim (i.e. the sequence/timestep dim) which is 1, and
             # since its a single token its 1 obviously!
             embds = torch.cat([img_features.unsqueeze(1), embds[:,:-1,:]], dim=1)
-            # outputs, final_hiddenstate = self.decoder(embds, hidden_states)
+            # we can get fancy and do other operations on embds like use an mlp to 
+            # fuse the features before being fed into the lstm for further processing
+            # but for now we stick to the simplest form and wont spend much time here
+            # as our intention is to use transformers later on
         
         elif self.method.lower() in ['h','ht','hidden','hidden_state']:
             # note that since at test time we want to be able to generate description
@@ -326,7 +329,7 @@ dec = Decoder(vocab_size=100,
               hidden_size=512,
               num_layers=2, 
               bidirectional=True, 
-              method='hidden_state')
+              method='in')
 x_img = torch.randn(size=(2,3,224,224))
 x_des = torch.randint(0,100,size=(2,30))
 out_feats = enc(x_img)
@@ -1017,9 +1020,9 @@ hidden_size = 512
 num_layers = 1
 dropout = 0.1
 bidirectional=False
-# (hidden_state gets 28% while input achieves 20.0% without bidirectional,
+# (hidden_state gets 35% while input achieves 24.0% without bidirectional,
 # if you enable bidirectional, then input's accuracy goes to 50/60%)
-# the input version has a hardtime learing unless we enable bidirection
+# the input version has a hardtime learning unless we enable bidirection
 # but this doesnt mean its learning properly, it does reduce the loss drastically
 # but at the expense of generating nonsense at test time. so we use no bidirectional
 # in image captioning unless maybe if we use it in the middle, in an encoder type of thing for
@@ -1037,18 +1040,26 @@ bidirectional=False
 # This discrepancy can lead to a drop in performance at test time.
 # Overfitting: BiLSTMs have more parameters than unidirectional LSTMs, which can
 # lead to overfitting, especially if the amount of training data is limited.
-# !also the 'input' method has a hard time developing a proper language model, probably
-# !becasue the way image features are fed /utilized along side other input-langauge related
-# !features, the scale difference, distribution difference, might make this hard for the 
+# also note that the image encoder section is extremely important, so is the imagefeature
+# fusion with the caption. if we have problem in any of this two parts we wont be getting
+# a satisfactory outcome. 
+# !for example the 'input' method has a hard time developing a proper language model, probably
+# !becasue the way image features are fused/utilized with other input-langauge related
+# !features, the scale difference, distribution difference,etc might make this hard for the 
 # lstm to utilize the information properly.
 # so we get the best performance usng image-features as initial hidden_states. (it achieves 
-# 26% in ht mode, while it only achieves 19% for input mode)
-#! without relu we achieved 26%acc
+# 36% in ht mode, while it only achieves 25% for input mode)
+# so simply using a better base vision model can improve our results (test with resent50/simplenet5m)
+# and better fusion enhances the results as well. 
+# finally proper truncation drastically improves our results and failing to do so adversly affects it
+# keeping these in mind helps us have a good outcome inshaallah.
+# here are some experiments I did and their results.
+#! without relu on the decoders output we achieved 26%acc
 #! used relu before outputs comes out of lstm, 20.68, bad text genertion and semantic understanding
 #! > no relu + with layernorm(took 4:19:53 to finish 20 epochs.) -> achieved 25.27%
 #! use 29k vocab with default/or best config to see how much .lower affects performance
 #! now lets use truncation and set it based on the majority of sequence length > 35.44
-# the truncation not only boosted our accuracy by nearly 10%! 
+# the truncation not only boosted our accuracy by nearly 10%! (from 25 to 35)
 # it also lowered our vram consumption from 9Gig down to 3.9gig! 
 # and it lowered the training time (down to ~4:00 hours)
 #! now using smaller vocab by using .lower() as the default ->
@@ -1057,9 +1068,21 @@ bidirectional=False
 # ultimately it finished at 36.79% at 20 epochs. (time elapsed: 03:57:13.65)
 # However, the description generation quality is not as good as the cased version(that is when we use all cases) the uncased version(.lower() version)
 # in my opinion, it starts all the sentences with <unk>, which seems to be needing early stopping
-# or a bit more regularization or training time. 
-#! now lets use simplenet and 1 lstm layer
-# achieves higher accuracy but 
+# or a bit more regularization or training time.
+# by the way this old paper is a good read https://openaccess.thecvf.com/content_cvpr_2018/papers/Cui_Learning_to_Evaluate_CVPR_2018_paper.pdf 
+#! up till now we use 2 lstm layers, try it with 1 lstm layer
+# using truncation we can improve our results drastically especially if theres a relatively
+# large difference between sequence lengths. we can see this in action in our case, although
+# we used pytorches pack-padding features, so each batch is padded based on the largest sequence length
+# we still face difficulty in training as theres large discrepency between average sequence length and
+# the top few percent of long input seuqences in our dataset, this leads to the majority of the sequences
+# have more paddings than the actual data and thus hurt the performance drastically. 
+# therefore if we use a truncation length that better provides a sinal to noise ratio, we get
+# much better results.
+# based on our tokenization statistics, and bar plot, we chose 15 as a length that covers most of
+# our samples. smaller trunc-len, like 12 may very well give us better accuracy, but 15 seems ok, we can always test
+# also note that, when dealing with truncation, we need to pay attention to the majority of samples
+# so we cover as many samples as we can without hurting the performance.
 trunc_len=15
 method = 'ht' # hidden_state or input 
 epochs = 20
@@ -1355,20 +1378,6 @@ trans = transforms.Compose([
 images = [Image.open(img) for img in [img1, img2,img3,img4,img5]]
 generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=3)
 #%%
-# torch.save(model.state_dict(),"ht_ps_2048_es_512_hs_300_num_layers_2_drp_0.1_bidir_0_acc67.43.pt")
-# training log : 35% valacc 
-# device='cuda'
-# epochs=20
-# trunc_len=15
-# model.method='ht'
-# model.encoder_backend='resnet'
-# len(dl_train)=9,247
-# len(dl_val)=391
-# tokenizer.vocab_size=37,937
-# num_layers = 2
-# model.embd_size=512
-# model.hidden_size=512
-# params = 43,087,921
 
 #%%
 # %%
