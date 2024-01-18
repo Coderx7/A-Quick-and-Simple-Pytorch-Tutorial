@@ -363,7 +363,6 @@ class EncoderDecoderImageCaption(nn.Module):
                                self.bidirectional,
                                self.decoder_dropout, 
                                self.method)
-        
         # disable gradients for the encoder part, becasue its job is to give us img features
         # and it doesnt need to change, the lstm/decoder part however, needs to be updated though
         # so lets effectively freeze our encoder!(this consumes less vram and improves performance as well)
@@ -1070,7 +1069,7 @@ bidirectional=False
 # in my opinion, it starts all the sentences with <unk>, which seems to be needing early stopping
 # or a bit more regularization or training time.
 # by the way this old paper is a good read https://openaccess.thecvf.com/content_cvpr_2018/papers/Cui_Learning_to_Evaluate_CVPR_2018_paper.pdf 
-#! up till now we use 2 lstm layers, try it with 1 lstm layer
+#! up till now we use 2 lstm layers, try it with 1 lstm layer.
 # using truncation we can improve our results drastically especially if theres a relatively
 # large difference between sequence lengths. we can see this in action in our case, although
 # we used pytorches pack-padding features, so each batch is padded based on the largest sequence length
@@ -1381,5 +1380,341 @@ generate_caption(model, images, trans, max_length=200, tokenizer=tokenizer,topk=
 
 #%%
 # %%
-# in the name of God, the most compassionate the most merciful
+# now lets use transformers as the decoder part and see how much of a difference it makes
+#tldr : it only performs best if we have a lot of data, or we use a pretrained transformer model!
+# but for the sake of compeleteness , lets see how we can create a quick and simly transformer
+# instead of our lstm!
+# !also note that 
+#! this is not the right way to do this, but here is it anyway, until I write it properly and
+# remove this section
+# there could be several reasons why our accuracy is low after replacing LSTM with a Transformer
+# decoder in our model:
+# Model Complexity: Transformers are more complex than LSTMs. 
+# They have more parameters and thus require more data to train effectively.
+# If your dataset is small, the Transformer might overfit to the training data, 
+# leading to poor performance on the validation or test data.
+# Long-Range Dependencies: Transformers are designed to handle long-range dependencies better
+# than LSTMs. However, in some tasks like image captioning, the dependencies between elements
+# might not be very long-range. In such cases, LSTMs might perform better.
+# Training Stability: Training Transformers can be less stable than training LSTMs.
+# we might need to adjust our learning rate, batch size, or other hyperparameters to stabilize 
+# the training.
+# Positional Encoding: Transformers use positional encodings to capture the order of the elements
+# in the sequence. If these are not implemented correctly, it could affect the performance of the
+# model.
+# Incorrect Usage: Transformers work differently than LSTMs. If they are not used correctly, 
+# it could lead to poor performance. For example, you need to ensure that the masks are applied
+# correctly during training.
+# Remember, replacing LSTM with Transformer is not a guaranteed way to improve performance. 
+# It depends on various factors like the complexity of the task, the amount of data available, 
+# etc
+class EncoderDecoderImageCaption(nn.Module):
+    
+    def __init__(self,vocab_size, 
+                 encoder_backend='simplenet',
+                 decoder_backend='trans',
+                 encoder_projection_size=4096, 
+                 embd_size=512, 
+                 hidden_size=512,
+                 num_layers=1, 
+                 decoder_dropout=0.0, 
+                 bidirectional=False, 
+                 method='ht',
+                 nhead=4, 
+                 num_tdlayers=4, 
+                 num_telayers=4) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.encoder_backend = encoder_backend.lower()
+        self.decoder_backend = decoder_backend
+        self.embd_size = embd_size
+        self.hidden_size = hidden_size
+        self.encoder_projection_size = encoder_projection_size
+        self.num_layers = num_layers
+        self.decoder_dropout = decoder_dropout
+        self.bidirectional = bidirectional
+        self.method = method
+        self.nhead = nhead
+        self.num_tdlayers = num_tdlayers
+        self.num_telayers = num_telayers
+        self.encoder = Encoder(self.encoder_backend,
+                               self.embd_size, 
+                               self.encoder_projection_size)
+        
+        self.decoder = Decoder(self.vocab_size, 
+                               self.embd_size,
+                               self.hidden_size, 
+                               self.num_layers,
+                               self.bidirectional,
+                               self.decoder_dropout, 
+                               self.method)
+        
+        self.embd = nn.Embedding(self.vocab_size, embd_size)
+        self.transformer = nn.Transformer(d_model=self.embd_size,
+                                          nhead=self.nhead,
+                                          num_decoder_layers=self.num_tdlayers,
+                                          num_encoder_layers=self.num_telayers,
+                                          batch_first=True,
+                                          norm_first=False)# setting this to true improves accuracy to only face nans in loss
+        # seems this is not the proper way to do it . so we start doing it the right way inshallah tomorrow
+        
+        self.fc = nn.Linear(self.embd_size, vocab_size)
+        # disable gradients for the encoder part, becasue its job is to give us img features
+        # and it doesnt need to change, the lstm/decoder part however, needs to be updated though
+        # so lets effectively freeze our encoder!(this consumes less vram and improves performance as well)
+        for module in self.encoder.modules():
+            module.requires_grad_(False)
+    
+    def forward(self, imgs, captions, hidden_states):
+        image_features = self.encoder(imgs)
+        if self.decoder_backend in ['t','tr','trans','transformer']:
+            hidden_states = None
+            # our TransformerDecoder in pytorch takes two inputs: the target sequence(target captions)
+            # and the output from the last layer of the encoder (memory). 
+            # Target Sequence (captions): This is the sequence that the decoder will use to generate 
+            # the output. during training, this is our target sequence (i.e., the correct captions).
+            # during inference, this would be the sequence generated so far.(this is a bit different than our lstm version)
+            # Memory (memory/ or in ourcase imagefeatures): This is the usually output from the last layer of the 
+            # encoder. it represents the encoded version of the input sequence 
+            # (i.e., the image features in our case). and it acts like using image-features as hiddenstates in lstm
+            # the TransformerDecoder uses these two inputs to generate the output sequence. 
+            # It does this by applying attention mechanisms that allow it to focus on different parts 
+            # of the input sequence when generating each word in the output sequence.
+            # In our code, captions is the target sequence and img_feats is the memory. 
+            # So, the line outputs = self.transformer.decoder(embds, img_feats.unsqueeze(1))
+            # is using the Transformer decoder to generate the output sequence based on the captions
+            # and the encoded image features.
+            # we can do another round of processing using the encoder part(may not be effective
+            # as when we use actual tokens.)
+            # sidenote: 
+            # for a transformer to perform well we need lots of data, much much more than when we
+            # have lstm. so we wont get better performance like ths, unless we have a lot more data
+            # or use a pretrained transformer model. we will see in a moment
+            # img_feats = self.transformer.encoder(image_features)
+            embds = self.embd(captions)
+            # by the way we need to unsqueeze our img_feats to be compatible(be in 3d shape not 2d so 
+            # we add an extra time-step dim to the Batch,Features and making it, B,1,F instead)
+            # Flatten the features and add an extra dimension for the sequence length
+            image_features = image_features.view(image_features.size(0), 1, -1)
+            # print(f'{image_features.shape=}')
+            # Repeat the features for each word in the caption
+            image_features = image_features.repeat(1, captions.size(1),1)
+            # print(f'{image_features.shape=}')
+            outputs = self.transformer.decoder(embds, image_features)
+            # and finally we need predictions so we have our classifier!
+            outputs = self.fc(outputs)
+        else:
+            outputs, hidden_states = self.decoder(image_features, captions, hidden_states)
+        return outputs, hidden_states
+
+
+# lets test
+x_img = torch.randn(size=(2,3,224,224))
+x_captions = torch.randint(0,100,size=(2,30))
+model = EncoderDecoderImageCaption(encoder_backend='simplenet',
+                                   decoder_backend='trans',
+                                   encoder_projection_size=4096,
+                                   vocab_size=100,
+                                   embd_size=512,
+                                   hidden_size=512,
+                                   nhead=4,
+                                   num_tdlayers=8,
+                                   num_telayers=8,
+                                   num_layers=2,
+                                   decoder_dropout=0.0,
+                                   bidirectional=True,
+                                   method='hidden_state')
+
+outputs,_ = model(x_img, x_captions,None)
+print(f'{outputs.shape=}')
       
+# %%
+tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+encoder_backend = 'resnet'
+decoder_backend ='transformer'
+num_tdlayers = 4
+num_telayers = 4
+nhead = 8
+project_size = 2048 
+end_token=tokenizer.encode(tokenizer._end)
+embd_size = 512
+hidden_size = 512
+num_layers = 1
+dropout = 0.1
+bidirectional=False
+
+trunc_len=15
+method = 'ht' # hidden_state or input 
+epochs = 20
+interval = 500
+batch_size = 64
+num_workers = 8
+
+
+transformations_train = transforms.Compose([
+    transforms.Resize(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])])
+
+transformations_val = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
+])
+
+dt_train = COCODataset(coco_root,annotation_dir,
+                       tokenizer=tokenizer, split='train',
+                       transformations=transformations_train)
+
+dt_val = COCODataset(coco_root,annotation_dir,
+                     tokenizer=tokenizer, split='val',
+                     transformations=transformations_val)
+
+# data loaders
+dl_train = DataLoader(dt_train, batch_size=batch_size, shuffle=True, 
+                      pin_memory=True, num_workers=num_workers, 
+                      collate_fn=OurColateFN(trunc_len,end_token))
+
+dl_val = DataLoader(dt_val, batch_size=batch_size, pin_memory=True, 
+                    num_workers=num_workers, 
+                    collate_fn=OurColateFN(trunc_len,end_token))
+
+model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
+                                   encoder_backend='simplenet',
+                                   decoder_backend='trans',
+                                   nhead=nhead,
+                                   num_tdlayers=num_tdlayers,
+                                   num_telayers=num_telayers,
+                                   encoder_projection_size=project_size, 
+                                   embd_size=embd_size,
+                                   hidden_size=hidden_size,
+                                   num_layers=num_layers,
+                                   decoder_dropout=dropout, 
+                                   bidirectional=bidirectional,
+                                   method=method)
+
+model.to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
+criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer._pad])
+
+# calculate blue score
+def calculate_bleu_score(ref_caps, gen_caps):
+    # convert list of idxs to list of words in each batch
+    refs = tokenizer.batch_decode(ref_caps,remove_special_tokens=True)
+    gens = tokenizer.batch_decode(gen_caps,remove_special_tokens=True)
+    # calculate the bleu 
+    return corpus_bleu([[ref] for ref in refs], [gen for gen in gens])
+
+print(f'{device=}')
+print(f'{epochs=}')
+print(f'{trunc_len=}')
+print(f'{model.method=}')
+print(f'{model.encoder_backend=}')
+print(f'{len(dl_train)=:,}')
+print(f'{len(dl_val)=:,}')
+print(f'{tokenizer.vocab_size=:,}')
+print(f'num_layers = {model.num_layers}')
+print(f'{model.decoder_backend=}')
+print(f'{model.nhead=}')
+
+print(f'{decoder_backend=}')
+print(f'{model.embd_size=}')
+print(f'{model.hidden_size=}')
+print(f'params = {sum(p.numel() for p in model.parameters()):,}')
+start = time.time()
+#
+for epoch in range(epochs):
+    
+    model.train()
+    losses_train = []
+    accs_train = []
+    bleu_scores = []
+    hidden_states = None
+    for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
+        imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+        outputs,_ = model(imgs, captions, hidden_states)
+        loss = criterion(outputs.permute(0,2,1), targets)
+        losses_train.append(loss.item())
+        accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if i%interval==0:
+            print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
+            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+    # update the lr    
+    scheduler.step()
+
+    with torch.no_grad():
+        model.eval()
+        losses_val=[]
+        accs_val=[]
+        bleu_scores_val = []
+        hidden_states = None
+        for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+            imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+            outputs,_ = model(imgs, captions, hidden_states)
+            # since we have our input in the form of (Batch,Timesteps,Classes),
+            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+            loss = criterion(outputs.permute(0,2,1), targets)
+            losses_val.append(loss.item())
+            accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+            # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
+            # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+            
+            # only calculate on validation, becasue its an expensive/time-consuming operation!
+            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+
+        print(f'{epoch}/{epochs} '
+            f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
+            f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+        print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+
+hours, rem = divmod(time.time() - start, 3600)
+minutes, seconds = divmod(rem, 60)
+print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
+# %%
+with torch.no_grad():
+    model.eval()
+    losses_val=[]
+    accs_val=[]
+    bleu_scores_val = []
+    hidden_states = None
+    for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+        imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+        outputs,_ = model(imgs, captions, hidden_states)
+        # since we have our input in the form of (Batch,Timesteps,Classes),
+        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+        loss = criterion(outputs.permute(0,2,1), targets)
+        losses_val.append(loss.item())
+        accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        print(f'labels: {tokenizer.batch_decode(targets[:3].tolist(),to_str=True, remove_special_tokens=False)}')
+        print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),to_str=True, remove_special_tokens=False)}')
+        
+        # only calculate on validation, becasue its an expensive/time-consuming operation!
+        bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+
+    print(f'{epoch}/{epochs} '
+        f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
+        f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+    print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+
+
+hours, rem = divmod(time.time() - start, 3600)
+minutes, seconds = divmod(rem, 60)
+print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
+
+#
+#%%
+# now lets use huggingface pipeline for imagecaptioning and the more indepth one 
+# which we ourselevs create a model to do image captioning
