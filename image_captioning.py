@@ -63,6 +63,7 @@ from collections import Counter
 import PIL.Image as Image
 import matplotlib.pyplot as plt 
 from tqdm import tqdm
+import pickle
 
 # for BLEU score
 import nltk
@@ -647,7 +648,9 @@ class Tokenizer():
             all_captions.append(caption_normalized)
         
         assert len(all_captions) == len(train_captions) + len(val_captions), 'size mismatch'
-        
+        # we can select words based on their frequency as well, like for example, we include
+        # the words that are repeated in the dataset more than n times (e.g. 3)
+        # we dont do that now!but we can if we want!
         self.min_length, self.max_length, self.seq_stats = self._calculate_caption_statistics(all_captions)
         #! make the whole words lowercase before creating the vocabs! this should drastically
         #! lower our vocabsize and thus model parameters and also improve performance hopefully!
@@ -676,6 +679,9 @@ class Tokenizer():
         self.itow.update(enumerate(words, start=len(self.special_tokens)))
         self.wtoi = {v:k for k,v in self.itow.items()}
         self.vocab_size = len(self.wtoi)
+        # save itow,wtoi and words to file for later use
+        with open('vocabs.pkl','wb') as f:
+            pickle.dump({"itow":self.itow, "wtoi":self.wtoi, "words":words}, f)
 
     def __len__(self):
         return len(self.wtoi)
@@ -1718,3 +1724,106 @@ print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
 #%%
 # now lets use huggingface pipeline for imagecaptioning and the more indepth one 
 # which we ourselevs create a model to do image captioning
+import os
+# to download files/images off of internet
+import requests
+# to parse urls and see if they are valid for added check
+from urllib import parse
+import numpy as np
+from tqdm import tqdm
+from PIL import Image
+
+import evaluate
+
+import torch
+import matplotlib.pyplot as plt 
+
+from datasets import load_dataset
+from transformers import VisionEncoderDecoderModel, GPT2TokenizerFast, ViTImageProcessor\
+                         ,Seq2SeqTrainingArguments,Seq2SeqTrainer
+
+
+
+# introduction to huggingface: 4 hours
+# https://www.youtube.com/watch?v=6NTHvcXAl90
+#  Data processing for Causal Language Modeling 
+# https://www.youtube.com/watch?v=ma1TrR7gE7I
+
+
+# set device to GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# load a fine-tuned image captioning model and corresponding tokenizer and image processor
+model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning").to(device)
+tokenizer = GPT2TokenizerFast.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+image_processor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+
+# lets create a few helper functions to grab an image using a url
+# it comes handy when we dont have an image locally at the moment!
+
+def get_image(url):
+    return Image.open(requests.get(url=url,stream=True).raw)
+
+# lets define a generator to create diverse description instead of simply using greedy sampling
+# we can use the built-in generator, but lets see how we can create our own generator.
+def generate(model, image, tokenizer, max_iter=1, topk=3):
+    img_tensor = image_processor(images=image,return_tensors='pt').to(device)
+    decoder_inputIdx = torch.zeros((1,1),dtype=torch.long, device=device)
+    idx_lst = []
+    for i in range(max_iter):
+        predictions = model(pixel_values=img_tensor["pixel_values"], decoder_input_ids=decoder_inputIdx)
+
+        # grab the last timestep logits
+        logits = predictions['logits'][:,-1,:]
+        probs, indexes = logits.topk(dim=-1, k=topk)
+        probs, indexes = tuple(t.view(-1) for t in (probs, indexes))
+        idx = torch.multinomial(input=probs.softmax(dim=-1), num_samples=1, replacement=True)
+        actual_idx = indexes[idx]
+        idx_lst.append(actual_idx.item())
+        # print(f'{decoder_inputIdx.shape=}')
+        decoder_inputIdx = torch.cat((decoder_inputIdx, actual_idx.unsqueeze(0)), dim=-1)
+    
+    # now lets convert the idxs to words 
+    output = tokenizer.decode(idx_lst, skip_special_tokens=True)
+    return output
+
+url = "http://images.cocodataset.org/test-stuff2017/000000004427.jpg"
+plt.imshow(get_image(url))
+
+# image_processor returns a dictionary containing 'pixel_values' which is what we want
+img = image_processor(get_image(url),return_tensors="pt").pixel_values.to(device)
+# num_beams=1 is greedy sampling, by increasing num_beams, we can create more diverse description
+# or using do_sample=True, top_k=3 we can create diverse outputs!
+output = model.generate(img, max_length = 100, do_sample=True, top_k=3)
+caption = tokenizer.batch_decode(output, skip_special_tokens=True)
+# now lets use our version
+caption2 = generate(model, get_image(url), tokenizer, max_iter=10)
+
+print(*caption, sep='\n')
+print(caption2, sep='\n')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
