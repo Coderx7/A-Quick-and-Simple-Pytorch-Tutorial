@@ -1428,7 +1428,8 @@ class EncoderDecoderImageCaption(nn.Module):
                  method='ht',
                  nhead=4, 
                  num_tdlayers=4, 
-                 num_telayers=4) -> None:
+                 num_telayers=4,
+                 pad_idx=0) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.encoder_backend = encoder_backend.lower()
@@ -1443,6 +1444,10 @@ class EncoderDecoderImageCaption(nn.Module):
         self.nhead = nhead
         self.num_tdlayers = num_tdlayers
         self.num_telayers = num_telayers
+        # this number is used to pad the input sequences
+        # and we need it to create attention-mask for our
+        # transformer layer so it doesnt atten to padded sections
+        self.pad_idx = pad_idx
         self.encoder = Encoder(self.encoder_backend,
                                self.embd_size, 
                                self.encoder_projection_size)
@@ -1456,13 +1461,21 @@ class EncoderDecoderImageCaption(nn.Module):
                                self.method)
         
         self.embd = nn.Embedding(self.vocab_size, embd_size)
+        #! we may need to send the attention_mask to transformers to make it work properly!
+        # passing in an `attention_mask` since our inputs are padded. 
+        # https://huggingface.co/docs/transformers/troubleshooting#incorrect-output-when-padding-tokens-arent-masked. 
         self.transformer = nn.Transformer(d_model=self.embd_size,
                                           nhead=self.nhead,
                                           num_decoder_layers=self.num_tdlayers,
                                           num_encoder_layers=self.num_telayers,
                                           batch_first=True,
-                                          norm_first=False)# setting this to true improves accuracy to only face nans in loss
-        # seems this is not the proper way to do it . so we start doing it the right way inshallah tomorrow
+                                          #! setting this to true improves accuracy to
+                                          # only face nans in loss.
+                                          # seems this is not the proper way to do it.
+                                          # so we start doing it the right way inshallah
+                                          # tomorrow.
+                                          norm_first=False)
+        
         
         self.fc = nn.Linear(self.embd_size, vocab_size)
         # disable gradients for the encoder part, becasue its job is to give us img features
@@ -1534,7 +1547,7 @@ model = EncoderDecoderImageCaption(encoder_backend='simplenet',
 outputs,_ = model(x_img, x_captions,None)
 print(f'{outputs.shape=}')
       
-# %%
+# %% transformer training section
 tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'resnet'
@@ -1689,7 +1702,7 @@ for epoch in range(epochs):
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
 print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
-# %%
+# %% validation test section
 with torch.no_grad():
     model.eval()
     losses_val=[]
@@ -1721,7 +1734,7 @@ minutes, seconds = divmod(rem, 60)
 print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
 
 #
-#%%
+#%% using huggingface for doing image captioning - pretrained models
 # now lets use huggingface pipeline for imagecaptioning and the more indepth one 
 # which we ourselevs create a model to do image captioning
 import os
@@ -1739,10 +1752,9 @@ import torch
 import matplotlib.pyplot as plt 
 
 from datasets import load_dataset
+import transformers as trans
 from transformers import VisionEncoderDecoderModel, GPT2TokenizerFast, ViTImageProcessor\
                          ,Seq2SeqTrainingArguments,Seq2SeqTrainer
-
-
 
 # introduction to huggingface: 4 hours
 # https://www.youtube.com/watch?v=6NTHvcXAl90
@@ -1772,7 +1784,6 @@ def generate(model, image, tokenizer, max_iter=1, topk=3):
     idx_lst = []
     for i in range(max_iter):
         predictions = model(pixel_values=img_tensor["pixel_values"], decoder_input_ids=decoder_inputIdx)
-
         # grab the last timestep logits
         logits = predictions['logits'][:,-1,:]
         probs, indexes = logits.topk(dim=-1, k=topk)
@@ -1780,28 +1791,430 @@ def generate(model, image, tokenizer, max_iter=1, topk=3):
         idx = torch.multinomial(input=probs.softmax(dim=-1), num_samples=1, replacement=True)
         actual_idx = indexes[idx]
         idx_lst.append(actual_idx.item())
-        # print(f'{decoder_inputIdx.shape=}')
         decoder_inputIdx = torch.cat((decoder_inputIdx, actual_idx.unsqueeze(0)), dim=-1)
-    
+                
     # now lets convert the idxs to words 
     output = tokenizer.decode(idx_lst, skip_special_tokens=True)
     return output
 
-url = "http://images.cocodataset.org/test-stuff2017/000000004427.jpg"
+url = "https://static.thehoneycombers.com/wp-content/uploads/sites/6/2022/03/anime-demon-slayer-900x643.jpeg"
 plt.imshow(get_image(url))
 
 # image_processor returns a dictionary containing 'pixel_values' which is what we want
 img = image_processor(get_image(url),return_tensors="pt").pixel_values.to(device)
 # num_beams=1 is greedy sampling, by increasing num_beams, we can create more diverse description
 # or using do_sample=True, top_k=3 we can create diverse outputs!
-output = model.generate(img, max_length = 100, do_sample=True, top_k=3)
+output = model.generate(img, max_length=100, do_sample=True, top_k=3)
 caption = tokenizer.batch_decode(output, skip_special_tokens=True)
 # now lets use our version
-caption2 = generate(model, get_image(url), tokenizer, max_iter=10)
+caption2 = generate(model, get_image(url), tokenizer, max_iter=10, topk=3)
 
 print(*caption, sep='\n')
 print(caption2, sep='\n')
 
+# Huggingface also provides a family of easy to use Classes with the name AutoModelFor..
+# which infers the application from the pretrained checkpoints, like AutoModelForImageClassification
+# and give it a pretrained checkpoint for a classification model and it will instantaite it for us
+# there is none for imagecaptioning so we use this method instead which is easy eough
+#! check to see if Im missing something regarding this
+#%%
+# now lets see how we can finetune these models on our own and hopefully get a better model
+# for our needs
+# there are several encoders/decoders we can use to create our imagecaptioning model. 
+# huggingface allows us easily use any transformer based models it hosts to create our model
+# side note: A "base-sized" model is usually smaller than "large" or "huge" models, 
+# but larger than "small" or "tiny" models. The exact number of parameters in a "base-sized" model can vary depending on the 
+# specific architecture of the model.
+# good to read: https://huggingface.co/docs/transformers/model_doc/vit
+#
+# light models: 
+# "google/vit-base-patch16-224" is a ViT model pre-trained on ImageNet-21k and fine-tuned on ImageNet 2012.
+# "google/vit-base-patch16-224-in21k"
+#  google vit-tiny and vit-small variants: 
+# "WinKawaks/vit-small-patch16-224"
+# "WinKawaks/vit-tiny-patch16-224" 
+# "facebook/deit-tiny-patch16-224" a tiny-sized DeiT (Data-efficient Image Transformers) model, which is a distilled version of the ViT model.
+# "facebook/deit-small-patch16-224" a small-sized DeiT model.
+# 
+# Heavier Models:
+# "facebook/deit-base-patch16-224" 
+# "facebook/deit-base-patch16-384" 
+# "google/vit-base-patch16-224-in21k" (pre-trained on ImageNet-21k).
+#  
+# and we also need to choose a decoder, and like the encoder we have a lot of choices here.
+# here are a few well-known models we can use : 
+
+# GPT Models:
+# 'gpt2': GPT-2 is a very commonly used model and has been used in a variety of tasks, including image captioning which is what we are after here.
+# 'gpt2-medium': This is a larger variant of GPT-2.
+# 'gpt2-large': This is one of the largest GPT-2 variants we can use.
+# 'gpt2-xl': This is the largest GPT-2 variant.
+# 'gpt3': GPT-3 models are not publicly available for fine-tuning, however, there are 
+# smaller variants like 'gpt3-small', 'gpt3-medium', and 'gpt3-large' that can be used.
+# 
+#
+# BERT Models: paper https://arxiv.org/pdf/1810.04805.pdf
+# Tiny Model:
+# "prajjwal1/bert-tiny" :converted the official bert-tiny from tf to pytorch
+# Base Models:
+# "bert-base-uncased": This is a base-sized BERT model with uncased text(i.e all lower cased)
+# "bert-base-cased": This is a base-sized BERT model with cased text(i.e. has capital letters aswell).
+# "bert-base-multilingual-uncased": This is a base-sized BERT model that can handle text in multiple languages(104, farsi is supported aswell-dont use this model use the cased one instead by the way).
+# "bert-base-multilingual-cased": This is a base-sized BERT model that can handle text in multiple languages and respects casing.
+# Large Models:
+# "bert-large-uncased": This is a large-sized BERT model with uncased text.
+# "bert-large-cased": This is a large-sized BERT model with cased text.
+# 
+# RoBERTa models:(RoBERTa: A Robustly Optimized BERT Pretraining Approach. https://arxiv.org/abs/1907.11692)
+# RoBERTa (short for "Robustly Optimized BERT Pretraining Approach") is a variant of the BERT model,
+# which was developed by researchers at Facebook AI. 
+# Like BERT, RoBERTa is a transformer-based language model that uses self-attention to process input 
+# sequences and generate contextualized representations of words in a sentence.
+# One key difference between RoBERTa and BERT is that RoBERTa was trained on a much larger dataset 
+# and using a more effective training procedure. 
+# In particular, RoBERTa was trained on a dataset of 160GB of text, which is more than 10 times larger 
+# than the dataset used to train BERT. Additionally, RoBERTa uses a dynamic masking technique during 
+# training that helps the model learn more robust and generalizable representations of words.
+# RoBERTa has been shown to outperform BERT and other state-of-the-art models on a variety of 
+# natural language processing tasks, including language translation, text classification, and 
+# question answering. It has also been used as a base model for many other successful NLP models 
+# and has become a popular choice for research and industry applications.
+# The RoBERTa model was proposed in "RoBERTa: A Robustly Optimized BERT Pretraining Approach". It was released on October 29, 2019¹.
+# refs
+# RoBERTa - Hugging Face. https://huggingface.co/docs/transformers/model_doc/roberta.
+# There are several RoBERTa models available on the Hugging Face Model Hub that are commonly used for various tasks⁴. Some of them include:
+# "roberta-base": the base variant of the RoBERTa model.
+# "roberta-large": the large variant of the RoBERTa model.
+# "roberta-large-mnli": This is the large variant of the RoBERTa model fine-tuned on the MultiNLI dataset.
+# Both BERT and RoBERTa are highly popular and widely used in the field of natural language processing. 
+# RoBERTa builds upon BERT by modifying key hyperparameters, 
+# removing the next-sentence pretraining objective, and training with much larger mini-batches 
+# and learning rates. 
+# These changes allow RoBERTa to often outperform BERT on a range of benchmark tasks. 
+# However, the choice between BERT and RoBERTa can depend on factors like the availability 
+# of computational resources, the size of the training data, and the specific requirements 
+# of the task.
+#
+# good to read refs:
+# What is the difference between BERT and Roberta. https://datascience.stackexchange.com/questions/97310/what-is-the-difference-between-bert-and-roberta.
+# GPT-3, BERT, and RoBERTa | AI Model Analysis & Comparison. https://medium.com/@livajorge7/gpt-3-bert-and-roberta-ai-model-analysis-comparison-7dfab049367d.
+# A review of pre-trained language models: from BERT, RoBERTa, to ELECTRA .... https://tungmphung.com/a-review-of-pre-trained-language-models-from-bert-roberta-to-electra-deberta-bigbird-and-more/.
+# Fine-tuning RoBERTa for Topic Classification with Hugging Face ... - Medium. https://medium.com/@achillesmoraites/fine-tuning-roberta-for-topic-classification-with-hugging-face-transformers-and-datasets-library-c6f8432d0820.
+# What's difference RobertaModel, RobertaSequenceClassification (hugging .... https://stackoverflow.com/questions/64383443/whats-difference-robertamodel-robertasequenceclassification-hugging-face.
+# https://moon-ci-docs.huggingface.co/docs/transformers/pr_25830/en/model_doc/roberta.
+# https://towardsdatascience.com/bert-roberta-distilbert-xlnet-which-one-to-use-3d5ab82ba5f8.
+
+# sidenote:
+# BERT and GPT are two different types of transformer-based models.
+# BERT (Bidirectional Encoder Representations from Transformers) is a pre-training language 
+# representation model created by Google in 2018. Unlike other NLP models that use unidirectional 
+# attention flow, BERT uses bidirectional flow, which allows it to use context from both directions
+# during processing. This allows the model to understand the meaning of words in context and, 
+# in turn, better comprehend language structures.
+# On the other hand, GPT (Generative Pre-trained Transformer) models, developed by OpenAI, 
+# are unidirectional and rely on the decoder part of the transformer architecture to generate text.
+# GPT models are autoregressive, meaning they generate sequences by predicting the next token in a 
+# sequence given the previous tokens.
+# So, while both BERT and GPT are transformer-based models and are used in natural language processing
+# tasks, they have different architectures and use different strategies for understanding and generating
+# text.
+#
+# to cut a long story short: BERT is a Transformer encoder, while GPT is a Transformer decoder
+# Bert creates its output all atonce, while GPT generates one token at a time(outpout sequentially)
+# because its autoregressive)
+# this stackoverflow answer says it well (for training):
+# BERT is a Transformer encoder, which means that, for each position in the input, 
+# the output at the same position is the same token (or the [MASK] token for masked tokens), 
+# that is the inputs and output positions of each token are the same.
+# GPT is a Transformer 'decoder', which means that it is meant for autoregressive inference. 
+# This means that the tokens in the input are shifted one position to the right with respect 
+# to the output, that is, if the output is [the, dog, is, brown, </s>], the input is 
+# [<s>, the, dog, is, brown, </s>]. (note the star/end tokens are the same here)
+#
+# also note that:
+# both the models — GPT-3 and BERT have been relatively new for the industry, 
+# but their state-of-the-art performance has made them the winners among other 
+# models in the natural language processing field. 
+# However, being trained on 175 billion parameters, GPT-3 becomes 470 times bigger
+# in size than BERT-Large.
+# Secondly, while BERT requires an elaborated fine-tuning process where users have to 
+# gather data of examples to train the model for specific downstream tasks, 
+# GPT-3’s text-in and text-out API allows the users to reprogram it using instructions
+# and access it. Case in point — for sentiment analysis or question answering tasks, 
+# to use BERT, the users have to train the model on a separate layer on sentence encodings.
+# However, GPT-3 uses a few-shot learning process on the input token to predict the output 
+# result.
+# On general NLP tasks like machine translation, answering questions, complicated arithmetic calculations or learning new words, GPT-3 works perfectly by conditioning it with a few examples — few-shot learning. Similarly, for text generation as well, GPT-3 works on a few prompts to quickly churn out relevant outputs, with an accuracy of approximately 52%. OpenAI, simply, by increasing the size of the model and its training parameters created a mighty monster of a model.
+# to understand the context of the word, BERT is trained on mask language model tasks, 
+# where it randomly masks 15% of words in each sequence to predict the outcome. 
+# Similarly, for sentence prediction, BERT is fed with a pair of sentences as input 
+# and then gets trained on an added auxiliary task for prediction. 
+# Here it processes both sentences involved to predict a binary label of the sentence prediction.
+# taken from the link below:
+# this link does a greta job at explaining the differences and highly recommend reading it 
+# https://analyticsindiamag.com/gpt-3-vs-bert-for-nlp-tasks/
+#
+# !check the correctness of all of these claims/points below becsuae gpts are very good at nearly everything
+# though I havent tested with bert, but we need to fact check these.
+# and this link : https://www.makeuseof.com/gpt-vs-bert/
+# While both are highly versatile NLP models, their architectural differences set them apart in
+# a few ways. For instance, BERT is far more capable for the following use cases:
+# Sentiment Analysis: BERT can better understand the overall sentiment of a given text 
+# as it analyzes words in either direction.
+# Named Entity Recognition: BERT is capable of recognizing different entities in a specific 
+# piece of text, including locations, people, or organizations.
+# Answering Questions: Because of its superior comprehension capabilities, 
+# BERT is more capable of extracting information from text and answering questions accurately.
+# 
+# The GPT learning model is no slouch, either. While sentiment analysis might not be its forte, 
+# GPT excels in several other applications:
+# Content Creation: If you've used ChatGPT, you probably know about this already. 
+# When it comes to content creation, GPT outsmarts most other models. 
+# Just write a prompt, and it'll churn out a perfectly coherent (though not always accurate) response.
+# Summarizing Text: Just copy-paste a large block of text in ChatGPT and ask it to summarize it. 
+# It's capable of summarizing text while maintaining the core information.
+# Machine translation: GPT can be fine-tuned for translating text from one language to another, 
+# thanks to its ability to generate text based on context.
+
+# good for reading/refs
+# (1) GPT vs. BERT: What Are the Differences Between the Two Most ... - MUO. https://www.makeuseof.com/gpt-vs-bert/.
+# (2) GPT-3 vs. BERT: Comparing the Two Most Popular Language Models - InvGate. https://blog.invgate.com/gpt-3-vs-bert.
+# (3) BERT vs GPT: Comparison of Two Leading AI Language Models - 360DigiTMG. https://360digitmg.com/blog/gpt-vs-bert.
+# (4) GPT-3 Vs BERT For NLP Tasks - Analytics India Magazine. https://analyticsindiamag.com/gpt-3-vs-bert-for-nlp-tasks/.
+# (5) What is the difference between GPT blocks and BERT blocks. https://datascience.stackexchange.com/questions/87637/what-is-the-difference-between-gpt-blocks-and-bert-blocks.
+#
+# BART Models by facebook 
+# (BART or Bidirectional and Auto-Regressive Transformers came in 2019
+# by the paper "BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension".
+# dont mistake  this with google Bard!:
+# 'facebook/bart-base': This is the base variant of the BART model.
+# 'facebook/bart-large': This is the large variant of the BART model.
+
+# T5 Models by google:
+# T5, short for Text-to-Text Transfer Transformer, is a natural language processing (NLP) model developed by Google
+# obviously its It’s based on the Transformer architecture, which is highly effective in NLP tasks.
+# T5 uses a text-to-text approach, where every task – including translation, question answering, and
+# classification – is cast as feeding the model text as input and training it to generate some target text.
+# The T5 model was presented in the paper "Exploring the Limits of Transfer Learning with a Unified 
+# Text-to-Text Transformer" in 2019 .
+# T5 comes in different sizes: t5-small, t5-base, t5-large, t5-3b, and t5-11b3. 
+# Based on the original T5 model, Google has released some follow-up works: 
+# T5v1.1, which is an improved version of T5 with some architectural tweaks, 
+# and is pre-trained on C4 only without mixing in the supervised tasks.
+# 't5-small': This is the small variant of the T5 model.
+# 't5-base': This is the base variant of the T5 model.
+# 't5-large': This is the large variant of the T5 model.
+# 't5-3b': This is a larger variant of the T5 model.
+# 't5-11b': This is the largest T5 variant.
+# 
+# There are much more uptodate models, in 2024 but these suffice for our introductory tutorial imho
+# to see the list of more models see this : https://huggingface.co/docs/transformers/main/en/model_doc/gpt2
+#
+# refs, 1/20/2024
+# undefined. https://huggingface.co/ankur310794.
+# nlpconnect/vit-gpt2-image-captioning · Hugging Face. https://huggingface.co/nlpconnect/vit-gpt2-image-captioning.
+# Image captioning - Hugging Face. https://huggingface.co/docs/transformers/main/en/tasks/image_captioning.
+# What is Image-to-Text? - Hugging Face. https://huggingface.co/tasks/image-to-text.
+# undefined. https://ankur3107.github.io/assets/images/image-captioning-example.png.
+# undefined. https://twitter.com/ankur310794.
+# undefined. http://github.com/ankur3107.
+# undefined. https://www.linkedin.com/in/ankur310794.
+# undefined. https://huggingface.co/datasets/Narsil/image_dummy/resolve/main/parrots.png.
+#  Fine-tune a pretrained model - Hugging Face. https://huggingface.co/docs/transformers/training.
+#  How to Train the Hugging Face Vision Transformer On a Custom Dataset. https://blog.roboflow.com/how-to-train-vision-transformer/.
+#  kalpesh22-21/Image_Captioning_using_Hugging_Face - GitHub. https://github.com/kalpesh22-21/Image_Captioning_using_Hugging_Face.
+#  The Illustrated Image Captioning using transformers. https://ankur3107.github.io/blogs/the-illustrated-image-captioning-using-transformers/.
+
+# lets use ms swin vit which was trained on 14m images(imagenet21k)
+encoder_model = "microsoft/swin-base-patch4-window7-224-in22k"
+decoder_model = "gpt2" # "bert-base-uncased"
+
+# 
+# now in order to create our model, we need to somehow combine our encoder and decoder models
+# we use VisionEncoderDecoderModel class to do this, along with from_encoder_decoder_pretrained()
+# we simply enter the name of the models from huggingface hub, and we have our final model ready
+# to go
+model = trans.VisionEncoderDecoderModel.from_encoder_decoder_pretrained(encoder_model,
+                                                                  decoder_model).to(device)
+# next we need to create our tokenizer and image preprocessors for our decoder and encoders 
+# respectively
+# since our decoder model isknown, we can simply use AutoTokenizer and pass the decoder name
+# and fetch the tokenizer. but the AutoTokenizer is very slower compared to the GPTTokenizerFast
+# since we are using gpt2, we go on and use the faster version.
+# tokenizer = trans.AutoTokenizer.from_pretrained(decoder_model)
+tokenizer = trans.GPT2TokenizerFast.from_pretrained(decoder_model)
+# so if we know what model we are going to use, if theres a fast version we go for that!
+# now lets grab the image_processor for our vision encoder model:
+image_processor = trans.ViTImageProcessor.from_pretrained(encoder_model)
+
+# we need to make sure our models decoder_start_token_id and pad_token_id are initialized properly
+# becasue the gpt2 model we are using, doesnt have decoder_start_token_id and pad_token_id instead
+# it has bos_token_id and eos_token_id (short for begining of sequence and end of sequence)
+if 'gp2' in decoder_model:
+    # since tokenizer doesnt have pad_token_id, lets use eos_token_id as pad_token_id
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    # now lets initialize the other configs
+    model.config.eos_token_id = tokenizer.eos_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
+    model.config.decoder_start_token_id = tokenizer.bos_token_id
+else:
+    # For other decoders such as bert, we use cls_token_id instead as the start_token_id
+    model.config.decoder_start_token_id = tokenizer.cls_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
+#%%
+import torch.nn as nn
+# our model is built, our preprocessors and tokenizers for encoder and decoders are now initialized
+# and ready , what remains is the dataset
+# we can use the cocodataset from huggingface, but since we already have it lets use our own dataset
+# theres no point in redownloading 20+ gigabyte of data again when we have it already!
+# lets define our dataset, it only needs two minor changes, one for transformations
+# which we will use image_processor, and the other for tokenizer encoder section
+# since we already implemented this, I remove the comments here
+class COCODataset(nn.Module):
+        
+    def __init__(self, coco_root, 
+                 annotation_dir,
+                 train_imgs_dir='train2017',
+                 val_imgs_dir='val2017',
+                 split='train',
+                 transformations=image_processor) -> None:
+        super().__init__()
+        self._coco_root = coco_root
+        self._annotation_dir = annotation_dir
+        self._captions_train_fname = 'captions_train2017.json'
+        self._captions_val_fname = 'captions_val2017.json'
+        self._train_dir = train_imgs_dir
+        self._val_dir = val_imgs_dir
+        self.split = split
+        self.transformations = transformations
+        
+        # captions_fname = captions_train_fname if 'train' in split else captions_val_fname
+        self.img_list = []
+        if split.lower() == 'train':
+            captions_fname = self._captions_train_fname
+            self.imgs_folder = self._train_dir
+        elif split.lower() == 'val':
+            captions_fname = self._captions_val_fname
+            self.imgs_folder = self._val_dir
+        else:
+            raise Exception(f"unknown split'{split}' entered!")
+        
+        with open(os.path.join(coco_root,annotation_dir,captions_fname),'r') as f:
+                self.annotations = json.load(f)
+                # self.caption is a list of dictionaries that each belong to an image
+                # we are intersted in the caption and image-id fields of each dictionary
+                # in this list
+                self.captions = self.annotations["annotations"]
+        
+        self.img_dict = {int(pathlib.Path(f).stem):f for f in glob.glob(os.path.join(self._coco_root, f"{self.imgs_folder}/*.jpg"))}
+    
+    def __getitem__(self, index):
+        img_id = self.captions[index]["image_id"]
+        img = Image.open(self.img_dict[img_id]).convert('RGB')
+        img = self.transformations(img, return_tensors="pt").pixel_values
+        # tokenize the caption and return it
+        caption = self.captions[index]['caption']
+        # note that usually we dont return the padded/truncated sequence from the dataset
+        # its the dataloader's job to create a batch of sequences, and if some 
+        # have different lengths, to make them work using sth like padding/truncation.
+        # we do that using the colate_fn argument and pass a function that handles
+        # these kinds of stuff, so the dataset need to return the actual data it contains,
+        # batching chores are offloaded to the dataloader.
+        return img, caption 
+
+    def __len__(self):
+        # note that there are several captions per image, so we use captions length
+        return len(self.captions)
+
+dt_train = COCODataset(coco_root,annotation_dir=annotation_dir, split='train', transformations=image_processor)
+dt_val = COCODataset(coco_root,annotation_dir=annotation_dir, split='val', transformations=image_processor)
+
+print(f'{len(dt_train)=:,}')
+print(f'{len(dt_val)=:,}')
+img,caption = dt_train[1]
+img_val,caption_val = dt_val[1]
+# now lets create our Colate_FN class! 
+class OurColateFN():
+    def __init__(self, truncation_length) -> None:
+        self.truncation_length = truncation_length
+        
+    def __call__(self, batch):
+        # separate the images and captions
+        images, captions = zip(*batch)
+        # normalize our captions
+        targets = tokenizer([caption for caption in captions], 
+                             max_length=self.truncation_length,
+                             padding="max_length",
+                             truncation=True,
+                             return_tensors="pt")
+        
+        # and finally create batches for images and labels
+        imgs = torch.stack([image for image in images])
+        labels = torch.stack([x for x in targets["input_ids"]])
+        # return them as a dictionary as its customary in hf
+        return {'pixel_values': imgs, 'labels': labels }
+
+# now lets test 
+trunc_len = 15
+dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len))
+dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len))
+
+print(f'{len(dl_train)=:,}')
+print(f'{len(dl_val)=:,}')
+# reminder!
+# note that we are dealing with dictionaries now, simply iterating a dictionary will give us the keys only
+# so doing sth like imgs, labels = next(iter(dl_train)) would only return the keys and store them into
+# imgs and labels respectively.
+data = next(iter(dl_train))
+# to actually get the key-value pair, we simply need to use .items() and then we are good to go!
+imgs, targets = next(iter(dl_val)).items()
+print(f'{data["labels"]=}')
+print(f'{targets=}')
+#%%
+# now everything seems to be complete, except the fact that we need to have something for
+# evaluating our model output. previoulsy we simply used accuracy which is not a good metric
+# for this kind of work, as different sequences/text can be equally correct but not identical
+# necessarily, this would result in lower accuracy becasue the output is not identical to the label
+# but infact is pretty good. so we need to use a better metric.
+# we used belu but there are more. lets see what we can use here:
+# There are a lot of metrics that are currecnly used in the nlp realm 
+# but the most common ones are as follows :
+# BLEU: It evaluates the n-gram overlap between the reference caption and the generated caption
+#       and gives a more balanced evaluation of content similarity and fluency. 
+#       It is calculated by computing the precision of the generated text with 
+#       respect to the reference text, and then taking the geometric average of
+#       the n-gram precisions (such as unigram, bigram, 3-gram, 4-gram, etc.). 
+#       The most common version is BLEU-4, which considers the unigram to 4-gram
+#       overlap average. It is widely used in the machine translation task. 
+#       Check this quick YouTube video to learn more about it https://www.youtube.com/watch?v=M05L1DhFqcw&ab_channel=HuggingFace or 
+#       this tutorial : https://thepythoncode.com/article/bleu-score-in-python
+#       
+# ROUGE: It calculates the percentage of common tokens between the generated text and 
+#        the reference text, with longer sequences given more weight. Like BLEU, 
+#        the score is between 0 and 1, where 1 is the perfect match and 0 is the
+#        poorer match. ROUGE can be calculated using different n-gram orders, 
+#        such as ROUGE-1 (unigrams, or just single token), ROUGE-2 (bigrams), 
+#        or ROUGE-L (longest common subsequence). 
+#        It is also common in machine translation and text summarization tasks. 
+#        The most common version we'll use for image captioning is ROUGE-L. 
+#        Check this YouTube video to learn more about it : https://www.youtube.com/watch?v=TMshhnrEXlg&ab_channel=HuggingFace
+#
+# METEOR: A combination of ROUGE and BLEU, which also considers word alignments, 
+#         synonymy, and other factors.
+# CIDEr: A metric that measures similarity between the generated text and reference
+#        texts using a consensus-based approach that takes into account the agreement
+#        among multiple human annotators.
+# SPICE: A semantic-based metric that computes a graph-based representation of the 
+#        captions and compares them based on their content. This metric is invented
+#        for image captioning specifically.
+# 
+# we can use evaluate python module to calculate these scores easily
+# we will be using rogue and bleu metrics here 
+rogue = evaluate.load("rouge")
+bleu = evaluate.load('bleu')
+# now lets define the actual function for measuring these scores 
+def calculate_scores(outputs, labels):
+    
 
 
 
@@ -1816,14 +2229,4 @@ print(caption2, sep='\n')
 
 
 
-
-
-
-
-
-
-
-
-
-
-
+# %%
