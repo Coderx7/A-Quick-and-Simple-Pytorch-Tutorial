@@ -64,6 +64,7 @@ import PIL.Image as Image
 import matplotlib.pyplot as plt 
 from tqdm import tqdm
 import pickle
+from functools import partial
 
 # for BLEU score
 import nltk
@@ -1192,6 +1193,48 @@ def calculate_bleu_score(ref_caps, gen_caps):
     # calculate the bleu 
     return corpus_bleu([[ref] for ref in refs], [gen for gen in gens])
 
+# we can use the huggingface evaluate module to measure bleu and more metrics.
+# The evaluate module provides a variety of evaluation modules, including popular
+# metrics for tasks ranging from NLP to Computer Vision, and dataset-specific metrics.
+# we can use the evaluate.list_evaluation_modules() function to list the available
+# metrics, comparisons, and measurements. 
+# we can also add new evaluation modules to the HuggingFace evaluate repository, and
+# use it everywhere easily!
+# To use this module, we can try the evaluate.load method. 
+# The evaluate.load(module_name, **kwargs) method is used to instantiate an
+# evaluation module. The module_name parameter is the name of the evaluation
+# module we want to load.
+# The evaluate.load() function can load a local script or an evaluation 
+# module from the HuggingFace evaluate repository. 
+# The path to the evaluation processing script can be either:
+# -A local path to the processing script or the directory containing the 
+# script (if the script has the same name as the directory), 
+# e.g., './metrics/rouge' or './metrics/rouge/rouge.py'.
+# - Or an evaluation module identifier on the HuggingFace evaluate repository,
+# e.g., 'rouge' or 'bleu'. 
+# These are located in either 'metrics/', 'comparisons/', or 'measurements/' 
+# depending on the provided module_type
+# after the module is instantiated, we can use the compute() method to calculate
+# the metric we are after. heres the documentation : https://huggingface.co/docs/evaluate/index
+# !try to at least have a look here and familiarize yourself with it : https://huggingface.co/docs/evaluate/a_quick_tour
+# !especially the types(metrics, comparisons, measurments) and visualizations sections
+# Types of evaluations
+# There are different aspects of a typical machine learning pipeline that can be 
+# evaluated and for each aspect 🤗 Evaluate provides a tool:
+# 
+# Metric: 
+#   A metric is used to evaluate a model’s performance and usually involves 
+#   the model’s predictions as well as some ground truth labels. 
+#   You can find all integrated metrics at evaluate-metric.
+# Comparison: 
+#   A comparison is used to compare two models. This can for example be 
+#   done by comparing their predictions to ground truth labels and computing
+#   their agreement. You can find all integrated comparisons at evaluate-comparison.
+# Measurement: 
+#   The dataset is as important as the model trained on it. With measurements
+#   one can investigate a dataset’s properties. You can find all integrated 
+#   measurements at evaluate-measurement.
+# !read the rest from the docs!
 
 rogue = evaluate.load("rouge")
 bleu = evaluate.load('bleu')
@@ -1201,7 +1244,8 @@ def calculate_scores(outputs, targets, tokenizer):
     # first convert them into string sequences
     predicted_texts = tokenizer.batch_decode(outputs, to_str=True ,remove_special_tokens=True)
     reference_texts = tokenizer.batch_decode(targets, to_str=True ,remove_special_tokens=True)
-
+    # print(f'{predicted_texts[:3]}')
+    # print(f'{reference_texts[:3]}')
     # now lets use our evaluate objects to calculate the scores as a dictionary
     # where each key contains a rogue score (rogue-1, rogue-2 and rogueL respectively)
     rogue_scores = rogue.compute(predictions=predicted_texts, references=reference_texts)
@@ -1215,8 +1259,11 @@ def calculate_scores(outputs, targets, tokenizer):
             "gen_len":bleu_scores["translation_length"]//len(targets)
            }
 
+calculate_scores = partial(calculate_scores, tokenizer=tokenizer)
+
 print(f'{device=}')
 print(f'{epochs=}')
+print(f'{interval=}')
 print(f'{trunc_len=}')
 print(f'{model.method=}')
 print(f'{model.encoder_backend=}')
@@ -1226,7 +1273,9 @@ print(f'{tokenizer.vocab_size=:,}')
 print(f'num_layers = {model.num_layers}')
 print(f'{model.embd_size=}')
 print(f'{model.hidden_size=}')
-print(f'params = {sum(p.numel() for p in model.decoder.parameters()):,}')
+print(f'encoder params = {sum(p.numel() for p in model.encoder.parameters()):,}')
+print(f'decoder params = {sum(p.numel() for p in model.decoder.parameters()):,}')
+print(f'model params = {sum(p.numel() for p in model.parameters()):,}')
 start = time.time()
 #
 # sidenote:
@@ -1284,9 +1333,9 @@ for epoch in range(epochs):
         optimizer.step()
 
         if i%interval==0:
-            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
+            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist())
             print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
-            # print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
             print('metrics: ', results)
     # update the lr    
     scheduler.step()
@@ -2330,9 +2379,10 @@ from functools import partial
 
 batch_size = 16
 epochs=2
-interval=2000
+interval=20000
 max_length = 15
 num_workers=8
+#! next test with fp16, dataloader_num_workers, torch.compile to get as fast as we can
 training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioning-swin-gpt2',
                                                do_train=True,
                                                do_eval=True,
@@ -2346,7 +2396,13 @@ training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioni
                                                eval_steps=interval,
                                                logging_steps=interval,
                                                save_steps=interval,  #save the model at intervals
-                                               logging_dir='./results/logs',)
+                                               logging_dir='./results/logs',
+                                               # resume from the last checkpoint
+                                               # it automatically checks output_dir
+                                               # and resumes from the last checkpoint
+                                               # otherwise, specify the path to checkpoint
+                                               # to be loaded
+                                               resume_from_checkpoint=True)
 
 # now lets train 
 trainer = trans.Seq2SeqTrainer(model = model, 
@@ -2357,14 +2413,10 @@ trainer = trans.Seq2SeqTrainer(model = model,
                                tokenizer=tokenizer,
                                compute_metrics=calculate_scores2
                                )
-# lets swap the dataloaders 
-# dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
-# dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
-# create a simple lambda that returns a dataloader for each
-# trainer.get_train_dataloader = lambda: dl_train
-# trainer.get_eval_dataloader = lambda: dl_val
 # now lets train!
-trainer.train()
+# to resume training specify the checkpoint directory name/path 
+# ref: https://github.com/huggingface/transformers/issues/7198#issuecomment-694352941
+trainer.train('./results_imgcaptioning-swin-gpt2/checkpoint-16000')
 
 # %%
 # now to train it ourselves we would need a few more things including a criterion/loss
