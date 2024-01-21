@@ -68,6 +68,8 @@ import pickle
 # for BLEU score
 import nltk
 from nltk.translate.bleu_score import sentence_bleu,corpus_bleu
+# evaluate is much better it offers more metrics like rogue bleu, etc as well.
+import evaluate
 
 import torch 
 import torch.nn as nn
@@ -1190,6 +1192,29 @@ def calculate_bleu_score(ref_caps, gen_caps):
     # calculate the bleu 
     return corpus_bleu([[ref] for ref in refs], [gen for gen in gens])
 
+
+rogue = evaluate.load("rouge")
+bleu = evaluate.load('bleu')
+# now lets define the actual function for measuring these scores 
+def calculate_scores(outputs, targets, tokenizer):
+    
+    # first convert them into string sequences
+    predicted_texts = tokenizer.batch_decode(outputs, to_str=True ,remove_special_tokens=True)
+    reference_texts = tokenizer.batch_decode(targets, to_str=True ,remove_special_tokens=True)
+
+    # now lets use our evaluate objects to calculate the scores as a dictionary
+    # where each key contains a rogue score (rogue-1, rogue-2 and rogueL respectively)
+    rogue_scores = rogue.compute(predictions=predicted_texts, references=reference_texts)
+    # multiply by 100
+    rogue_scores = {k: (v*100) for k,v in rogue_scores.items()}
+    # now lets calculate the bleu score 
+    bleu_scores = bleu.compute(predictions=predicted_texts, references=reference_texts)
+    
+    return {**rogue_scores,
+            "bleu":bleu_scores["bleu"]*100,
+            "gen_len":bleu_scores["translation_length"]//len(targets)
+           }
+
 print(f'{device=}')
 print(f'{epochs=}')
 print(f'{trunc_len=}')
@@ -1249,16 +1274,20 @@ for epoch in range(epochs):
         # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
         # print(f'{loss=}')
         losses_train.append(loss.item())
-        accs_train.append((outputs.argmax(dim=-1)==targets).float().mean().item())
-        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
-
+        accs_train.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
+        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+        #! train with this and see the scores
+        # results = calculate_scores(targets.tolist(), outputs.argmax(dim=-1).tolist())
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         if i%interval==0:
+            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
             print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
-            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+            # print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+            print('metrics: ', results)
     # update the lr    
     scheduler.step()
 
@@ -1275,18 +1304,20 @@ for epoch in range(epochs):
             # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
             loss = criterion(outputs.permute(0,2,1), targets)
             losses_val.append(loss.item())
-            accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+            accs_val.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
             # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
             # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
-            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
 
         print(f'{epoch}/{epochs} '
             f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
             f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-        print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
-
+        # print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+        results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
+        print('metrics-val: ', results)
+        
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
 print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
@@ -2279,7 +2310,7 @@ def calculate_scores(outputs, targets, tokenizer):
     # multiply by 100
     rogue_scores = {k: (v*100) for k,v in rogue_scores.items()}
     # now lets calculate the bleu score 
-    bleu_scores = bleu.compute(predicted_texts, reference_texts)
+    bleu_scores = bleu.compute(predictions=predicted_texts, references=reference_texts)
     
     return {**rogue_scores,
             "bleu":bleu_scores["bleu"]*100,
@@ -2300,7 +2331,7 @@ from functools import partial
 batch_size = 16
 epochs=2
 interval=2000
-max_length = 20
+max_length = 15
 num_workers=8
 training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioning-swin-gpt2',
                                                do_train=True,
@@ -2327,20 +2358,82 @@ trainer = trans.Seq2SeqTrainer(model = model,
                                compute_metrics=calculate_scores2
                                )
 # lets swap the dataloaders 
-dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
-dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
+# dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
+# dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
 # create a simple lambda that returns a dataloader for each
 # trainer.get_train_dataloader = lambda: dl_train
 # trainer.get_eval_dataloader = lambda: dl_val
 # now lets train!
 trainer.train()
 
+# %%
+# now to train it ourselves we would need a few more things including a criterion/loss
+# an optimizer, and dataloaders. 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = trans.VisionEncoderDecoderModel.from_encoder_decoder_pretrained(encoder_model,decoder_model).to(device)
+tokenizer = trans.GPT2TokenizerFast.from_pretrained(decoder_model)
+image_processor = trans.ViTImageProcessor.from_pretrained(encoder_model)
 
+if 'gpt2' in decoder_model:
+    tokenizer.pad_token =  tokenizer.eos_token
+    model.config.eos_token_id = tokenizer.eos_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
+    model.config.decoder_start_token_id = tokenizer.bos_token_id
+else:
+    model.config.decoder_start_token_id = tokenizer.cls_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
+    
+# to check if everything is as expected lets print them 
+print("Tokenizer pad_token:", tokenizer.pad_token)
+print("Tokenizer pad_token_id:", tokenizer.pad_token_id)
+print("Model config pad_token_id:", model.config.pad_token_id)
 
+criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+optimizer = torch.optim.AdamW(model.parameters(), lr = 0.00001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=1, gamma=0.1)
+epochs = 2
+batch_size = 8
+num_workers=8
+max_length =15
+interval = 5000
+dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
+dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
 
-
-
-
-
-
+for epoch in range(epochs):
+    model.train()
+    for i, (data) in tqdm(enumerate(dl_train),leave=False):
+        imgs, labels = data["pixel_values"], data["labels"]
+        imgs,labels = tuple(t.to(device) for t in (imgs, labels))
+        # note that predictions contains the calculated loss as well, but 
+        # try to do everything ourseleves here.
+        predictions = model(pixel_values=imgs, labels=labels)
+        logits = predictions["logits"]
+        # we could also write 
+        # loss = predictions.loss
+        loss = criterion(logits.permute(0,2,1) , labels)
+        metrics = calculate_scores(logits.softmax(dim=-1).argmax(dim=-1), labels,tokenizer=tokenizer)
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        if i%interval==0:
+            print(f'{loss.item():.4f} {metrics}')
+        
+    scheduler.step()
+    
+    with torch.nograd():
+        model.eval()
+        losses = []
+        for i,data in tqdm(enumerate(dl_val),leave=False):
+            imgs, labels = data["pixel_values"], data["labels"]
+            imgs,labels = tuple(t.to(device) for t in (imgs, labels))
+            predictions = model(pixel_values=imgs,labels=labels)
+            logits = predictions["logits"]
+            loss = criterion(logits.permute(0,2,1) , labels)
+            metrics = calculate_scores(logits.softmax(dim=-1).argmax(dim=-1), labels,tokenizer=tokenizer)
+            losses.append(loss.item())
+            print(f'{np.mean(losses):.4f} {metrics}')
+            
+            
 # %%
