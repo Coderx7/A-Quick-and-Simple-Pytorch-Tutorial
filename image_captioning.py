@@ -2050,9 +2050,55 @@ image_processor = trans.ViTImageProcessor.from_pretrained(encoder_model)
 # we need to make sure our models decoder_start_token_id and pad_token_id are initialized properly
 # becasue the gpt2 model we are using, doesnt have decoder_start_token_id and pad_token_id instead
 # it has bos_token_id and eos_token_id (short for begining of sequence and end of sequence)
-if 'gp2' in decoder_model:
-    # since tokenizer doesnt have pad_token_id, lets use eos_token_id as pad_token_id
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+if 'gpt2' in decoder_model:
+    # Padding tokens were not used during the pre-training of GPT and GPT-2, therefore they have none
+    # so we need to add them ourseleves.
+    # sidenote: Because GPT2 and GPT are causal LM you don't need to pad shorter sentences in batches.
+    # It is important though that the loss on these "unnecessary" tokens is not calculated.
+    # sidenote2: 
+    # "Causal Language Model" (LM) refers to a type of language model that generates a 
+    # probability distribution for the next token in the sequence based on the tokens 
+    # that have come before it. This is also known as "autoregressive" language modeling.
+    # GPT-2 and GPT are examples of causal LMs.
+    # In the context of training these models, we dont need to pad shorter sentences in 
+    # batches because these models generate the next token based on the previous ones, 
+    # and they do not need to consider the future tokens. Therefore, the length of the 
+    # sentences doesnt need to be the same, unlike in some other types of models where
+    # you need to pad the input sequences to ensure they have the same length.
+    # sidenote2: 
+    # we already knew that padding is used in batch processing of sequences to make all 
+    # sequences in a batch the same length for efficient computation and this is particularly
+    # important for models that are not autoregressive, like BERT, where the model looks 
+    # at the entire sequence at once.
+    # However, for autoregressive models like GPT-2, each token is predicted one at a time
+    # based on the previous tokens. Therefore, these models technically dont require sequences
+    # to be of the same length. Thats why we said that "we dont need to pad shorter sentences
+    # in batches" for GPT/GPT-2 models.
+    # But in practice, when we're preparing batches of sequences for training in a practical 
+    # implementation, we often still pad sequences for efficiency reasons. 
+    # The key is to ensure that the padding tokens are ignored during the computation of the 
+    # loss function as we briefly experimented with in our previous example using lstms.
+    # 
+    # now back to our main issue here, since tokenizer doesnt have pad_token_id, 
+    # we use eos_token_id as pad_token_id, if we dont do this we get this error 
+    # message during trainig: 
+    # ValueError: Asking to pad but the tokenizer does not have a padding token. 
+    # Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` 
+    # or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
+    # side note from : https://github.com/ludwig-ai/ludwig/pull/3735/files 
+    # Notes:
+    #- (geoffrey): gpt2 has no pad token. Recommendation is to use eos token instead.
+    #    - https://github.com/huggingface/transformers/issues/2630#issuecomment-1290809338
+    #    - https://github.com/huggingface/transformers/issues/2648#issuecomment-616177044
+    #- (Justin): Using the EOS token in place of the pad token causes an issue with HF model.generate() when
+    #    there are multiple examples in the batch.
+    #    - https://github.com/facebookresearch/llama/issues/380#issuecomment-1716832417
+    #    - Recommendation is to set a separate '[PAD]' or '<pad>' token.
+    # but i guess the best way if the following doesnt work is to use add_special_tokens
+    # and do a tokenizer.padding_side = "right" (cuz - GPT-2 is a model with absolute position embeddings so it’s usually advised to pad the inputs on the right rather than the left.) 
+    # https://github.com/huggingface/transformers/issues/2630#issuecomment-1637601289
+    # 
+    tokenizer.pad_token =  tokenizer.eos_token
     # now lets initialize the other configs
     model.config.eos_token_id = tokenizer.eos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
@@ -2061,6 +2107,12 @@ else:
     # For other decoders such as bert, we use cls_token_id instead as the start_token_id
     model.config.decoder_start_token_id = tokenizer.cls_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
+    
+# to check if everything is as expected lets print them 
+print("Tokenizer pad_token:", tokenizer.pad_token)
+print("Tokenizer pad_token_id:", tokenizer.pad_token_id)
+print("Model config pad_token_id:", model.config.pad_token_id)
+
 #%%
 import torch.nn as nn
 # our model is built, our preprocessors and tokenizers for encoder and decoders are now initialized
@@ -2120,7 +2172,7 @@ class COCODataset(nn.Module):
         # we do that using the colate_fn argument and pass a function that handles
         # these kinds of stuff, so the dataset need to return the actual data it contains,
         # batching chores are offloaded to the dataloader.
-        return img, caption 
+        return img.squeeze(0), caption 
 
     def __len__(self):
         # note that there are several captions per image, so we use captions length
@@ -2133,21 +2185,23 @@ print(f'{len(dt_train)=:,}')
 print(f'{len(dt_val)=:,}')
 img,caption = dt_train[1]
 img_val,caption_val = dt_val[1]
+print(f'{img_val.shape=}')
 # now lets create our Colate_FN class! 
 class OurColateFN():
-    def __init__(self, truncation_length) -> None:
+    def __init__(self, truncation_length,tokenizer) -> None:
         self.truncation_length = truncation_length
-        
+        self.tokenizer = tokenizer
+
     def __call__(self, batch):
         # separate the images and captions
         images, captions = zip(*batch)
         # normalize our captions
-        targets = tokenizer([caption for caption in captions], 
+        targets = self.tokenizer([caption for caption in captions], 
                              max_length=self.truncation_length,
                              padding="max_length",
                              truncation=True,
                              return_tensors="pt")
-        
+
         # and finally create batches for images and labels
         imgs = torch.stack([image for image in images])
         labels = torch.stack([x for x in targets["input_ids"]])
@@ -2156,8 +2210,8 @@ class OurColateFN():
 
 # now lets test 
 trunc_len = 15
-dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len))
-dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len))
+dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,tokenizer=tokenizer))
+dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,tokenizer=tokenizer))
 
 print(f'{len(dl_train)=:,}')
 print(f'{len(dl_val)=:,}')
@@ -2213,13 +2267,73 @@ print(f'{targets=}')
 rogue = evaluate.load("rouge")
 bleu = evaluate.load('bleu')
 # now lets define the actual function for measuring these scores 
-def calculate_scores(outputs, labels):
+def calculate_scores(outputs, targets, tokenizer):
     
+    # first convert them into string sequences
+    predicted_texts = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    reference_texts = tokenizer.batch_decode(targets, skip_special_tokens=True)
 
+    # now lets use our evaluate objects to calculate the scores as a dictionary
+    # where each key contains a rogue score (rogue-1, rogue-2 and rogueL respectively)
+    rogue_scores = rogue.compute(predictions=predicted_texts, references=reference_texts)
+    # multiply by 100
+    rogue_scores = {k: (v*100) for k,v in rogue_scores.items()}
+    # now lets calculate the bleu score 
+    bleu_scores = bleu.compute(predicted_texts, reference_texts)
+    
+    return {**rogue_scores,
+            "bleu":bleu_scores["bleu"]*100,
+            "gen_len":bleu_scores["translation_length"]//len(targets)
+           }
 
+# for trainer class, the result ofthe model is a EvalPredictions object, so we have this wrapper
+def calculate_scores2(eval_predictions):
+    return calculate_scores(eval_predictions.predictions, eval_predictions.label_ids, tokenizer=tokenizer)
+#%% we have everything in place and we can now commence training!!
+# for training just like what we saw previously in rnn section/text generation part
+# we can use the huggingface trainer class which makes it a breeze to train or use 
+# good old pytorch training loop. 
+# we first train using trainer class and then also see how we can train this using 
+# pytorch and whether its any different! 
+from functools import partial
 
+batch_size = 16
+epochs=2
+interval=2000
+max_length = 20
+num_workers=8
+training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioning-swin-gpt2',
+                                               do_train=True,
+                                               do_eval=True,
+                                               per_device_train_batch_size=batch_size,
+                                               per_device_eval_batch_size=batch_size,
+                                               num_train_epochs=epochs,
+                                               predict_with_generate=True,
+                                               # evaluate the model at each eval_steps
+                                               # other options are ['no', 'steps', 'epoch']
+                                               evaluation_strategy='steps',
+                                               eval_steps=interval,
+                                               logging_steps=interval,
+                                               save_steps=interval,  #save the model at intervals
+                                               logging_dir='./results/logs',)
 
-
+# now lets train 
+trainer = trans.Seq2SeqTrainer(model = model, 
+                               args=training_args,
+                               train_dataset=dt_train,
+                               eval_dataset=dt_val,
+                               data_collator=OurColateFN(truncation_length=max_length, tokenizer=tokenizer),
+                               tokenizer=tokenizer,
+                               compute_metrics=calculate_scores2
+                               )
+# lets swap the dataloaders 
+dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
+dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
+# create a simple lambda that returns a dataloader for each
+# trainer.get_train_dataloader = lambda: dl_train
+# trainer.get_eval_dataloader = lambda: dl_val
+# now lets train!
+trainer.train()
 
 
 
