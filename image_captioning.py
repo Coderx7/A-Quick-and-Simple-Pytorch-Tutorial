@@ -1,7 +1,7 @@
 #%% in the name of God the most compassionate the most merciful 
 # in this section we will be looking at the image captioning 
 # and see how we can implement this using an LSTM and later on 
-# a transformer model. 
+# a transformer model.
 # to give you a short summary of what we are dealing with here,
 # I need to say that image captioning is a subfield of ai that 
 # intersects computer vision and natural language processing. 
@@ -643,8 +643,9 @@ print(idxs_to_words(words_to_idxs("Hello world! this is a test baby")))
 from functools import reduce
 class Tokenizer():
            
-    def __init__(self, train_captions, val_captions, use_lower=True) -> None:
+    def __init__(self, train_captions, val_captions, use_lower=False) -> None:
         
+        self.use_lower = use_lower
         all_captions = []
         for row in itertools.chain(train_captions, val_captions):
             caption_normalized = row['caption'].translate(str.maketrans('','',string.punctuation))
@@ -668,14 +669,14 @@ class Tokenizer():
         # special symbols for normalizing our sequences. we define them like this so in case
         # we wanted to change them anywhere in our code, we would be able to easily do so 
         # without any issues.
-        self._start = '<start>'
-        self._end = '<end>'
-        self._unknown = '<unk>'
+        self.start = '<start>'
+        self.end = '<end>'
+        self.unknown = '<unk>'
         # since we later pad our input, we want to make sure we can differentiate between
         # our actual values and pads(initially I used 0 for end, and pads, but then changed
         # my mind to make it more obvious)
-        self._pad = '<pad>'
-        self.special_tokens = (self._pad, self._start, self._end, self._unknown)
+        self.pad = '<pad>'
+        self.special_tokens = (self.pad, self.start, self.end, self.unknown)
         
         self.itow = dict(enumerate(self.special_tokens))
         # incase we add new special tokens, lets dynamically update the counts
@@ -690,28 +691,33 @@ class Tokenizer():
         return len(self.wtoi)
 
     def encode(self, input_text, add_special_tokens=True):
+        # make sure the casing is correct
+        input_text = input_text.lower() if self.use_lower else input_text
+        
         # if we recieve any special tokens, just return their code, they are probably
         # the initial token for text-generation at test time
         if input_text in self.special_tokens:
-            return self.wtoi[input_text]
+           return self.wtoi[input_text]
         
+        # else carry on normalizing it
         normalized = input_text.translate(str.maketrans('','',string.punctuation))
         if add_special_tokens:
-            normalized = f"{self.itow[self.wtoi[self._start]]} {normalized} {self.itow[self.wtoi[self._end]]}"
+            normalized = f"{self.itow[self.wtoi[self.start]]} {normalized} {self.itow[self.wtoi[self.end]]}"
+
         # if a word is not in our vocabulary, encode it with <unk> symbol
-        return [self.wtoi.get(word, self.wtoi[self._unknown]) for word in normalized.split()]
+        return [self.wtoi.get(word, self.wtoi[self.unknown]) for word in normalized.split()]
 
     def batch_encode(self, input_text_batch, add_special_tokens=True):
         return [self.encode(text,add_special_tokens) for text in input_text_batch]
-    
+
     def decode(self, input_idxs, to_str=False, remove_special_tokens=False):
         token_list = self.special_tokens if remove_special_tokens else []
         output_list = [word for idx in input_idxs if (word:=self.itow[idx]) not in token_list]
         return ' '.join(output_list) if to_str else output_list
-    
+
     def batch_decode(self, input_idxs_batch, to_str=False, remove_special_tokens=False):
         return [self.decode(idx, to_str, remove_special_tokens) for idx in input_idxs_batch]
-                
+
     def _calculate_caption_statistics(self, all_captions):
         # lets calculate max and min seq_length
         all_captions_length = [len(caption.split()) for caption in all_captions]
@@ -880,7 +886,6 @@ img_val,caption_val = dt_val[1]
 show_image(img, caption)
 show_image(img_val, caption_val)
 
-
 #%%
 # now lets create our colate_fn function to do sequence management, padd,trunctaion etc 
 # since our colate_fn has a new argument, we simply use a lambda to apply our argument
@@ -968,10 +973,12 @@ class OurColateFN():
         input_captions  = pad_sequence(input_captions, batch_first=True, padding_value=0)
         target_captions = pad_sequence(target_captions, batch_first=True, padding_value=0)
         return images, input_captions, target_captions
-    
+
+
 # now lets test 
 trunc_len = 15
-end_token = tokenizer.encode(tokenizer._end)
+tokenizer = Tokenizer(captions_train, captions_val,True)
+end_token = tokenizer.encode(tokenizer.end)
 dl_train = DataLoader(dt_train, 5, shuffle=True, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
 dl_val = DataLoader(dt_val, 5, pin_memory=True, num_workers=0,collate_fn=OurColateFN(trunc_len,end_token))
 
@@ -1015,7 +1022,7 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # need more embedding features/dims, hidden_state size, or even data  to begin with , 
 # we might need dropout if we overfit there as well.
 
-tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
+tokenizer = Tokenizer(captions_train, captions_val, use_lower=True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'resnet' # resent50 works the best, simplenet is just there as another test model
 project_size = 2048 # this affects the output a lot!
@@ -1023,7 +1030,7 @@ project_size = 2048 # this affects the output a lot!
 # as our image_features are used as initial hidden_states so should match
 # for input mode, they can be different as they are fed as the initial token of
 # the embeddings.
-end_token=tokenizer.encode(tokenizer._end)
+end_token=tokenizer.encode(tokenizer.end)
 embd_size = 512
 hidden_size = 512
 num_layers = 1
@@ -1185,7 +1192,7 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, ga
 # modeling or image captioning. Other metrics like BLEU or METEOR can provide a more holistic 
 # view of our model’s performance.
 # see https://medium.com/@sthanikamsanthosh1994/understanding-bleu-and-rouge-score-for-nlp-evaluation-1ab334ecadcb
-criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer._pad])
+criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer.pad])
 
 # calculate blue score
 def calculate_bleu_score(ref_caps, gen_caps):
@@ -1566,7 +1573,7 @@ def calculate_scores(outputs, targets, tokenizer):
             "bleu":bleu_scores["bleu"]*100,
             # total length of all the generated translations, 
             # which is the sum of the lengths of all the translated sentences.
-            "gen_len":bleu_scores["translation_length"],
+            # "gen_len":bleu_scores["translation_length"],
             # average length of generated translation
             # its refered to as translation, because bleu was initially created
             # for machine translation, but its later used in other nlp tasks like
@@ -1736,7 +1743,7 @@ def generate_caption(model, img_list, trans, max_length, tokenizer:Tokenizer,top
             model.eval()
             hidden_states = None
             output_lst = []
-            caption_str = tokenizer._start
+            caption_str = tokenizer.start
             device = next(model.parameters()).device
 
             image_features = model.encoder(trans(img).unsqueeze(0).to(device))
@@ -1753,7 +1760,7 @@ def generate_caption(model, img_list, trans, max_length, tokenizer:Tokenizer,top
                 # if caption_str != tokenizer._start: 
                 output_lst.append(caption_str)
                 caption = torch.tensor(idx.item(), device=device).view(1,-1).long()
-                if caption_str == tokenizer._end:
+                if caption_str == tokenizer.end:
                     break
             img_captions.append(' '.join(output_lst))
 
@@ -1951,7 +1958,7 @@ num_tdlayers = 4
 num_telayers = 4
 nhead = 8
 project_size = 2048 
-end_token=tokenizer.encode(tokenizer._end)
+end_token=tokenizer.encode(tokenizer.end)
 embd_size = 512
 hidden_size = 512
 num_layers = 1
@@ -2016,7 +2023,7 @@ model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
-criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer._pad])
+criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.wtoi[tokenizer.pad])
 
 # calculate blue score
 def calculate_bleu_score(ref_caps, gen_caps):
@@ -2148,8 +2155,6 @@ import matplotlib.pyplot as plt
 
 from datasets import load_dataset
 import transformers as trans
-from transformers import VisionEncoderDecoderModel, GPT2TokenizerFast, ViTImageProcessor\
-                         ,Seq2SeqTrainingArguments,Seq2SeqTrainer
 
 # introduction to huggingface: 4 hours
 # https://www.youtube.com/watch?v=6NTHvcXAl90
@@ -2161,9 +2166,9 @@ from transformers import VisionEncoderDecoderModel, GPT2TokenizerFast, ViTImageP
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # load a fine-tuned image captioning model and corresponding tokenizer and image processor
-model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning").to(device)
-tokenizer = GPT2TokenizerFast.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-image_processor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+model = trans.VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning").to(device)
+tokenizer = trans.GPT2TokenizerFast.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+image_processor = trans.ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
 
 # lets create a few helper functions to grab an image using a url
 # it comes handy when we dont have an image locally at the moment!
