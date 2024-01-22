@@ -1022,7 +1022,7 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # need more embedding features/dims, hidden_state size, or even data  to begin with , 
 # we might need dropout if we overfit there as well.
 
-tokenizer = Tokenizer(captions_train, captions_val, use_lower=True)
+tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'resnet' # resent50 works the best, simplenet is just there as another test model
 project_size = 2048 # this affects the output a lot!
@@ -1033,7 +1033,7 @@ project_size = 2048 # this affects the output a lot!
 end_token=tokenizer.encode(tokenizer.end)
 embd_size = 512
 hidden_size = 512
-num_layers = 1
+num_layers = 2
 dropout = 0.1
 bidirectional=False
 # (hidden_state gets 35% while input achieves 24.0% without bidirectional,
@@ -1083,7 +1083,7 @@ bidirectional=False
 #(43m vs 34.5m! ), and the accuracy is higher right off the bat, (at 2 epochs 34.15 vs 35.52)
 # ultimately it finished at 36.79% at 20 epochs. (time elapsed: 03:57:13.65)
 # However, the description generation quality is not as good as the cased version(that is when we use all cases) the uncased version(.lower() version)
-# in my opinion, it starts all the sentences with <unk>, which seems to be needing early stopping
+# in my opinion, seems to be needing early stopping
 # or a bit more regularization or training time.
 # by the way this old paper is a good read https://openaccess.thecvf.com/content_cvpr_2018/papers/Cui_Learning_to_Evaluate_CVPR_2018_paper.pdf 
 #! up till now we use 2 lstm layers, try it with 1 lstm layer.
@@ -2701,24 +2701,29 @@ batch_size = 16
 epochs=2
 interval=20000
 max_length = 15
-num_workers=8
+num_workers=2
 #! next test with fp16, dataloader_num_workers, torch.compile to get as fast as we can
-training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioning-swin-gpt2',
-                                               do_train=True,
-                                               do_eval=True,
-                                               per_device_train_batch_size=batch_size,
-                                               per_device_eval_batch_size=batch_size,
-                                               num_train_epochs=epochs,
-                                               predict_with_generate=True,
-                                               # evaluate the model at each eval_steps
-                                               # other options are ['no', 'steps', 'epoch']
-                                               evaluation_strategy='steps',
-                                               eval_steps=interval,
-                                               logging_steps=interval,
-                                               save_steps=interval,  #save the model at intervals
-                                               logging_dir='./results/logs',
-                                               # resume from the last checkpoint
-                                               resume_from_checkpoint=True,
+training_args = trans.Seq2SeqTrainingArguments(
+                                output_dir='./results_imgcaptioning-swin-gpt2',
+                                do_train=True,
+                                do_eval=True,
+                                # for some reason enabling them took all cores and ram 100% and crashed ultimately
+                                # dataloader_num_workers=num_workers,
+                                # fp16=True,
+                                # torch_compile=True,
+                                per_device_train_batch_size=batch_size,
+                                per_device_eval_batch_size=batch_size,
+                                num_train_epochs=epochs,
+                                predict_with_generate=True,
+                                # evaluate the model at each eval_steps
+                                # other options are ['no', 'steps', 'epoch']
+                                evaluation_strategy='steps',
+                                eval_steps=interval,
+                                logging_steps=interval,
+                                save_steps=interval,  #save the model at intervals
+                                logging_dir='./results/logs',
+                                # resume from the last checkpoint
+                                resume_from_checkpoint=True,
                                                )
 
 # now lets train 
