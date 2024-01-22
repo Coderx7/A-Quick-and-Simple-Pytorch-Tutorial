@@ -2398,11 +2398,8 @@ training_args = trans.Seq2SeqTrainingArguments(output_dir='./results_imgcaptioni
                                                save_steps=interval,  #save the model at intervals
                                                logging_dir='./results/logs',
                                                # resume from the last checkpoint
-                                               # it automatically checks output_dir
-                                               # and resumes from the last checkpoint
-                                               # otherwise, specify the path to checkpoint
-                                               # to be loaded
-                                               resume_from_checkpoint=True)
+                                               resume_from_checkpoint=True,
+                                               )
 
 # now lets train 
 trainer = trans.Seq2SeqTrainer(model = model, 
@@ -2416,9 +2413,35 @@ trainer = trans.Seq2SeqTrainer(model = model,
 # now lets train!
 # to resume training specify the checkpoint directory name/path 
 # ref: https://github.com/huggingface/transformers/issues/7198#issuecomment-694352941
-trainer.train('./results_imgcaptioning-swin-gpt2/checkpoint-16000')
-
-# %%
+# and see https://discuss.huggingface.co/t/no-skipping-steps-after-loading-from-checkpoint/6880
+# setting this to True, should automatically resume the training, otherwise specifying the
+# checkpoint directory will load that checkpoint like ours below
+# !test the True check and see if that works! (yes it works)
+# sidenote: had to edit trainer_state.json and update save_steps,eval_steps with new number
+# becasue they retained their old values, even when I updated the 'interval' 
+trainer.train(resume_from_checkpoint=True)
+#output
+# TrainOutput(global_step=73970, training_loss=1.1278452465949034, metrics={'train_runtime': 19476.8822, 'train_samples_per_second': 60.765, 'train_steps_per_second': 3.798, 'train_loss': 1.1278452465949034, 'epoch': 2.0})
+#%% save last model
+trainer.save_model('./results_imgcaptioning-swin-gpt2/checkpoint-73970')
+trainer._save_optimizer_and_scheduler('./results_imgcaptioning-swin-gpt2/checkpoint-73970')
+trainer._save_rng_state('./results_imgcaptioning-swin-gpt2/checkpoint-73970')
+trainer.evaluate(dt_val)
+# {'eval_loss': 1.569061040878296,
+#  'eval_rouge1': 42.590119827380235,
+#  'eval_rouge2': 17.340671941403368,
+#  'eval_rougeL': 38.89672915460514,
+#  'eval_rougeLsum': 38.89039623752789,
+#  'eval_bleu': 11.512851516259435,
+#  'eval_gen_len': 10,
+#  'eval_runtime': 522.196,
+#  'eval_samples_per_second': 47.902,
+#  'eval_steps_per_second': 2.995,
+#  'epoch': 2.0}
+#%%
+url='http://images.cocodataset.org/test-stuff2017/000000014118.jpg'
+print(generate(model, get_image(url), tokenizer, max_iter=10, topk=3))
+#%%
 # now to train it ourselves we would need a few more things including a criterion/loss
 # an optimizer, and dataloaders. 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
