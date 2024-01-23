@@ -2418,7 +2418,7 @@ def generate(model, image, tokenizer, max_iter=1, topk=3):
     output = tokenizer.decode(idx_lst, skip_special_tokens=True)
     return output
 
-url = "https://static.thehoneycombers.com/wp-content/uploads/sites/6/2022/03/anime-demon-slayer-900x643.jpeg"
+url = 'http://images.cocodataset.org/test-stuff2017/000000014118.jpg'
 plt.imshow(get_image(url))
 
 # image_processor returns a dictionary containing 'pixel_values' which is what we want
