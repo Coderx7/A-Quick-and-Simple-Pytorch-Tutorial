@@ -50,6 +50,7 @@
 import math 
 import random
 import time
+import datetime
 import os
 import glob
 import pathlib
@@ -1022,7 +1023,7 @@ print(*tokenizer.batch_decode(targets.tolist(),remove_special_tokens=False),sep=
 # need more embedding features/dims, hidden_state size, or even data  to begin with , 
 # we might need dropout if we overfit there as well.
 
-tokenizer = Tokenizer(captions_train, captions_val, use_lower=False)
+tokenizer = Tokenizer(captions_train, captions_val, use_lower=True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 encoder_backend = 'resnet' # resent50 works the best, simplenet is just there as another test model
 project_size = 2048 # this affects the output a lot!
@@ -1036,6 +1037,7 @@ hidden_size = 512
 num_layers = 2
 dropout = 0.1
 bidirectional=False
+use_fp16=True
 # (hidden_state gets 35% while input achieves 24.0% without bidirectional,
 # if you enable bidirectional, then input's accuracy goes to 50/60%)
 # the input version has a hardtime learning unless we enable bidirection
@@ -1103,7 +1105,7 @@ trunc_len=15
 method = 'ht' # hidden_state or input 
 epochs = 20
 interval = 500
-batch_size = 64
+batch_size = 256#64
 num_workers = 8
 
 
@@ -1150,7 +1152,7 @@ model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
                                    bidirectional=bidirectional,
                                    method=method)
 model.to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr = 0.01)
+optimizer = torch.optim.AdamW(model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
 # ignore the paddings in the loss 
 # sidenote:
@@ -1584,13 +1586,15 @@ def calculate_scores(outputs, targets, tokenizer):
 calculate_scores = partial(calculate_scores, tokenizer=tokenizer)
 
 print(f'{device=}')
+print(f'{use_fp16=}')
 print(f'{epochs=}')
+print(f'{batch_size=}')
 print(f'{interval=}')
 print(f'{trunc_len=}')
-print(f'{model.method=}')
-print(f'{model.encoder_backend=}')
 print(f'{len(dl_train)=:,}')
 print(f'{len(dl_val)=:,}')
+print(f'{model.method=}')
+print(f'{model.encoder_backend=}')
 print(f'{tokenizer.vocab_size=:,}')
 print(f'num_layers = {model.num_layers}')
 print(f'{model.embd_size=}')
@@ -1615,80 +1619,90 @@ start = time.time()
 # even two humans would likely come up with different sentence variants for a
 # problem, and would rarely achieve a perfect match
 
+# to scale the gradients calculating loss so we dont face underflow!
+scaler = torch.cuda.amp.grad_scaler.GradScaler(enabled=use_fp16)
+
 for epoch in range(epochs):
     
-    model.train()
-    losses_train = []
-    accs_train = []
-    bleu_scores = []
-    hidden_states = None
-    for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
-        imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
-        outputs,_ = model(imgs, captions, hidden_states)
-        # print(f'{outputs.argmax(dim=-1).shape=}')
-        # print(f'{captions.shape=}')
-        # print(f'{captions}')
-        # 
-        # since we have our input in the form of (Batch,Timesteps,Classes),
-        # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
-        # print(f'{outputs.shape=} {captions.shape=}')
-        loss = criterion(outputs.permute(0,2,1), targets)
-        # we could also do a reshape and offer both outputs as 2d tensors (and therefore
-        # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
-        # it contains (B,T,C) and our captions/labels contains (B,T).
-        # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
-        # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
-        # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
-        # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
-        # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
-        # if we are doing multi-class classification problem (which we are, but with sequences)
-        # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
-        # print(f'{loss=}')
-        losses_train.append(loss.item())
-        accs_train.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
-        bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
-        #! train with this and see the scores
-        # results = calculate_scores(targets.tolist(), outputs.argmax(dim=-1).tolist())
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if i%interval==0:
-            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist())
-            print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
-            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
-            print('metrics: ', results)
-    # update the lr    
-    scheduler.step()
-
-    with torch.no_grad():
-        model.eval()
-        losses_val=[]
-        accs_val=[]
-        bleu_scores_val = []
+    with torch.cuda.amp.autocast(enabled=use_fp16):
+        model.train()
+        losses_train = []
+        accs_train = []
+        bleu_scores = []
         hidden_states = None
-        for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+        # use leave=False for tqdm so we print the results inplace and not create 
+        for i,(imgs,captions,targets) in tqdm(enumerate(dl_train), leave=False):
             imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
             outputs,_ = model(imgs, captions, hidden_states)
+            # print(f'{outputs.argmax(dim=-1).shape=}')
+            # print(f'{captions.shape=}')
+            # print(f'{captions}')
+            # 
             # since we have our input in the form of (Batch,Timesteps,Classes),
-            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+            # and crossentropy expects (Batch,Classes,Timesteps), we need to permute
+            # print(f'{outputs.shape=} {captions.shape=}')
             loss = criterion(outputs.permute(0,2,1), targets)
-            losses_val.append(loss.item())
-            accs_val.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
-            # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
-            # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+            # we could also do a reshape and offer both outputs as 2d tensors (and therefore
+            # had to flatten the captions to make it 1d) by default our outputs tensor is 3d
+            # it contains (B,T,C) and our captions/labels contains (B,T).
+            # so in other words, outputs.view(-1, outputs.size(-1)) reshapes the outputs tensor
+            # to be 2D with shape (batch_size * sequence_length, vocab_size), and captions.view(-1)
+            # reshapes the captions tensor to be 1D with shape (batch_size * sequence_length,). 
+            # This is necessary because as we just said CrossEntropyLoss expects the input tensor 
+            # to be of shape (minibatch, C) and the target tensor to be of shape (minibatch,)
+            # if we are doing multi-class classification problem (which we are, but with sequences)
+            # loss = criterion(outputs.view(-1, outputs.size(-1)), captions.view(-1))
+            # print(f'{loss=}')
+            losses_train.append(loss.item())
+            accs_train.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
+            bleu_scores.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+            #! train with this and see the scores
+            # results = calculate_scores(targets.tolist(), outputs.argmax(dim=-1).tolist())
             
-            # only calculate on validation, becasue its an expensive/time-consuming operation!
-            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+            optimizer.zero_grad()
+            # scale the gradients before doing a backward
+            scaler.scale(loss).backward()
+            # unscale the gradients before we do optimizer.step
+            scaler.step(optimizer)
+            # update the scales for the next round
+            scaler.update()
 
-        print(f'{epoch}/{epochs} '
-            f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
-            f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-        # print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
-        results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
-        print('metrics-val: ', results)
+            if i%interval==0:
+                results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist())
+                print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
+                print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+                print('metrics: ', results)
         
+        # update the lr    
+        scheduler.step()
+
+        with torch.no_grad():
+            model.eval()
+            losses_val=[]
+            accs_val=[]
+            bleu_scores_val = []
+            hidden_states = None
+            for i,(imgs, captions, targets) in tqdm(enumerate(dl_val), leave=False):
+                imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
+                outputs,_ = model(imgs, captions, hidden_states)
+                # since we have our input in the form of (Batch,Timesteps,Classes),
+                # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
+                loss = criterion(outputs.permute(0,2,1), targets)
+                losses_val.append(loss.item())
+                accs_val.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
+                # print(f'labels: {tokenizer.batch_decode(target_cap_val[:3].tolist(),remove_special_tokens=False)}')
+                # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
+                
+                # only calculate on validation, becasue its an expensive/time-consuming operation!
+                bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+
+            print(f'{epoch}/{epochs} '
+                f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
+                f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+            # print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
+            print('metrics-val: ', results)
+            
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
 print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
@@ -2701,16 +2715,22 @@ batch_size = 16
 epochs=2
 interval=20000
 max_length = 15
-num_workers=2
+num_workers=8
 #! next test with fp16, dataloader_num_workers, torch.compile to get as fast as we can
 training_args = trans.Seq2SeqTrainingArguments(
                                 output_dir='./results_imgcaptioning-swin-gpt2',
                                 do_train=True,
                                 do_eval=True,
-                                # for some reason enabling them took all cores and ram 100% and crashed ultimately
-                                # dataloader_num_workers=num_workers,
-                                # fp16=True,
-                                # torch_compile=True,
+                                # for some reason enabling them took all cores and 
+                                # ram 100% and crashed ultimately
+                                # speed 3.55 vs 6.35 (num_workers 1 vs 8)
+                                dataloader_num_workers=num_workers,
+                                #decreases the vram from 9.8g to 8.5g, and speeds training up a bit
+                                #(with num_worker=1, 2.69 vs 3.55 iter/sec)
+                                fp16=True,
+                                # with torch_compile, the speedup is increased
+                                # 6.35 vs 8.55 iter/s (fp16,num_worker=8) (took 22gb ram)
+                                torch_compile=True,
                                 per_device_train_batch_size=batch_size,
                                 per_device_eval_batch_size=batch_size,
                                 num_train_epochs=epochs,
@@ -2743,7 +2763,8 @@ trainer = trans.Seq2SeqTrainer(model = model,
 # checkpoint directory will load that checkpoint like ours below
 # !test the True check and see if that works! (yes it works)
 # sidenote: had to edit trainer_state.json and update save_steps,eval_steps with new number
-# becasue they retained their old values, even when I updated the 'interval' 
+# becasue they retained their old values, even when I updated the 'interval'
+print(f'{datetime.datetime.now().strftime("%d/%m/%Y, %H:%M:%S")}') #4mins to get going!
 trainer.train(resume_from_checkpoint=True)
 #output
 # TrainOutput(global_step=73970, training_loss=1.1278452465949034, metrics={'train_runtime': 19476.8822, 'train_samples_per_second': 60.765, 'train_steps_per_second': 3.798, 'train_loss': 1.1278452465949034, 'epoch': 2.0})
@@ -2796,44 +2817,55 @@ batch_size = 8
 num_workers=8
 max_length =15
 interval = 5000
+use_fp16 = True
+
 dl_train = DataLoader(dt_train, batch_size, shuffle=True, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
 dl_val = DataLoader(dt_val, batch_size, pin_memory=True, num_workers=num_workers,collate_fn=OurColateFN(max_length, tokenizer))
 
+# create a GradScaler object scale the gradients to prevent underflow during the backward pass
+scaler = torch.cuda.amp.grad_scaler.GradScaler(enabled=use_fp16)
+
 for epoch in range(epochs):
-    model.train()
-    for i, (data) in tqdm(enumerate(dl_train),leave=False):
-        imgs, labels = data["pixel_values"], data["labels"]
-        imgs,labels = tuple(t.to(device) for t in (imgs, labels))
-        # note that predictions contains the calculated loss as well, but 
-        # try to do everything ourseleves here.
-        predictions = model(pixel_values=imgs, labels=labels)
-        logits = predictions["logits"]
-        # we could also write 
-        # loss = predictions.loss
-        loss = criterion(logits.permute(0,2,1) , labels)
-        metrics = calculate_scores(logits.softmax(dim=-1).argmax(dim=-1), labels,tokenizer=tokenizer)
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        if i%interval==0:
-            print(f'{loss.item():.4f} {metrics}')
-        
-    scheduler.step()
-    
-    with torch.nograd():
-        model.eval()
-        losses = []
-        for i,data in tqdm(enumerate(dl_val),leave=False):
+    with torch.cuda.amp.autocast(enabled=use_fp16):
+        model.train()
+        for i, (data) in tqdm(enumerate(dl_train),leave=False):
             imgs, labels = data["pixel_values"], data["labels"]
             imgs,labels = tuple(t.to(device) for t in (imgs, labels))
-            predictions = model(pixel_values=imgs,labels=labels)
+            # note that predictions contains the calculated loss as well, but 
+            # try to do everything ourseleves here.
+            predictions = model(pixel_values=imgs, labels=labels)
             logits = predictions["logits"]
+            # we could also write 
+            # loss = predictions.loss
             loss = criterion(logits.permute(0,2,1) , labels)
             metrics = calculate_scores(logits.softmax(dim=-1).argmax(dim=-1), labels,tokenizer=tokenizer)
-            losses.append(loss.item())
-            print(f'{np.mean(losses):.4f} {metrics}')
+            
+            optimizer.zero_grad()
+            # by scaling the loss before computing the backward pass we prevent underflow
+            scaler.scale(loss).backward()
+            # unscale the gradients and apply them using our optimizer
+            scaler.step(optimizer)
+            # and finally update the scale for the next iteration
+            scaler.update()
+            
+            if i%interval==0:
+                print(f'{loss.item():.4f} {metrics}')
+        
+        # update the learning rate at each epoch   
+        scheduler.step()
+        
+        with torch.nograd():
+            model.eval()
+            losses = []
+            for i,data in tqdm(enumerate(dl_val),leave=False):
+                imgs, labels = data["pixel_values"], data["labels"]
+                imgs,labels = tuple(t.to(device) for t in (imgs, labels))
+                predictions = model(pixel_values=imgs,labels=labels)
+                logits = predictions["logits"]
+                loss = criterion(logits.permute(0,2,1) , labels)
+                metrics = calculate_scores(logits.softmax(dim=-1).argmax(dim=-1), labels,tokenizer=tokenizer)
+                losses.append(loss.item())
+                print(f'{np.mean(losses):.4f} {metrics}')
             
             
 # %%
