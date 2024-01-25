@@ -404,7 +404,7 @@ from transformers import pipeline
 # with Bert(see below example, where we directly us the class abstraction to do this example)
 # sidenote4: read the Risks, Limitations and Biases section of the distilbert model (its informative!)
 classifier = pipeline('text-classification',device='cuda')
-# we feed it list of sequences, and it will return the type of text we fed it 
+# we feed it list of sequences, and it will return the type of text we fed it
 comments = ["i guess it was ok?!", "this was awesome!","oh my God, it was aweful!hate it!"]
 outputs = classifier(comments)
 print(*outputs,sep='\n')
@@ -438,7 +438,10 @@ print(*outputs,sep='\n')
 # 5. **DistilBERT**: 
 #      DistilBERT is a smaller, faster, and cheaper version of BERT that retains 
 #      most of its accuracy⁵.
-# Remember, the choice of model depends on your specific use case and the resources you have available. You might need to experiment with different models to see which one works best for your task. Also, keep in mind that these models typically require a significant amount of computational resources and may take a long time to train¹..
+# Remember, the choice of model depends on our specific use case and the resources we have available. 
+# we might need to experiment with different models to see which one works best for your task. 
+# Also, keep in mind that these models typically require a significant amount of computational 
+# resources and may take a long time to train¹..
 # Source: Conversation with Bing, 1/3/2024
 # (1) Transformers for Multilabel Classification | Towards Data Science. https://towardsdatascience.com/transformers-for-multilabel-classification-71a1a0daf5e1.
 # (2) Text generation strategies - Hugging Face. https://huggingface.co/docs/transformers/generation_strategies.
@@ -476,6 +479,18 @@ tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
 # text, which could then be used as input for other machine learning models or tasks. 
 # But for most NLP tasks (like text classification, sentiment analysis, question answering, etc.), we would 
 # typically fine-tune the model on your specific task¹.
+# side note: 
+# there are specifically trained models on huggingface where we can use, like for sentiment analysis
+# if we go to huggingface hub, under models, natural language processing, and click on text classification
+# (https://huggingface.co/models?pipeline_tag=text-classification&sort=trending) we can find a plethora 
+# of models trained for text classification. if we click on one of them we can find different information
+# concerning the model, its training, labels, etc. obviously we can use them rightaway, but thats another
+# story. 
+# sidenote 2: 
+# huggingface libarary also offers a "Auto" version for modles and tokenizers, which allows us
+# to load and use any models using its name only. for models we have AutoModeletc, for tokenizers
+# we have AutoTokenizer, and for SequenceClassification we have AutoModelSequenceClassification
+# for example, which allows us to be more flexible and more easily use the models
 # Source: Conversation with Bing, 1/4/2024
 # (1) DistilBERT - Hugging Face. https://huggingface.co/docs/transformers/model_doc/distilbert.
 # (2) time series - why take the first hidden state for sequence .... https://stackoverflow.com/questions/60087613/why-take-the-first-hidden-state-for-sequence-classification-distilbertforsequen.
