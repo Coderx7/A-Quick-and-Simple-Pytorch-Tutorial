@@ -1236,8 +1236,26 @@ embd_size = 512
 hidden_size = 512
 num_layers = 2
 dropout = 0.1
+# bidirection by itself doesnt result in a good outcome because it causes the model to
+# massively overfit. if we are going to us ebidirection, we have to either use it in a
+# an encoder fashion and then use the output in our decoder, or use mlm (masked language modeling
+# like what bert does, basically the labels need to change so that randomly some tokens
+# are removed so the model has to find the right tokens for the missing balnks. its not
+# worth it here, because ultimately we are going to use pretrained transformers and get 
+# a hugely better outcome. we could also use attention (like badanhu's attention etc) to 
+# improve our results, and only go lstm if theres no pretrained model, or the data is very
+# scarce and only then try to use more complex regimes for traiing. also note that
+# using encoder/decoder fashion for our text creation(basically making it a seq2seq
+# makes it a good option when understanding the context is involved but it may not result
+# in a better textgeneration capapbility compared to autoregressive counterparts/causal models
+# like transformers) read my explanation in huggingface tutorials/text summarization)
 bidirectional=False
 use_fp16=True
+# compiles the model for faster training/inference
+# basically torch.compile speeds up our pytorch code by JIT-compiling it into
+# optimized kernels, this is basically free speed, we get 23 iter instead of 19
+# iteration per second! and all we have to do is to do model.compile()! thats it!
+torch_compile=True
 # (hidden_state gets 35% while input achieves 24.0% without bidirectional,
 # if you enable bidirectional, then input's accuracy goes to 50/60%)
 # the input version has a hardtime learning unless we enable bidirection
@@ -1359,7 +1377,10 @@ model = EncoderDecoderImageCaption(vocab_size=tokenizer.vocab_size,
                                    bidirectional=bidirectional,
                                    method=method)
 model.to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr = 0.01)
+if torch_compile:
+    model.compile()
+# adam with proper weight decay!
+optimizer = torch.optim.AdamW(model.parameters(), lr = 0.01)# test with 0.003 as well
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
 # ignore the paddings in the loss 
 # sidenote:
@@ -1794,6 +1815,7 @@ calculate_scores = partial(calculate_scores, tokenizer=tokenizer)
 
 print(f'{device=}')
 print(f'{use_fp16=}')
+print(f'{torch_compile=}')
 print(f'{epochs=}')
 print(f'{batch_size=}')
 print(f'{interval=}')
@@ -1838,7 +1860,7 @@ for epoch in range(epochs):
         bleu_scores = []
         hidden_states = None
         # use leave=False for tqdm so we print the results inplace and not create 
-        for i,(imgs,captions,targets) in tqdm(enumerate(dl_train), leave=False):
+        for i,(imgs,captions,targets) in tqdm(enumerate(dl_train)):
             imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
             outputs,_ = model(imgs, captions, hidden_states)
             # print(f'{outputs.argmax(dim=-1).shape=}')
@@ -1876,10 +1898,8 @@ for epoch in range(epochs):
 
             if i%interval==0:
                 results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist())
-                print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
-                print(f'BLEU score: {np.mean(bleu_scores):.4f}')
-                print('metrics: ', results)
-        
+                print(f'\rEpoch: {epoch}/{epochs} | Iteration: {i}/{len(dl_train)} | Loss: {np.mean(losses_train):.4f} | Accuracy: {np.mean(accs_train)*100:.2f}% | LR: {scheduler.get_last_lr()[-1]:.1e} | BLEU Score: {np.mean(bleu_scores):.4f} | Metrics: {results}', end='')
+
         # update the lr    
         scheduler.step()
 
@@ -1889,7 +1909,9 @@ for epoch in range(epochs):
             accs_val=[]
             bleu_scores_val = []
             hidden_states = None
-            for i,(imgs, captions, targets) in tqdm(enumerate(dl_val), leave=False):
+            # calculate 3 metrics all at once 
+            clf_metrics = evaluate.combine(["bleu", "rouge"])
+            for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
                 imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
                 outputs,_ = model(imgs, captions, hidden_states)
                 # since we have our input in the form of (Batch,Timesteps,Classes),
@@ -1901,14 +1923,20 @@ for epoch in range(epochs):
                 # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
                 
                 # only calculate on validation, becasue its an expensive/time-consuming operation!
-                bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+                # bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+                # instead of calculating scores for each batch, lets calculate all at once
+                clf_metrics.add_batch(predictions=tokenizer.batch_decode(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), True,True), 
+                                      references=tokenizer.batch_decode(targets.tolist(),True,True)
+                                    )
 
-            print(f'{epoch}/{epochs} '
-                f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
-                f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
+            print(f' --Epoch: {epoch}/{epochs} | '
+                f'Loss/Acc[Train]: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} | '
+                f'Loss/Acc[Val]: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f} | '
+                f'{clf_metrics.compute()}',end='')
             # print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
-            results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
-            print('metrics-val: ', results)
+            # results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist(),tokenizer=tokenizer)
+            # print('metrics-val: ', results)
+            # print(clf_metrics.compute())
             
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
@@ -1920,25 +1948,30 @@ with torch.no_grad():
     accs_val=[]
     bleu_scores_val = []
     hidden_states = None
-    for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
+    # calculate 3 metrics all at once 
+    clf_metrics = evaluate.combine(["bleu", "rouge"])
+    for i,(imgs, captions, targets) in enumerate(dl_val):
         imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
         outputs,_ = model(imgs, captions, hidden_states)
         # since we have our input in the form of (Batch,Timesteps,Classes),
         # and crossentropy expects (Batch,Classes,Timesteps), we need to permute 
         loss = criterion(outputs.permute(0,2,1), targets)
         losses_val.append(loss.item())
-        accs_val.append((outputs.argmax(dim=-1)==targets).float().mean().item())
+        accs_val.append((outputs.softmax(dim=-1).argmax(dim=-1)==targets).float().mean().item())
         print(f'labels: {tokenizer.batch_decode(targets[:3].tolist(),to_str=True, remove_special_tokens=False)}')
         print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),to_str=True, remove_special_tokens=False)}')
         
         # only calculate on validation, becasue its an expensive/time-consuming operation!
-        bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+        # bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.softmax(dim=-1).argmax(dim=-1).tolist()))
+        # instead of calculating scores for each batch, lets calculate all at once
+        clf_metrics.add_batch(predictions=tokenizer.batch_decode(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), True,True), 
+                                references=tokenizer.batch_decode(targets.tolist(),True,True)
+                            )
 
-    print(f'{epoch}/{epochs} '
-        f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
-        f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-    print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
-
+    print(f' --Epoch: {epoch}/{epochs} | '
+        f'Loss/Acc[Train]: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} | '
+        f'Loss/Acc[Val]: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f} | '
+        f'{clf_metrics.compute()}',end='')
 
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
@@ -2292,8 +2325,7 @@ for epoch in range(epochs):
         optimizer.step()
 
         if i%interval==0:
-            print(f'[{epoch}/{epochs} iter:{i}/{len(dl_train)}] loss: {np.mean(losses_train):.4f} Accuray: {np.mean(accs_train)*100:.2f} lr: {scheduler.get_last_lr()[-1]:.1e}')
-            print(f'BLEU score: {np.mean(bleu_scores):.4f}')
+            print(f'Epoch: {epoch}/{epochs} | Iteration:{i}/{len(dl_train)}] | Loss: {np.mean(losses_train):.4f} | Accuray: {np.mean(accs_train)*100:.2f} | LR: {scheduler.get_last_lr()[-1]:.1e} | BLEU score: {np.mean(bleu_scores):.4f}')
     # update the lr    
     scheduler.step()
 
@@ -2303,6 +2335,8 @@ for epoch in range(epochs):
         accs_val=[]
         bleu_scores_val = []
         hidden_states = None
+        # calculate 3 metrics all at once 
+        metrics = evaluate.combine(["bleu", "rouge"])
         for i,(imgs, captions, targets) in tqdm(enumerate(dl_val)):
             imgs, captions, targets = tuple(t.to(device) for t in (imgs, captions,targets))
             outputs,_ = model(imgs, captions, hidden_states)
@@ -2315,12 +2349,15 @@ for epoch in range(epochs):
             # print(f'output:{tokenizer.batch_decode(outputs[:3].argmax(dim=-1).tolist(),remove_special_tokens=False)}')
             
             # only calculate on validation, becasue its an expensive/time-consuming operation!
-            bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
-
-        print(f'{epoch}/{epochs} '
-            f'train-loss/acc: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} '
-            f'val-loss/acc: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f}')
-        print(f'BLEU scores: train-bleu: {np.mean(bleu_scores):.4f} val-bleu: {np.mean(bleu_scores_val):.4f}')
+            # bleu_scores_val.append(calculate_bleu_score(targets.tolist(), outputs.argmax(dim=-1).tolist()))
+            # lets calculate both scores at once
+            clf_metrics.add_batch(predictions=tokenizer.batch_decode(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), True,True), 
+                                      references=tokenizer.batch_decode(targets.tolist(),True,True)
+                                 )
+        print(f' --Epoch: {epoch}/{epochs} | '
+            f'Loss/Acc[Train]: {np.mean(losses_train):.4f}/{np.mean(accs_train)*100:.2f} | '
+            f'Loss/Acc[Val]: {np.mean(losses_val):.4f}/{np.mean(accs_val)*100:.2f} | '
+            f'{clf_metrics.compute()}')
 
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
