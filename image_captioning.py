@@ -1328,7 +1328,7 @@ torch_compile=True
 # 
 trunc_len=15
 method = 'ht' # hidden_state or input 
-epochs = 20
+epochs = 40
 interval = 500
 batch_size = 64
 num_workers = 12
@@ -1380,8 +1380,8 @@ model.to(device)
 if torch_compile:
     model.compile()
 # adam with proper weight decay!
-optimizer = torch.optim.AdamW(model.parameters(), lr = 0.01)# test with 0.003 as well
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=5, gamma=0.1)
+optimizer = torch.optim.AdamW(model.parameters(), lr = 0.003)# 0.01
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=10, gamma=0.1)
 # ignore the paddings in the loss 
 # sidenote:
 # the ignore_index argument in CrossEntropyLoss allows us to specify a target value that is
@@ -1941,7 +1941,15 @@ for epoch in range(epochs):
 hours, rem = divmod(time.time() - start, 3600)
 minutes, seconds = divmod(rem, 60)
 print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
+#  --Epoch: 39/40 | Loss/Acc[Train]: 2.1191/42.93 | Loss/Acc[Val]: 2.4059/40.44 | 
+# {'bleu': 0.1407848213889798, 
+# 'precisions': [0.49385429067702336, 0.20542345607986814, 0.08998045273976922, 0.043035445176177044],
+# 'brevity_penalty': 1.0, 'length_ratio': 1.0043003081168806, 'translation_length': 256195, 'reference_length': 255098,
+# 'rouge1': 0.49289924664822715, 'rouge2': 0.2049048515551346, 'rougeL': 0.4747051670287223, 'rougeLsum': 0.4746438507518921}
+# time elapsed: 05:01:46.61
+
 # %%
+print(f"time elapsed: {int(hours):0>2}:{int(minutes):0>2}:{seconds:05.2f}")
 with torch.no_grad():
     model.eval()
     losses_val=[]
