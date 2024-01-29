@@ -769,6 +769,11 @@ print(model.itos(argmax))
 # for each image organized in a list of dictionary items, each entery has a image_id, id and caption keys
 # with respective information. 
 
+# sidenote: creating the tokenizer or using one is very important and has direct impact on our result
+# different task, langauge may very well require its specific tokenization process. for example we
+# use a different tokenization for coding, than we do for normal english, etc
+# watching this talk from jay alamar is good : https://www.youtube.com/watch?v=rT6wVLEDC_w
+
 coco_root = '/media/hossein/SSD/mscoco_dataset/'
 annotation_dir = 'annotations_trainval2017/annotations'
 captions_train_fname = 'captions_train2017.json'
@@ -1328,9 +1333,13 @@ torch_compile=True
 # 
 trunc_len=15
 method = 'ht' # hidden_state or input 
-epochs = 40
+# with 20 epochs, step=5 and lr of 0.01 we get up to 37/38%acc, 
+# with 40 and lr or 0.003 and steps=10, we get better output.
+epochs = 40 
 interval = 500
+# smaller batchsize result in better outcome in our case
 batch_size = 64
+# higher worker threads result in faster training
 num_workers = 12
 
 
@@ -1898,7 +1907,7 @@ for epoch in range(epochs):
 
             if i%interval==0:
                 results = calculate_scores(outputs.softmax(dim=-1).argmax(dim=-1).tolist(), targets.tolist())
-                print(f'\rEpoch: {epoch}/{epochs} | Iteration: {i}/{len(dl_train)} | Loss: {np.mean(losses_train):.4f} | Accuracy: {np.mean(accs_train)*100:.2f}% | LR: {scheduler.get_last_lr()[-1]:.1e} | BLEU Score: {np.mean(bleu_scores):.4f} | Metrics: {results}', end='')
+                print(f'Epoch: {epoch}/{epochs} | Iteration: {i}/{len(dl_train)} | Loss: {np.mean(losses_train):.4f} | Accuracy: {np.mean(accs_train)*100:.2f}% | LR: {scheduler.get_last_lr()[-1]:.1e} | BLEU Score: {np.mean(bleu_scores):.4f} | Metrics: {results}', end='')
 
         # update the lr    
         scheduler.step()
