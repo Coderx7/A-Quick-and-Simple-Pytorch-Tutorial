@@ -456,6 +456,15 @@ print(*outputs,sep='\n')
 # for our case, we need a tokenizer and a model for sequence classification, and since
 # we used distilbert in the previous example, lets use that here as well. we can choose anyother
 # models, like BERT('bert-base-uncased'), Roberta('roberta-base') ,gpt2('gpt2),xla('xlnet-base-cased') etc as well.
+#
+#sidebnoote: watch this video clip on encoders/decoders: https://www.youtube.com/watch?v=0_4KEb08xrE
+# there are many encoders/decoders in seq2seq architectures, we can use an encoder thats good
+# in 1 thing and use another decoder for it, like bert for encoder, and gp2 for decoder, or we could
+# use bert for encoder and decoder (the first example, dcoder is autoregressive but in the secodn example
+# our bert decoder, is mask language model I explained how these two differ at the imagecaptioning.py example
+# )
+#
+
 from transformers import DistilBertForSequenceClassification,DistilBertTokenizer,Trainer, TrainingArguments
 import torch 
 # we need a model and its tokenizer 
@@ -717,7 +726,9 @@ for epoch in range(epoches):  # Number of epochs
 
 #side note for text-classification this introductory video is good https://www.youtube.com/watch?v=BqvDHdOwCY4
 
-
+# TODO:
+# Pre-Train BERT from scratch: Solution for Company Domain Knowledge Data | PyTorch (SBERT 51) 
+# https://www.youtube.com/watch?v=IcrN_L2w0_Y
 
 
 
