@@ -1,5 +1,5 @@
 # %%
-# in the name of God the most compassionate the most merciful 
+# in the name of God the most compassionate the most merciful
 # in this section Im going to review using rnns(rnn/gru/lstm)
 # and use it to prediction/regression, generate text, classification, sentiment analysis
 # we use pytorch

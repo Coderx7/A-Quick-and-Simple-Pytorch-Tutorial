@@ -770,7 +770,8 @@ print(model.itos(argmax))
 # with respective information. 
 
 # sidenote: creating the tokenizer or using one is very important and has direct impact on our result
-# different task, langauge may very well require its specific tokenization process. for example we
+# different task, langauge may very well require its specific tokenization process. we can lose a lot 
+# of information if we chose the wrong tokenizer/tokenization process. for example we
 # use a different tokenization for coding, than we do for normal english, etc
 # watching this talk from jay alamar is good : https://www.youtube.com/watch?v=rT6wVLEDC_w
 
