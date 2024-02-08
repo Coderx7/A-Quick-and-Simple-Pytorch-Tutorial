@@ -1875,6 +1875,18 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
 # This is because the fused layer requires fewer memory accesses and computations than the original 
 # layers.
+#
+# TODO: use scaled_dot_product_attention to use Flash Attention v2 which speeds up the calculation a lot 
+# since pytorch 2.1 we can use this, but in pytorch 2.2 flash attention v2 was implemented which gives 2x
+# more speed compared to previous version which was fast by itself alone!
+# ref : https://github.com/pytorch/pytorch/releases/tag/v2.2.0 
+# Updated flash attention kernel in scaled_dot_product_attention to use Flash Attention v2 (#105602)
+# Previously, the v1 Flash Attention kernel had a Windows implementation. So if a user on Windows had explicitly forced the flash attention kernel to be run by using sdp_kernel context manager with only flash attention enabled, it would work. In 2.2, if the sdp_kernel context manager must be used, use the memory efficient or math kernel if on Windows.
+# with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
+# # Don't force flash attention to be used if using sdp_kernel on Windows
+# with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=True):
+#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
 
 #%%
 #%% 
