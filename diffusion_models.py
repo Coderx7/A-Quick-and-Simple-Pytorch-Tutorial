@@ -2,6 +2,8 @@
 # geremey howard part 9,9a and 9b and 10 watch them first to get the initial idea. 
 # then feel free to watch any of the following:
 # 
+# https://huggingface.co/docs/diffusers/en/tutorials/basic_training
+# 
 # Stable Diffusion - What, Why, How? 
 # https://www.youtube.com/watch?v=ltLNYA3lWAQ
 #
@@ -104,12 +106,38 @@ import evaluate
 import diffusers as dfs
 #
 # in the first step we are going to see how we can use huggingface diffusers library/module to 
-# create/finetune/train diffusion models 
+# create/finetune/train diffusion models and then go on to implement  
 # 
 # 
+from ipywidgets import interact
+# sidenote: 
+# ipywidgets is a Python library that provides interactive widgets for the Jupyter notebook. 
+# The interact function from ipywidgets is a particularly useful tool that automatically creates
+# user interface (UI) controls for exploring code and data interactively 
 # 
+# we can use interact as a decorator over our function and simply have a gui to play with its arguments
+# sth like this for example 
+# @interact (a=1,b=0.5,c=0.8)
+# def plot_sth(a,b,c):
+#    pass
+# or use them like this 
+# def f(m, b):
+#     plt.figure(2)
+#     x = np.linspace(-10, 10, num=1000)
+#     plt.plot(x, m * x + b)
+#     plt.ylim(-5, 5)
+#     plt.show()
+# interact(f, m=(-2.0, 2.0), b=(-3, 3, 0.5))
+# %%
+# First we see how we can use diffusion modles hosted on huggingface and how they work
+# and learn to do stuff such as lora, textinversion, dreamboth, etc imagetoimage,etc
+# and then we we got a good grasp on the hugging face transformers/diffusers libraries
+# we go on and try to train one model ourseleves from scratch
+#
+# this guide is inspired by geremy howards 2022 course -fastai #9 and 10
 # 
-# 
+#%%
+# ref https://huggingface.co/docs/diffusers/en/tutorials/basic_training
 # 
 # 
 # 

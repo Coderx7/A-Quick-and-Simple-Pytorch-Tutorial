@@ -1,6 +1,11 @@
 # in the name of God the most compasisonate the most merciful 
 # good video's lectures about nlp and llms :
-
+# 
+# see huggingface_tutorials.py section as well
+# Aligning LLMs with Direct Preference Optimization (great presentation watch it)
+# sidenote: sft = supervised finetuning, dpo=direct preference optimization (for alignment)
+# the notebooks and slides are downloaded here as well check them out
+# https://www.youtube.com/watch?v=QXVCqtAZAn4
 # 
 # Stanford CS25: V3 I Retrieval Augmented Language Models 
 # https://www.youtube.com/watch?v=mE7IDf2SmJg
