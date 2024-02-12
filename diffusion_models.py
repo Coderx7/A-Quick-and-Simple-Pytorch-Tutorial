@@ -181,6 +181,8 @@ for module in modules:
 # matplotlib  : 3.7.1
 # PIL         : 9.4.0
 #
+# refs good to read: https://blog.segmind.com/the-a-z-of-stable-diffusion-essential-concepts-and-terms-demystified/
+# https://huggingface.co/docs/diffusers/main/en/using-diffusers/write_own_pipeline
 # now lets get back to our main objective. 
 # what is stable diffusion again? 
 # Stable Diffusion is a text-to-image latent diffusion model capable of generating photo-realistic
@@ -436,8 +438,124 @@ width = 512
 # but as I said its model and scheduler related.
 # the sdxlv1.0 requires fewer iteration to create good images! sdxlv1.0-turbo requires 1-4 only!
 # (its a distilled version of the base sdxlv1.0 finetuned using Adversarial Diffusion Distillation (ADD))
-num_inference_steps = 50 
+num_inference_steps = 50
+# The `timesteps` parameter is a tensor that contains the timesteps at which the model denoises 
+# an image. Each element in this tensor corresponds to a timestep.
+# this tensor is created when we set the number of timesteps for the denoising process. 
+# For example, if we set the number of timesteps to 50, the scheduler creates a tensor 
+# with 50 evenly spaced elements.
+# during the denoising process, we iterate over this tensor to denoise an image. 
+# at each timestep, the model predicts the noise residual and the scheduler uses it to
+# predict a less noisy image.
+# the more noise is on the image, the more the network spends on less relevant visual features,
+# so typically more examples are sampled at earlier time steps than later time steps.
+# It's important to set the timesteps  carefully because:
+# The number of timesteps can affect the quality of the generated image and the time it takes 
+# to generate the image.
+# Using too few timesteps may result in a "butched" outcome, where the image is not denoised
+# properly.
+# Using too many timesteps can make the image generation process slower¹.
+# The recommended number of timesteps can depend on your specific use case and the complexity 
+# of the text prompt. It's always best to experiment with different numbers of timesteps to 
+# see what works best for your use case.
+# Source: Conversation with Bing, 2/12/2024
+# (1) Understanding pipelines, models and schedulers - Hugging Face. https://huggingface.co/docs/diffusers/main/en/using-diffusers/write_own_pipeline.
+# (2) How and why stable diffusion works for text to image generation. https://www.paepper.com/blog/posts/how-and-why-stable-diffusion-works-for-text-to-image-generation/.
+# (3) A Comprehensive Beginner's Guide to Stable Diffusion: Key Terms and .... https://blog.segmind.com/the-a-z-of-stable-diffusion-essential-concepts-and-terms-demystified/.
+# (4) T-Stitch: Accelerating Sampling in Pre-trained Diffusion Models with .... https://t-stitch.github.io/.
+# side note:
+# The num_inference_steps and timesteps both control the number of denoising steps during the
+# image generation process. If we only specify num_inference_steps, the model will automatically
+# generate a tensor of timesteps evenly spaced between 0 and 1. This may make timesteps argument
+# excessive and useless.
+# However, the timesteps parameter gives us more control over the specific points in time 
+# at which the denoising process is applied. By providing a custom timesteps tensor, we can 
+# control the distribution of the timesteps, which can influence the denoising process and 
+# the final generated image.
+# For example, we might want to use more timesteps early in the process when the image is 
+# noisier, and fewer timesteps later when the image is closer to its final state. 
+# This could potentially improve the quality of the generated image or speed up the generation
+# process.
+# So while num_inference_steps and timesteps can both be used to control the number of denoising
+# steps, they offer different levels of control. 
+# num_inference_steps is simpler to use and may be sufficient for most use cases, 
+# while timesteps offers more flexibility for advanced use cases or for users who want to
+# experiment with different timestep distributions.
+# Sidenote 2: 
+# we may ask ourselves why would I want to use timesteps when its already taken care of when 
+# I set num_inference_steps. it seems it should not have been exposed, as its an implementation
+# detail! setting it from outside provides no benifit to when we set num_inference_steps, and 
+# that creates a timesteps tensor automatically internally.
+#
+# well its true that num_inference_steps and timesteps both control the number of denoising steps 
+# during the image generation process. If we only specify num_inference_steps, the model 
+# will automatically generate a tensor of timesteps evenly spaced between 0 and 1.(this is important remember this)
+# However, the timesteps parameter gives us more control over the specific points in time at
+# which the denoising process is applied. By providing a custom timesteps tensor, we can 
+# control the distribution of the timesteps, which can influence the denoising process and 
+# the final generated image.
+# For example, we might want to use more timesteps early in the process when the image is 
+# noisier, and fewer timesteps later when the image is closer to its final state. 
+# This could potentially improve the quality of the generated image or speed up the generation
+# process.
+# So while num_inference_steps and timesteps can both be used to control the number of denoising
+# steps, they offer different levels of control. num_inference_steps is simpler to use and may
+# be sufficient for most use cases, while timesteps offers more flexibility for advanced use 
+# cases or for users who want to experiment with different timestep distributions.
+#
+# let's delve into it a bit more.
+# The timesteps parameter in the Stable Diffusion model allows us to specify the exact points in 
+# time at which the denoising process is applied. This gives us control over the distribution of
+# the timesteps so far so good.
+# we also know that in the diffusion process, the image starts as noise and gradually becomes 
+# less noisy over time. Early in the process, when the image is very noisy, small changes can
+# have a big impact on the final image. Later in the process, when the image is less noisy, 
+# changes tend to be more subtle.
+# Now, by providing a custom timesteps tensor, we can control where in this process we want to
+# focus the denoising steps. 
+# that is for example, we might want to use more timesteps early in the process when the image 
+# is noisier, and fewer timesteps later when the image is closer to its final state. 
+# This could potentially improve the quality of the generated image or speed up the generation 
+# process.
+# Here's an example of how we might create a custom timesteps tensor that focuses more on the
+# early stages of the process:
+# import torch
+# # Create a tensor with more timesteps early in the process
+# timesteps = torch.cat([torch.linspace(0, 0.5, steps=30), torch.linspace(0.5, 1, steps=10)])
+# 
+# In this code, torch.linspace(0, 0.5, steps=30) creates a tensor with 30 timesteps evenly spaced
+# between 0 and 0.5, and torch.linspace(0.5, 1, steps=10) creates a tensor with 10 timesteps 
+# evenly spaced between 0.5 and 1. The torch.cat function then concatenates these two tensors 
+# to create a single timesteps tensor.
+# This timesteps tensor has a total of 40 elements, with 30 of them focused on the first half
+# of the process and 10 of them focused on the second half. This means the model will apply 
+# more denoising steps early in the process when the image is noisier.
+# now if you recall our previous headsup, you remember that by default the model generates a
+# timesteps tensor with uniform step sizes(timesteps evenly spaced between 0 and 1), whereas here, we specify the density of numbers
+# how close/far away/etc the values are for each point, in different [denoising] steps so to speak!
+# this should have hopefully clarified how the timesteps parameter can be used to control the
+# distribution of the denoising steps! 
 timesteps = None
+# This parameter corresponds to the eta (η) parameter in the DDIM paper. 
+# It only applies to DDIMScheduler and will be ignored for others. The eta parameter controls
+# the noise schedule in the diffusion process.
+eta = 0.0
+# This parameter is typically used to provide precomputed embeddings for the text prompt. 
+# Instead of passing a text string as the prompt, we can pass a tensor of embeddings. 
+# This can be useful if we want to use a custom text encoder or if we want to reuse the 
+# same prompt embeddings multiple times
+prompt_embeds =None
+# Similar to prompt_embeds, this parameter is used to provide precomputed embeddings for 
+# the negative text prompt. The negative prompt is used to guide the model away from 
+# generating certain types of images, more on this in a moment!
+negative_prompt_embeds=None
+# ipAdapter is short for Image Prompt Adapter, basically this parameter is typically used 
+# when we want to incorporate an image alongside our text prompt, shaping the resulting image’s
+# composition, style, color palette, or even faces. This is done by employing an Image Prompt 
+# Adapter (IP-Adapter model)
+ip_adapter_image=None
+
+
 # guidance_scale is very important as it specifies how much our model should pay attention to the prompt
 # The guidance_scale parameter controls how much the image generation process follows the text prompt closely.
 # It can also be thought of as the "prompt strength".
