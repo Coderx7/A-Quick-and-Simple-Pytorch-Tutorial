@@ -600,9 +600,12 @@ for module in modules:
 # repo_model_name = "CompVis/stable-diffusion-v1-4"
 repo_model_name = "runwayml/stable-diffusion-v1-5"
 # this is the latest base model its fp16 is 6.5Gb and offers native 1024x1024
-# repo_model_name = "stabilityai/stable-diffusion-xl-base-1.0" 
+repo_model_name = "stabilityai/stable-diffusion-xl-base-1.0" 
 # the trubo version, takes as much but faster in image generation : https://huggingface.co/stabilityai/sdxl-turbo
-# repo_model_name = "stabilityai/sdxl-turbo"
+repo_model_name = "stabilityai/sdxl-turbo"
+#
+# these models will be downloaded and stored in the ~/.cache/huggingface/hub directory under your user dir
+# so make sure your home directory has enough space
 # text2image = StableDiffusionPipeline.from_pretrained(repo_model_name,
 #                                                 variant='fp16',
 #                                                 torch_dtype= torch.float16,
@@ -678,28 +681,22 @@ print(f'{text2image.__dict__.keys()}')
 # 'image_encoder', 'vae_scale_factor', 'image_processor', 
 # '_guidance_scale', '_guidance_rescale', '_clip_skip', '_cross_attention_kwargs', '_interrupt', '_num_timesteps', '_progress_bar_config'])
 # 
-# The "vae" ([`AutoencoderKL`]) is  the Variational Auto-Encoder (VAE) model to encode and decode 
-#   images to and from latent representations.
-# The "text_encoder" ([`~transformers.CLIPTextModel`]) is the Frozen text-encoder ([clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14)).
-# The "tokenizer" ([`~transformers.CLIPTokenizer`]) is a `CLIPTokenizer` to tokenize text.
-# The "unet" ([`UNet2DConditionModel`]) is a `UNet2DConditionModel` to denoise the encoded image latents.
-# The scheduler ([`SchedulerMixin`]) is a scheduler to be used in combination with `unet` to denoise 
-#   the encoded image latents. 
-#   It can be one of:
-#   [`DDIMScheduler`],
-#   [`LMSDiscreteScheduler`],
-#   or [`PNDMScheduler`].
+# The "vae" (AutoencoderKL) is  the Variational Auto-Encoder (VAE) model to encode and decode images to and from latent representations.
+# The "text_encoder" (transformers.CLIPTextModel) is the frozen text-encoder (clip-vit-large-patch14).
+# The "tokenizer" (transformers.CLIPTokenizer) is a CLIPTokenizer to tokenize the input text.
+# The "unet" (UNet2DConditionModel) is a UNet2DConditionModel to denoise the encoded image latents.
+# The scheduler (SchedulerMixin) is a scheduler(or sampler) to be used in combination with "unet" to denoise 
+# the encoded image latents. It can be one of: DDIMScheduler, LMSDiscreteScheduler, or PNDMScheduler
 #
-# The "safety_checker" ([`StableDiffusionSafetyChecker`]) is a Classification module that estimates 
-#   whether generated images could be considered offensive or harmful.
-# The "feature_extractor" ([`~transformers.CLIPImageProcessor`]) is a `CLIPImageProcessor` to extract
-# features from generated images, its used as inputs to the `safety_checker`.
-# The "requires_safety_checker" is a boolean value specifying whether to run safty check on the output or not
-#    the default is Ture. 
+# The "safety_checker" (StableDiffusionSafetyChecker) is a Classification module that estimates whether 
+# generated images could be considered offensive or harmful.
+# The "feature_extractor" (transformers.CLIPImageProcessor) is a CLIPImageProcessor to extract features from 
+# generated images, its used as inputs to the "safety_checker".
+# The "requires_safety_checker" is a boolean value specifying whether to run safty check on the output or not the default is Ture. 
 # we ignore the ones with _, as they are implementation details and we will get to them later on inshaallah.
 # 
 # this command in jupyeter notebook allows us to see the implementation details of our pipeline
-# which if you have a look at, will find a lot of useful comments concerning how certain sections work!
+# which if we have a look at, we'll find a lot of useful comments concerning how certain sections work!
 ??text2image
 # and we can see a few intersting arguments we can utilize to have more control on the result
 # prompt: Union[str, List[str]] = None,
@@ -767,7 +764,7 @@ print(f'{text2image.__dict__.keys()}')
 # https://mspoweruser.com/best-stable-diffusion-prompts/ and
 # https://medium.com/phygital/top-40-useful-prompts-for-stable-diffusion-xl-008c03dd0557 
 # and many more if you google for it
-prompt = ["an 8k photorealistc photography of a horse in a lush forest",
+prompt = ["an 8k photorealistc photography of a naked girl in a lush forest",
           "a Vintage-style photo of a family playing at the beach"]
 # resolution also plays an important role in good outcome, the larger the better!
 height = 512
@@ -885,17 +882,30 @@ eta = 0.0
 # Instead of passing a text string as the prompt, we can pass a tensor of embeddings. 
 # This can be useful if we want to use a custom text encoder or if we want to reuse the 
 # same prompt embeddings multiple times
+# # Precompute the prompt embeddings
+# prompt_embeds = text2image.encode_prompt("A beautiful sunset over the mountains")
+# # Use the precomputed embeddings to generate an image
+# result = text2image(prompt_embeds=prompt_embeds)
 prompt_embeds =None
 # Similar to prompt_embeds, this parameter is used to provide precomputed embeddings for 
 # the negative text prompt. The negative prompt is used to guide the model away from 
 # generating certain types of images, more on this in a moment!
+# # Precompute the negative prompt embeddings
+# negative_prompt_embeds = text2image.encode_prompt("-glasses")
+# # Use the precomputed embeddings to generate an image
+# result = text2image(prompt="A human", negative_prompt_embeds=negative_prompt_embeds)
 negative_prompt_embeds=None
 # ipAdapter is short for Image Prompt Adapter, basically this parameter is typically used 
 # when we want to incorporate an image alongside our text prompt, shaping the resulting image’s
 # composition, style, color palette, or even faces. This is done by employing an Image Prompt 
 # Adapter (IP-Adapter model)
+# Load an image
+# image = Image.open("example.jpg")
+# # Convert the image to a tensor
+# image_tensor = transforms.ToTensor()(image)
+# # Use the image as an IP-Adapter image
+# result = text2image("A beautiful sunset over the mountains", ip_adapter_image=image_tensor)
 ip_adapter_image=None
-
 
 # guidance_scale is very important as it specifies how much our model should pay attention to the prompt
 # The guidance_scale parameter controls how much the image generation process follows the text prompt closely.
