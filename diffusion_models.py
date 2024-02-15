@@ -96,6 +96,9 @@ import sys
 import time
 import random
 import numpy as np
+# import urllib
+import requests
+from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -600,22 +603,30 @@ for module in modules:
 # repo_model_name = "CompVis/stable-diffusion-v1-4"
 repo_model_name = "runwayml/stable-diffusion-v1-5"
 # this is the latest base model its fp16 is 6.5Gb and offers native 1024x1024
-repo_model_name = "stabilityai/stable-diffusion-xl-base-1.0" 
+# repo_model_name = "stabilityai/stable-diffusion-xl-base-1.0" 
 # the trubo version, takes as much but faster in image generation : https://huggingface.co/stabilityai/sdxl-turbo
-repo_model_name = "stabilityai/sdxl-turbo"
+# repo_model_name = "stabilityai/sdxl-turbo"
 #
-# these models will be downloaded and stored in the ~/.cache/huggingface/hub directory under your user dir
-# so make sure your home directory has enough space
+# by default these models will be downloaded and stored in the ~/.cache/huggingface/hub directory under your user dir
+# so make sure your home directory has enough space, otherwise we can use cache_dir parameter to set the desired path 
+# to download and store the models into.
+print(f'using {repo_model_name}...')
 # text2image = StableDiffusionPipeline.from_pretrained(repo_model_name,
 #                                                 variant='fp16',
+#                                                 # cache_dir="./models"  
 #                                                 torch_dtype= torch.float16,
 #                                                 # incase our download is interuppted due to bad connection
 #                                                 # lets resume from where we left off last time
 #                                                 resume_download=True).to('cuda')
+# # 
 # for sdxl-base-1.0 DiffusionPipeline works!
 text2image = DiffusionPipeline.from_pretrained(repo_model_name,
                                                 variant='fp16',
                                                 torch_dtype= torch.float16,
+                                                # cache_dir="./models"                                                  
+                                                # disable the internal nsfw checker
+                                                safety_checker=None,
+                                                requires_safety_checker=False,
                                                 # incase our download is interuppted due to bad connection
                                                 # lets resume from where we left off last time
                                                 resume_download=True).to('cuda')
@@ -624,6 +635,7 @@ text2image = DiffusionPipeline.from_pretrained(repo_model_name,
 # text2image = AutoPipelineForText2Image.from_pretrained(repo_model_name,
 #                                                 variant='fp16',
 #                                                 torch_dtype= torch.float16,
+#                                                 # cache_dir="./models"         
 #                                                 # incase our download is interuppted due to bad connection
 #                                                 # lets resume from where we left off last time
 #                                                 resume_download=True).to('cuda')
@@ -647,6 +659,8 @@ text2image = DiffusionPipeline.from_pretrained(repo_model_name,
 # If a number is provided, it uses as many slices as `ttention_head_dim // slice_size`. 
 # In this case, "attention_head_dim" must be a multiple of "slice_size".
 # 
+text2image.enable_attention_slicing() 
+# or
 # text2image.enable_attention_slicing("max")
 #
 # now we simply pass our textual prompt, describing the image we want and get the result
@@ -654,15 +668,19 @@ text2image = DiffusionPipeline.from_pretrained(repo_model_name,
 # which is a boolean value denoting whether ther result contains anything not safe for work and if
 # it does, it returns a black image instead! (its detection can not be trusted though! its not accurate)
 prompt = "a beautiful day in a lush forest"
-result = text2image(prompt)
-print(f'{result.nsfw_content_detected=}')
+result = text2image(prompt=prompt, height=512,width=512)
+# doesnt work on the sdxl_turbo model
+if 'xl' not in repo_model_name:
+    print(f'{result.nsfw_content_detected=}')
 plt.imshow(result.images[0])
 plt.show()
 #%%
 # now if we want we can send a list of prompts and get a list of images
 prompt = ["a beautiful day in a lush forest","a dog sleeping at the beach"]
 result = text2image(prompt)
-print(f'{result.nsfw_content_detected=}')
+# doesnt work on the sdxl_turbo model
+if 'xl' not in repo_model_name:
+    print(f'{result.nsfw_content_detected=}')
 def display_images(prompt, result):
     for msg, img in zip(prompt,result.images):
         plt.imshow(img)
@@ -687,7 +705,85 @@ print(f'{text2image.__dict__.keys()}')
 # The "unet" (UNet2DConditionModel) is a UNet2DConditionModel to denoise the encoded image latents.
 # The scheduler (SchedulerMixin) is a scheduler(or sampler) to be used in combination with "unet" to denoise 
 # the encoded image latents. It can be one of: DDIMScheduler, LMSDiscreteScheduler, or PNDMScheduler
+# to see our current scheduler we simply use the scheduler property
+# The image_encoder is for ipadapter workloads, (explained in the next part)
+print(f'{text2image.scheduler=}')
+# which prints 
+# text2image.scheduler=PNDMScheduler {
+#   "_class_name": "PNDMScheduler",
+#   "_diffusers_version": "0.26.2",
+#   "beta_end": 0.012,
+#   "beta_schedule": "scaled_linear",
+#   "beta_start": 0.00085,
+#   "clip_sample": false,
+#   "num_train_timesteps": 1000,
+#   "prediction_type": "epsilon",
+#   "set_alpha_to_one": false,
+#   "skip_prk_steps": true,
+#   "steps_offset": 1,
+#   "timestep_spacing": "leading",
+#   "trained_betas": null
+# }
+# if at somepoint we decided we want to change our scheduler to something else
+# we can see a list of compatible schedulers with our current one. 
+print(f'compatible schedulers: {text2image.scheduler.compatibles}')
+# prints:
+# compatible schedulers: [
+# <class 'diffusers.schedulers.scheduling_heun_discrete.HeunDiscreteScheduler'>,
+# <class 'diffusers.schedulers.scheduling_dpmsolver_singlestep.DPMSolverSinglestepScheduler'>,
+# <class 'diffusers.utils.dummy_torch_and_torchsde_objects.DPMSolverSDEScheduler'>,
+# <class 'diffusers.schedulers.scheduling_euler_discrete.EulerDiscreteScheduler'>,
+# <class 'diffusers.schedulers.scheduling_dpmsolver_multistep.DPMSolverMultistepScheduler'>,
+# <class 'diffusers.schedulers.scheduling_unipc_multistep.UniPCMultistepScheduler'>,
+# <class 'diffusers.schedulers.scheduling_ddim.DDIMScheduler'>,
+# <class 'diffusers.schedulers.scheduling_euler_ancestral_discrete.EulerAncestralDiscreteScheduler'>,
+# <class 'diffusers.schedulers.scheduling_deis_multistep.DEISMultistepScheduler'>,
+# <class 'diffusers.schedulers.scheduling_pndm.PNDMScheduler'>,
+# <class 'diffusers.schedulers.scheduling_lms_discrete.LMSDiscreteScheduler'>,
+# <class 'diffusers.schedulers.scheduling_k_dpm_2_ancestral_discrete.KDPM2AncestralDiscreteScheduler'>,
+# <class 'diffusers.schedulers.scheduling_ddpm.DDPMScheduler'>,
+# <class 'diffusers.schedulers.scheduling_k_dpm_2_discrete.KDPM2DiscreteScheduler'>]
+# now if we want to go on, we simply use the config property in combination with the from_config() on the new
+# scheduler to initialize it. 
+# this returns a dictionary of the configuration of the scheduler
+config = text2image.scheduler.config 
+print(f'scheduler config: {config}')
+# which prints 
+# scheduler config: FrozenDict([
+    # ('num_train_timesteps', 1000),
+    # ('beta_start', 0.00085),
+    # ('beta_end', 0.012),
+    # ('beta_schedule', 'scaled_linear'),
+    # ('trained_betas', None),
+    # ('skip_prk_steps', True),
+    # ('set_alpha_to_one', False),
+    # ('prediction_type', 'epsilon'),
+    # ('timestep_spacing', 'leading'),
+    # ('steps_offset', 1),
+    # ('_use_default_values',
+    # ['timestep_spacing', 'prediction_type']),
+    # ('_class_name', 'PNDMScheduler'),
+    # ('_diffusers_version', '0.26.2'),
+    # ('clip_sample', False)])
+text2image.scheduler = dfs.DDIMScheduler.from_config(config)
+# 
+# Here is a brief explanation of each scheduler you mentioned:
+# 1. **DPMSolverSDEScheduler**: This scheduler implements the stochastic sampler from the Elucidating the Design Space of Diffusion-Based Generative Models paper[^30^].
+# 2. **EulerDiscreteScheduler**: This is a fast scheduler which can often generate good outputs in 20-30 steps⁸.
+# 3. **LMSDiscreteScheduler**: LMSDiscreteScheduler is a linear multistep scheduler for discrete beta schedules. The scheduler is ported from and created by Katherine Crowson⁹.
+# 4. **DDIMScheduler**: Creates a new DDIM scheduler given the number of steps to be used for inference as well as the number of steps that was used during training¹⁶.
+# 5. **DDPMScheduler**: DDPMScheduler extends the denoising procedure introduced in denoising diffusion probabilistic models (DDPMs) with non-Markovian guidance¹³.
+# 6. **HeunDiscreteScheduler**: I couldn't find specific information about this scheduler.
+# 7. **DPMSolverMultistepScheduler**: You can use a combination of offset=1 and set_alpha_to_one=False to make the last step use step 0 for the previous alpha product like in Stable Diffusion[^30^].
+# 8. **DEISMultistepScheduler**: DEISMultistepScheduler is a fast high order solver for diffusion ordinary differential equations (ODEs). This implementation modifies the polynomial fitting formula in log-rho space instead of the original linear tspace in the DEIS paper²⁴.
+# 9. **PNDMScheduler**: By default, the stable diffusion pipeline uses the PNDM scheduler¹⁵.
+# 10. **EulerAncestralDiscreteScheduler**: EulerAncestralDiscreteScheduler is based on the timestep, a scheduler may be discrete in which case the timestep is an int or continuous in which case the timestep is a float²⁷.
+# 11. **UniPCMultistepScheduler**: I couldn't find specific information about this scheduler.
+# 12. **KDPM2DiscreteScheduler**: I couldn't find specific information about this scheduler.
+# 13. **DPMSolverSinglestepScheduler**: I couldn't find specific information about this scheduler.
+# 14. **KDPM2AncestralDiscreteScheduler**: I couldn't find specific information about this scheduler.
 #
+#  
 # The "safety_checker" (StableDiffusionSafetyChecker) is a Classification module that estimates whether 
 # generated images could be considered offensive or harmful.
 # The "feature_extractor" (transformers.CLIPImageProcessor) is a CLIPImageProcessor to extract features from 
@@ -697,8 +793,12 @@ print(f'{text2image.__dict__.keys()}')
 # 
 # this command in jupyeter notebook allows us to see the implementation details of our pipeline
 # which if we have a look at, we'll find a lot of useful comments concerning how certain sections work!
+# note that this will print the whole source code for our pipeline! if youre in vscode
 ??text2image
 # and we can see a few intersting arguments we can utilize to have more control on the result
+# note that obviously the keywords are different for the sdxl version of the models.
+# below we are looking at some of the keywrods for the sdv1.5 has, note that these are not all the keywords!
+# just some of the most used ones
 # prompt: Union[str, List[str]] = None,
 # height: Optional[int] = None,
 # width: Optional[int] = None,
@@ -764,9 +864,10 @@ print(f'{text2image.__dict__.keys()}')
 # https://mspoweruser.com/best-stable-diffusion-prompts/ and
 # https://medium.com/phygital/top-40-useful-prompts-for-stable-diffusion-xl-008c03dd0557 
 # and many more if you google for it
-prompt = ["an 8k photorealistc photography of a naked girl in a lush forest",
+prompt = ["a beautiful photorealistic horse in a lush forest",
           "a Vintage-style photo of a family playing at the beach"]
-# resolution also plays an important role in good outcome, the larger the better!
+# resolution also plays an important role in good outcome, 
+# usually the smaller the size, the worse the result
 height = 512
 width = 512
 # num_inference_steps controls the number of denoising steps during the image generation process.
@@ -873,11 +974,21 @@ num_inference_steps = 50
 # how close/far away/etc the values are for each point, in different [denoising] steps so to speak!
 # this should have hopefully clarified how the timesteps parameter can be used to control the
 # distribution of the denoising steps! 
+# side note: 
+# note that not all schedulers/samplers support custom timesteps, that is if we set 
+# timesteps other than None, while using those schedulers like PNDMScheduler for example, it will error out!
+# timesteps = torch.cat([torch.linspace(0, 0.5, steps=30), torch.linspace(0.5, 1, steps=10)])
+# text2image.scheduler = dfs.schedulers.scheduling_ddim.DDIMScheduler.from_config(text2image.scheduler.config)
+# text2image.scheduler.set_timesteps(timesteps)
+#! sidenote: I myself couldnt get this to work! asked a question and still no answer
 timesteps = None
 # This parameter corresponds to the eta (η) parameter in the DDIM paper. 
 # It only applies to DDIMScheduler and will be ignored for others. The eta parameter controls
 # the noise schedule in the diffusion process.
 eta = 0.0
+# this is used to create deterministic results
+# generator = torch.manual_seed(0)
+generator = None
 # This parameter is typically used to provide precomputed embeddings for the text prompt. 
 # Instead of passing a text string as the prompt, we can pass a tensor of embeddings. 
 # This can be useful if we want to use a custom text encoder or if we want to reuse the 
@@ -895,18 +1006,195 @@ prompt_embeds =None
 # # Use the precomputed embeddings to generate an image
 # result = text2image(prompt="A human", negative_prompt_embeds=negative_prompt_embeds)
 negative_prompt_embeds=None
-# ipAdapter is short for Image Prompt Adapter, basically this parameter is typically used 
-# when we want to incorporate an image alongside our text prompt, shaping the resulting image’s
-# composition, style, color palette, or even faces. This is done by employing an Image Prompt 
-# Adapter (IP-Adapter model)
-# Load an image
-# image = Image.open("example.jpg")
-# # Convert the image to a tensor
-# image_tensor = transforms.ToTensor()(image)
-# # Use the image as an IP-Adapter image
-# result = text2image("A beautiful sunset over the mountains", ip_adapter_image=image_tensor)
-ip_adapter_image=None
+# ipAdapter is short for Image Prompt Adapter, it is a method of enhancing Stable Diffusion models 
+# that was developed by Tencent AI Lab and released in August 2023 (IP-Adapter: Text Compatible Image Prompt Adapter for Text-to-Image Diffusion Models: https://arxiv.org/abs/2308.06721)
+# their github repo also hosts several demos along with some best practices : https://github.com/tencent-ailab/IP-Adapter
+# If we were to describe it in a single sentence it would be "single image fine-tuning", 
+# instead of training models with 20-1000 images, all we have to do is input a single image.
+# basically this parameter is typically used when we want to incorporate an image alongside our text prompt,
+# shaping our final resulting image’s composition, style, color palette, or even faces. 
+# I'd like to emphasis that this is really a prompt! we use this image as our base canvas and then using
+# our textual prompt, try to finetune it/change it the way we like. 
+# This is done by employing an Image Prompt Adapter (IP-Adapter model) so we need an ip-adapter model and
+# our base model also needs to support it.
+# ref1 https://stable-diffusion-art.com/ip-adapter/
+# 
+# IP-Adapter models function kind of like ControlNets. 
+# There are many ip-adapter models, each have specialized purposes. 
+# where do we get our ip-adapter models? huggingface hub is one!
+# since we are using sdv1.5 we choose a general model from the official repo here : https://huggingface.co/h94/IP-Adapter
+# I said general, becasue there are different models for different tasks, 
+# some are specific to faces (require cropped faces to work, etc)
+# remember to use ipadapter models, we both need an image encoder model, a weight file. in the given
+# link we just saw, you can see each ip-adapter lists its imageencoder as well, so if we are downloading 
+# them manually, we need to download them both, and send the image-encoder as image-encoder argument in our
+# pipeline constructor when we are intantiating one. otherwise, we can use one of the pipeline utility
+# methods to load them both automatically. (this is what we do)
+# for the reference this is the model weights url(is around 150mb) and its imageencoder model is OpenCLIP-ViT-H-14 (which is around 2.3Gb)
+# ip_adapter_plus_sd15_url = "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.bin?download=true"
+# this is much better than the ip-adapter_sd15.bin as ours use patch image embeddings from OpenCLIP-ViT-H-14 
+# as condition, closer to the reference image than ip-adapter_sd15. 
+# sidenote: The original IP-adapter used the CLIP image encoder to extract features from the reference image.but later on
+# used OpenCLIP-ViT-H-14. 
+# The novelty of the IP-adapter is training separate cross-attention layers for the image. 
+# This makes the IP-adapter more effective in steering the image generation processing. 
+# ip-adapter model scheme: https://github.com/tencent-ailab/IP-Adapter/raw/main/assets/figs/fig1.png
+# the models we use here, use OpenCLIP-ViT-H-14 with 632.08M parameter however.
+# 
+# IP-Adapter works with most of our pipelines, including Stable Diffusion, Stable Diffusion XL (SDXL),
+# ControlNet, T2I-Adapter, AnimateDiff. And we can use any custom models finetuned from the same base
+# models. It also works with LCM-Lora out of box.
+# 
+# sidenote: 
+# we can use the set_ip_adapter_scale() method to adjust the text prompt and image prompt condition ratio.
+# If we're only using the image prompt, we should set the scale to 1.0. 
+# we can lower the scale to get more generation diversity, but it'll be less aligned with the prompt.
+# scale=0.5 can achieve good results in most cases when we use both text and image prompts.
+# 
+# more explanation: 
+# The `set_ip_adapter_scale()` function is used to set the scale of the image prompt adapter in the
+# diffusion model. This scale factor can influence the impact of the image prompt on the generated image.
+# A higher scale value gives more weight to the image prompt, while a lower scale value reduces its impact.
+# As for the importance of the text prompt versus the image in IP-Adapter, both play significant roles 
+# but in different ways:
+# - **Text Prompt**: The text prompt provides high-level guidance for the image generation process. 
+#   It's used to specify the main subject or theme of the generated image.
+# - **Image Prompt (IP-Adapter)**: The image prompt, on the other hand, influences the style, color 
+#   palette, composition, and even specific features of the generated image. It provides more detailed
+#   guidance on the visual aspects of the image.
+# In the IP-Adapter mode, the image prompt and the text prompt can work together to achieve multimodal 
+# image generation. The image prompt can also work well with the text prompt to accomplish multimodal 
+# image generation. This means that the final generated image is influenced by both the text and the 
+# image prompts, combining the high-level guidance from the text with the detailed visual guidance from
+# the image.
+# So, both the text prompt and the image prompt are important in the IP-Adapter mode, and their relative importance can depend on the specific requirements of your image generation task⁴⁵.
 
+# to use it we simply do 
+text2image.set_ip_adapter_scale(0.5)
+# this downloads all the necessary files and puts them into models directory in the default cache directory which for me is:
+# ~/.cache/huggingface/hub/models--h94--IP-Adapter/snapshots/92a2d51861c754afacf8b3aaf90845254b49f219
+# the last folder is randomly generated so you get the idea where to find them. like before, we can set "cache_dir" argument
+# and specify where we want to store the downloaded models! 
+text2image.load_ip_adapter("h94/IP-Adapter", 
+                           #here I decided to use the default!
+                           cache_dir=None, 
+                           # means to go and grab the subfolder named "models" in the main repository
+                           # this is the subfolder by the way: https://huggingface.co/h94/IP-Adapter/tree/main/models
+                           subfolder="models", 
+                           # there are two variants, .bin files and .safetensors files. both will do it
+                           # however, safetensors are recommended becasue they are safer! 
+                           weight_name="ip-adapter-plus_sd15.bin",
+                           resume_download=True)
+# IP-Adapter relies on an image encoder to generate the image features, 
+# if our IP-Adapter weights folder contains a "image_encoder" subfolder,
+# the image encoder will be automatically loaded and registered to the pipeline.
+# Otherwise we can so load a CLIPVisionModelWithProjection model and pass it to 
+# a Stable Diffusion pipeline when we create it.
+#
+# from diffusers import AutoPipelineForText2Image, or DiffuserPipeline, or StableDiffusionPipeline
+# from transformers import CLIPVisionModelWithProjection
+# image_encoder = CLIPVisionModelWithProjection.from_pretrained("h94/IP-Adapter",subfolder="models/image_encoder",
+#                                                               torch_dtype=torch.float16,).to("cuda")
+# pipeline = AutoPipelineForText2Image.from_pretrained(repo_model_name, image_encoder=image_encoder, torch_dtype=torch.float16).to("cuda")
+# 
+# since we are using multiple prompts here, we need to have an ip-adapter model defined for every image. 
+# we can load multiple IP-Adapter models and use multiple reference images at the same time. 
+# so to do this we simply specify the weights for each ip-adapter model in the weights section 
+text2image.load_ip_adapter("h94/IP-Adapter",
+                           #here I decided to use the default!
+                           cache_dir=None, 
+                           # means to go and grab the subfolder named "models" in the main repository
+                           # this is the subfolder by the way: https://huggingface.co/h94/IP-Adapter/tree/main/models
+                           # if its nested, we use a list!
+                           subfolder="models",
+                           # since some files like the imagenecoder are big, lets enable this
+                           resume_download=True,
+                           # since we want to use the same adapter model for our two images 
+                           # to show both variants are the same, I use both extensions here
+                           weight_name=["ip-adapter-plus_sd15.bin",
+                                        "ip-adapter-plus_sd15.safetensors"])#ip-adapter-plus-face_sd15.bin
+
+# In this example we use IP-Adapter-Plus face model to create a consistent character and also 
+# use IP-Adapter-Plus model along with 10 images to create a coherent style in the image we generate.
+# 
+# sidenote: peft(backend) module needs to be installed by the way(pip install --upgrade peft)
+# sidenote2: 
+# PEFT, or Pretrained Efficient Fine-Tuning, is a library integrated with the Transformers, Diffusers,
+# and Accelerate libraries to provide a faster and easier way to load, train, and use large models for 
+# inference.
+# In the context of IP adapters in diffusion models, PEFT is used to manage and load adapters for inference.
+# Adapters are small modules inserted into pre-existing models, allowing us to fine-tune the model on 
+# a specific task without having to retrain the entire model.
+# For example, we can use PEFT to easily fuse/unfuse multiple adapters directly into the model weights
+# (both UNet and text encoder) using the fuse_lora() method, which can lead to a speed-up in inference 
+# and lower VRAM usage.
+# To perform the adapter injection, we can use the inject_adapter_in_model method that takes 3 arguments:
+# the PEFT config, the model itself, and an optional adapter name. 
+# we can also attach multiple adapters in the model if we call inject_adapter_in_model multiple times with
+# different adapter names.
+# img = tfms.ToTensor()(tfms.Resize((512,512))(Image.open("./pretty_mage1.jpeg")))
+# print(f'{img.shape=}')
+# Sidenote: when using ipadapter our image needs to make sense to our prompt, 
+# becasue our prompt is going to work on this given image, that is, our prompt
+# changes this given image so to speak
+# lets define new prompts for our image prompts
+# again, note that we have two prompts here, the text prompt and the image "PROMPT"
+# we are using the images as references so the final image takes the shape/form/style/etc
+# of the reference image. the text prompt is used to add the changes we want in that seeting!
+# also as indicated before, we can have more than 1 reference image, and we decide how much 
+# of each reference image prompts we want in our final image by using set_ip_adapter_scale.
+# using several image from certain concept/artstyle/etc can allow us to create consistent 
+# style for example in our final image. 
+# we can also use several images for each model. this is to get the most consistent look of the
+# ip-images. for this we simply use a list of images instead of a single image.
+# try these and then uncomment or only set one scale (0.5) and see the result
+prompt = ["a Robot riding a horse from hell",
+          "a boat in heavy thunderstorm ocean with black sky raining"]
+ip_img1 = dfs.utils.load_image("/media/hossein/SSD1/code_dl/pretty_image4.jpeg")
+ip_img2 = dfs.utils.load_image("./pretty_image2.jpeg")
+# imgs taken from "https://huggingface.co/datasets/YiYiXu/testing-images/resolve/main/style_ziggy"
+fldr = "/media/hossein/SSD1/code_dl/"
+ip_imgs3 = [dfs.utils.load_image(f"{fldr}/img{i}.png") for i in range(10)]
+ip_adapter_image=[ip_img1, ip_img2]
+# ip_adapter_image=[ip_imgs3, ip_img2]
+# ip_adapter_image=[ip_imgs3, [ip_img1, ip_img2]]
+# lets change the scales for these images
+# the higher the values, the more impact the image prompts will have. 
+# and it will disregard the text prompt, try [0.5,0.5] or higher and see it for yourself
+# also these numbers dont need to add to one, as each belongs to one ipadapter model and image
+# try [0.4,0.3] and see the result. 
+# if you dont set_ip_adapter_scale here, both ref images will affect all promps eaually
+# comment these lines and see the effect 
+# try the image prompts with these one by one and see how they affect each one
+text2image.set_ip_adapter_scale([0.1,0.1])
+# text2image.set_ip_adapter_scale([0.2,0.2])
+# text2image.set_ip_adapter_scale([0.4,0.3])
+# text2image.set_ip_adapter_scale([0.4])
+# while you may think this is good for style, its not really that impressive. well see another
+# usage next where we can use a single image (like ourseleves, and then use it as image prompt
+# and then change it however we like, pose a certain way, wear a specific cloth, etc
+# or we can create caricatures, or avatars of ourseleves using style images(a list of images with
+# the same style and art) and our own image, and get what we want
+# a good example is given here: https://huggingface.co/docs/diffusers/en/using-diffusers/loading_adapters?tasks=image-to-image#ip-adapter
+
+# lets do this and see it in action 
+# uncomment this section to see how it looks
+# we use ip_imgs3 for style and use a face image I used leon s.kennedy
+# ip_img_face =  dfs.utils.load_image(f"{fldr}/leon_face_re2.jpg")
+# # lets create a separate ip_adapter here 
+# text2image.load_ip_adapter("h94/IP-Adapter",
+#                            subfolder="models",
+#                            resume_download=True,
+#                            # we use two models, the first to capture the overall style 
+#                            # and the second one is used specifically for the face alteration
+#                            weight_name=["ip-adapter-plus_sd15.bin",
+#                                         "ip-adapter-plus-face_sd15.bin"])
+# prompt = ["kodak portrait 4k"]
+# ip_adapter_image = [ip_imgs3, ip_img_face]
+# # use a lot of style_images, and a bit of face image
+# text2image.set_ip_adapter_scale([0.6,0.45])
+#
+#
 # guidance_scale is very important as it specifies how much our model should pay attention to the prompt
 # The guidance_scale parameter controls how much the image generation process follows the text prompt closely.
 # It can also be thought of as the "prompt strength".
@@ -929,13 +1217,17 @@ guidance_scale = 8.5
 # note that this is a rudemintary prompt, we can use much richer negative prompts obvioulsy but
 # this should suffice for our demonstration purposes (you get the idea!)
 negative_prompt = [
-    "ugly,low quality,extra limbs,bad anatomy,poorly rendered face,deformed,"
-    "bad proportions,blurry cloned face,cropped,disfigured,duplicate, out of frame,"
-    "extra arms,extra fingers,extra legs,fused fingers,gross proportions,long neck,"
-    "lowres,malformed limbs,missing arms,missing legs,morbid,mutated hands,mutation,mutilated,"
-    "poorly drawn face,poorly drawn hands,too many fingers,watermark,worst quality,"]*len(prompt) 
+    "worst quality, low quality, ugly, low quality, extra limbs, bad anatomy, poorly rendered face, deformed,"
+    " bad proportions, blurry cloned face, cropped, disfigured, duplicate, out of frame,"
+    " extra arms, extra fingers, extra legs, fused fingers, gross proportions, long neck,"
+    " lowres, malformed limbs, missing arms, missing legs, morbid, mutated hands, mutation, mutilated,"
+    " poorly drawn face, poorly drawn hands, too many fingers, watermark, worst quality,"]*len(prompt) 
 # we can generate multiple images for a single prompt and chose all or the best one if we wish
 num_images_per_prompt = 1
+# sidenote:
+# by the way if we wanted to change the scheduler post pipeline creation we could do 
+# text2image.scheduler = dfs.DDIMScheduler.from_config(text2image.scheduler.config)
+# 
 # To disable the safety check, we can set safety_checker=None, the
 # the requires_safety_checker attribute is a boolean that indicates
 # whether a safety checker is required for the pipeline. 
@@ -952,6 +1244,9 @@ result = text2image(prompt=prompt,
                     negative_prompt=negative_prompt,
                     num_images_per_prompt=num_images_per_prompt,
                     output_type = 'pil',
+                    generator=generator,
+                    # use the image prompt adapter to add a style to our final image
+                    ip_adapter_image=ip_adapter_image,
                     # If return_dict is `True`, StableDiffusionPipelineOutput is returned,
                     # otherwise a `tuple` is returned where the first element is a list with
                     # the generated images and the second element is a list of `bool`s 
@@ -959,7 +1254,10 @@ result = text2image(prompt=prompt,
                     # "not-safe-for-work" (nsfw) content. the default is True
                     return_dict = True,
                     )
+
 display_images(prompt, result)
+
+
 # if you noticed, the faces are sometimes really ugly! to fix that, there are several methods 
 # from finetuning, using proper positive and negative prompts, and separate models to fix faces
 # we will get to them later on inshaalah.
