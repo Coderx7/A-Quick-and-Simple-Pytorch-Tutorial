@@ -681,9 +681,10 @@ result = text2image(prompt)
 # doesnt work on the sdxl_turbo model
 if 'xl' not in repo_model_name:
     print(f'{result.nsfw_content_detected=}')
-def display_images(prompt, result):
+def display_images(prompt, result,split=50):
     for msg, img in zip(prompt,result.images):
         plt.imshow(img)
+        msg = '\n'.join([msg[i:i+split] for i in range(0, len(msg), split)]) + '\n'
         plt.title(msg)
         plt.show()
         
@@ -986,8 +987,73 @@ timesteps = None
 # It only applies to DDIMScheduler and will be ignored for others. The eta parameter controls
 # the noise schedule in the diffusion process.
 eta = 0.0
-# this is used to create deterministic results
-# generator = torch.manual_seed(0)
+# this is used to create deterministic results (note the device=cpu part)
+# generator = torch.Generator(device="cpu").manual_seed(128)
+# torch.manual_seed(), sets the seed for the global generator, which might be used elsewhere in our code
+# or in the libraries we're using, however, the GPU is mostly nondeterminstic unless we specifically disable
+# nondeterminstic kernels. For this reason, we rather create the generator on the cpu, the tensor on the cpu
+# and then move it to the GPU. this way, we create a determinstic outcome, that is not possible if we simply 
+# use torch.manual_seed().  
+# torch.Generator(device="cpu").manual_seed(), ensures that the same sequence of random numbers is used in 
+# the diffusion pipeline every time we run our code, leading to the same image being generated.
+# from : https://huggingface.co/docs/diffusers/using-diffusers/reproducibility#control-randomness
+# Every time the pipeline is run, torch.randn uses a different random seed to create Gaussian noise 
+# which is denoised stepwise. This leads to a different result each time it is run, which is great 
+# for diffusion pipelines since it generates a different random image each time.
+# But if you need to reliably generate the same image, that’ll depend on whether you’re running the
+# pipeline on a CPU or GPU.
+# To generate reproducible results on a CPU, you’ll need to use a PyTorch Generator and set a seed:
+# sidenote: 
+# It might be a bit unintuitive at first to pass Generator objects to the pipeline instead of just 
+# integer values representing the seed, but this is the recommended design when dealing with probabilistic
+# models in PyTorch, as Generators are random states that can be passed to multiple pipelines in a sequence.
+# Writing a reproducible pipeline on a GPU is a bit trickier, and full reproducibility across different 
+# hardware is not guaranteed because matrix multiplication - which diffusion pipelines require a lot of -
+# is less deterministic on a GPU than a CPU. 
+# So eveing using torch.Generator(device="cuda").manual_seed(128), the result is not the same even though
+# we're using an identical seed because the GPU uses a different random number generator than the CPU.
+# To circumvent this problem, Diffusers has a randn_tensor() function for creating random noise on the CPU,
+# and then moving the tensor to a GPU if necessary. The randn_tensor function is used everywhere inside the
+# pipeline, allowing the user to always pass a CPU Generator even if the pipeline is run on a GPU.
+# sidenote2: 
+# If reproducibility is important, we recommend always passing a CPU generator. The performance loss is 
+# often neglectable, and you’ll generate much more similar values than if the pipeline had been run on a GPU.
+# Finally, for more complex pipelines such as UnCLIPPipeline, these are often extremely susceptible to 
+# precision error propagation. Don’t expect similar results across different GPU hardware or PyTorch versions.
+# In this case, you’ll need to run exactly the same hardware and PyTorch version for full reproducibility.
+# Deterministic algorithms
+# You can also configure PyTorch to use deterministic algorithms to create a reproducible pipeline. 
+# However, you should be aware that deterministic algorithms may be slower than nondeterministic ones
+# and you may observe a decrease in performance. But if reproducibility is important to you, then this
+# is the way to go!
+# Nondeterministic behavior occurs when operations are launched in more than one CUDA stream. 
+# To avoid this, set the environment variable CUBLAS_WORKSPACE_CONFIG to :16:8 to only use one buffer size
+# during runtime.
+# PyTorch typically benchmarks multiple algorithms to select the fastest one, but if you want reproducibility,
+# you should disable this feature because the benchmark may select different algorithms each time. 
+# Lastly, pass True to torch.use_deterministic_algorithms to enable deterministic algorithms.
+# sample code: 
+# import os, torch
+# os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+# torch.backends.cudnn.benchmark = False
+# torch.use_deterministic_algorithms(True)
+# # RuntimeError: Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)`
+# # or `at::Context::setDeterministicAlgorithms(true)`, but this operation is not deterministic because it
+# # uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, you must set an 
+# # environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or 
+# # CUBLAS_WORKSPACE_CONFIG=:16:8. For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
+# import diffusers as dfs
+# model_id = "runwayml/stable-diffusion-v1-5"
+# pipe = dfs.DiffusionPipeline.from_pretrained(model_id, variant='fp16', torch_dtype= torch.float16).to('cuda')
+# pipe.scheduler = dfs.DDIMScheduler.from_config(pipe.scheduler.config)
+# g = torch.Generator(device="cuda")
+# prompt = "A bear is playing a guitar on Times Square"
+# g.manual_seed(0)
+# result1 = pipe(prompt=prompt, num_inference_steps=50, generator=g, output_type="latent").images
+# g.manual_seed(0)
+# result2 = pipe(prompt=prompt, num_inference_steps=50, generator=g, output_type="latent").images
+# print("L_inf dist =", abs(result1 - result2).max()) # prints: "L_inf dist = tensor(0., device='cuda:0')"
+
 generator = None
 # This parameter is typically used to provide precomputed embeddings for the text prompt. 
 # Instead of passing a text string as the prompt, we can pass a tensor of embeddings. 
@@ -1179,9 +1245,9 @@ text2image.set_ip_adapter_scale([0.1,0.1])
 
 # lets do this and see it in action 
 # uncomment this section to see how it looks
-# we use ip_imgs3 for style and use a face image I used leon s.kennedy
+## we use ip_imgs3 for style and use a face image I used leon s.kennedy
 # ip_img_face =  dfs.utils.load_image(f"{fldr}/leon_face_re2.jpg")
-# # lets create a separate ip_adapter here 
+## lets create a separate ip_adapter here 
 # text2image.load_ip_adapter("h94/IP-Adapter",
 #                            subfolder="models",
 #                            resume_download=True,
@@ -1191,8 +1257,27 @@ text2image.set_ip_adapter_scale([0.1,0.1])
 #                                         "ip-adapter-plus-face_sd15.bin"])
 # prompt = ["kodak portrait 4k"]
 # ip_adapter_image = [ip_imgs3, ip_img_face]
-# # use a lot of style_images, and a bit of face image
+## use a lot of style_images, and a bit of face image
 # text2image.set_ip_adapter_scale([0.6,0.45])
+#! another example with face only 
+# give another example with face only
+# lets first load our ip-adapter model, since we are after face, we use a face model 
+# text2image.load_ip_adapter("h94/IP-Adapter", subfolder="models", resume_download=True,
+#                            weight_name=["ip-adapter-plus-face_sd15.bin"])
+# # lets load our image prompt 
+# ip_image = dfs.utils.load_image(f"{fldr}/leon_face_re2.jpg")
+# # since our negative prompt is a list, we send our prompt in a list as well
+# prompt = ["A photo of a man holding a Glock 19, upper body, behind is a brick wall"]
+# # now lets set our ip-adapter
+# ip_adapter_image = ip_image
+# text2image.set_ip_adapter_scale(0.7)
+# # DDIMScheduler seems to give better results for face models
+# # text2image.scheduler = dfs.DDIMScheduler.from_config(text2image.scheduler.config)
+# width = 512
+# height = 704
+# print(torch.random.initial_seed())
+# # generator = torch.Generator(device="cpu").manual_seed(128)
+#
 #
 #
 # guidance_scale is very important as it specifies how much our model should pay attention to the prompt
@@ -1270,3 +1355,5 @@ display_images(prompt, result)
 # 
 # 
 # 
+
+# %%
