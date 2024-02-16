@@ -1278,6 +1278,107 @@ text2image.set_ip_adapter_scale([0.1,0.1])
 # print(torch.random.initial_seed())
 # # generator = torch.Generator(device="cpu").manual_seed(128)
 #
+# we can also use ip-adapter with LCM Lora (which we will get to shortly) released in nov 2023
+# to achieve “instant fine-tune” with custom images. Note that we need to load
+# IP-Adapter weights before loading the LCM-Lora weights.
+# the whole point of lcm-lora is to get an image in the least amount of steps (reach realtime image
+# generation using difusion model. thats it. the rest of the example below is just us trying sth
+# for fun! that is we can use our existing pipeline which uses sd1.5 and ip-adapter just fine but
+# for the sake of it, we are going to use the herge-style here) 
+#
+# for a change lets use a stylized model this time, this is a finetuned model using dreambooth method
+# we want to apply this style to our ip_adapter_image. this model size is around the same size of sd1.5
+# note that to enable this style we have to use "herge_style" in our prompt otherwise the
+# style wont take effect.
+# 
+# uncomment the following section to run the snippet! 
+#
+# model_id =  "sd-dreambooth-library/herge-style"
+# # https://huggingface.co/latent-consistency/lcm-lora-sdv1-5
+# lcm_lora_id = "latent-consistency/lcm-lora-sdv1-5"
+# # before loading a new ip_adapter, lets unload our previous one up there
+# # text2image.unload_ip_adapter()
+# text2image = DiffusionPipeline.from_pretrained(model_id,
+#                                resume_download=True, 
+#                                torch_dtype= torch.float16,
+#                                # cache_dir="./models"                                                  
+#                                # disable the internal nsfw checker
+#                                safety_checker=None,
+#                                requires_safety_checker=False,).to("cuda")
+
+# text2image.enable_attention_slicing("max")
+
+# # now lets load our ip-adapter model
+# text2image.load_ip_adapter("h94/IP-Adapter", 
+#                            resume_download=True,
+#                            subfolder="models", 
+#                            weight_name="ip-adapter-plus_sd15.bin")
+# # now lets load our lcm-lora weights
+# # only when we load the lcm lora weights, the lcm scheduler works as intended, without the wieght
+# # we dont get anywhere and the final result is just absymal! non-existent!
+# text2image.load_lora_weights(lcm_lora_id)
+# # lcmscheduler 
+# text2image.scheduler = dfs.LCMScheduler.from_config(text2image.scheduler.config)
+# # if we have low gpu vram and want to offload the models to cpu we can use
+# # text2image.enable_model_cpu_offload()
+# # the other option is to use enable_sequential_cpu_offload() which sequentially moves
+# # models to the gpu, one at a time at forward() pass, and then moves them back to the cpu
+# # this saves more vram but is slower compared to the previous method.
+# # text2image.enable_sequential_cpu_offload()
+# prompt = ["1girl herge_style"]
+# # image taken from https://user-images.githubusercontent.com/24734142/266492875-2d50d223-8475-44f0-a7c6-08b51cb53572.png
+# ip_adapter_image = dfs.utils.load_image(f"{fldr}/knight_woman.png")
+# # set the proper scale (try using 0.2 and 0.5 as well and see the result)
+# text2image.set_ip_adapter_scale(0.47)
+# # now we can have as few as 4 short steps to get the final image instead of 50!
+# # this doesnt mean we acnt use larger numbers, it means we can get a result with
+# # as few as 4-8 steps!. try this with 4,8,20 and 40 steps and see how it turns out
+# num_inference_steps = 8
+# # also note that specifying image height and width also directly affects our image generation
+# # note that they must be divisible by 8!
+# height=704
+# width=512
+# # ref: https://huggingface.co/docs/diffusers/main/en/using-diffusers/inference_with_lcm_lora
+# # note that we set guidance_scale=1.0, which disables classifer-free-guidance. 
+# # This is because the LCM-LoRA is trained with guidance, so the batch size does 
+# # not have to be doubled in this case. 
+# # This leads to a faster inference time, with the drawback that negative prompts 
+# # don’t have any effect on the denoising process.
+# # we can also use guidance with LCM-LoRA, but due to the nature of training the 
+# # model is very sensitve to the guidance_scale values, high values can lead to 
+# # artifacts in the generated images. In huggingface team's experiments, they 
+# # found that the best values are in the range of [1.0, 2.0].
+# # remember to uncomment the other guidance_scale down below!
+# guidance_scale = 1
+# # but what is LCMLora? 
+# LCM-LoRA stands for Latent Consistency Model - LoRA. It's a groundbreaking approach in the realm of 
+# image synthesis³. LCM-LoRA is a product of LoRA distillation applied to Stable-Diffusion models, 
+# including SD-V1.5, SSD-1B, and SDXL³. 
+# This process allows for a significant reduction in memory consumption and enhances the quality of image
+# generation³.
+# LCM-LoRA was proposed in "LCM-LoRA: A universal Stable-Diffusion Acceleration Module" by Simian Luo, 
+# Yiqin Tan, Suraj Patil, Daniel Gu, et al¹. It is a distilled consistency adapter for stable-diffusion-xl-base-1.0 
+# that allows to reduce the number of inference steps to only between 2 - 8 steps¹. 
+# LCM-LoRA can be used with any custom checkpoint model to speed up the image generation to as few as 
+# four steps⁴. It can be used for various tasks such as text-to-image, image-to-image, and inpainting¹². 
+# For example, to use LCM-LoRA for text-to-image task, you can load it with its base model 
+# stabilityai/stable-diffusion-xl-base-1.0, change the scheduler to LCMScheduler, and reduce the number 
+# of inference steps to just 2 to 8 steps¹. 
+# Similarly, for image-to-image tasks, you can use it with the dreamshaper-7 model and the LCM-LoRA for 
+# stable-diffusion-v1-5².
+# Please note that the specific usage might require additional libraries such as the Hugging Face Diffusers 
+# library¹². For detailed usage examples, it's recommended to check out the official LCM-LoRA docs¹².
+# Source: Conversation with Bing, 2/16/2024
+# (1) LCM LoRa: A Universal Stable-Diffusion Acceleration Module. https://lcmlorasd.com/.
+# (2) latent-consistency/lcm-lora-sdxl · Hugging Face. https://huggingface.co/latent-consistency/lcm-lora-sdxl.
+# (3) LCM-LoRA: High-speed Stable Diffusion - Stable Diffusion Art. https://stable-diffusion-art.com/lcm-lora/.
+# (4) latent-consistency/lcm-lora-sdv1-5 · Hugging Face. https://huggingface.co/latent-consistency/lcm-lora-sdv1-5.
+# (5) undefined. https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/inpaint.png.
+# (6) undefined. https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/inpaint_mask.png.
+# (7) undefined. https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/img2img-init.png.
+# 
+# ref https://huggingface.co/docs/diffusers/main/en/using-diffusers/inference_with_lcm_lora
+#
 #
 #
 # guidance_scale is very important as it specifies how much our model should pay attention to the prompt
@@ -1342,12 +1443,14 @@ result = text2image(prompt=prompt,
 
 display_images(prompt, result)
 
-
 # if you noticed, the faces are sometimes really ugly! to fix that, there are several methods 
 # from finetuning, using proper positive and negative prompts, and separate models to fix faces
 # we will get to them later on inshaalah.
 #
-# 
+#
+# talk about Stable Cascade that came out afew days ago(4 days ago) https://github.com/Stability-AI/StableCascade)! its power lies in its ability to follow
+# the given prompt much better than the ordinary diffusion models we have seen so far! like dalle3!
+#  
 #%%
 # ref https://huggingface.co/docs/diffusers/en/tutorials/basic_training
 # 
