@@ -1446,17 +1446,316 @@ display_images(prompt, result)
 # if you noticed, the faces are sometimes really ugly! to fix that, there are several methods 
 # from finetuning, using proper positive and negative prompts, and separate models to fix faces
 # we will get to them later on inshaalah.
-#
-#
-# talk about Stable Cascade that came out afew days ago(4 days ago) https://github.com/Stability-AI/StableCascade)! its power lies in its ability to follow
+# 
+# TODO: talk about Stable Cascade that came out afew days ago(4 days ago) https://github.com/Stability-AI/StableCascade)! its power lies in its ability to follow
 # the given prompt much better than the ordinary diffusion models we have seen so far! like dalle3!
 #  
 #%%
 # ref https://huggingface.co/docs/diffusers/en/tutorials/basic_training
 # 
+# OK before we dive deeper, lets get to know diffusion models better and see how they work under
+# the hood. here we are tyring to get a deeper understanding of how everytihng works and implement
+# what these pipelines are hiding/abstracting away. 
 # 
+# a difffusion model consistes of several parts or components. what are these components you may aks?
+# a text encoder (happens to be clip for sd1.5) becasue obviously we are dealing with text prompts
 # 
+# an autoencoder (vae) to take us from noise to the final image
 # 
+# a noise generator like a unet model to generate the noise given the input image. This noise is
+# then added to the image to create a ‘noisy’ version of the image. The purpose of this component
+# is to introduce variability into the model, which can help prevent overfitting and improve the
+# models ability to generalize to new data. 
 # 
+# and finally a scheduler/sampler that creates the final image by repeatedly denoising the latent
+# noise. This component controls the noise level at each step of the denoising process. 
+# It determines how much noise to add or remove at each step. 
+# The scheduler/sampler plays a crucial role in controlling the trade-off between the amount of 
+# noise and the quality of the reconstructed image.
+#
+# lets expand on this a bit more:
+# a diffusion model works by adding noise to the data and then learning to remove this noise 
+# so it can recover the original data. This process is done iteratively, with the model making the 
+# data less and less noisy in each step. The final result is a model that can generate new data that is similar to the training data.
+# but why does denoising has to be done iteratively? 
+# there are a few reasons why this is the case, 
+# it so happens that jumping from pure noise to the perfect image is very hard, so instead its done
+# in several steps, gradually removing noise to reach to the final result, its akin to an artist might
+# start with a rough sketch and then gradually add details until the final image is complete. 
+# Each iteration allows the model to refine its reconstruction, adding more and more detail with each
+# step.
+# by doing this the whole process becomes more stable than trying to denoise the image in one step.
+# as each iteration allows the model to make small adjustments, which can help prevent it from making
+# large errors that could result from trying to denoise the image all at once.
+# In addition to that, training a model to denoise an image in one step is challenging, as it 
+# requires the model to learn a complex mapping from the noisy image to the original image. 
+# By breaking this task down into smaller steps, each of which involves denoising the image 
+# a little bit, the learning problem becomes easier and the training process can be more efficient.
+# note that this is solely due to the specifics of architecture design and not an inherent attribute
+# for example the SDXL requires way fewer steps to generate a good image. other methods such as LCM-lora
+# even lower this to 2-8 steps, basically removing the need for multiple iterations. but these require
+# specific design choices we will get to later on. 
+# for now it suffices to say that SDXL uses a technique called SDEdit and LCM-Lora is a distillation
+# approach. we'll get to them later inshaallah
+# Now we said our diffusion model consits of several part, like vae,text-encoder,scheduler and a noise generator
+# this is not accuate though, a diffusion model by nature at its simplest form is composed of 
+# a noise generator(unet) really and a scheduler for denoising. 
+# the rest are really used for either conditioning the generation process (text-encoder) or aiding in
+# lowering the process overhead. 
+# what really happens under the hood at the simplest form is we want to generate images that resemble
+# our training dataset. what do we do? we feed it noise, and expect the model to generate an image
+# any image, this is called unconditional generation, the model just produces an outcome randomly.
+# this is fine if our goal is to generate only one type of image, like only dogs, or cats, etc, but
+# its very lacking becasue it would be very useful if we could have control on different aspects of
+# the image generation, like the color, shape, form environment etc related to the images. this is 
+# where the conditioning factor comes into play, by using the text-encoder, we effectively control
+# and steer the generation process to toward where we want, creating images according to our dynamic needs!
+# now before we get to the autoencoder part, lets see how our model is trained exactly. 
+# we want to generate images, unconditional generation for now, what do we need to do? 
+# our model needs something to start, we can use noise! pure noise, the model takes the noise matrix
+# which has the same dimension as the imagesize we are interested in, and changes it to a prefect image!
+# how do we make the model do that? the training is relatively straightfoward, we take an image from our
+# dataset, add some noise to it and feed it to the model, we ask the model to give us back the added noise!
+# why? for once, if we were to give the image intact, and ask the model to generate it, it would be an autoencoder
+# it would only, duplicate our dataset, we want brand new images, so the raw image doesnt cut it for us. 
+# so what do we do? we add noise to the image, and and use this instead, now the model either has to create 
+# the image, which is not useful to us, or give us the noise. 
+# now when we repeat this process many times, with varying amount of noise from no noise at all, to a lot
+# of noise to the point the image is not visible anymore, the model learns about two things. where the actual
+# image manifold lies and where the noises lie. why is this important, it is important becasue now we
+# can feed the model a noise or noisy image, and ask it to give us the noise, the model tries its best to 
+# detect what it identifies as noise, we subtract the input image from this noise, and get a new image, 
+# now its still not there, theres still a lot of noise! so we keep doing this process a few more times, 
+# and hopefully the model removes all the noise and gradually goes towards the manifold of images
+# and generates the final noise-free image.
+#! now we skiped a alot of details here, like the type of model we use, how we sample noise, the choice of
+# noise and how it affects the output, choice of activation functions and their effect on result, etc
+# well get to these details when we start implementing our diffusion model ourseleves, for now, lets
+# briefly talk about some of the more important aspects here and leave the rest for our future encounter 
+# inshaallah. 
+# the type of model we are going to use is something called a U-Net model. U-Nets are typically used for 
+# segmentation tasks while our usecase is a diffusion model. whats the difference you may ask? 
+# The Standard U-Nets are designed for segmentation, where the input is a clean image and the output is a
+# mask or segmentation of different image regions while diffusion models involve a different learning task: 
+# they predict the noise added or removed at each time step to progressively refine an image. 
+# This means, we need to incorporate some changes into our implementation of UNet that is specific to our 
+# usecase. so what are these modifications we are talking about here. 
+# The choice of activation functions used in the model, the depth for encoder/decoder parts, and the skip
+# connections are afew that needs careful attention and needs to change. 
+# for example, depending on our choice of noise range, Leaky ReLU, Sigmoid or SeLU can be used. 
+# LeakyReLU is appropriate for handling negative noise, Sigmoid for strictly positive noise,
+# and SELU offers improved gradient flow. 
+# !(If our noise is strictly positive, a Sigmoid activation in the final layer ensures the output
+# remains within the valid range (0-1). For negative noise, Leaky ReLU allows both positive and 
+# negative values. SELU can be beneficial in both encoders and decoders for improved learning and
+# gradient flow.)
+# Also while Skip Connections are essential for both Standard U-Nets and diffusion models, their 
+# importance for preserving spatial information is crucial for accurate noise removal/image generation.
+# in addition to what we discussed, Time step embedding and residual/gated connections are also part of 
+# enhancements to our U-Net that we can add depending on our usecase. 
+# 
+# Also concerning Time Step Embedding, Diffusion models involve adding and removing noise at different
+# time steps. Incorporating a time step embedding into the U-Net provides the model with knowledge about
+# the current stage of the diffusion process. This can be implemented by concatenating a time step 
+# representation or its features with the input or intermediate activations.
+#
+# And concerning Skip Connections, beyond their usual role in U-Nets, skip connections are crucial in
+# diffusion models to preserve high-resolution features from the encoder. These features help in 
+# accurately reconstructing the clean image during the denoising process. jus remember to make sure 
+# that the skip connections have compatible dimensions for concatenation with the decoder outputs. 
+#
+# concerning Output and Loss Function, In denoising diffusion, the U-Net output should represent the 
+# clean image. we need to adjust the final layer's number of channels to match the image channels 
+# (e.g., 1 for grayscale, 3 for RGB).
+# For loss function, we need to use a loss function appropriate for our diffusion goal. For denoising, 
+# mean squared error (MSE) or L1 loss are common choices. we might need to adapt the loss function 
+# depending on our specific task (e.g., image generation, inpainting).
+#
+# so to recap:
+# for diffusion models, some modifications are essential to optimize performance and correctly address 
+# the diffusion process:
+# 1. Input Noise Characteristics:
+# - Input Dimensions: Standard U-Nets often take clean images as input. In diffusion models, the input
+#   is a noisy version of the target image. we need to adjust the input channels in the U-Net to 
+#   accommodate the number of noise channels or dimensions based on our diffusion process.
+# - Activation Functions: we must consider the noise range. If our noise is strictly positive, 
+#   a Sigmoid activation in the final layer ensures the output remains within the valid range (0-1).
+#   For negative noise, Leaky ReLU allows both positive and negative values. SELU can be beneficial 
+#   in both encoders and decoders for improved learning and gradient flow.
+# 2. Time Step Information:
+# - Time Step Embedding: Diffusion models involve adding and removing noise at different time steps. 
+#   Incorporating a time step embedding into the U-Net provides the model with knowledge about the 
+#   current stage of the diffusion process. This can be implemented by concatenating a time step 
+#   representation or its features with the input or intermediate activations.
+# - Conditional U-Net: we need to explore using a conditional U-Net architecture, where the time step
+#   information is directly fed into the U-Net layers, allowing the model to dynamically adapt its 
+#   predictions based on the current stage.
+# 3. Skip Connections:
+# - Beyond their usual role in U-Nets, skip connections are crucial in diffusion models to preserve 
+#   high-resolution features from the encoder. These features help in accurately reconstructing the clean image during the denoising process. Ensure that the skip connections have compatible dimensions for concatenation with the decoder outputs.
+# 4. Output and Loss Function:
+# - Output Layer: In denoising diffusion, the U-Net output should represent the clean image. 
+#   we need to adjust the final layer's number of channels to match the image channels (e.g., 1 for grayscale, 3 for RGB).
+# - Loss Function: Use a loss function appropriate for your diffusion goal. For denoising, mean squared error 
+#   (MSE) or L1 loss are common choices. You might need to adapt the loss function depending on your specific task
+#   (e.g., image generation, inpainting).
+# Why are these modifications needed?
+# Standard U-Nets are designed for segmentation, where the input is a clean image and the output is a mask or
+#   segmentation of different image regions. Diffusion models involve a different learning task: predicting the 
+#   noise added or removed at each time step to progressively refine an image. The modifications address these 
+#   differences:
+# - Input channels: Adapt to the noisy input representation.
+# - Activation functions: Ensure valid predictions based on the noise range.
+# - Time step information: Guide the model with contextual knowledge of the diffusion process.
+# - Output and loss: Align with the specific goal of denoising or other diffusion tasks.
+# 
+#
+# sidenote:
+# in a typical diffusion model, noise is usually added to each channel of the input image, 
+# so it might not seem necessary to explicitly change the number of channels in the U-Net. 
+# However, there are a few nuances to consider:
+# **1. Noise Representation:**
+# - our diffusion model might not simply add random noise to each channel. 
+#   Some methods add different types of noise (e.g., Gaussian, Laplacian) or add noise in a more 
+#   structured way (e.g., channel-wise scaling, frequency-domain noise). In such cases, the input
+#   to your U-Net might have additional channels representing these different noise components. 
+#   You'll need to adjust the U-Net's input channels accordingly.
+# **2. Diffusion Model Architecture:**
+# - The diffusion model architecture itself might involve processing the added noise separately 
+#   from the original image data. For example, some models pass the noisy image through a separate 
+#   network specifically designed for denoising the added noise. In such cases, the U-Net might only
+#   need to handle the original image channels, not the noise channels directly.
+# **3. Conditional U-Nets:**
+# - As mentioned earlier, we could explore using a conditional U-Net, where the time step information
+#   (including noise characteristics) is directly fed into the U-Net layers. This might require changes 
+#   to the U-Net structure to accommodate the additional input channels representing the noise information.
+# **Therefore, although directly adding noise to each channel is common, the specific implementation of our
+#   diffusion model and its noise representation might influence the number of channels needed in the U-Net.**
+# **Key Takeaway:**
+# Always analyze our specific diffusion model architecture and the way noise is incorporated to determine the 
+# appropriate number of channels for your U-Net input. Don't simply assume it should match the original image 
+# channels in every case.
+#
+#
+# sidenote 2 : 
+# In diffusion models, the choice between strictly positive noise and negative noise has important 
+# implications for the training process and the resulting generated images. 
+# Here's a breakdown of the key differences and considerations:
+# **Strictly Positive Noise:**
+# * **Definition:** All values added to the image at each diffusion step are non-negative, typically 
+#     Gaussian noise with a zero mean and positive variance.
+# * **Training and Inference:**
+#     * Easier to implement computationally, as calculations don't need to handle negative values.
+#     * Might require special activation functions in the U-Net (e.g., Sigmoid) to ensure predictions 
+#       remain within the valid range.
+# * **Generated Images:**
+#     * Tend to be smoother and less sharp due to the non-negative noise distribution.
+#     * Often lead to higher Inception Scores (IS) due to more natural-looking textures.
+#     * Might lack detail and clarity compared to models using negative noise.
+# * **When to Choose:**
+#     * Prioritize smoothness and high IS scores.
+#     * Prefer simpler training setup without handling negative values.
+#     * Dealing with image domains where negative values don't make sense (e.g., grayscale images).
+# **Negative Noise:**
+# * **Definition:** Noise at each diffusion step can be both positive and negative, usually Gaussian noise 
+#     with a zero mean and a non-zero variance.
+# * **Training and Inference:**
+#     * Requires more careful handling of negative values during calculations.
+#     * U-Net activation functions need to accommodate both positive and negative predictions (e.g., Leaky ReLU).
+# * **Generated Images:**
+#     * Can be sharper and more detailed due to the wider range of noise values.
+#     * Might yield lower IS scores as they can appear more "noisy" than strictly positive noise models.
+#     * Often capture finer details and high-frequency information.
+# * **When to Choose:**
+#     * Aim for sharp and detailed images with potential trade-off in smoothness.
+#     * Willing to invest in a slightly more complex training setup.
+#     * Working with image domains where negative values are meaningful (e.g., natural images with shadows).
+# **Additional Considerations:**
+# * The best choice for you depends on your specific goals and requirements.
+# * Experiment with both options and evaluate their performance on your dataset using relevant metrics.
+# * Some diffusion models employ mixtures of positive and negative noise for more flexibility and potentially 
+#   better results.
+# * The effectiveness of each approach can also be influenced by the U-Net architecture and hyperparameters.
+# I hope this comprehensive explanation helps you make an informed decision about choosing strictly positive
+#   or negative noise for your diffusion model!
+# 
+# By incorporating these modifications, you can leverage the U-Net architecture effectively within your MNIST 
+# diffusion model for improved performance. Remember to adapt and experiment based on your specific model details and requirements.
+# this type of model also exibits an intersting characteristc. 
+# !it preserves the spatial information of our image much better than normal feed forward models, 
+# !unet starts off big and shrink in several stages, then it starts to upsample the featuremaps until 
+# !we reach the initial size, in doing so, it allows the model to extract features at different resolutions
+# !due to its architecture while allowing the featuremaps in later stages to recieve information form earlier
+# !counterparts. 
+# this is particularly useful in our diffusion models, where high-frequency information is dominated by 
+# noise exponentially faster. unet models also utilize skip connections, which help in adding detail
+# to images. These connections allow the model to bypass layers, which helps in preserving the spatial
+# !resolution throughout the network and allows for more precise localization. 
+# well see more information concerning this
+# now since this is images that we are dealing with, the higher resolution, the images, the higher the
+# processing cost gets, therefore the idea of making enhancements to lower said overhead comes into play
+# this is where the autoencoder part comes into play. instead of using the full resolution image/noise
+# to train our model, and later use, we simply use an autoencoder to compress the images and instead 
+# work with a compressed representation of the original data, resulting in much faster computation and 
+# less computation overhead. 
+# to make this more intuitive lets implement one from scratch ourselves 
+#%%
+# we are going to use mnist dataset and create a diffusion model to generate digits for us
+# lets import what we need 
+import torch
+import torch.nn as nn
+import torchvision
+import torchvision.transforms as tfms
+import torchvision.datasets as dataset
 
+# we need to have a dtaset 
+# we need to have a unet model
+# we need to have a scheduler to add noise and reverse it
+# lets instantiate our dataset 
+transform=tfms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
+dt_train = dataset.MNIST(f"{fldr}/data",train=True,download=True, transform=transform)
+dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=transform)
+#
+# now lets create our unet architecture 
+# we start off with 28x28 size, downsample it until we reach
+# a small featuremap,then start to upsample it to reach 28x28
+#
+# 
+class Unet(nn.Module):
+    def __init__(self):
+        pass 
+    
+
+
+# let's break down the process of how a diffusion model works step by step:
+# 1. The process begins with an initial image. This could be a random noise 
+#    image or a specific image provided as input.
+# 2. In the first step, a small amount of noise is added to the image. 
+#    This is done to introduce variability and prevent the model from 
+#    simply memorizing the training data. The amount of noise added is
+#    controlled by a noise schedule, which determines how much noise to
+#    add at each step.
+# 3. After the noise has been added, the model's task is to remove this 
+#    noise and recover the original image. This is done using a denoising
+#    model, which is a neural network trained to predict the original image
+#    given the noisy image. The denoising model is applied iteratively, with
+#    each iteration making the image less noisy.
+# 4. Steps 2 and 3 are repeated multiple times. With each iteration, the 
+#    image becomes less noisy and more like the original image. The number
+#    of iterations is typically a hyperparameter that is set before training
+#    begins.
+# 5. After a certain number of iterations, the denoising process is stopped. 
+#    The image at this point is the final output of the diffusion model. It 
+#    should be a clean, denoised version of the original image.
+# 6. If the diffusion model is being used for text-to-image generation, a text
+#    encoder may be used to convert text prompts into a format that the model 
+#    can understand. This is typically done before the noise addition step, 
+#    and the output of the text encoder is used to guide the denoising process.
+# 7. Some diffusion models also include an autoencoder, which is a type of 
+#    neural network that can learn to compress and decompress data. 
+#    The autoencoder is used to convert the image into a lower-dimensional 
+#    representation before the noise addition step, and then to reconstruct
+#    the image from this representation after the denoising step.
+# In summary, a diffusion model works by adding noise to an image and then iteratively denoising the image until it resembles the original image. This process allows the model to generate new images that are similar to the training data.
 # %%
+
