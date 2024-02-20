@@ -1708,11 +1708,12 @@ import torchvision
 import torchvision.transforms as tfms
 import torchvision.datasets as dataset
 
+fldr="/media/hossein/SSD1/code_dl/"
 # we need to have a dtaset 
 # we need to have a unet model
 # we need to have a scheduler to add noise and reverse it
 # lets instantiate our dataset 
-transform=tfms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
+transform=tfms.Compose([tfms.ToTensor(),tfms.Normalize((0.1307,), (0.3081,))])
 dt_train = dataset.MNIST(f"{fldr}/data",train=True,download=True, transform=transform)
 dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=transform)
 #
@@ -1720,13 +1721,152 @@ dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=trans
 # we start off with 28x28 size, downsample it until we reach
 # a small featuremap,then start to upsample it to reach 28x28
 #
-# 
-class Unet(nn.Module):
-    def __init__(self):
-        pass 
+# our unet can be viewed an encoder/decoder model
+# the encoder part being the first section where 
+# the input is shrunk and the decoder part is where
+# its upsampled to match the initial input size in
+# the begining. you might also see terms such as middle
+# which refers to the bottom part of the model right
+# after the encoder and before the decoder. 
+# before we create the model as a monolithic class, lets
+# create separate modules and make our life easier
+
+# to create layers for encoder
+class ConvBnAct(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, use_bn=True, act=nn.LeakyReLU(inplace=True)):
+        super().__init__()
+        self.use_bn = use_bn
+        self.conv = nn.Conv2d(in_channels=in_channels,
+                              out_channels=out_channels,
+                              kernel_size=kernel_size,
+                              stride=stride,
+                              padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(num_features=out_channels)
+        self.act = act
+
+        # if in_channels is not equal to out_channels, or if stride is not 1, 
+        # then the dimensions of x and the output of the convolutional layer 
+        # will not match, and we'll get an error when we try to add them together.
+        # to create a skip/resudial connection. so in such cases, we use a 1x1 conv
+        # instead so the outputs match
+        if in_channels != out_channels or stride != 1:
+            # we can use a conv1x1 or simply use a pooling operation to 
+            # downsample the input to match it with the output of our block
+            # but since the in_channels and out_channels are different, we 
+            # need to use conv layer instead of a simple pooling
+            self.match_dimensions = nn.Conv2d(in_channels,
+                                              out_channels, 
+                                              kernel_size=1, 
+                                              stride=stride, 
+                                              bias=False)
+        else:
+            self.match_dimensions = None
+
+    def forward(self, x)->torch.Tensor:
+        identity = x
+        if self.match_dimensions is not None:
+            identity = self.match_dimensions(x)
+        
+        out = self.conv(x)
+        if self.use_bn:
+            out = self.bn(out)
+        out = self.act(out)
+        return out + identity
+
+
+class DeconvBnAct(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, act=nn.LeakyReLU(inplace=True)):
+        super().__init__()
+        self.deconv = nn.ConvTranspose2d(in_channels=in_channels,
+                                         out_channels=out_channels,
+                                         kernel_size=kernel_size,
+                                         stride=stride,
+                                         padding=padding)
+        self.bn = nn.BatchNorm2d(num_features=out_channels)
+        self.act = act
+        self.conv = ConvBnAct(in_channels=out_channels,out_channels=out_channels,kernel_size=3, stride=1,padding=1,use_bn=False)
+        if in_channels != out_channels or stride != 1:
+            # like our convbnact, here we need to use a deconv which adjust the spatial
+            # resolution and also fixes the discrepency in channels. 
+            # we can use a bn after this, but for now lets not do it!
+            self.match_dimensions = nn.ConvTranspose2d(in_channels,
+                                                       out_channels, 
+                                                       kernel_size=2, 
+                                                       stride=2, 
+                                                       bias=False)
+            self.bn2 = nn.BatchNorm2d(out_channels)
+        else:
+            self.match_dimensions = None
     
+    def forward(self, x)->torch.Tensor:
+        identity = x 
+        if self.match_dimensions is not None:
+            identity = self.match_dimensions(x)
+            # identity = self.bn2(identity)
+            
+        output = self.conv(self.act(self.bn(self.deconv(x)))) 
+        return output + identity
 
 
+class Unet(nn.Module):
+    def __init__(self, in_channel=1, initial_fmap=64):
+        super().__init__()
+        # we have two sections in the first section/part/encoder 
+        # we shrink the input, its a series of conv/bn/relu layers
+        # then we reverse this, i.e. we start upsampling it till we
+        # reach the initial image output
+        # we define the first layer of unet normally and then use for
+        # loop to create the rest of the encoder module. 
+        self.conv_in = nn.Conv2d(in_channels=in_channel,out_channels=initial_fmap,kernel_size=3,stride=1,padding=1)
+        self.relu = nn.ReLU()
+        
+        self.encoder = nn.ModuleList()
+        # we are dealing with mnist dataset, images are 28x28 but to make things easier
+        # we resize it to 32x32 before we feed it to our network
+        fmaps = initial_fmap
+        for i in range(4):
+            self.encoder.append(ConvBnAct(fmaps,fmaps*2,stride=2,padding=1))
+            fmaps*=2
+        print(self.encoder)
+        # now lets build our decoder/upsampler part
+        # we will use upsample2d+ a convlayer
+        self.decoder = nn.ModuleList()
+        for i in range(4):
+            self.decoder.append(DeconvBnAct(fmaps, fmaps//2, kernel_size=2, stride=2,padding=0))
+            fmaps//=2
+
+        print(self.decoder)
+        # now for the final output layer 
+        self.conv2 = nn.Conv2d(fmaps,in_channel, kernel_size=1,stride=1,padding=0)
+        # incase we used positive noise
+        self.sigmoid = nn.Sigmoid()
+    
+    # note that we 
+    def forward(self, x):
+        out = self.relu(self.conv_in(x))
+        skip_connections = []
+        for l in self.encoder:
+            out = l(out)
+            skip_connections.append(out)
+            print(f'{out.shape=}')
+        
+        for i,l in enumerate(self.decoder):
+            out = l(out+skip_connections[-(i+1)])
+            print(f'{out.shape=}')
+        
+        # final output    
+        out = self.conv2(out)
+        out = self.sigmoid(out)
+        return out
+
+m = Unet()
+x = torch.randn(size=(1,1,32,32))
+print(m(x).shape)
+
+
+
+
+#%%
 # let's break down the process of how a diffusion model works step by step:
 # 1. The process begins with an initial image. This could be a random noise 
 #    image or a specific image provided as input.
