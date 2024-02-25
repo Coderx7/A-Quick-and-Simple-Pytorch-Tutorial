@@ -1542,12 +1542,12 @@ display_images(prompt, result)
 # usecase. so what are these modifications we are talking about here. 
 # The choice of activation functions used in the model, the depth for encoder/decoder parts, and the skip
 # connections are afew that needs careful attention and needs to change. 
-# for example, depending on our choice of noise range, Leaky ReLU, Sigmoid or SeLU can be used. 
+# for example, depending on our choice of noise range, Leaky ReLU, Sigmoid or SiLU can be used. 
 # LeakyReLU is appropriate for handling negative noise, Sigmoid for strictly positive noise,
 # and SELU offers improved gradient flow. 
 # !(If our noise is strictly positive, a Sigmoid activation in the final layer ensures the output
 # remains within the valid range (0-1). For negative noise, Leaky ReLU allows both positive and 
-# negative values. SELU can be beneficial in both encoders and decoders for improved learning and
+# negative values. SiLU can be beneficial in both encoders and decoders for improved learning and
 # gradient flow.)
 # Also while Skip Connections are essential for both Standard U-Nets and diffusion models, their 
 # importance for preserving spatial information is crucial for accurate noise removal/image generation.
@@ -1701,22 +1701,32 @@ display_images(prompt, result)
 # to make this more intuitive lets implement one from scratch ourselves 
 #%%
 # we are going to use mnist dataset and create a diffusion model to generate digits for us
-# lets import what we need 
+# lets import what we need
+import sys,os
 import torch
+# for pylance so we get autocomplete for submodules!
+import torch.utils
+import torch.utils.data
+
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as tfms
 import torchvision.datasets as dataset
+import matplotlib.pyplot as plt
 
 fldr="/media/hossein/SSD1/code_dl/"
+
+print(f'{torch.__version__}')
+print(f'{sys.version}')
+
 # we need to have a dtaset 
 # we need to have a unet model
 # we need to have a scheduler to add noise and reverse it
 # lets instantiate our dataset 
-transform=tfms.Compose([tfms.ToTensor(),tfms.Normalize((0.1307,), (0.3081,))])
+transform=tfms.Compose([tfms.Resize(32), tfms.ToTensor(), tfms.Normalize((0.1307,), (0.3081,))])
 dt_train = dataset.MNIST(f"{fldr}/data",train=True,download=True, transform=transform)
 dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=transform)
-#
+
 # now lets create our unet architecture 
 # we start off with 28x28 size, downsample it until we reach
 # a small featuremap,then start to upsample it to reach 28x28
@@ -1773,7 +1783,6 @@ class ConvBnAct(nn.Module):
         out = self.act(out)
         return out + identity
 
-
 class DeconvBnAct(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding, act=nn.LeakyReLU(inplace=True)):
         super().__init__()
@@ -1806,7 +1815,6 @@ class DeconvBnAct(nn.Module):
             
         output = self.conv(self.act(self.bn(self.deconv(x)))) 
         return output + identity
-
 
 class Unet(nn.Module):
     def __init__(self, in_channel=1, initial_fmap=64):
@@ -1841,7 +1849,6 @@ class Unet(nn.Module):
         # incase we used positive noise
         self.sigmoid = nn.Sigmoid()
     
-    # note that we 
     def forward(self, x):
         out = self.relu(self.conv_in(x))
         skip_connections = []
@@ -1850,18 +1857,106 @@ class Unet(nn.Module):
             skip_connections.append(out)
             print(f'{out.shape=}')
         
-        for i,l in enumerate(self.decoder):
-            out = l(out+skip_connections[-(i+1)])
+        for l in self.decoder:
+            out = l(out+skip_connections.pop())
             print(f'{out.shape=}')
         
-        # final output    
         out = self.conv2(out)
         out = self.sigmoid(out)
         return out
 
 m = Unet()
 x = torch.randn(size=(1,1,32,32))
-print(m(x).shape)
+imgs, labels = next(iter(torch.utils.data.DataLoader(dt_train,batch_size=32)))
+print(f'{m(imgs).shape=}')
+plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0))
+plt.show()
+# now https://www.youtube.com/watch?v=a4Yfz2FxXiY&t=298s
+# https://www.youtube.com/watch?v=ZBKpAp_6TGI&t=16612s
+
+# refs: https://github.com/Jmkernes/Diffusion/blob/main/diffusion/ddpm/tutorial.md
+# https://daviddmc.github.io/blog/2020/DDPM/
+
+# the forward process is fairly easy, 
+# all that needs to be done is to add noise
+# to the input image, feed it to our unet
+# model, and then our models job is to predict 
+# the noise from the actual image. 
+# this part is done by a noise scheduler
+# in the paper the equation describing this
+# process is given as : 
+# q(x_{1:T} | x_0) = \prod_{t=1}^T q(x_t | x_{t-1})
+# This equation represents a conditional probability distribution 
+# over a sequence \(x_{1:T}\) given an initial state \(x_0\). 
+# The distribution is factorized into a product of conditional probabilities,
+# each dependent on the previous state in the sequence. 
+# This is a common form for Markov chains and hidden Markov models.
+# this means our diffusion model is also a type of markov chain, in fact 
+# a diffusion probabilistic model is a parameterized Markov chain
+# trained using variational inference to produce samples matching
+# the data after finite time.(more https://daviddmc.github.io/blog/2020/DDPM/)
+# 
+# the equation here describes the forward process(the equation represents the noise process),
+# where the model generates a sequence of states starting from a data point
+# (x_0 which is our initial input image) and applying a series of noise transformations.
+# Here, (q(x_t|x_{t-1})) is a Gaussian distribution with mean (\sqrt{1-\beta_t}x_{t-1})
+# and covariance (\beta_t I), where (\beta_t) is either a learned parameter or a constant(hyperparameter).
+# basically the amount of noise we add to an image depends on the previous image
+# and the way the noise is sampled is dervided from the following formula: 
+# q(x_t|x_{t-1}):=\mathcal{N}(x_t; \sqrt{1-\beta_t}x_{t-1}, \beta_t I)
+# its a conditional guassian distribution with a mean that depends on the previous image
+# and a specific variance. in this equation N(x_t; sqrt(1-β_t)x_t-1, β_t.I)
+# x_t is the outupt, sqrt(1-β_t).x_t-1) is the mean (of the distribution), and beta_t.I is the variance (fixed in our case)
+# the sequence of betas are called variance schedule they describe how much noise we want
+# to add in each of the time steps,x_t-1 is the previous less noisy image,which means
+# the mean of our distribution is exactly the previous image multiplied by this term
+# that depends on the variance schedule beta. the variance of this normal distribution
+# is fixed to beta multiplied by the Identity.
+# to get a better intuition about beta, lets imagin this
+# lets pick a pixel out of an image of a car for example, this pixel has 3 channels for
+# rgb, and the range of values is between 0-255 or normalized between -1 and 1 for example,
+# lets assume our picked pixel has these values (1,-1,-1) (suppose its normalized between -1 and 1)
+# this means, its a red pixel, (the red channel is 1, the maximum value, and the other two channels
+# are -1, the minimum value, signifying they are no green or blue colors! so its a red pixel!)
+# based on our equation just now, the distribution of our next image is now described by 
+# this mean and variance (i.e. N(sqrt(1-βₜ)xₜ₋₁), βₜ.I) ) that means the value of
+# our red pixel multiplied by square root of 1 minus beta_t (sqrt(1-βₜ)) is exactly 
+# the mean of our distribution, (i.e. μ = sqrt(1-βₜ)xₜ₋₁ and σ = βₜ.I. 
+# depending on our noise level βₜ, suppose it could be something like ~0.99 for example, 
+# the variance is fixed to βₜ, so if we choose a large number, it means, not only the pixel
+# distribution is wider now, but also more shifted, which results in a more corrupted image. 
+# also, when sampling from this distribution, we will consequently endup with more noise,
+# eventually β controls how fast we converge towards a mean of 0 which corrosponds to standard
+# guassian distribution. (try different beta and see how it controls this)
+# the important things is to add the right amount of noise, such that we arrive at an isotropic 
+# distribution with a mean of 0 and fixed variance in all direction otherwise the sampling later 
+# will not work. this simply means we dont wnat to add too few noise or too much noise!
+# in order to have a too noisy image too early! there are different schedulings for that
+# in our case, we would add the noise linearly, but there are many more variants, and ways to do this
+# use quadratics, cosine, sigmoidal.
+# it turns out, in practice, the noise is not added sequentially, becasue the sum of guassians is
+# still a gaussian distribution, we can directly calculate the noisy version of an image
+# for a specific timestep t and thats without iterating  over its predecessors based on the initial image x_0
+# we can calcualte its noisy version for any abitrrart timestep t . 
+# for this we need to calculate the closed form of the mean and variance based on the cumulative
+# variance schedules.
+# that means 
+# q(xₜ|x0) = N(xₜ, sqrt(α⁻)x0, (1-α⁻)I)
+# lets see an example of what this means 
+#
+#
+# (see image ./Diffusion_model_mean_var_example_1.png 
+# and ./Diffusion_model_mean_large_beta_var.png)
+# 
+#   
+#
+#
+
+
+
+
+
+
 
 
 
