@@ -1710,6 +1710,10 @@ import torch.utils.data
 
 import torch.nn as nn
 import torchvision
+# for pylance intellisense to work properly!
+import torchvision.utils
+import torchvision.datasets.utils
+
 import torchvision.transforms as tfms
 import torchvision.datasets as dataset
 import matplotlib.pyplot as plt
@@ -1723,10 +1727,23 @@ print(f'{sys.version}')
 # we need to have a unet model
 # we need to have a scheduler to add noise and reverse it
 # lets instantiate our dataset 
+# before we create our dataset, we need to create our transformations 
+# because we have to send one during dataset creating. 
+# for transformation everything is straight forward, we resize our image to a given size
+# for easier manipulation, then we can normalize it, first to tensor (which makes in 0-1
+# and then we normalize it. if we are using other datasets, like cars, cifar, etc
+# its usually normalized in -1 to 1 range instead, and the unet also need to take this
+# into account) for now lets keep this simple. we later on use a more sophesticated example
+# and use a different set of transformations.
 transform=tfms.Compose([tfms.Resize(32), tfms.ToTensor(), tfms.Normalize((0.1307,), (0.3081,))])
 dt_train = dataset.MNIST(f"{fldr}/data",train=True,download=True, transform=transform)
 dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=transform)
-
+# since we dont need a validation set, we can use all the images,
+# to use both train and validation set images we can concatenate the two datasets
+dt_mnist = torch.utils.data.ConcatDataset([dt_train, dt_val])
+batch_size = 64
+num_workers = 8
+dataloader = torch.utils.data.DataLoader(dt_mnist, batch_size=batch_size, shuffle=True, num_workers=num_workers,pin_memory=True, drop_last=True)
 # now lets create our unet architecture 
 # we start off with 28x28 size, downsample it until we reach
 # a small featuremap,then start to upsample it to reach 28x28
@@ -1867,10 +1884,13 @@ class Unet(nn.Module):
 
 m = Unet()
 x = torch.randn(size=(1,1,32,32))
-imgs, labels = next(iter(torch.utils.data.DataLoader(dt_train,batch_size=32)))
+imgs, labels = next(iter(dataloader))
 print(f'{m(imgs).shape=}')
-plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0))
-plt.show()
+def show_image(imgs_tensor, title=''):
+    plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0))
+    plt.title(title)
+    plt.show()
+show_image(imgs)
 # now https://www.youtube.com/watch?v=a4Yfz2FxXiY&t=298s
 # https://www.youtube.com/watch?v=ZBKpAp_6TGI&t=16612s
 
@@ -1994,10 +2014,19 @@ def get_alphas_cumprod_t(alphas_cumprod_values:torch.Tensor, timestep:torch.Tens
     # that specifies the indices of elements to gather. 
     # The dimension of the output tensor is the same as the dimension of the index tensor (which is timestep here).
     alphas_cumprod_t = alphas_cumprod_values.gather(-1,timestep.cpu())
-    return alphas_cumprod_t.reshape(batchsize, *( (1,) * (len(x0_shape)-1) ) )
+    # before we return, we make sure the shape is compatible with the input image(s) x0.
+    # so that when later on we mutiply them together everything works out. 
+    # e.g. for a single image x0 it'd be torch.Size([1, 1, 1]) instead of torch.Size([1])
+    # and for a batch of images (x0 is a batch of images), the final shape would be torch.Size([1, 1, 1, 1])
+    # len(x0_shape) simply tells us how many dimensions our x0 has, does it have 3 ( a single image) or 4(a batch of images)
+    # we decrease 1, since we added the batch at the begining, so (1,) is then only repeated one time less
+    # and later we unpack this new tuple (which is (1,1) or (1,1,1) depending on whether x0 has a batch dim or not)
+    # and this makes up our final shape!
+    shape=(batchsize, *( (1,) * (len(x0_shape)-1) ))
+    return alphas_cumprod_t.reshape(shape)
 #
 # now we can calculate the forward diffusion process 
-def forward_diffusion(x0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, device='cpu'):
+def forward_diffusion(x0:torch.Tensor, t:torch.Tensor, sqrt_alphas_cumprod:torch.Tensor, sqrt_one_minus_alphas_cumprod:torch.Tensor, device:str|torch.device='cpu'):
     # first lets create our noise 
     noise = torch.randn_like(x0)
     # now lets get alphas_cumprod for timestep t, since we are using its sqrt version we 
@@ -2011,16 +2040,82 @@ def forward_diffusion(x0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod,
         output = (sqrt_alphas_cumprod_t * x0) + (sqrt_one_minus_alphas_cumprod_t * noise), noise
     return output
 #
-#!I also saw these but havent figured out why!
+# by padding the `alphas_cumprod` tensor at the beginning with a value of `-1.0` 
+# The `alphas_cumprod` tensor represents the cumulative product of the `alpha` values,
+# which are parameters of the diffusion process. 
+# The `[:-1]` operation is used to exclude the last element from `alphas_cumprod`. 
+# This padded tensor is used in the calculation of the posterior variance.
 alphas_cumprod_prev = torch.nn.functional.pad(alphas_cumprod[:-1], (1,0),value=-1.0)
+# we are calculating the square root of the reciprocal of the `alpha` values. 
+# The `alpha` values are parameters of the diffusion process and they represent
+# the variance reduction per time step. 
+# The `sqrt_recip_alphas` tensor is used in the calculation of the mean of the 
+# posterior distribution.
 sqrt_recip_alphas = torch.sqrt(1.0/alphas)
-# and 
+# we are calculating the variance of the posterior distribution at each time step. 
+# The `betas` are another set of parameters of the diffusion process². 
+# The `alphas_cumprod` and `alphas_cumprod_prev` tensors represent the 
+# cumulative product of the `alpha` values up to the current and previous time step,
+# respectively.
 posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod) 
+# These calculations are part of the reverse process of the diffusion model, 
+# where the model gradually denoises an image starting from pure noise⁷. 
+# The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
+# used in the calculation of the Gaussian distribution from which the denoised 
+# image is sampled at each time step⁷.
+# 
+# Source: Conversation with Bing, 2/26/2024
+# (1) Denoising Diffusion Probabilistic Model - Keras. https://keras.io/examples/generative/ddpm/.
+# (2) Bayesian inversion of a diffusion model with application to biology. https://link.springer.com/article/10.1007/s00285-021-01621-2.
+# (3) A Diffusion Model from Scratch | by Amir Behbahanian - Medium. https://medium.com/@amir.behbahanian/a-diffusion-model-from-scratch-cf1131988e78.
+# (4) Chapter 5. Bayesian Statistics - Brown University. https://www.dam.brown.edu/people/huiwang/classes/am166/Ch5.pdf.
+# (5) How diffusion models work: the math from scratch | AI Summer. https://theaisummer.com/diffusion-models/.
+# (6) 1 On the Design Fundamentals of Diffusion Models: A Survey - arXiv.org. https://arxiv.org/pdf/2306.04542.pdf.
+# (7) [2107.00630] Variational Diffusion Models - arXiv.org. https://arxiv.org/abs/2107.00630.
+# (8) latent-diffusion/ldm/models/diffusion/ddim.py · multimodalart .... https://huggingface.co/spaces/multimodalart/latentdiffusion/blob/8c6eab45567a29aee245e0ecfd6b87c0c41fefbf/latent-diffusion/ldm/models/diffusion/ddim.py.
+# (9) [Bug]: alphas_cumprod are downcasted to half precision during model .... https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues/14071.
+# (10) The Annotated Diffusion Model - Google Colab. https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/annotated_diffusion.ipynb.
+# (11) Three Stable Diffusion Training Losses: x0, epsilon, and v ... - Medium. https://medium.com/@zljdanceholic/three-stable-diffusion-training-losses-x0-epsilon-and-v-prediction-126de920eb73.
 #
-#
+# now lets test our forward diffision model for now
+# lets grab a few images
+imgs,_ = next(iter(dataloader))
+show_image(imgs,'test')
+# now lets determine how many steps we want 
+timesteps_t = 200
+# number of steps we want to visualize the transition of noisification
+num_imgs_for_visualization = 10
+# now lets determine the step size 
+step_size = timesteps_t//num_imgs_for_visualization
+device = 'cpu'
+plt.figure(figsize=(8,6))
+# lets create a dictionary to store images transitions for later visualization
+imdic = {i:[] for i in range(imgs.size(0))}
+# now lets apply noise to our image, or in other words run our diffusion's forward() pass
+for idx in range(0, timesteps_t, step_size):
+    # lets convert our t into a tensor 
+    t = torch.tensor([idx]).long()
+    # now lets do a forward
+    output_imgs, noise = forward_diffusion(imgs, t, sqrt_alphas_cumprod,
+                                      sqrt_one_minus_alphas_cumprod, device)
+    # plt.subplot(nrows, ncols, index)
+    plt.subplot(1, num_imgs_for_visualization+1, (idx//step_size)+1)
+    plt.axis("off")
+    plt.imshow(output_imgs.permute(0,2,3,1).numpy()[0])
+    plt.title(f'{idx}')
+    # to save the images for visualizing the whole batch later
+    for i, img in enumerate(output_imgs):
+        imdic[i].append(img.permute(1,2,0).numpy())
+plt.show()
 
-
-
+# to display all the images in our batch
+for k, imgs in imdic.items():
+    plt.figure(figsize=(16,12))
+    for i in range(len(imgs)):    
+        plt.subplot(1, len(imgs)+1, i+1)
+        plt.axis("off")
+        plt.imshow(imgs[i])
+plt.show()
 
 
 
