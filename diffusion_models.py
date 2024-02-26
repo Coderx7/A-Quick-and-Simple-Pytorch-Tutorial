@@ -1896,6 +1896,7 @@ plt.show()
 # trained using variational inference to produce samples matching
 # the data after finite time.(more https://daviddmc.github.io/blog/2020/DDPM/)
 # 
+# ref from https://www.youtube.com/watch?v=a4Yfz2FxXiY
 # the equation here describes the forward process(the equation represents the noise process),
 # where the model generates a sequence of states starting from a data point
 # (x_0 which is our initial input image) and applying a series of noise transformations.
@@ -1928,27 +1929,93 @@ plt.show()
 # also, when sampling from this distribution, we will consequently endup with more noise,
 # eventually β controls how fast we converge towards a mean of 0 which corrosponds to standard
 # guassian distribution. (try different beta and see how it controls this)
-# the important things is to add the right amount of noise, such that we arrive at an isotropic 
+#(see image ./Diffusion_model_mean_var_example_1.png and ./Diffusion_model_mean_large_beta_var.png)
+# the important thing here is to add the right amount of noise, such that we arrive at an isotropic 
 # distribution with a mean of 0 and fixed variance in all direction otherwise the sampling later 
 # will not work. this simply means we dont wnat to add too few noise or too much noise!
 # in order to have a too noisy image too early! there are different schedulings for that
 # in our case, we would add the noise linearly, but there are many more variants, and ways to do this
 # use quadratics, cosine, sigmoidal.
 # it turns out, in practice, the noise is not added sequentially, becasue the sum of guassians is
-# still a gaussian distribution, we can directly calculate the noisy version of an image
-# for a specific timestep t and thats without iterating  over its predecessors based on the initial image x_0
-# we can calcualte its noisy version for any abitrrart timestep t . 
-# for this we need to calculate the closed form of the mean and variance based on the cumulative
+# still a gaussian distribution, therefore we can directly calculate the noisy version of an image
+# for a specific timestep t and thats without iterating over its predecessors.
+# so basically based on the initial image x_0 we can calcualte its noisy version for any abitrart
+# timestep t. 
+# to do this we need to pre-calculate the closed form of the mean and variance based on the cumulative
 # variance schedules.
 # that means 
 # q(xₜ|x0) = N(xₜ, sqrt(α⁻)x0, (1-α⁻)I)
-# lets see an example of what this means 
-#
-#
-# (see image ./Diffusion_model_mean_var_example_1.png 
-# and ./Diffusion_model_mean_large_beta_var.png)
+# lets see an example of what this means, lets imagine we have 200 steps in our diffusion process,
+# the variance schedule beta(β) tells us how much noise we want to add in each time steps.
+# we linearly increase it until we reach a maximum value of 0.02. if we wouldnt increase it at all,
+# it would take for ever to endup with pure noise (full noise image). therefore the authors
+# defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
+# we get to keep about an image when transitioning to another/next image.
+# β₁ = 0.0001, β₂ = 0.0002, β₃ = 0.0003, β₄ = 0.0004, .... β₂₀₀ = 0.02
+# α₁ = 0.9999, α₂ = 0.9998, α₃ = 0.9997, α₄ = 0.9996, .... α₂₀₀ = 0.98
 # 
-#   
+# cumulative products of alpha results in alpha overline:
+#  ̅α₁=0.9999,   ̅α₂ =0.9997,  ̅α₃ =0.9994,  ̅α₄ =0.9990, ....  ̅α₂₀₀ =0.1322 
+# by calculating the cumulative product of these alpha terms, we get a new term called ̅α 
+# (alpha overline).
+# with this we can specify a new distribution that allows us to sample for a specific
+# timestep.(more details look at url: )
+# consequently for training, we can now simply sample a timestep t and pass the nosified version of it to the model 
+# this makes the training much more smoother and easier compared to sequentially iterating over
+# the same image .
+# sidenote: 
+# I wrote ̅α like \overbar and then \alpha , by pressing space after each of them their unicode symbol
+# is written. (Fast Unicode Math Characters plugin is installed by theway)
+# 
+# now lets implement our noise scheduler
+# we say scheduler, becasue we specify at different steps/schedules so to speak to add noise
+# and not in once go. so the first step is to create our betas 
+# we use a simple linear interpolation to create our betas. 
+def create_betas(start=0.0001, end=0.02, timesteps=200):
+    return torch.linspace(start=start, end=end, steps=timesteps)
+# next lets calculate the closed form of mean and variance based on the cumulatie varianec schedules
+# basically calculate alpha overline( ̅α )
+# first lets calculate alpha, for that we need betas, since alphas =1-betas
+betas = create_betas(timesteps=200)
+alphas = 1.0-betas
+# now lets calculate the alpha overline ( ̅α )
+alphas_cumprod = torch.cumprod(alphas, dim=0)
+# now √̅α
+sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+# now √1-̅α 
+sqrt_one_minus_alphas_cumprod = torch.sqrt(1-alphas_cumprod)
+# becasue we need them both Lₛᵢₘₚₗₑ(θ):=Eₜ,ₓ₀,ϵ [‖ ϵ-ϵ₀(√̅αₜX₀ + √1-̅αₜϵ,t) ‖²₂], the better text form is available https://daviddmc.github.io/blog/2020/DDPM/ in the training and sampling section
+# so we need to multiply alphas_cumprod for timestep t by x_0 and sqrt_1_minus_alphas_prod
+# by our noise at timestep t. 
+# so we need to grab alphas_cumprod for a specific timestep t, lets do that 
+def get_alphas_cumprod_t(alphas_cumprod_values:torch.Tensor, timestep:torch.Tensor, x0_shape:torch.Size):
+    batchsize = timestep.shape[0]
+    # note the tensor.gather() function expects the second argument to be a tensor 
+    # that specifies the indices of elements to gather. 
+    # The dimension of the output tensor is the same as the dimension of the index tensor (which is timestep here).
+    alphas_cumprod_t = alphas_cumprod_values.gather(-1,timestep.cpu())
+    return alphas_cumprod_t.reshape(batchsize, *( (1,) * (len(x0_shape)-1) ) )
+#
+# now we can calculate the forward diffusion process 
+def forward_diffusion(x0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, device='cpu'):
+    # first lets create our noise 
+    noise = torch.randn_like(x0)
+    # now lets get alphas_cumprod for timestep t, since we are using its sqrt version we 
+    # use the sqrt versions instead 
+    sqrt_alphas_cumprod_t = get_alphas_cumprod_t(sqrt_alphas_cumprod, t, x0.shape)
+    sqrt_one_minus_alphas_cumprod_t = get_alphas_cumprod_t(sqrt_one_minus_alphas_cumprod, t, x0.shape)
+    # now lets calculate the output which is mean + variance 
+    # we also return the noise!
+    # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
+    with torch.device(device):
+        output = (sqrt_alphas_cumprod_t * x0) + (sqrt_one_minus_alphas_cumprod_t * noise), noise
+    return output
+#
+#!I also saw these but havent figured out why!
+alphas_cumprod_prev = torch.nn.functional.pad(alphas_cumprod[:-1], (1,0),value=-1.0)
+sqrt_recip_alphas = torch.sqrt(1.0/alphas)
+# and 
+posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod) 
 #
 #
 
