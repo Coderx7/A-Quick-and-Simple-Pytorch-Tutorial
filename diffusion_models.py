@@ -99,6 +99,7 @@ import numpy as np
 # import urllib
 import requests
 from pathlib import Path
+from tqdm import tqdm
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -107,6 +108,7 @@ import PIL.Image as Image
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as tfms
 
@@ -1363,7 +1365,7 @@ text2image.set_ip_adapter_scale([0.1,0.1])
 # four steps⁴. It can be used for various tasks such as text-to-image, image-to-image, and inpainting¹². 
 # For example, to use LCM-LoRA for text-to-image task, you can load it with its base model 
 # stabilityai/stable-diffusion-xl-base-1.0, change the scheduler to LCMScheduler, and reduce the number 
-# of inference steps to just 2 to 8 steps¹. 
+# of inference steps to just 2 to 8 steps¹. (checkout https://huggingface.co/RunDiffusion/Juggernaut-XL-Lightning which does this in 4 steps as well)
 # Similarly, for image-to-image tasks, you can use it with the dreamshaper-7 model and the LCM-LoRA for 
 # stable-diffusion-v1-5².
 # Please note that the specific usage might require additional libraries such as the Hugging Face Diffusers 
@@ -1703,12 +1705,16 @@ display_images(prompt, result)
 # we are going to use mnist dataset and create a diffusion model to generate digits for us
 # lets import what we need
 import sys,os
+import numpy as np
+from tqdm import tqdm
+
 import torch
 # for pylance so we get autocomplete for submodules!
 import torch.utils
 import torch.utils.data
 
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision
 # for pylance intellisense to work properly!
 import torchvision.utils
@@ -1872,24 +1878,26 @@ class Unet(nn.Module):
         for l in self.encoder:
             out = l(out)
             skip_connections.append(out)
-            print(f'{out.shape=}')
+            # print(f'{out.shape=}')
         
         for l in self.decoder:
             out = l(out+skip_connections.pop())
-            print(f'{out.shape=}')
+            # print(f'{out.shape=}')
         
         out = self.conv2(out)
         out = self.sigmoid(out)
         return out
 
-m = Unet()
+model = Unet()
 x = torch.randn(size=(1,1,32,32))
 imgs, labels = next(iter(dataloader))
-print(f'{m(imgs).shape=}')
+print(f'{model(imgs).shape=}')
+
 def show_image(imgs_tensor, title=''):
-    plt.imshow(torchvision.utils.make_grid(imgs).permute(1,2,0))
+    plt.imshow(torchvision.utils.make_grid(imgs_tensor).permute(1,2,0))
     plt.title(title)
     plt.show()
+
 show_image(imgs)
 # now https://www.youtube.com/watch?v=a4Yfz2FxXiY&t=298s
 # https://www.youtube.com/watch?v=ZBKpAp_6TGI&t=16612s
@@ -2021,7 +2029,7 @@ def get_alphas_cumprod_t(alphas_cumprod_values:torch.Tensor, timestep:torch.Tens
     # len(x0_shape) simply tells us how many dimensions our x0 has, does it have 3 ( a single image) or 4(a batch of images)
     # we decrease 1, since we added the batch at the begining, so (1,) is then only repeated one time less
     # and later we unpack this new tuple (which is (1,1) or (1,1,1) depending on whether x0 has a batch dim or not)
-    # and this makes up our final shape!
+    # and this makes up our final shape! 
     shape=(batchsize, *( (1,) * (len(x0_shape)-1) ))
     return alphas_cumprod_t.reshape(shape)
 #
@@ -2039,43 +2047,6 @@ def forward_diffusion(x0:torch.Tensor, t:torch.Tensor, sqrt_alphas_cumprod:torch
     with torch.device(device):
         output = (sqrt_alphas_cumprod_t * x0) + (sqrt_one_minus_alphas_cumprod_t * noise), noise
     return output
-#
-# by padding the `alphas_cumprod` tensor at the beginning with a value of `-1.0` 
-# The `alphas_cumprod` tensor represents the cumulative product of the `alpha` values,
-# which are parameters of the diffusion process. 
-# The `[:-1]` operation is used to exclude the last element from `alphas_cumprod`. 
-# This padded tensor is used in the calculation of the posterior variance.
-alphas_cumprod_prev = torch.nn.functional.pad(alphas_cumprod[:-1], (1,0),value=-1.0)
-# we are calculating the square root of the reciprocal of the `alpha` values. 
-# The `alpha` values are parameters of the diffusion process and they represent
-# the variance reduction per time step. 
-# The `sqrt_recip_alphas` tensor is used in the calculation of the mean of the 
-# posterior distribution.
-sqrt_recip_alphas = torch.sqrt(1.0/alphas)
-# we are calculating the variance of the posterior distribution at each time step. 
-# The `betas` are another set of parameters of the diffusion process². 
-# The `alphas_cumprod` and `alphas_cumprod_prev` tensors represent the 
-# cumulative product of the `alpha` values up to the current and previous time step,
-# respectively.
-posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod) 
-# These calculations are part of the reverse process of the diffusion model, 
-# where the model gradually denoises an image starting from pure noise⁷. 
-# The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
-# used in the calculation of the Gaussian distribution from which the denoised 
-# image is sampled at each time step⁷.
-# 
-# Source: Conversation with Bing, 2/26/2024
-# (1) Denoising Diffusion Probabilistic Model - Keras. https://keras.io/examples/generative/ddpm/.
-# (2) Bayesian inversion of a diffusion model with application to biology. https://link.springer.com/article/10.1007/s00285-021-01621-2.
-# (3) A Diffusion Model from Scratch | by Amir Behbahanian - Medium. https://medium.com/@amir.behbahanian/a-diffusion-model-from-scratch-cf1131988e78.
-# (4) Chapter 5. Bayesian Statistics - Brown University. https://www.dam.brown.edu/people/huiwang/classes/am166/Ch5.pdf.
-# (5) How diffusion models work: the math from scratch | AI Summer. https://theaisummer.com/diffusion-models/.
-# (6) 1 On the Design Fundamentals of Diffusion Models: A Survey - arXiv.org. https://arxiv.org/pdf/2306.04542.pdf.
-# (7) [2107.00630] Variational Diffusion Models - arXiv.org. https://arxiv.org/abs/2107.00630.
-# (8) latent-diffusion/ldm/models/diffusion/ddim.py · multimodalart .... https://huggingface.co/spaces/multimodalart/latentdiffusion/blob/8c6eab45567a29aee245e0ecfd6b87c0c41fefbf/latent-diffusion/ldm/models/diffusion/ddim.py.
-# (9) [Bug]: alphas_cumprod are downcasted to half precision during model .... https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues/14071.
-# (10) The Annotated Diffusion Model - Google Colab. https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/annotated_diffusion.ipynb.
-# (11) Three Stable Diffusion Training Losses: x0, epsilon, and v ... - Medium. https://medium.com/@zljdanceholic/three-stable-diffusion-training-losses-x0-epsilon-and-v-prediction-126de920eb73.
 #
 # now lets test our forward diffision model for now
 # lets grab a few images
@@ -2138,17 +2109,174 @@ for k, imgs in imdic.items():
         plt.imshow(imgs[i])
 plt.show()
 #%%
-# now lets carry on 
+# now lets carry on - Parameterized backward pass (reverse pass)
+# now we get to the unet part of our model. unet as we said previously is mainly used
+# for semantice segmentation tasks, so the output matches the input size, this makes it
+# very good for images, and especially for our work becasue we feed our noisy image and
+# get the noise back from the unet(predict the noise).
+# since our beta is fixed, (variance is fixed), we will only generate 1 value per pixel,
+# and that means the model learns the mean of the gaussian distribution of images, this
+# is also called denoising score matching.
+# note that there were experiments with predicting the image mean instead of the noise mean
+# and both approaches seem to work. 
+# one important thing to note is that, we need to tell the model which timestep we are in
+# becasue the model always uses the same shared weights for each input, no matter if its 
+# timestep 45 or 8! we'll explain about this in more detail in a moment
+# the reverse process can be formulated mathimatically like this :
+# p₀(X_T) = Ν(xₜ;0;I) (p_theta(X_T) = N(x_t;0;I) )
+# which means, we start in X_t with gaussian noise with zero mean and variance of 1 (unit variance)
+# then in a sequence the transition from one latent to the next is predicted.
+# this makes the model to learn the probablity density of an earlier timestep, given the current
+# timestep.
+# p_theta(x_0:T) = p(x_T) πᵀₜ₌₁ p_theta(x_t-1|x_t)
+# as said previously, during training we just randomly sample timesteps and dont go through
+# sequence at sampling time.
+# however we need to iterate from pure noise from xt to x0 which is the final image.
+# The density p is predicted by the gaussian noise distribution in the image. 
+# in order to get the actual image of timestep xt-1 we have to subtract this predicted noise
+#! from the image xt during sampling. x_t-1 = x_t-noise is a rough form of it
+#! see the formula in paper
+#
+# now for loss, the loss for diffusion models are optimized with the variational lower bound
+# like how its done in vaes.however as the authors briged the connection to dneoising score matching
+# they propose an alternative formulation that is equivalent to using the variational inference.
+# to make it shore the final loss function is defined by this(below):
+# Lₛᵢₘₚₗₑ(θ):=Eₜ,ₓ₀,ϵ [‖ ϵ-ϵ₀(Xₜ,t) ‖²₂] (ϵ is the added noise and ϵ₀(Xₜ,t) is the predicted noise here)
+# simply means we calulate l2 distance of the predicted noise and actual noise in the imaghe.
+# this loss function is quite easy but there are quite some derivations and considerations to arrive at
+# this simple term which I couldnt include in this handson video, it is however highly recommended
+# to look into some of the literature to get a better understanding.
+# therefore the loss function for that is pretty straighforward! its l1/l2 loss or mse! mean sequre error
+# between the forward diffusion images and the noise generated (timestep is required)
+def calculate_loss(model, x_0, t, device):
+    imgs_noisy, noise = forward_diffusion(x_0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, device)
+    noise_predicted = model(imgs_noisy, t)
+    #! test with l2,mse, and others as well
+    return torch.nn.functional.l1_loss(noise, noise_predicted)
 
+# now before going to the training, we need to implement the sampling part
+# so here it is 
+@torch.no_grad()
+def sample_timesteps(unet_model,x,t,device='cpu'):
+    unet_model.to(device)
+    # in order to do the sampling we need 3 more terms which are as follows 
+    # here we are padding the alphas_cumprod at the begining with the value of -1.0.
+    # This padded tensor is used in the calculation of the posterior variance.
+    alphas_cumprod_prev = torch.nn.functional.pad(alphas_cumprod[:-1], (1,0),value=-1.0).to(device)
+    # we are calculating the square root of the reciprocal of the `alpha` values. 
+    # recall that these `alpha` values represent the variance reduction per time step in 
+    # our diffusion model.
+    # The `sqrt_recip_alphas` tensor is used in the calculation of the mean of the 
+    # posterior distribution.
+    sqrt_recip_alphas = torch.sqrt(1.0/alphas).to(device)
+    # we are calculating the variance of the posterior distribution at each time step. 
+    # # The `alphas_cumprod` and `alphas_cumprod_prev` tensors represent the 
+    # cumulative product of the `alpha` values up to the current and previous time step,
+    # respectively.
+    posterior_variance = betas.to(device) * (1.0 - alphas_cumprod_prev.to(device)) / (1.0 - alphas_cumprod.to(device)) 
+    # These calculations are part of the reverse process of the diffusion model, 
+    # where the model gradually denoises an image starting from pure noise⁷. 
+    # The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
+    # used in the calculation of the Gaussian distribution from which the denoised 
+    # image is sampled at each time step⁷.
+    # 
+    # Source: Conversation with Bing, 2/26/2024
+    # (1) Denoising Diffusion Probabilistic Model - Keras. https://keras.io/examples/generative/ddpm/.
+    # (2) Bayesian inversion of a diffusion model with application to biology. https://link.springer.com/article/10.1007/s00285-021-01621-2.
+    # (3) A Diffusion Model from Scratch | by Amir Behbahanian - Medium. https://medium.com/@amir.behbahanian/a-diffusion-model-from-scratch-cf1131988e78.
+    # (4) Chapter 5. Bayesian Statistics - Brown University. https://www.dam.brown.edu/people/huiwang/classes/am166/Ch5.pdf.
+    # (5) How diffusion models work: the math from scratch | AI Summer. https://theaisummer.com/diffusion-models/.
+    # (6) 1 On the Design Fundamentals of Diffusion Models: A Survey - arXiv.org. https://arxiv.org/pdf/2306.04542.pdf.
+    # (7) [2107.00630] Variational Diffusion Models - arXiv.org. https://arxiv.org/abs/2107.00630.
+    # (8) latent-diffusion/ldm/models/diffusion/ddim.py · multimodalart .... https://huggingface.co/spaces/multimodalart/latentdiffusion/blob/8c6eab45567a29aee245e0ecfd6b87c0c41fefbf/latent-diffusion/ldm/models/diffusion/ddim.py.
+    # (9) [Bug]: alphas_cumprod are downcasted to half precision during model .... https://github.com/AUTOMATIC1111/stable-diffusion-webui/issues/14071.
+    # (10) The Annotated Diffusion Model - Google Colab. https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/annotated_diffusion.ipynb.
+    # (11) Three Stable Diffusion Training Losses: x0, epsilon, and v ... - Medium. https://medium.com/@zljdanceholic/three-stable-diffusion-training-losses-x0-epsilon-and-v-prediction-126de920eb73.
+        
+    # get the betas for current timestep
+    betas_t = get_alphas_cumprod_t(betas, t, x.shape).to(device)
+    # get the sqrt_one_minus_alphas_cumprod for current timestep as well
+    sqrt_one_minus_alphas_cumprod_t = get_alphas_cumprod_t(sqrt_one_minus_alphas_cumprod, t, x.shape).to(device)
+    # also get the sqrt_recip_alphas for current timestep
+    sqrt_recip_alphas_t = get_alphas_cumprod_t(sqrt_recip_alphas, t, x.shape).to(device)
+    
+    # now call model for current image - noise_prediction 
+    x=x.to(device)
+    predicted_noise = unet_model(x)
+    model_mean =  sqrt_recip_alphas_t * (x - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
+    # now get the posterior variance for the current timestep as well
+    posterior_variance_t = get_alphas_cumprod_t(posterior_variance,t,x.shape).to(device)
+    
+    if t==0:
+        return model_mean.to(device)
+    else:
+        noise = torch.randn_like(x).to(device)
+        return model_mean + torch.sqrt(posterior_variance_t)*noise
+    
+output = sample_timesteps(model, imgs, torch.tensor([100]))
+# model = Unet()
+# x = torch.randn(size=(64,1,32,32))
+# output = model(imgs)
+print(f'{output.shape=}')
+show_image(output)
 
+# now for visualization 
+@torch.no_grad()
+def sample_plot_image(model,in_channel=1,device='cpu'):
+    # Sample noise
+    img_size = 32
+    img = torch.randn((1, in_channel, img_size, img_size), device=device)
+    plt.figure(figsize=(15,15))
+    plt.axis('off')
+    num_images = 10
+    stepsize = int(timesteps_t/num_images)
 
+    for i in range(0,timesteps_t)[::-1]:
+        t = torch.full((1,), i, device=device, dtype=torch.long)
+        img = sample_timesteps(model,img, t, device)
+        # Edit: This is to maintain the natural range of the distribution
+        img = torch.clamp(img, -1.0, 1.0)
+        if i % stepsize == 0:
+            plt.subplot(1, num_images, int(i/stepsize)+1)
+            show_image(img.detach().cpu())
+    plt.show()     
+#%%
 
+# now for training we need an optimizer to get going
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,gamma=0.1)
+device='cuda' if torch.cuda.is_available() else 'cpu'
 
-
-
-
-
-
+print(f'running on {device}...')
+print(f'batch count: {len(dataloader):,}')
+epochs = 5
+losses = []
+interval = 50
+model = model.to(device)
+for epoch in range(epochs):
+    for i, (imgs,_) in tqdm(enumerate(dataloader)):
+        # with torch.device(device):
+        # lets create a few timesteps 
+        t = torch.randint(0,timesteps_t, size=(batch_size,),dtype=torch.long)
+        # now lets do a forward diffusion
+        noisy_imgs, actual_noise = forward_diffusion(imgs, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod,device)
+        noisy_imgs, actual_noise = tuple(t.to(device) for t in (noisy_imgs, actual_noise))
+        # now lets get the predicted noise from noisy images from previous step
+        predicted_noises = model(noisy_imgs)
+        # now lets calculate the loss 
+        loss = F.l1_loss(actual_noise, predicted_noises)
+        # now lets do a backward pass 
+        losses.append(loss.item())
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if i%interval==0:
+            print(f'Epoch: {epoch}/{epochs} | Iter: {i}/{len(dataloader)} | loss: {loss.item():.6f}')
+            sample_plot_image(model,device=device)
+                
+    print(f'Epoch: {epoch}/{epochs} | loss: {np.mean(losses):.6f}')
+    sample_plot_image(model,device=device)
 
 
 
