@@ -2081,14 +2081,15 @@ posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod
 # lets grab a few images
 imgs,_ = next(iter(dataloader))
 show_image(imgs,'test')
-# now lets determine how many steps we want 
+# now lets determine how many steps we want until we face full noise!
+# try 300 or 100 and see what happens
 timesteps_t = 200
 # number of steps we want to visualize the transition of noisification
 num_imgs_for_visualization = 10
 # now lets determine the step size 
 step_size = timesteps_t//num_imgs_for_visualization
 device = 'cpu'
-plt.figure(figsize=(8,6))
+plt.figure(figsize=(128,64))
 # lets create a dictionary to store images transitions for later visualization
 imdic = {i:[] for i in range(imgs.size(0))}
 # now lets apply noise to our image, or in other words run our diffusion's forward() pass
@@ -2096,19 +2097,39 @@ for idx in range(0, timesteps_t, step_size):
     # lets convert our t into a tensor 
     t = torch.tensor([idx]).long()
     # now lets do a forward
-    output_imgs, noise = forward_diffusion(imgs, t, sqrt_alphas_cumprod,
+    imgs_output, noise = forward_diffusion(imgs, t, sqrt_alphas_cumprod,
                                       sqrt_one_minus_alphas_cumprod, device)
     # plt.subplot(nrows, ncols, index)
     plt.subplot(1, num_imgs_for_visualization+1, (idx//step_size)+1)
     plt.axis("off")
-    plt.imshow(output_imgs.permute(0,2,3,1).numpy()[0])
+    # show the first image only
+    # plt.imshow(imgs_output.permute(0,2,3,1).numpy()[0])
+    # if we want we can display all the batch but we
+    # instead save them to view them better individually later
+    # plt.imshow(torchvision.utils.make_grid(imgs_output).permute(1,2,0).numpy())
+    # or we can simply treat the batch as one big image (stack them)
+    ims = imgs_output.permute(0,2,3,1)
+    img_rows = []
+    # how many images do we want in each row
+    ncol = 8
+    for i in range(0, ims.size(0), ncol):
+        # grab ncol images at a time from our batch
+        img_row = ims[i:i+ncol]
+        # concatenate them along the column, so we get a row of images
+        img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(32, -1)
+        # print(f'{i=} {img_row.shape=}')
+        # store them to later stack them and get a full image
+        img_rows.append(img_row)
+    # stack the images along the height and get our final image
+    img_grid = torch.cat(img_rows,dim=0)
+    plt.imshow(img_grid)
     plt.title(f'{idx}')
     # to save the images for visualizing the whole batch later
-    for i, img in enumerate(output_imgs):
+    for i, img in enumerate(imgs_output):
         imdic[i].append(img.permute(1,2,0).numpy())
 plt.show()
-
-# to display all the images in our batch
+#%%
+# to display all the images in our batch individually
 for k, imgs in imdic.items():
     plt.figure(figsize=(16,12))
     for i in range(len(imgs)):    
@@ -2116,6 +2137,131 @@ for k, imgs in imdic.items():
         plt.axis("off")
         plt.imshow(imgs[i])
 plt.show()
+#%%
+# now lets carry on 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#%%
+# ims = imgs_output.permute(0,2,3,1)
+# plt.figure(figsize=(128,64))
+# j=0
+# img_rows = []
+# for i in range(ims.size(0)):
+#     if i>=8:break
+#     if j==0:
+#         gg = ims[i:(i+1)*8]
+#     else:
+#         gg = ims[j:(i+1)*8]
+#     j = (i+1)*8
+#     new_gg = torch.cat((gg.chunk(8,dim=0)),dim=2).reshape(32,-1)
+#     print(f'{i=} {j=} {new_gg.shape=}')
+#     ggs.append(new_gg)
+# or better 
+# for i in range(0, ims.size(0), 8):
+#     img_row = ims[i:i+8]
+#     new_gg = torch.cat(img_row.chunk(8, dim=0), dim=2).reshape(32, -1)
+#     print(f'{i=} {new_gg.shape=}')
+#     img_rows.append(new_gg)
+# img_grid = torch.cat(img_rows,dim=0)
+# print(img_grid.shape)    
+# plt.imshow(img_grid.numpy())
+# plt.show()
+
+
+
+
+
+
+
+
+
+
+# we have an image of size 64 x 32x32x1 
+# we want an image for these 64 images 
+# 8 images in each row 
+# so imgs[1:8] in row 1 
+# and imgs[8:16] in row 2 
+# and so on and so forth
+# so itd be imgs[i:i*8]
+# imgs[i:i*8] -> [1:1*8]
+# imgs[i*8:i*8] -> [1*8:2*8]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
