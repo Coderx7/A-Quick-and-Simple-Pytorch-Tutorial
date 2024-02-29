@@ -1765,18 +1765,69 @@ dataloader = torch.utils.data.DataLoader(dt_mnist, batch_size=batch_size, shuffl
 # create separate modules and make our life easier
 
 # to create layers for encoder
+# first of all we need positional encoding to retain position info and differentiate 
+# between different timesteps, so lets first create a sinusoidal positional encoding
+# to encode our timesteps
+#%%
+import numpy as np
+def sin_pos_enc_v2(pos, embd_d):
+    pos_vec = torch.zeros(embd_d)
+    div_term = torch.exp(-torch.arange(0, embd_d, 2) * (torch.log(torch.tensor([10_000])) / embd_d))
+    pos_vec[0::2] = torch.sin(pos * div_term)
+    pos_vec[1::2] = torch.cos(pos * div_term)
+    return pos_vec
+
+def pos_enc(pos, embd_size):
+    div_term = np.exp(-np.arange(0, embd_size, 2 )) * (np.log(10_000.0)/embd_size)
+    rep = np.zeros(embd_size)
+    rep[0::2] = np.sin(pos * div_term)
+    rep[1::2] = np.cos(pos * div_term)
+    return rep
+
+sin_pos_enc_v2(1, 32)
+
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, embd_size=32,device='cpu') -> None:
+        super().__init__()
+        self.embd_size = embd_size
+        self.device = device
+    
+    @torch.no_grad()
+    def forward(self, positions):
+        pos_vec = torch.zeros(size=(positions.size(0),self.embd_size),device=self.device)
+        div_term = torch.exp(-torch.arange(0, self.embd_size, 2, device=self.device) * (torch.log(torch.tensor([10_000], device=self.device)) / self.embd_size))
+        positions = positions[:,None]
+        pos_vec[:,0::2] = torch.sin(positions * div_term)
+        pos_vec[:,1::2] = torch.cos(positions * div_term)
+        return pos_vec
+
+device = 'cpu'    
+pos_enc_model = SinusoidalPositionalEncoding(embd_size=32, device=device)
+print(pos_enc_model(torch.tensor([1],device=device)))
+t = torch.randint(0,2,size=(2,),device=device)
+print(f'{t=}')
+print(f'{pos_enc_model(t)=}')
+
 class ConvBnAct(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, use_bn=True, act=nn.LeakyReLU(inplace=True)):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, timestep_embd_size=32, use_bn=True, act=nn.LeakyReLU(),device='cpu'):
         super().__init__()
         self.use_bn = use_bn
         self.conv = nn.Conv2d(in_channels=in_channels,
                               out_channels=out_channels,
                               kernel_size=kernel_size,
                               stride=stride,
-                              padding=padding, bias=False)
-        self.bn = nn.BatchNorm2d(num_features=out_channels)
+                              padding=padding, bias=False,device=device)
+        self.bn = nn.BatchNorm2d(num_features=out_channels,device=device)
         self.act = act
-
+        
+        # we need our sinusoidal positional encoding to be incorporated in the model
+        # so we create a small mlp to do this so that we get a higher representation out of our
+        # sinusoidal positional embeddings
+        self.time_embd_size = timestep_embd_size
+        self.timemlp = torch.nn.Sequential(SinusoidalPositionalEncoding(self.time_embd_size,device=device),
+                                           nn.Linear(self.time_embd_size,out_channels,device=device),
+                                           nn.ReLU())
+        
         # if in_channels is not equal to out_channels, or if stride is not 1, 
         # then the dimensions of x and the output of the convolutional layer 
         # will not match, and we'll get an error when we try to add them together.
@@ -1791,32 +1842,53 @@ class ConvBnAct(nn.Module):
                                               out_channels, 
                                               kernel_size=1, 
                                               stride=stride, 
-                                              bias=False)
+                                              bias=False,device=device)
         else:
             self.match_dimensions = None
 
-    def forward(self, x)->torch.Tensor:
+    def forward(self, x, t)->torch.Tensor:
         identity = x
+        # get the time_embeddings
+        timestep_embeddings = self.timemlp(t)
         if self.match_dimensions is not None:
             identity = self.match_dimensions(x)
-        
         out = self.conv(x)
+        
+        # make them compatible. the ... (ellipsis) is a shortcut that means 
+        # "all preceding dimensions" and None adds a new dimension. 
+        # so t[..., None, None] will add two new dimensions at the end of the tensor.
+        # we could use other methods(unsqueeze, expand, etc), but this is consise and elegent! 
+        out += timestep_embeddings[...,None,None] 
         if self.use_bn:
             out = self.bn(out)
         out = self.act(out)
         return out + identity
 
 class DeconvBnAct(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, act=nn.LeakyReLU(inplace=True)):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, timestep_embd_size=32, act=nn.LeakyReLU(),device='cpu'):
         super().__init__()
         self.deconv = nn.ConvTranspose2d(in_channels=in_channels,
                                          out_channels=out_channels,
                                          kernel_size=kernel_size,
                                          stride=stride,
-                                         padding=padding)
-        self.bn = nn.BatchNorm2d(num_features=out_channels)
+                                         padding=padding,device=device)
+        self.bn = nn.BatchNorm2d(num_features=out_channels,device=device)
         self.act = act
-        self.conv = ConvBnAct(in_channels=out_channels,out_channels=out_channels,kernel_size=3, stride=1,padding=1,use_bn=False)
+        # we need our sinusoidal positional encoding to be incorporated in the model
+        # so we create a small mlp to do this so that we get a higher representation out of our
+        # sinusoidal positional embeddings
+        self.time_embd_size = timestep_embd_size
+        self.timemlp = torch.nn.Sequential(SinusoidalPositionalEncoding(self.time_embd_size,device=device),
+                                           nn.Linear(self.time_embd_size,out_channels,device=device),
+                                           nn.ReLU())
+        
+        self.conv = nn.Sequential(nn.Conv2d(in_channels=out_channels,
+                                            out_channels=out_channels,
+                                            kernel_size=3,
+                                            stride=1,
+                                            padding=1,
+                                            device=device),
+                                  nn.LeakyReLU())
         if in_channels != out_channels or stride != 1:
             # like our convbnact, here we need to use a deconv which adjust the spatial
             # resolution and also fixes the discrepency in channels. 
@@ -1825,73 +1897,114 @@ class DeconvBnAct(nn.Module):
                                                        out_channels, 
                                                        kernel_size=2, 
                                                        stride=2, 
-                                                       bias=False)
-            self.bn2 = nn.BatchNorm2d(out_channels)
+                                                       bias=False,device=device)
+            self.bn2 = nn.BatchNorm2d(out_channels,device=device)
         else:
             self.match_dimensions = None
     
-    def forward(self, x)->torch.Tensor:
+    def forward(self, x, t)->torch.Tensor:
         identity = x 
+        # get the time_embeddings
+        # with torch.device(t.device):
+        timestep_embeddings = self.timemlp(t)
+        
         if self.match_dimensions is not None:
             identity = self.match_dimensions(x)
             # identity = self.bn2(identity)
-            
         output = self.conv(self.act(self.bn(self.deconv(x)))) 
+        
+        # print(f'output.shape={tuple(output.shape)} {timestep_embeddings.shape=}')
+        output += timestep_embeddings[...,None,None]
+        
         return output + identity
 
+device='cuda'
+c = ConvBnAct(1, 64, kernel_size=3, stride=1, padding=1, timestep_embd_size=32,device=device)
+d = DeconvBnAct(64, 1, kernel_size=2, stride=1, padding=1, timestep_embd_size=32,act=nn.LeakyReLU(),device=device)
+x,_ = next(iter(dataloader))
+t = torch.randint(0,200, size=(batch_size,)).long()
+x2 = torch.randn(size=(64,64,2,2))
+x,t,x2 = tuple(t.to(device) for t in (x,t,x2))
+output = c.forward(x,t)
+output2 = d.forward(x2,t)
+print(f'{output.shape=}')
+print(f'{output2.shape=}')
+#%%
 class Unet(nn.Module):
-    def __init__(self, in_channel=1, initial_fmap=64):
+    
+    def __init__(self, in_channel=1, initial_fmap=64, time_embd_size=32,device='cuda'):
         super().__init__()
+        self.device = device
         # we have two sections in the first section/part/encoder 
         # we shrink the input, its a series of conv/bn/relu layers
         # then we reverse this, i.e. we start upsampling it till we
         # reach the initial image output
         # we define the first layer of unet normally and then use for
         # loop to create the rest of the encoder module. 
-        self.conv_in = nn.Conv2d(in_channels=in_channel,out_channels=initial_fmap,kernel_size=3,stride=1,padding=1)
+        self.conv_in = nn.Conv2d(in_channels=in_channel,out_channels=initial_fmap,
+                                 kernel_size=3,stride=1,padding=1, device=device)
         self.relu = nn.ReLU()
-        
+        # we need our sinusoidal positional encoding to be incorporated in the model
+        # so we create a small mlp so that we get a higher representation out of our
+        # sinusoidal positional embeddings
+        # self.timemlp = torch.nn.Sequential(SinusoidalPositionalEncoding(time_embd_size),
+        #                                    nn.Linear(time_embd_size,time_embd_size),
+        #                                    nn.ReLU())
+        # we also need a transformation involving timesteps in every layer of our encoder
+        # and decoders so lets create a block for them as well. we use this block
+        # to combine the image features and the timestep positional embedding features
+        # the output of this block gets fed to our normal layers in the encoder/decoders
+        # so they work with both features merged, not just image features
+        #! write the block? or add the timestep to the convbnact module? 
         self.encoder = nn.ModuleList()
         # we are dealing with mnist dataset, images are 28x28 but to make things easier
         # we resize it to 32x32 before we feed it to our network
         fmaps = initial_fmap
         for i in range(4):
-            self.encoder.append(ConvBnAct(fmaps,fmaps*2,stride=2,padding=1))
+            self.encoder.append(ConvBnAct(fmaps,fmaps*2,stride=2,padding=1,
+                                          timestep_embd_size=time_embd_size,device=device,act=nn.ReLU()))
             fmaps*=2
-        print(self.encoder)
+        # print(self.encoder)
         # now lets build our decoder/upsampler part
         # we will use upsample2d+ a convlayer
         self.decoder = nn.ModuleList()
         for i in range(4):
-            self.decoder.append(DeconvBnAct(fmaps, fmaps//2, kernel_size=2, stride=2,padding=0))
+            self.decoder.append(DeconvBnAct(fmaps, fmaps//2, kernel_size=2, stride=2,padding=0,
+                                            timestep_embd_size=time_embd_size,device=device,act=nn.ReLU()))
             fmaps//=2
 
-        print(self.decoder)
+        # print(self.decoder)
         # now for the final output layer 
-        self.conv2 = nn.Conv2d(fmaps,in_channel, kernel_size=1,stride=1,padding=0)
+        self.conv2 = nn.Conv2d(fmaps,in_channel, kernel_size=1,stride=1,padding=0,device=device)
         # incase we used positive noise
         self.sigmoid = nn.Sigmoid()
     
-    def forward(self, x):
+    def forward(self, x,t):
+        # first conv layer
         out = self.relu(self.conv_in(x))
+        
         skip_connections = []
         for l in self.encoder:
-            out = l(out)
+            out = l(out,t)
             skip_connections.append(out)
             # print(f'{out.shape=}')
         
         for l in self.decoder:
-            out = l(out+skip_connections.pop())
+            out = l(out+skip_connections.pop(),t)
             # print(f'{out.shape=}')
         
         out = self.conv2(out)
         out = self.sigmoid(out)
         return out
 
-model = Unet()
+device = 'cpu'
+model = Unet(device=device)
+# model.to(device)
 x = torch.randn(size=(1,1,32,32))
-imgs, labels = next(iter(dataloader))
-print(f'{model(imgs).shape=}')
+t = torch.randint(0,200, size=(batch_size,)).long()
+imgs, _ = next(iter(dataloader))
+imgs,x,t = tuple(t.to(device) for t in (imgs,x,t))
+print(f'{model(imgs,t).shape=}')
 
 def show_image(imgs_tensor, title=''):
     plt.imshow(torchvision.utils.make_grid(imgs_tensor).permute(1,2,0))
@@ -1999,8 +2112,8 @@ show_image(imgs)
 # we say scheduler, becasue we specify at different steps/schedules so to speak to add noise
 # and not in once go. so the first step is to create our betas 
 # we use a simple linear interpolation to create our betas. 
-def create_betas(start=0.0001, end=0.02, timesteps=200):
-    return torch.linspace(start=start, end=end, steps=timesteps)
+def create_betas(start=0.0001, end=0.02, timesteps=200, device='cpu'):
+    return torch.linspace(start=start, end=end, steps=timesteps, device=device)
 # next lets calculate the closed form of mean and variance based on the cumulatie varianec schedules
 # basically calculate alpha overline( ̅α )
 # first lets calculate alpha, for that we need betas, since alphas =1-betas
@@ -2029,7 +2142,7 @@ def get_alphas_cumprod_t(alphas_cumprod_values:torch.Tensor, timestep:torch.Tens
     # len(x0_shape) simply tells us how many dimensions our x0 has, does it have 3 ( a single image) or 4(a batch of images)
     # we decrease 1, since we added the batch at the begining, so (1,) is then only repeated one time less
     # and later we unpack this new tuple (which is (1,1) or (1,1,1) depending on whether x0 has a batch dim or not)
-    # and this makes up our final shape! 
+    # and this makes up our final shape! we also could do alphas_cumprod_t[..., None,None,None] etc
     shape=(batchsize, *( (1,) * (len(x0_shape)-1) ))
     return alphas_cumprod_t.reshape(shape)
 #
@@ -2137,6 +2250,17 @@ plt.show()
 #! from the image xt during sampling. x_t-1 = x_t-noise is a rough form of it
 #! see the formula in paper
 #
+# now how do we use timestep in our model and involve it in the process? 
+# we know that our neural network has shared parameters across time (i.e. different execution
+# with different values, all are dealing with the same shared weights) which means it cant 
+# distinuish between different timesteps. so it means, it needs to somehow filter out images
+# with very different noise intensities, to this end, the authors used the sinusoidal positional embedding
+# to circumvent/fix/address this issue. its a neat idea to encode discrete positional information
+# like sequence steps. we talked about positional embedding in detail in our
+# transformer architecture section please head over there and read about it.
+# so thats why we added the positional emebedding to our unet
+# 
+#
 # now for loss, the loss for diffusion models are optimized with the variational lower bound
 # like how its done in vaes.however as the authors briged the connection to dneoising score matching
 # they propose an alternative formulation that is equivalent to using the variational inference.
@@ -2198,14 +2322,14 @@ def sample_timesteps(unet_model,x,t,device='cpu'):
     # get the sqrt_one_minus_alphas_cumprod for current timestep as well
     sqrt_one_minus_alphas_cumprod_t = get_alphas_cumprod_t(sqrt_one_minus_alphas_cumprod, t, x.shape).to(device)
     # also get the sqrt_recip_alphas for current timestep
-    sqrt_recip_alphas_t = get_alphas_cumprod_t(sqrt_recip_alphas, t, x.shape).to(device)
+    sqrt_recip_alphas_t = get_alphas_cumprod_t(sqrt_recip_alphas.cpu(), t, x.shape).to(device)
     
     # now call model for current image - noise_prediction 
     x=x.to(device)
-    predicted_noise = unet_model(x)
+    predicted_noise = unet_model(x,t)
     model_mean =  sqrt_recip_alphas_t * (x - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
     # now get the posterior variance for the current timestep as well
-    posterior_variance_t = get_alphas_cumprod_t(posterior_variance,t,x.shape).to(device)
+    posterior_variance_t = get_alphas_cumprod_t(posterior_variance.cpu(),t,x.shape).to(device)
     
     if t==0:
         return model_mean.to(device)
@@ -2220,13 +2344,30 @@ output = sample_timesteps(model, imgs, torch.tensor([100]))
 print(f'{output.shape=}')
 show_image(output)
 
-# now for visualization 
+# now for visualization
+def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
+    ims = imgs_output.permute(0,2,3,1)
+    img_rows = []
+    # how many images do we want in each row
+    ncol = 8
+    for i in range(0, ims.size(0), ncol):
+        # grab ncol images at a time from our batch
+        img_row = ims[i:i+ncol]
+        # concatenate them along the column, so we get a row of images
+        img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(32, -1)
+        # print(f'{i=} {img_row.shape=}')
+        # store them to later stack them and get a full image
+        img_rows.append(img_row)
+    # stack the images along the height and get our final image
+    img_grid = torch.cat(img_rows,dim=0)
+    return img_grid
+
 @torch.no_grad()
 def sample_plot_image(model,in_channel=1,device='cpu'):
     # Sample noise
     img_size = 32
     img = torch.randn((1, in_channel, img_size, img_size), device=device)
-    plt.figure(figsize=(15,15))
+    plt.figure(figsize=(64,32))
     plt.axis('off')
     num_images = 10
     stepsize = int(timesteps_t/num_images)
@@ -2235,34 +2376,35 @@ def sample_plot_image(model,in_channel=1,device='cpu'):
         t = torch.full((1,), i, device=device, dtype=torch.long)
         img = sample_timesteps(model,img, t, device)
         # Edit: This is to maintain the natural range of the distribution
-        img = torch.clamp(img, -1.0, 1.0)
+        img = torch.clamp(img,0, 1.0)#-1.0, 1.0
         if i % stepsize == 0:
             plt.subplot(1, num_images, int(i/stepsize)+1)
-            show_image(img.detach().cpu())
+            plt.imshow(img.reshape(32,32).cpu())
     plt.show()     
 #%%
-
+#now lets train!
+device='cuda' if torch.cuda.is_available() else 'cpu'
+model = Unet(in_channel=1, initial_fmap=64, time_embd_size=32,device=device)
 # now for training we need an optimizer to get going
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,gamma=0.1)
-device='cuda' if torch.cuda.is_available() else 'cpu'
 
 print(f'running on {device}...')
 print(f'batch count: {len(dataloader):,}')
-epochs = 5
+epochs = 200
 losses = []
-interval = 50
+interval = 500
 model = model.to(device)
 for epoch in range(epochs):
-    for i, (imgs,_) in tqdm(enumerate(dataloader)):
+    for i, (imgs,_) in enumerate(dataloader):
         # with torch.device(device):
         # lets create a few timesteps 
-        t = torch.randint(0,timesteps_t, size=(batch_size,),dtype=torch.long)
+        t = torch.randint(0,timesteps_t, size=(batch_size,),dtype=torch.long, device=device)
         # now lets do a forward diffusion
         noisy_imgs, actual_noise = forward_diffusion(imgs, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod,device)
         noisy_imgs, actual_noise = tuple(t.to(device) for t in (noisy_imgs, actual_noise))
         # now lets get the predicted noise from noisy images from previous step
-        predicted_noises = model(noisy_imgs)
+        predicted_noises = model(noisy_imgs,t)
         # now lets calculate the loss 
         loss = F.l1_loss(actual_noise, predicted_noises)
         # now lets do a backward pass 
@@ -2271,9 +2413,9 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if i%interval==0:
-            print(f'Epoch: {epoch}/{epochs} | Iter: {i}/{len(dataloader)} | loss: {loss.item():.6f}')
-            sample_plot_image(model,device=device)
+        # if i%interval==0:
+            # print(f'Epoch: {epoch}/{epochs} | Iter: {i}/{len(dataloader)} | loss: {loss.item():.6f}')
+            # sample_plot_image(model,device=device)
                 
     print(f'Epoch: {epoch}/{epochs} | loss: {np.mean(losses):.6f}')
     sample_plot_image(model,device=device)
