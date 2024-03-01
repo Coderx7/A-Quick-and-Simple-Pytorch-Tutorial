@@ -1768,7 +1768,7 @@ dataloader = torch.utils.data.DataLoader(dt_mnist, batch_size=batch_size, shuffl
 # first of all we need positional encoding to retain position info and differentiate 
 # between different timesteps, so lets first create a sinusoidal positional encoding
 # to encode our timesteps
-#%%
+
 import numpy as np
 def sin_pos_enc_v2(pos, embd_d):
     pos_vec = torch.zeros(embd_d)
@@ -1880,7 +1880,7 @@ class DeconvBnAct(nn.Module):
         self.time_embd_size = timestep_embd_size
         self.timemlp = torch.nn.Sequential(SinusoidalPositionalEncoding(self.time_embd_size,device=device),
                                            nn.Linear(self.time_embd_size,out_channels,device=device),
-                                           nn.ReLU())
+                                           nn.SiLU())
         
         self.conv = nn.Sequential(nn.Conv2d(in_channels=out_channels,
                                             out_channels=out_channels,
@@ -1888,7 +1888,7 @@ class DeconvBnAct(nn.Module):
                                             stride=1,
                                             padding=1,
                                             device=device),
-                                  nn.LeakyReLU())
+                                  nn.SiLU())
         if in_channels != out_channels or stride != 1:
             # like our convbnact, here we need to use a deconv which adjust the spatial
             # resolution and also fixes the discrepency in channels. 
@@ -1929,7 +1929,7 @@ output = c.forward(x,t)
 output2 = d.forward(x2,t)
 print(f'{output.shape=}')
 print(f'{output2.shape=}')
-#%%
+
 class Unet(nn.Module):
     
     def __init__(self, in_channel=1, initial_fmap=64, time_embd_size=32,device='cuda'):
@@ -1943,7 +1943,8 @@ class Unet(nn.Module):
         # loop to create the rest of the encoder module. 
         self.conv_in = nn.Conv2d(in_channels=in_channel,out_channels=initial_fmap,
                                  kernel_size=3,stride=1,padding=1, device=device)
-        self.relu = nn.ReLU()
+        self.relu = nn.SiLU()
+        self.bn_in = nn.BatchNorm2d(num_features=initial_fmap,device=device)
         # we need our sinusoidal positional encoding to be incorporated in the model
         # so we create a small mlp so that we get a higher representation out of our
         # sinusoidal positional embeddings
@@ -1962,7 +1963,7 @@ class Unet(nn.Module):
         fmaps = initial_fmap
         for i in range(4):
             self.encoder.append(ConvBnAct(fmaps,fmaps*2,stride=2,padding=1,
-                                          timestep_embd_size=time_embd_size,device=device,act=nn.ReLU()))
+                                          timestep_embd_size=time_embd_size,device=device,act=nn.SiLU()))
             fmaps*=2
         # print(self.encoder)
         # now lets build our decoder/upsampler part
@@ -1970,18 +1971,18 @@ class Unet(nn.Module):
         self.decoder = nn.ModuleList()
         for i in range(4):
             self.decoder.append(DeconvBnAct(fmaps, fmaps//2, kernel_size=2, stride=2,padding=0,
-                                            timestep_embd_size=time_embd_size,device=device,act=nn.ReLU()))
+                                            timestep_embd_size=time_embd_size,device=device,act=nn.SiLU()))
             fmaps//=2
 
         # print(self.decoder)
         # now for the final output layer 
         self.conv2 = nn.Conv2d(fmaps,in_channel, kernel_size=1,stride=1,padding=0,device=device)
         # incase we used positive noise
-        self.sigmoid = nn.Sigmoid()
+        # self.sigmoid = nn.Sigmoid()
     
     def forward(self, x,t):
         # first conv layer
-        out = self.relu(self.conv_in(x))
+        out = self.relu(self.bn_in(self.conv_in(x)))
         
         skip_connections = []
         for l in self.encoder:
@@ -1994,7 +1995,8 @@ class Unet(nn.Module):
             # print(f'{out.shape=}')
         
         out = self.conv2(out)
-        out = self.sigmoid(out)
+        # changing actf rom sigmoid to tanh, decreased the loss from 0.98 to 0.48!!
+        out = F.tanh(out)
         return out
 
 device = 'cpu'
@@ -2117,7 +2119,7 @@ def create_betas(start=0.0001, end=0.02, timesteps=200, device='cpu'):
 # next lets calculate the closed form of mean and variance based on the cumulatie varianec schedules
 # basically calculate alpha overline( ̅α )
 # first lets calculate alpha, for that we need betas, since alphas =1-betas
-betas = create_betas(timesteps=200)
+betas = create_betas(timesteps=400)
 alphas = 1.0-betas
 # now lets calculate the alpha overline ( ̅α )
 alphas_cumprod = torch.cumprod(alphas, dim=0)
@@ -2167,7 +2169,7 @@ imgs,_ = next(iter(dataloader))
 show_image(imgs,'test')
 # now lets determine how many steps we want until we face full noise!
 # try 300 or 100 and see what happens
-timesteps_t = 200
+timesteps_t = 400
 # number of steps we want to visualize the transition of noisification
 num_imgs_for_visualization = 10
 # now lets determine the step size 
@@ -2212,16 +2214,16 @@ for idx in range(0, timesteps_t, step_size):
     for i, img in enumerate(imgs_output):
         imdic[i].append(img.permute(1,2,0).numpy())
 plt.show()
-#%%
+#
 # to display all the images in our batch individually
-for k, imgs in imdic.items():
-    plt.figure(figsize=(16,12))
-    for i in range(len(imgs)):    
-        plt.subplot(1, len(imgs)+1, i+1)
-        plt.axis("off")
-        plt.imshow(imgs[i])
-plt.show()
-#%%
+# for k, imgs in imdic.items():
+#     plt.figure(figsize=(16,12))
+#     for i in range(len(imgs)):    
+#         plt.subplot(1, len(imgs)+1, i+1)
+#         plt.axis("off")
+#         plt.imshow(imgs[i])
+# plt.show()
+#
 # now lets carry on - Parameterized backward pass (reverse pass)
 # now we get to the unet part of our model. unet as we said previously is mainly used
 # for semantice segmentation tasks, so the output matches the input size, this makes it
@@ -2275,7 +2277,7 @@ plt.show()
 def calculate_loss(model, x_0, t, device):
     imgs_noisy, noise = forward_diffusion(x_0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, device)
     noise_predicted = model(imgs_noisy, t)
-    #! test with l2,mse, and others as well
+    #! test with mse, and others as well
     return torch.nn.functional.l1_loss(noise, noise_predicted)
 
 # now before going to the training, we need to implement the sampling part
@@ -2346,7 +2348,7 @@ show_image(output)
 
 # now for visualization
 def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
-    ims = imgs_output.permute(0,2,3,1)
+    ims = imgs_output.permute(0,2,3,1).cpu()
     img_rows = []
     # how many images do we want in each row
     ncol = 8
@@ -2366,7 +2368,7 @@ def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
 def sample_plot_image(model,in_channel=1,device='cpu'):
     # Sample noise
     img_size = 32
-    img = torch.randn((1, in_channel, img_size, img_size), device=device)
+    img = torch.randn((64, in_channel, img_size, img_size), device=device)
     plt.figure(figsize=(64,32))
     plt.axis('off')
     num_images = 10
@@ -2376,18 +2378,18 @@ def sample_plot_image(model,in_channel=1,device='cpu'):
         t = torch.full((1,), i, device=device, dtype=torch.long)
         img = sample_timesteps(model,img, t, device)
         # Edit: This is to maintain the natural range of the distribution
-        img = torch.clamp(img,0, 1.0)#-1.0, 1.0
+        img = torch.clamp(img,-1.0, 1.0)#-1.0, 1.0
         if i % stepsize == 0:
             plt.subplot(1, num_images, int(i/stepsize)+1)
-            plt.imshow(img.reshape(32,32).cpu())
+            plt.imshow(create_image_from_batch(img))
     plt.show()     
-#%%
+
 #now lets train!
 device='cuda' if torch.cuda.is_available() else 'cpu'
 model = Unet(in_channel=1, initial_fmap=64, time_embd_size=32,device=device)
 # now for training we need an optimizer to get going
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10,gamma=0.1)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4000,gamma=0.1)
 
 print(f'running on {device}...')
 print(f'batch count: {len(dataloader):,}')
