@@ -1704,7 +1704,7 @@ display_images(prompt, result)
 #%%
 # we are going to use mnist dataset and create a diffusion model to generate digits for us
 # lets import what we need
-import sys,os
+import sys,os,math,random
 import numpy as np
 from tqdm import tqdm
 
@@ -1747,7 +1747,7 @@ dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=trans
 # since we dont need a validation set, we can use all the images,
 # to use both train and validation set images we can concatenate the two datasets
 dt_mnist = torch.utils.data.ConcatDataset([dt_train, dt_val])
-batch_size = 64
+batch_size = 256
 num_workers = 8
 dataloader = torch.utils.data.DataLoader(dt_mnist, batch_size=batch_size, shuffle=True, num_workers=num_workers,pin_memory=True, drop_last=True)
 # now lets create our unet architecture 
@@ -1923,7 +1923,7 @@ c = ConvBnAct(1, 64, kernel_size=3, stride=1, padding=1, timestep_embd_size=32,d
 d = DeconvBnAct(64, 1, kernel_size=2, stride=1, padding=1, timestep_embd_size=32,act=nn.LeakyReLU(),device=device)
 x,_ = next(iter(dataloader))
 t = torch.randint(0,200, size=(batch_size,)).long()
-x2 = torch.randn(size=(64,64,2,2))
+x2 = torch.randn(size=(batch_size,64,2,2))
 x,t,x2 = tuple(t.to(device) for t in (x,t,x2))
 output = c.forward(x,t)
 output2 = d.forward(x2,t)
@@ -2196,8 +2196,10 @@ for idx in range(0, timesteps_t, step_size):
     # or we can simply treat the batch as one big image (stack them)
     ims = imgs_output.permute(0,2,3,1)
     img_rows = []
-    # how many images do we want in each row
-    ncol = 8
+    # how many images do we want in each row, lets create equal rows/cols
+    # i assume the batchsize are 2^sth!
+    ncol = int(np.sqrt(ims.size(0)))
+    # print(f'{ncol=}')
     for i in range(0, ims.size(0), ncol):
         # grab ncol images at a time from our batch
         img_row = ims[i:i+ncol]
@@ -2351,7 +2353,7 @@ def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
     ims = imgs_output.permute(0,2,3,1).cpu()
     img_rows = []
     # how many images do we want in each row
-    ncol = 8
+    ncol = int(np.sqrt(ims.size(0)))
     for i in range(0, ims.size(0), ncol):
         # grab ncol images at a time from our batch
         img_row = ims[i:i+ncol]
@@ -2368,7 +2370,7 @@ def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
 def sample_plot_image(model,in_channel=1,device='cpu'):
     # Sample noise
     img_size = 32
-    img = torch.randn((64, in_channel, img_size, img_size), device=device)
+    img = torch.randn((batch_size, in_channel, img_size, img_size), device=device)
     plt.figure(figsize=(64,32))
     plt.axis('off')
     num_images = 10
@@ -2393,11 +2395,12 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4000,gamma=0.1)
 
 print(f'running on {device}...')
 print(f'batch count: {len(dataloader):,}')
-epochs = 200
-losses = []
-interval = 500
+epochs = 4000
+interval = 20
 model = model.to(device)
 for epoch in range(epochs):
+    model.train()
+    losses = []
     for i, (imgs,_) in enumerate(dataloader):
         # with torch.device(device):
         # lets create a few timesteps 
@@ -2418,10 +2421,16 @@ for epoch in range(epochs):
         # if i%interval==0:
             # print(f'Epoch: {epoch}/{epochs} | Iter: {i}/{len(dataloader)} | loss: {loss.item():.6f}')
             # sample_plot_image(model,device=device)
-                
-    print(f'Epoch: {epoch}/{epochs} | loss: {np.mean(losses):.6f}')
-    sample_plot_image(model,device=device)
-
+    if epoch%interval==0:  
+        with torch.no_grad():
+            model.eval()
+            print(f'Epoch: {epoch}/{epochs} | loss: {np.mean(losses):.6f}')
+            sample_plot_image(model,device=device)
+            torch.save({"state_dict":model.state_dict(),
+                        "optimizer":optimizer},f"{fldr}/diffusion_mnist.pt")
+print(f'finished')
+#%%
+sample_plot_image(model,device=device)
 
 
 
