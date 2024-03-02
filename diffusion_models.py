@@ -1705,8 +1705,10 @@ display_images(prompt, result)
 # we are going to use mnist dataset and create a diffusion model to generate digits for us
 # lets import what we need
 import sys,os,math,random
+from pathlib import Path
 import numpy as np
-from tqdm import tqdm
+# from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 import torch
 # for pylance so we get autocomplete for submodules!
@@ -1741,7 +1743,11 @@ print(f'{sys.version}')
 # its usually normalized in -1 to 1 range instead, and the unet also need to take this
 # into account) for now lets keep this simple. we later on use a more sophesticated example
 # and use a different set of transformations.
-transform=tfms.Compose([tfms.Resize(32), tfms.ToTensor(), tfms.Normalize((0.1307,), (0.3081,))])
+transform=tfms.Compose([tfms.Resize(32), tfms.ToTensor(),
+                        tfms.Normalize((0.5,), (0.5,)),
+                        # tfms.Lambda(lambda x: x*2-1)
+                        ])
+
 dt_train = dataset.MNIST(f"{fldr}/data",train=True,download=True, transform=transform)
 dt_val = dataset.MNIST(f"{fldr}/data",train=False,download=True, transform=transform)
 # since we dont need a validation set, we can use all the images,
@@ -1809,7 +1815,7 @@ print(f'{t=}')
 print(f'{pos_enc_model(t)=}')
 
 class ConvBnAct(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, timestep_embd_size=32, use_bn=True, act=nn.LeakyReLU(),device='cpu'):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, timestep_embd_size=32, use_bn=True, act=nn.SiLU(),device='cpu'):
         super().__init__()
         self.use_bn = use_bn
         self.conv = nn.Conv2d(in_channels=in_channels,
@@ -1865,7 +1871,7 @@ class ConvBnAct(nn.Module):
         return out + identity
 
 class DeconvBnAct(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, timestep_embd_size=32, act=nn.LeakyReLU(),device='cpu'):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, timestep_embd_size=32, act=nn.SiLU(),device='cpu'):
         super().__init__()
         self.deconv = nn.ConvTranspose2d(in_channels=in_channels,
                                          out_channels=out_channels,
@@ -1920,7 +1926,7 @@ class DeconvBnAct(nn.Module):
 
 device='cuda'
 c = ConvBnAct(1, 64, kernel_size=3, stride=1, padding=1, timestep_embd_size=32,device=device)
-d = DeconvBnAct(64, 1, kernel_size=2, stride=1, padding=1, timestep_embd_size=32,act=nn.LeakyReLU(),device=device)
+d = DeconvBnAct(64, 1, kernel_size=2, stride=1, padding=1, timestep_embd_size=32,act=nn.SiLU(),device=device)
 x,_ = next(iter(dataloader))
 t = torch.randint(0,200, size=(batch_size,)).long()
 x2 = torch.randn(size=(batch_size,64,2,2))
@@ -2119,7 +2125,7 @@ def create_betas(start=0.0001, end=0.02, timesteps=200, device='cpu'):
 # next lets calculate the closed form of mean and variance based on the cumulatie varianec schedules
 # basically calculate alpha overline( ̅α )
 # first lets calculate alpha, for that we need betas, since alphas =1-betas
-betas = create_betas(timesteps=400)
+betas = create_betas(timesteps=200)
 alphas = 1.0-betas
 # now lets calculate the alpha overline ( ̅α )
 alphas_cumprod = torch.cumprod(alphas, dim=0)
@@ -2169,7 +2175,10 @@ imgs,_ = next(iter(dataloader))
 show_image(imgs,'test')
 # now lets determine how many steps we want until we face full noise!
 # try 300 or 100 and see what happens
-timesteps_t = 400
+# i tried 400, and it seemed nothing worked! though loss was very low, so it
+# might have been the sampling? need to test this more!around 200 epochs, we should
+# have initial digits formed, but previously with 400 it was pure noise even at 1900 epoch!
+timesteps_t = 200
 # number of steps we want to visualize the transition of noisification
 num_imgs_for_visualization = 10
 # now lets determine the step size 
@@ -2350,7 +2359,7 @@ show_image(output)
 
 # now for visualization
 def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
-    ims = imgs_output.permute(0,2,3,1).cpu()
+    ims = imgs_output.permute(0,2,3,1).detach().cpu()
     img_rows = []
     # how many images do we want in each row
     ncol = int(np.sqrt(ims.size(0)))
@@ -2367,7 +2376,7 @@ def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
     return img_grid
 
 @torch.no_grad()
-def sample_plot_image(model,in_channel=1,device='cpu'):
+def sample_plot_image(model,in_channel=1,msg='',device='cpu'):
     # Sample noise
     img_size = 32
     img = torch.randn((batch_size, in_channel, img_size, img_size), device=device)
@@ -2384,6 +2393,7 @@ def sample_plot_image(model,in_channel=1,device='cpu'):
         if i % stepsize == 0:
             plt.subplot(1, num_images, int(i/stepsize)+1)
             plt.imshow(create_image_from_batch(img))
+            plt.title(msg)
     plt.show()     
 
 #now lets train!
@@ -2392,16 +2402,29 @@ model = Unet(in_channel=1, initial_fmap=64, time_embd_size=32,device=device)
 # now for training we need an optimizer to get going
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4000,gamma=0.1)
+load_checkpoint = Path(f"{fldr}/diffusion_mnist.pt").exists()
+epoch_start=0
+if load_checkpoint:
+    checkpoint = torch.load(f"{fldr}/diffusion_mnist.pt")
+    epoch_start = checkpoint["epoch"]
+    model.load_state_dict(checkpoint["state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    scheduler.load_state_dict(checkpoint["scheduler"])
 
 print(f'running on {device}...')
 print(f'batch count: {len(dataloader):,}')
+print(f'checkpoint loaded!')
+
 epochs = 4000
 interval = 20
 model = model.to(device)
-for epoch in range(epochs):
+# leave=True, makes tqdm stays in place, and position=0 and 1 makes each loop
+# to occure in a different lines
+tqdm._instances.clear()
+for epoch in tqdm(range(epoch_start, epochs), leave=True, position=0):
     model.train()
     losses = []
-    for i, (imgs,_) in enumerate(dataloader):
+    for i, (imgs,_) in tqdm(enumerate(dataloader), leave=True, position=1):
         # with torch.device(device):
         # lets create a few timesteps 
         t = torch.randint(0,timesteps_t, size=(batch_size,),dtype=torch.long, device=device)
@@ -2425,9 +2448,11 @@ for epoch in range(epochs):
         with torch.no_grad():
             model.eval()
             print(f'Epoch: {epoch}/{epochs} | loss: {np.mean(losses):.6f}')
-            sample_plot_image(model,device=device)
-            torch.save({"state_dict":model.state_dict(),
-                        "optimizer":optimizer},f"{fldr}/diffusion_mnist.pt")
+            sample_plot_image(model,device=device,msg=f"Epoch: {epoch} | Loss: {np.mean(losses):.6f}")
+            torch.save({"epoch":epoch,
+                        "state_dict":model.state_dict(),
+                        "optimizer":optimizer.state_dict(),
+                        "scheduler":scheduler.state_dict()},f"{fldr}/diffusion_mnist.pt")
 print(f'finished')
 #%%
 sample_plot_image(model,device=device)
