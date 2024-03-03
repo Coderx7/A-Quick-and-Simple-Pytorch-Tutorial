@@ -1707,8 +1707,8 @@ display_images(prompt, result)
 import sys,os,math,random
 from pathlib import Path
 import numpy as np
-# from tqdm import tqdm
-from tqdm.notebook import tqdm
+from tqdm import tqdm
+# from tqdm.notebook import tqdm
 
 import torch
 # for pylance so we get autocomplete for submodules!
@@ -1745,6 +1745,9 @@ print(f'{sys.version}')
 # and use a different set of transformations.
 transform=tfms.Compose([tfms.Resize(32), tfms.ToTensor(),
                         tfms.Normalize((0.5,), (0.5,)),
+                        #tfms.Normalize((0.1307,), (0.3081,)) # --> this caused the noise! 
+                        # like the network wouldnt learn a thing! even at epoch 2100 the sampling
+                        # was pure noise!
                         # tfms.Lambda(lambda x: x*2-1)
                         ])
 
@@ -2125,7 +2128,7 @@ def create_betas(start=0.0001, end=0.02, timesteps=200, device='cpu'):
 # next lets calculate the closed form of mean and variance based on the cumulatie varianec schedules
 # basically calculate alpha overline( ̅α )
 # first lets calculate alpha, for that we need betas, since alphas =1-betas
-betas = create_betas(timesteps=200)
+betas = create_betas(timesteps=400)
 alphas = 1.0-betas
 # now lets calculate the alpha overline ( ̅α )
 alphas_cumprod = torch.cumprod(alphas, dim=0)
@@ -2178,7 +2181,9 @@ show_image(imgs,'test')
 # i tried 400, and it seemed nothing worked! though loss was very low, so it
 # might have been the sampling? need to test this more!around 200 epochs, we should
 # have initial digits formed, but previously with 400 it was pure noise even at 1900 epoch!
-timesteps_t = 200
+# ok more timesteps, results in lower loss, the thing is I needed to add more steps to sapling
+# likespecify  20 for num_imgs otherwise it seems we only get noise
+timesteps_t = 400
 # number of steps we want to visualize the transition of noisification
 num_imgs_for_visualization = 10
 # now lets determine the step size 
@@ -2376,19 +2381,19 @@ def create_image_from_batch(imgs_output:torch.Tensor)->torch.Tensor:
     return img_grid
 
 @torch.no_grad()
-def sample_plot_image(model,in_channel=1,msg='',device='cpu'):
+def sample_plot_image(model,in_channel=1,num_images = 20,msg='',device='cpu'):
     # Sample noise
     img_size = 32
     img = torch.randn((batch_size, in_channel, img_size, img_size), device=device)
     plt.figure(figsize=(64,32))
     plt.axis('off')
-    num_images = 10
     stepsize = int(timesteps_t/num_images)
 
     for i in range(0,timesteps_t)[::-1]:
         t = torch.full((1,), i, device=device, dtype=torch.long)
         img = sample_timesteps(model,img, t, device)
         # Edit: This is to maintain the natural range of the distribution
+        # its important, or otherwise we get a very blury almost all noise image
         img = torch.clamp(img,-1.0, 1.0)#-1.0, 1.0
         if i % stepsize == 0:
             plt.subplot(1, num_images, int(i/stepsize)+1)
@@ -2401,7 +2406,7 @@ device='cuda' if torch.cuda.is_available() else 'cpu'
 model = Unet(in_channel=1, initial_fmap=64, time_embd_size=32,device=device)
 # now for training we need an optimizer to get going
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4000,gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
 load_checkpoint = Path(f"{fldr}/diffusion_mnist.pt").exists()
 epoch_start=0
 if load_checkpoint:
@@ -2415,12 +2420,12 @@ print(f'running on {device}...')
 print(f'batch count: {len(dataloader):,}')
 print(f'checkpoint loaded!')
 
-epochs = 4000
-interval = 20
+epochs = 3000
+interval = 10
 model = model.to(device)
 # leave=True, makes tqdm stays in place, and position=0 and 1 makes each loop
 # to occure in a different lines
-tqdm._instances.clear()
+
 for epoch in tqdm(range(epoch_start, epochs), leave=True, position=0):
     model.train()
     losses = []
@@ -2455,11 +2460,94 @@ for epoch in tqdm(range(epoch_start, epochs), leave=True, position=0):
                         "scheduler":scheduler.state_dict()},f"{fldr}/diffusion_mnist.pt")
 print(f'finished')
 #%%
-sample_plot_image(model,device=device)
+@torch.no_grad()
+def sample_plot_image(model,in_channel=1,num_images = 20,msg='',device='cpu'):
+    # Sample noise
+    img_size = 32
+    img = torch.randn((batch_size, in_channel, img_size, img_size), device=device)
+    plt.figure(figsize=(128,64))
+    plt.axis('off')
+    stepsize = int(timesteps_t/num_images)
 
+    for i in range(0,timesteps_t)[::-1]:
+        t = torch.full((1,), i, device=device, dtype=torch.long)
+        img = sample_timesteps(model,img, t, device)
+        # Edit: This is to maintain the natural range of the distribution
+        # its important, or otherwise we get a very blury almost all noise image
+        img = torch.clamp(img,-1.0, 1.0)#-1.0, 1.0
+        if i % stepsize == 0:
+            plt.subplot(1, num_images, int(i/stepsize)+1)
+            plt.imshow(create_image_from_batch(img))
+            plt.title(msg)
+    plt.show()
+sample_plot_image(model,num_images=10, device=device)
 
+#%%
+# now lets consolidate what we have learned so far, and write a diffusion model 
+# in a much better way. previously everything was all over the place! lets implement
+# it properly now.
+# before we start implementing lets review what we need to implement/have
+# 1. a diffusion foward process, this requires several values/betas/alphas etc
+# 2. a reverse diffusion process/denoising part: this requires a unet model for denoising
+# 3. a loss function, which is usually an l1 loss. 
+# 4. a sampling function/method so we can generate new images from noise using our model
+# 5. a dataset of images and the required dataloader. 
+# 6. a training loop to train our model
+from typing import Tuple
+# lets create our class
+class DiffusionMnist(nn.Module):
+    def __init__(self, in_channel, base_fmap_size, timesteps, device = 'cpu') -> None:
+        super().__init__()
+        self.in_channel = in_channel
+        self.base_fmap_size = base_fmap_size
+        self.timesteps = timesteps
+        self.device = device
+        # lets initialize our attributes for the forward_diffusion process 
+        self.init()
+        
+        
+    def forward(self, x, t):
+        pass
+    
+    def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple(torch.Tensor,torch.Tensor):
+        # Check if the input is a batch or a single image
+        is_batch = input_images.ndim>3
+        # Create a noise tensor with the same dimensions as input_images 
+        actual_noises = torch.randn_like(input_images)
+        # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
+        sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
+        sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
+        # now calculate the mean + variance to get the noisy image
+        # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
+        with torch.device(self.device):
+            noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
+        # return the noisy_image along with the actual noise
+        return noisy_images, actual_noises
+    
+    def sample(self, x0, t):
+        pass
+    
+    def init_parameters(self):
+        # β
+        self.betas = self._create_betas_linear()
+        # α 
+        self.alphas = 1.0 - self.betas
+        # ̅α 
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=-1).to(self.device)
+        # √̅α
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        # √1-̅α 
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        
+        
+    def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
+        return torch.linspace(start=start, end=end, steps=self.timesteps, device=self.device)
 
-
+    def _get_value_for_timestep_t(self, tensors:torch.Tensor, timestep_indexes:torch.Tensor, use_batch=True):
+        batch_size = timestep_indexes.size(0)
+        values_at_t =  torch.gather(tensors, dim=-1, index=timestep_indexes)
+        shape = (batch_size, 1,1,1) if use_batch else (batch_size, 1,1)
+        return values_at_t.reshape(shape)
 
 
 
