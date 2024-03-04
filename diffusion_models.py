@@ -2496,33 +2496,143 @@ sample_plot_image(model,num_images=10, device=device)
 
 from typing import Tuple
 
-class Block(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, use_bn=True, ac=nn.ReLU(), is_encoder=True) -> None:
+# since we need to encode our timesteps to 
+# use them in our model we need to use a method 
+# such as sinusoidal positional encoding.
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, embd_size=32, device='cpu') -> None:
         super().__init__()
+        self.embd_size = embd_size
+        self.device = device
+    
+    @torch.no_grad()
+    def forward(self, positions):
+        pos_vec = torch.zeros(size=(positions.size(0),self.embd_size),device=self.device)
+        div_term = torch.exp(-torch.arange(0, self.embd_size, 2, device=self.device) * (torch.log(torch.tensor([10_000], device=self.device)) / self.embd_size))
+        positions = positions[:,None]
+        pos_vec[:,0::2] = torch.sin(positions * div_term)
+        pos_vec[:,1::2] = torch.cos(positions * div_term)
+        return pos_vec
+
+# we need a block to do conv on the images and timesteps
+# we can do this using functions, but a class/module form
+# is more prefered
+class ResBlock(nn.Module):
+    def __init__(self, 
+                 in_channels,
+                 out_channels,
+                 use_bn=True, 
+                 act=nn.ReLU(),
+                 time_embd_size=32, 
+                 is_encoder=True,
+                 ) -> None:
+        super().__init__()
+
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.time_embd_size = time_embd_size
+        
         if is_encoder:
-            self.conv = nn.Sequential([nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
-                                                 stride=stride, padding=padding),
-                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
-                                      ])
+            # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
+            # the inputsize at each step, thats why we are using strides of 2. obviously in a realworld
+            # scenario we dont downsample this rapidly! we use too much information, but for our simple case
+            # this suffices. this is also the case when we code the decoder part where we upsample the
+            # featuremaps.
+            # so to make it obvious, we are hardcoding kernel/stride/padding triplet for both parts for
+            # the sake of simplicity
+            # sidenote 2: since we are also dealing with timesteps, we want to combine both inputs and
+            # utilize it in our model. time information allows the model to learn to deal wil different
+            # levels of noise properly.
+            self.conv = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1),
+                                      nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
+                                      act)
         else:
-            self.conv = nn.Sequential([nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2,
-                                                stride=2, padding=0),
-                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
-                                      ])
-            
-        
-        
-class UnetModel(nn.Module):
-    def __init__(self, in_channel, base_fmap_size) -> None:
-        super().__init__()
-        self.in_channel = in_channel
-        self.base_fmap_size = base_fmap_size
+            # otherwise, we will use convtransposed or (conv2d+upsample2d) to create larger featuremaps
+            # we can use ksize=4 with stride=2 pad=1 or ksize=2 with stride=2 and padding=0 to double the fmap size
+            # the difference between them is that the larger kernel size, results in a smoother output, and its
+            # more common in generative models.
+            self.conv = nn.Sequential(nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
+                                      # we use a separate conv layer becasue contransposed is usually only used for upsampling
+                                      # the learning part happens in the normal conv layer
+                                      nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
+                                      act)
 
+        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size),
+                                      nn.Linear(self.time_embd_size, out_channels),
+                                      nn.BatchNorm1d(out_channels),
+                                      nn.ReLU())
+
+        # in ou case our skip-connection differs from our output 
+        # (channel number is increased for each block) so the input
+        # and the output of this block will have different channels
+        # we have to use a second conv to make them compatible 
+        self.h = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
+                               #! batchnorm may not be needed, since we want to apply a linear transformation only
+                               nn.BatchNorm2d(out_channels)
+                              )
+
+    def forward (self, x, t):
+        identity = x
+        # get time embeddigs 
+        time_embeddings = self.time_mlp(t)
+        # combine the time embedding and input images, we 
+        # add an extra dim to time_embd to make them compatible
+        output = self.conv(x) + time_embeddings[..., None,None]
+        #! some people add the timeembedding to the skip_connection
+        identity = self.h(identity)
+        # print(f'{output.shape=} {identity.shape=}')
+        return output + identity
+
+
+x0 = torch.randn(size=(3,1,32,32))
+x1 = torch.randn(size=(3,64, 2,2))
+t = torch.randint(0,200,size=(3,))
+
+enc0 = ResBlock(1,64)
+print(f'{enc0(x0,t).shape=}')
+dec0 = ResBlock(64,1,is_encoder=False)
+print(f'{dec0(x1,t).shape=}')
+
+#%%        
+class UnetModel(nn.Module):
+    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32) -> None:
+        super().__init__()
+        self.in_channels = in_channels
+        self.base_fmap_size = base_fmap_size
+        self.embd_size = embd_size
+        
+        self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size, kernel_size=3, padding=1,bias=False),
+                                     nn.BatchNorm2d(base_fmap_size),
+                                     nn.ReLU())
+        fmap = base_fmap_size
+        
+        self.encoder = nn.ModuleList()
+        self.decoder = nn.ModuleList()
+        for _ in range(4):
+            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True))
+            fmap *=2
+            
+        for _ in range(4):
+            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False))
+            fmap //=2
+        # print(f'{self.encoder=}')
+        # print(f'{self.decoder=}')
+        
     def forward(self, input_images, timesteps):
-        pass
-    
+        out = self.conv_in(input_images)
+        for l in self.encoder:
+            out = l(out, timesteps)
+            print(f'encoder: {out.shape=}')
+        for l in self.decoder:
+            out = l(out, timesteps)
+            print(f'decoder: {out.shape=}')
+        return out
+
+x = torch.randn(size=(3,1,32,32))
+m = UnetModel()
+m(x,t)
+#%%    
 # lets create our class
 class DiffusionMnist(nn.Module):
     def __init__(self, unet_model, num_timesteps, device = 'cpu') -> None:
