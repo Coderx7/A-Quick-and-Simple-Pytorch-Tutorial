@@ -2493,26 +2493,53 @@ sample_plot_image(model,num_images=10, device=device)
 # 4. a sampling function/method so we can generate new images from noise using our model
 # 5. a dataset of images and the required dataloader. 
 # 6. a training loop to train our model
+
 from typing import Tuple
-# lets create our class
-class DiffusionMnist(nn.Module):
-    def __init__(self, in_channel, base_fmap_size, timesteps, device = 'cpu') -> None:
+
+class Block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, use_bn=True, ac=nn.ReLU(), is_encoder=True) -> None:
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if is_encoder:
+            self.conv = nn.Sequential([nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
+                                                 stride=stride, padding=padding),
+                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
+                                      ])
+        else:
+            self.conv = nn.Sequential([nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2,
+                                                stride=2, padding=0),
+                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
+                                      ])
+            
+        
+        
+class UnetModel(nn.Module):
+    def __init__(self, in_channel, base_fmap_size) -> None:
         super().__init__()
         self.in_channel = in_channel
         self.base_fmap_size = base_fmap_size
-        self.timesteps = timesteps
-        self.device = device
-        # lets initialize our attributes for the forward_diffusion process 
-        self.init()
-        
-        
-    def forward(self, x, t):
+
+    def forward(self, input_images, timesteps):
         pass
     
-    def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple(torch.Tensor,torch.Tensor):
+# lets create our class
+class DiffusionMnist(nn.Module):
+    def __init__(self, unet_model, num_timesteps, device = 'cpu') -> None:
+        super().__init__()
+        self.model = unet_model
+        self.num_timesteps = num_timesteps
+        self.device = device
+        # lets initialize our attributes for the forward_diffusion process 
+        self.init_parameters()
+        
+    def forward(self, input_images, timesteps):
+        predicted_noise = self.model(input_images, timesteps)
+    
+    def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple(torch.Tensor, torch.Tensor):
         # Check if the input is a batch or a single image
         is_batch = input_images.ndim>3
-        # Create a noise tensor with the same dimensions as input_images 
+        # Create a noise tensor with the same dimensions as input_images
         actual_noises = torch.randn_like(input_images)
         # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
         sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
@@ -2523,9 +2550,6 @@ class DiffusionMnist(nn.Module):
             noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
         # return the noisy_image along with the actual noise
         return noisy_images, actual_noises
-    
-    def sample(self, x0, t):
-        pass
     
     def init_parameters(self):
         # β
@@ -2538,18 +2562,116 @@ class DiffusionMnist(nn.Module):
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         # √1-̅α 
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        # alphas_prev
+        self.alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], pad=(1,0), value=-1.0)
+        self.sqrt_recip_alphas = torch.sqrt(1.0/alphas)
+        # These calculations are part of the reverse process of the diffusion model, 
+        # where the model gradually denoises an image starting from pure noise. 
+        # The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
+        # used in the calculation of the Gaussian distribution from which the denoised 
+        # image is sampled at each time step.
+        self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        # register these buffers so they are not optimized and also are saved when saving state_dict()
+        self.register_buffer("betas", self.betas)
+        self.register_buffer("alphas", self.alphas)
+        self.register_buffer("alphas_cumprod", self.alphas_cumprod)
+        self.register_buffer("sqrt_alphas_cumprod", self.sqrt_alphas_cumprod)
+        self.register_buffer("sqrt_one_minus_alphas_cumprod", self.sqrt_one_minus_alphas_cumprod)
+        self.register_buffer("alphas_cumprod_prev", self.alphas_cumprod_prev)
+        self.register_buffer("sqrt_recip_alphas", self.sqrt_recip_alphas)
+        self.register_buffer("posterior_variance", self.posterior_variance)
         
+    @torch.no_grad()
+    def sample(self, input_images, timesteps):
+        # Check whether input_images is a batch of images or a single one
+        is_batch = input_images.ndim>3
+        # get the betas for current timestep
+        betas_t = self._get_value_for_timestep_t(self.betas, timesteps, is_batch)    
+        # get the sqrt_one_minus_alphas_cumprod for current timestep as well
+        sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
+        # get the sqrt_recip_alphas for current timestep
+        sqrt_recip_alphas_t = self._get_value_for_timestep_t(self.sqrt_recip_alphas, timesteps, is_batch)
+        # now call the denoising model noise_prediction 
+        predicted_noise = self.forward(input_images, timesteps)
+        # calculate the model mean
+        model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
         
+        # The if clause here is checking whether the timestep is 0 or not, if it is, 
+        # then it returns the model_mean tensor. 
+        # This is because at the initial timestep (t=0), the model assumes that there's
+        # no noise added yet, so it returns the original data (after some transformations 
+        # defined by the model). 
+        # If the timestep is not 0, it means the diffusion process has started. In this case,
+        # the function generates a noise tensor with the same shape as the input images 
+        # (torch.randn_like(input_images, device=self.device)) and adds this noise to the model_mean. 
+        # The amount of noise added is scaled by the square root of the posterior_variance_t, 
+        # which is a measure of how much the model expects the data to have diffused at this timestep.
+        # sidenote2: note that since our timestep is always 1 dimensional its ok to do ==
+        # otherwise we'd face an error. torch.all() would work regardless but to convey and
+        # make sure timesteps needs to be 1 dimensional here, we use ==
+        if timesteps == 0:
+            return model_mean.to(device)
+        else:
+            noise = torch.randn_like(input_images, device=self.device)
+            # get the posterior variance for the current timestep
+            posterior_variance_t = self._get_value_for_timestep_t(self.posterior_variance, timesteps, is_batch)
+            return model_mean + torch.sqrt(posterior_variance_t)*noise
+    
+    @torch.no_grad()
+    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', device='cpu', fig_size=(8,6)):
+        # create noise 
+        noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+        # configure out plot size and remove the axis for uncluttered output
+        plt.figure(figsize=(fig_size))
+        plt.axis("off")
+        # set a stepsize so we display only num_images intermediate images for our diffusion process
+        step_size = self.num_timesteps//num_images
+        # now reverse the timestep in denoising 
+        for t in range(0, self.num_timesteps[::-1]):
+            # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
+            # its is used when we want to create a tensor of a certain size and fill it with a 
+            # specific value. This is useful when we need a tensor of a certain size, but don’t
+            # care about the exact values because they’re all going to be the same. we could also 
+            # simply use torch.tensor([i])
+            # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
+            t = torch.tensor([t], dtype=torch.long)
+            noise = self.sample(noise, t)
+            # This is to maintain the natural range of the distribution
+            # its important, or otherwise we get a very blury almost all noise image
+            noise = torch.clamp(noise, -1.0, 1.0)
+            if i%step_size==0:
+                plt.subplot(1, num_images, (i//step_size)+1)
+                plt.imshow(self._create_image_from_batch(noise))
+                plt.title(title)
+        plt.show()        
+    
+    @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
-        return torch.linspace(start=start, end=end, steps=self.timesteps, device=self.device)
+        return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
 
+    @torch.no_grad()
     def _get_value_for_timestep_t(self, tensors:torch.Tensor, timestep_indexes:torch.Tensor, use_batch=True):
         batch_size = timestep_indexes.size(0)
         values_at_t =  torch.gather(tensors, dim=-1, index=timestep_indexes)
         shape = (batch_size, 1,1,1) if use_batch else (batch_size, 1,1)
         return values_at_t.reshape(shape)
 
-
+    @torch.no_grad()
+    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_size=32)->torch.Tensor:
+        imgs = imgs_tensor.permute(0,2,3,1).detach().cpu()
+        img_rows = []
+        # how many images do we want in each row
+        ncol = int(np.sqrt(imgs.size(0)))
+        for i in range(0, imgs.size(0), ncol):
+            # grab ncol images at a time from our batch
+            img_row = imgs[i:i+ncol]
+            # concatenate them along the column, so we get a row of images
+            img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(img_size, -1)
+            # store them to later stack them and get a full image
+            img_rows.append(img_row)
+        # stack the images along the height and get our final image
+        img_grid = torch.cat(img_rows, dim=0).numpy()
+        return img_grid
 
 
 
@@ -2566,6 +2688,12 @@ class DiffusionMnist(nn.Module):
 
 
 #%%
+import torch 
+x = torch.tensor([0,2])
+if x == 0:
+    print(f'0')
+else:
+    print('not')
 # ims = imgs_output.permute(0,2,3,1)
 # plt.figure(figsize=(128,64))
 # j=0
