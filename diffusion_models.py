@@ -2507,12 +2507,13 @@ class SinusoidalPositionalEncoding(nn.Module):
     
     @torch.no_grad()
     def forward(self, positions):
-        pos_vec = torch.zeros(size=(positions.size(0),self.embd_size),device=self.device)
-        div_term = torch.exp(-torch.arange(0, self.embd_size, 2, device=self.device) * (torch.log(torch.tensor([10_000], device=self.device)) / self.embd_size))
-        positions = positions[:,None]
-        pos_vec[:,0::2] = torch.sin(positions * div_term)
-        pos_vec[:,1::2] = torch.cos(positions * div_term)
-        return pos_vec
+        with torch.device(self.device):
+            pos_vec = torch.zeros(size=(positions.size(0),self.embd_size))
+            div_term = torch.exp(-torch.arange(0, self.embd_size, 2) * (torch.log(torch.tensor([10_000], device=self.device)) / self.embd_size))
+            positions = positions[:,None]
+            pos_vec[:,0::2] = torch.sin(positions * div_term)
+            pos_vec[:,1::2] = torch.cos(positions * div_term)
+            return pos_vec
 
 # we need a block to do conv on the images and timesteps
 # we can do this using functions, but a class/module form
@@ -2525,13 +2526,14 @@ class ResBlock(nn.Module):
                  act=nn.ReLU(),
                  time_embd_size=32, 
                  is_encoder=True,
-                 ) -> None:
+                 device='cpu',) -> None:
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.time_embd_size = time_embd_size
-        
+        self.device = device
+
         if is_encoder:
             # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
             # the inputsize at each step, thats why we are using strides of 2. obviously in a realworld
@@ -2558,7 +2560,7 @@ class ResBlock(nn.Module):
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
                                       act)
 
-        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size),
+        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       nn.Linear(self.time_embd_size, out_channels),
                                       nn.BatchNorm1d(out_channels),
                                       nn.ReLU())
@@ -2567,7 +2569,8 @@ class ResBlock(nn.Module):
         # (channel number is increased for each block) so the input
         # and the output of this block will have different channels
         # we have to use a second conv to make them compatible 
-        self.h = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
+        layer,ksize,stride,padding = (nn.Conv2d, 3,2,1) if is_encoder else (nn.ConvTranspose2d, 4,2,1)
+        self.h = nn.Sequential(layer(in_channels, out_channels, kernel_size=ksize, stride=stride, padding=padding, bias=False),
                                #! batchnorm may not be needed, since we want to apply a linear transformation only
                                nn.BatchNorm2d(out_channels)
                               )
@@ -2594,13 +2597,13 @@ print(f'{enc0(x0,t).shape=}')
 dec0 = ResBlock(64,1,is_encoder=False)
 print(f'{dec0(x1,t).shape=}')
 
-#%%        
 class UnetModel(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32) -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, device='cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.embd_size = embd_size
+        self.device = device
         
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size, kernel_size=3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
@@ -2609,44 +2612,77 @@ class UnetModel(nn.Module):
         
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
+        # encoder
         for _ in range(4):
-            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True))
+            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True, device=self.device))
             fmap *=2
-            
+        # decoder
         for _ in range(4):
-            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False))
+            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False, device=self.device))
             fmap //=2
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
+        self.final_conv = nn.Sequential(nn.Conv2d(fmap, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
+                                        nn.BatchNorm2d(in_channels), 
+                                        )
         
     def forward(self, input_images, timesteps):
         out = self.conv_in(input_images)
+        skip_connections = []
+        
         for l in self.encoder:
             out = l(out, timesteps)
-            print(f'encoder: {out.shape=}')
+            skip_connections.append(out)
+            # print(f'encoder:{out.shape=}')
+
         for l in self.decoder:
-            out = l(out, timesteps)
-            print(f'decoder: {out.shape=}')
-        return out
+            skip = skip_connections.pop()
+            out = l(out+skip, timesteps)
+            # print(f'decoder:{out.shape=}')
+            
+        out = self.final_conv(out)
+        # use tanh to make the values be in range -1,1
+        # as our inputs range is -1,1
+        return F.tanh(out)
 
 x = torch.randn(size=(3,1,32,32))
 m = UnetModel()
-m(x,t)
-#%%    
+m(x,t).shape
+ 
 # lets create our class
 class DiffusionMnist(nn.Module):
-    def __init__(self, unet_model, num_timesteps, device = 'cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, device = 'cpu') -> None:
         super().__init__()
-        self.model = unet_model
+        self.in_channels = in_channels
+        self.base_fmap_size = base_fmap_size
+        self.embd_size = embd_size
         self.num_timesteps = num_timesteps
         self.device = device
-        # lets initialize our attributes for the forward_diffusion process 
-        self.init_parameters()
         
-    def forward(self, input_images, timesteps):
-        predicted_noise = self.model(input_images, timesteps)
+        self.unet_model = UnetModel(in_channels=in_channels, base_fmap_size=base_fmap_size, embd_size=embd_size, device=device)
+        self.unet_model.to(device)
+        # lets initialize our attributes for the forward_diffusion process 
+        self._init_parameters()
     
-    def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple(torch.Tensor, torch.Tensor):
+    def forward(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Runs the forward diffusion followed by unet forward
+
+        Args:
+            input_images (torch.Tensor): input noise
+            timesteps (torch.Tensor): input timestep
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: returns a tuple of predicted_noises and actual noises 
+        """
+        noisy_images, actual_noises = self.forward_diffusion(input_images, timesteps)
+        predicted_noises = self.forward_unet(noisy_images, timesteps)
+        return predicted_noises, actual_noises
+    
+    def forward_unet(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> torch.Tensor:
+        predicted_noise = self.unet_model(input_images, timesteps)
+        return predicted_noise
+    
+    def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Check if the input is a batch or a single image
         is_batch = input_images.ndim>3
         # Create a noise tensor with the same dimensions as input_images
@@ -2655,44 +2691,40 @@ class DiffusionMnist(nn.Module):
         sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
         sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
         # now calculate the mean + variance to get the noisy image
-        # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
-        with torch.device(self.device):
-            noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
+        noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
         # return the noisy_image along with the actual noise
         return noisy_images, actual_noises
-    
-    def init_parameters(self):
-        # β
-        self.betas = self._create_betas_linear()
-        # α 
-        self.alphas = 1.0 - self.betas
-        # ̅α 
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=-1).to(self.device)
-        # √̅α
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
-        # √1-̅α 
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
-        # alphas_prev
-        self.alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], pad=(1,0), value=-1.0)
-        self.sqrt_recip_alphas = torch.sqrt(1.0/alphas)
-        # These calculations are part of the reverse process of the diffusion model, 
-        # where the model gradually denoises an image starting from pure noise. 
-        # The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
-        # used in the calculation of the Gaussian distribution from which the denoised 
-        # image is sampled at each time step.
-        self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
-        # register these buffers so they are not optimized and also are saved when saving state_dict()
-        self.register_buffer("betas", self.betas)
-        self.register_buffer("alphas", self.alphas)
-        self.register_buffer("alphas_cumprod", self.alphas_cumprod)
-        self.register_buffer("sqrt_alphas_cumprod", self.sqrt_alphas_cumprod)
-        self.register_buffer("sqrt_one_minus_alphas_cumprod", self.sqrt_one_minus_alphas_cumprod)
-        self.register_buffer("alphas_cumprod_prev", self.alphas_cumprod_prev)
-        self.register_buffer("sqrt_recip_alphas", self.sqrt_recip_alphas)
-        self.register_buffer("posterior_variance", self.posterior_variance)
-        
+
     @torch.no_grad()
-    def sample(self, input_images, timesteps):
+    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', device='cpu', fig_size=(8,6)):
+        # create noise 
+        noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+        # configure out plot size and remove the axis for uncluttered output
+        plt.figure(figsize=(fig_size))
+        plt.axis("off")
+        # set a stepsize so we display only num_images intermediate images for our diffusion process
+        step_size = self.num_timesteps//num_images
+        # now reverse the timestep in denoising 
+        for t in range(0, self.num_timesteps[::-1]):
+            # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
+            # its is used when we want to create a tensor of a certain size and fill it with a 
+            # specific value. This is useful when we need a tensor of a certain size, but don’t
+            # care about the exact values because they’re all going to be the same. we could also 
+            # simply use torch.tensor([i])
+            # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
+            t = torch.tensor([t], dtype=torch.long)
+            noise = self._sample(noise, t)
+            # This is to maintain the natural range of the distribution
+            # its important, or otherwise we get a very blury almost all noise image
+            noise = torch.clamp(noise, -1.0, 1.0)
+            if i%step_size==0:
+                plt.subplot(1, num_images, (i//step_size)+1)
+                plt.imshow(self._create_image_from_batch(noise))
+                plt.title(title)
+        plt.show()
+
+    @torch.no_grad()
+    def _sample(self, input_images, timesteps):
         # Check whether input_images is a batch of images or a single one
         is_batch = input_images.ndim>3
         # get the betas for current timestep
@@ -2702,7 +2734,7 @@ class DiffusionMnist(nn.Module):
         # get the sqrt_recip_alphas for current timestep
         sqrt_recip_alphas_t = self._get_value_for_timestep_t(self.sqrt_recip_alphas, timesteps, is_batch)
         # now call the denoising model noise_prediction 
-        predicted_noise = self.forward(input_images, timesteps)
+        predicted_noise = self.forward_unet(input_images, timesteps)
         # calculate the model mean
         model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
         
@@ -2726,35 +2758,34 @@ class DiffusionMnist(nn.Module):
             # get the posterior variance for the current timestep
             posterior_variance_t = self._get_value_for_timestep_t(self.posterior_variance, timesteps, is_batch)
             return model_mean + torch.sqrt(posterior_variance_t)*noise
-    
-    @torch.no_grad()
-    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', device='cpu', fig_size=(8,6)):
-        # create noise 
-        noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
-        # configure out plot size and remove the axis for uncluttered output
-        plt.figure(figsize=(fig_size))
-        plt.axis("off")
-        # set a stepsize so we display only num_images intermediate images for our diffusion process
-        step_size = self.num_timesteps//num_images
-        # now reverse the timestep in denoising 
-        for t in range(0, self.num_timesteps[::-1]):
-            # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
-            # its is used when we want to create a tensor of a certain size and fill it with a 
-            # specific value. This is useful when we need a tensor of a certain size, but don’t
-            # care about the exact values because they’re all going to be the same. we could also 
-            # simply use torch.tensor([i])
-            # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
-            t = torch.tensor([t], dtype=torch.long)
-            noise = self.sample(noise, t)
-            # This is to maintain the natural range of the distribution
-            # its important, or otherwise we get a very blury almost all noise image
-            noise = torch.clamp(noise, -1.0, 1.0)
-            if i%step_size==0:
-                plt.subplot(1, num_images, (i//step_size)+1)
-                plt.imshow(self._create_image_from_batch(noise))
-                plt.title(title)
-        plt.show()        
-    
+
+    def _init_parameters(self):
+        # β
+        self.betas = self._create_betas_linear()
+        # α 
+        self.alphas = 1.0 - self.betas
+        # ̅α 
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=-1).to(self.device)
+        # √̅α
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        # √1-̅α 
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        # alphas_prev
+        self.alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], pad=(1,0), value=-1.0)
+        self.sqrt_recip_alphas = torch.sqrt(1.0/self.alphas)
+        # These calculations are part of the reverse process of the diffusion model, 
+        # where the model gradually denoises an image starting from pure noise. 
+        # The `alphas_cumprod_prev`, `sqrt_recip_alphas`, and `posterior_variance` are 
+        # used in the calculation of the Gaussian distribution from which the denoised 
+        # image is sampled at each time step.
+        self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        # print([t.device for t in (self.betas,self.alphas ,self.alphas_cumprod,
+        #                             self.sqrt_alphas_cumprod,
+        #                             self.sqrt_one_minus_alphas_cumprod,
+        #                             self.alphas_cumprod_prev,
+        #                             self.sqrt_recip_alphas,
+        #                             self.posterior_variance)])
+            
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
         return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
@@ -2762,6 +2793,7 @@ class DiffusionMnist(nn.Module):
     @torch.no_grad()
     def _get_value_for_timestep_t(self, tensors:torch.Tensor, timestep_indexes:torch.Tensor, use_batch=True):
         batch_size = timestep_indexes.size(0)
+        # print([t.device for t in (tensors, timestep_indexes)])
         values_at_t =  torch.gather(tensors, dim=-1, index=timestep_indexes)
         shape = (batch_size, 1,1,1) if use_batch else (batch_size, 1,1)
         return values_at_t.reshape(shape)
@@ -2783,70 +2815,97 @@ class DiffusionMnist(nn.Module):
         img_grid = torch.cat(img_rows, dim=0).numpy()
         return img_grid
 
+# now lets grab our data
+transforms = torchvision.transforms.Compose([tfms.Resize(32),
+                                             tfms.ToTensor(),
+                                            #  tfms.Normalize(mean=(.5,),std=(0.5)),
+                                             # rescale the input to the -1,1 range,
+                                             # !its important to get good result
+                                             tfms.Lambda(lambda x: x*2-1)])
 
+# we can test mnist and then other datasets such as cifar10 etc 
+dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
+dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True )
 
+#concat the train/val splits 
+dataset = torch.utils.data.ConcatDataset([dt_tr,dt_val])
 
+batch_size = 256
+num_workers = 8
+dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
 
+# now let us train
+epochs = 3000
+epoch_start=0
+num_timesteps = 200
+embd_size = 64
+lr = 0.0001
+interval = 20
+in_channels = 1
+base_fmap_size = 64
+checkpoint_name = 'diffusion_mnist.pth'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+model = DiffusionMnist(in_channels=in_channels, 
+                       base_fmap_size=base_fmap_size,
+                       embd_size=embd_size, 
+                       num_timesteps=num_timesteps, 
+                       device=device)
 
+optimizer = torch.optim.Adam(model.parameters(), lr = lr)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
 
+load_checkpoint = Path(f"{fldr}/{checkpoint_name}").exists()
+if load_checkpoint:
+    checkpoint = torch.load(f"{fldr}/{checkpoint_name}")
+    epoch_start = checkpoint["epoch"]
+    model.unet_model.load_state_dict(checkpoint["state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    scheduler.load_state_dict(checkpoint["scheduler"])
 
+print(f'running on    : {device}/{model.device}')
+print(f'num_epochs    : {epochs}')
+print(f'epoch_start   : {epoch_start}')
+print(f'interval      : {interval}')
+print(f'n_timestep    : {model.num_timesteps}')
+print(f'embd_size     : {model.embd_size}')
+print(f'batch_size    : {batch_size}')
+print(f'learning_rate : {lr}')
+print(f'in_channels   : {in_channels}')
+print(f'base_fmap_size: {base_fmap_size}')
 
-
-
+for epoch in tqdm(range(epoch_start, epochs)):
+    losses = []
+    for i, (imgs,_) in tqdm(enumerate(dataloader)):
+        # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
+        # but it only works at the tensor creation time! i.e. before a tensor is created
+        # ithas to be called.
+        imgs = imgs.to(model.device)
+        t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
+        predicted_noises, noises = model(imgs, t)
+        
+        loss = F.l1_loss(predicted_noises, noises)
+        losses.append(loss.item())
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+            
+    if i%interval==0:
+        print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
+        model.display_sample(input_channel=model.in_channels,
+                             batch_size=imgs.size(0),
+                             num_images=20,
+                             fig_size=(24,16),
+                             title=f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
+        torch.save({"epoch":epoch,
+                    "state_dict":model.unet_model.state_dict(),
+                    "optimizer":optimizer.state_dict(),
+                    "scheduler":scheduler.state_dict()},
+                   f"{fldr}/{checkpoint_name}")
 
 
 
 #%%
-import torch 
-x = torch.tensor([0,2])
-if x == 0:
-    print(f'0')
-else:
-    print('not')
-# ims = imgs_output.permute(0,2,3,1)
-# plt.figure(figsize=(128,64))
-# j=0
-# img_rows = []
-# for i in range(ims.size(0)):
-#     if i>=8:break
-#     if j==0:
-#         gg = ims[i:(i+1)*8]
-#     else:
-#         gg = ims[j:(i+1)*8]
-#     j = (i+1)*8
-#     new_gg = torch.cat((gg.chunk(8,dim=0)),dim=2).reshape(32,-1)
-#     print(f'{i=} {j=} {new_gg.shape=}')
-#     ggs.append(new_gg)
-# or better 
-# for i in range(0, ims.size(0), 8):
-#     img_row = ims[i:i+8]
-#     new_gg = torch.cat(img_row.chunk(8, dim=0), dim=2).reshape(32, -1)
-#     print(f'{i=} {new_gg.shape=}')
-#     img_rows.append(new_gg)
-# img_grid = torch.cat(img_rows,dim=0)
-# print(img_grid.shape)    
-# plt.imshow(img_grid.numpy())
-# plt.show()
-
-
-
-
-
-
-
-
-
-
-# we have an image of size 64 x 32x32x1 
-# we want an image for these 64 images 
-# 8 images in each row 
-# so imgs[1:8] in row 1 
-# and imgs[8:16] in row 2 
-# and so on and so forth
-# so itd be imgs[i:i*8]
-# imgs[i:i*8] -> [1:1*8]
-# imgs[i*8:i*8] -> [1*8:2*8]
 
 
 
