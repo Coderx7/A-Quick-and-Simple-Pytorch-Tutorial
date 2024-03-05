@@ -2696,32 +2696,33 @@ class DiffusionMnist(nn.Module):
         return noisy_images, actual_noises
 
     @torch.no_grad()
-    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', device='cpu', fig_size=(8,6)):
-        # create noise 
-        noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
-        # configure out plot size and remove the axis for uncluttered output
-        plt.figure(figsize=(fig_size))
-        plt.axis("off")
-        # set a stepsize so we display only num_images intermediate images for our diffusion process
-        step_size = self.num_timesteps//num_images
-        # now reverse the timestep in denoising 
-        for t in range(0, self.num_timesteps[::-1]):
-            # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
-            # its is used when we want to create a tensor of a certain size and fill it with a 
-            # specific value. This is useful when we need a tensor of a certain size, but don’t
-            # care about the exact values because they’re all going to be the same. we could also 
-            # simply use torch.tensor([i])
-            # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
-            t = torch.tensor([t], dtype=torch.long)
-            noise = self._sample(noise, t)
-            # This is to maintain the natural range of the distribution
-            # its important, or otherwise we get a very blury almost all noise image
-            noise = torch.clamp(noise, -1.0, 1.0)
-            if i%step_size==0:
-                plt.subplot(1, num_images, (i//step_size)+1)
-                plt.imshow(self._create_image_from_batch(noise))
-                plt.title(title)
-        plt.show()
+    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', fig_size=(8,6)):
+        with torch.device(self.device):
+            # create noise 
+            noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+            # configure out plot size and remove the axis for uncluttered output
+            plt.figure(figsize=(fig_size))
+            plt.axis("off")
+            # set a stepsize so we display only num_images intermediate images for our diffusion process
+            step_size = self.num_timesteps//num_images
+            # now reverse the timestep in denoising 
+            for i in range(0, self.num_timesteps)[::-1]:
+                # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
+                # its is used when we want to create a tensor of a certain size and fill it with a 
+                # specific value. This is useful when we need a tensor of a certain size, but don’t
+                # care about the exact values because they’re all going to be the same. we could also 
+                # simply use torch.tensor([i])
+                # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
+                timestep = torch.tensor([i], dtype=torch.long)
+                noise = self._sample(noise, timestep)
+                # This is to maintain the natural range of the distribution
+                # its important, or otherwise we get a very blury almost all noise image
+                noise = torch.clamp(noise, -1.0, 1.0)
+                if i%step_size==0:
+                    plt.subplot(1, num_images, (i//step_size)+1)
+                    plt.imshow(self._create_image_from_batch(noise))
+                    plt.title(title)
+            plt.show()
 
     @torch.no_grad()
     def _sample(self, input_images, timesteps):
@@ -2804,6 +2805,7 @@ class DiffusionMnist(nn.Module):
         img_rows = []
         # how many images do we want in each row
         ncol = int(np.sqrt(imgs.size(0)))
+        # print(f'{imgs.size(0)=} {ncol=}')
         for i in range(0, imgs.size(0), ncol):
             # grab ncol images at a time from our batch
             img_row = imgs[i:i+ncol]
@@ -2811,6 +2813,7 @@ class DiffusionMnist(nn.Module):
             img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(img_size, -1)
             # store them to later stack them and get a full image
             img_rows.append(img_row)
+        # print([t.shape for t in img_rows])
         # stack the images along the height and get our final image
         img_grid = torch.cat(img_rows, dim=0).numpy()
         return img_grid
@@ -2832,7 +2835,11 @@ dataset = torch.utils.data.ConcatDataset([dt_tr,dt_val])
 
 batch_size = 256
 num_workers = 8
-dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
+# set drop_last=True so, the batch sizes all are the same
+dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, 
+                                         num_workers=num_workers, 
+                                         pin_memory=True,
+                                         drop_last=False)
 
 # now let us train
 epochs = 3000
@@ -2876,6 +2883,7 @@ print(f'base_fmap_size: {base_fmap_size}')
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
+    model.train()
     for i, (imgs,_) in tqdm(enumerate(dataloader)):
         # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
         # but it only works at the tensor creation time! i.e. before a tensor is created
@@ -2890,13 +2898,16 @@ for epoch in tqdm(range(epoch_start, epochs)):
         loss.backward()
         optimizer.step()
             
-    if i%interval==0:
+    if epoch%interval==0:
+        model.eval()
         print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
         model.display_sample(input_channel=model.in_channels,
-                             batch_size=imgs.size(0),
+                             batch_size=64,
+                             image_height=32,
+                             image_width=32,
                              num_images=20,
-                             fig_size=(24,16),
-                             title=f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
+                             fig_size=(64,32),
+                             title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
         torch.save({"epoch":epoch,
                     "state_dict":model.unet_model.state_dict(),
                     "optimizer":optimizer.state_dict(),
