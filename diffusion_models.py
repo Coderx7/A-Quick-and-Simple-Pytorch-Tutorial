@@ -2697,6 +2697,10 @@ class DiffusionMnist(nn.Module):
 
     @torch.no_grad()
     def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', fig_size=(8,6)):
+        # set the model in eval mode first
+        is_training=model.training
+        if model.training:
+            model.eval()
         with torch.device(self.device):
             # create noise 
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
@@ -2720,10 +2724,14 @@ class DiffusionMnist(nn.Module):
                 noise = torch.clamp(noise, -1.0, 1.0)
                 if i%step_size==0:
                     plt.subplot(1, num_images, (i//step_size)+1)
-                    plt.imshow(self._create_image_from_batch(noise))
+                    plt.imshow(self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel)))
                     plt.title(title)
+            # show the image
             plt.show()
-
+        # restore the model status
+        if is_training:
+            model.train()
+            
     @torch.no_grad()
     def _sample(self, input_images, timesteps):
         # Check whether input_images is a batch of images or a single one
@@ -2800,7 +2808,7 @@ class DiffusionMnist(nn.Module):
         return values_at_t.reshape(shape)
 
     @torch.no_grad()
-    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_size=32)->torch.Tensor:
+    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1))->torch.Tensor:
         imgs = imgs_tensor.permute(0,2,3,1).detach().cpu()
         img_rows = []
         # how many images do we want in each row
@@ -2810,12 +2818,19 @@ class DiffusionMnist(nn.Module):
             # grab ncol images at a time from our batch
             img_row = imgs[i:i+ncol]
             # concatenate them along the column, so we get a row of images
-            img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(img_size, -1)
+            img_row = torch.cat(img_row.chunk(ncol, dim=0), dim=2).reshape(img_shape[0],-1,img_shape[-1])
             # store them to later stack them and get a full image
             img_rows.append(img_row)
         # print([t.shape for t in img_rows])
         # stack the images along the height and get our final image
         img_grid = torch.cat(img_rows, dim=0).numpy()
+        # normalize the image to be in range (0-1) since
+        # matplotlib uses 0-1 for floats and 0-255 for int
+        # images. we just reverse the process we used for converting
+        # 0-1 to (-1,1) range
+        # print(f'img_grid range: ({img_grid.min()}, {img_grid.max()})')
+        img_grid = (img_grid+1)/2
+        # print(f'img_grid range: ({img_grid.min()}, {img_grid.max()})') 
         return img_grid
 
 # now lets grab our data
@@ -2825,10 +2840,28 @@ transforms = torchvision.transforms.Compose([tfms.Resize(32),
                                              # rescale the input to the -1,1 range,
                                              # !its important to get good result
                                              tfms.Lambda(lambda x: x*2-1)])
-
 # we can test mnist and then other datasets such as cifar10 etc 
 dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
-dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True )
+dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True)
+
+transforms = torchvision.transforms.Compose([tfms.Resize(32),
+                                             tfms.ToTensor(),
+                                             tfms.Normalize(mean=(.5,),std=(0.5)),
+                                             # rescale the input to the -1,1 range,
+                                             # !its important to get good result
+                                             tfms.Lambda(lambda x: x*2-1)])
+dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
+dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
+
+# transforms = torchvision.transforms.Compose([tfms.Resize(32),
+#                                              tfms.ToTensor(),
+#                                             #  tfms.Normalize(mean=(.5,),std=(0.5)),
+#                                              # rescale the input to the -1,1 range,
+#                                              # !its important to get good result
+#                                              tfms.Lambda(lambda x: x*2-1)])
+# dt_tr = torchvision.datasets.StanfordCars(f'{fldr}/data',split='train', transform=transforms, download=True )
+# dt_val = torchvision.datasets.StanfordCars(f'{fldr}/data',split='test', transform=transforms, download=True )
+
 
 #concat the train/val splits 
 dataset = torch.utils.data.ConcatDataset([dt_tr,dt_val])
@@ -2846,11 +2879,17 @@ epochs = 3000
 epoch_start=0
 num_timesteps = 200
 embd_size = 64
+# the learning rate is very important, 
+# and 1e-4 seems to work just fine, 
+# anything larger like 1e-3 e.g. wont 
+# work and results in noise and high loss (0.3793)
 lr = 0.0001
 interval = 20
-in_channels = 1
+# mnist is 1 channel, and cifar10 is 3!
+in_channels = 3
 base_fmap_size = 64
-checkpoint_name = 'diffusion_mnist.pth'
+checkpoint_name = 'diffusion_cifar.pth'
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 model = DiffusionMnist(in_channels=in_channels, 
@@ -2860,6 +2899,9 @@ model = DiffusionMnist(in_channels=in_channels,
                        device=device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
+# 0.0001 is small enough and lowering it would imepede the convergence further
+# so I just set it at 3000 to mean donot change it! why use it then? to test with
+# different cases! feel free to choose and play with other schedulers and optimizers
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
 
 load_checkpoint = Path(f"{fldr}/{checkpoint_name}").exists()
@@ -2897,7 +2939,8 @@ for epoch in tqdm(range(epoch_start, epochs)):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-            
+        scheduler.step()
+        
     if epoch%interval==0:
         model.eval()
         print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
@@ -2905,7 +2948,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
                              batch_size=64,
                              image_height=32,
                              image_width=32,
-                             num_images=20,
+                             num_images=10,
                              fig_size=(64,32),
                              title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
         torch.save({"epoch":epoch,
@@ -2914,10 +2957,24 @@ for epoch in tqdm(range(epoch_start, epochs)):
                     "scheduler":scheduler.state_dict()},
                    f"{fldr}/{checkpoint_name}")
 
-
+# mnist: 
+# we startedwith a loss of 0.2835 and achieved a loss of 0.2028 at 1760 epochs, 
+# we saw that as early as 20 epochs we had a somewhat good result which got constant
+# improvement. since our lr was small, it obviously took a lot, the more the model is
+# trained, the more prominent/sharper the final images become. 
+# we also see that if we try different shapes, like different widths, hieght we get 
+# the output but they dont look good. larger sizes also show this fact that our model
+# works well on the image dimensions it was trained on! we trained it 32x32 so it performs
+# well on this resolution. try 32x64, and 64x64 and see the result
 
 #%%
-
+model.display_sample(input_channel=model.in_channels,
+                    batch_size=64,
+                    image_height=32,
+                    image_width=32,
+                    num_images=20,
+                    fig_size=(256,128),
+                    title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
 
 
