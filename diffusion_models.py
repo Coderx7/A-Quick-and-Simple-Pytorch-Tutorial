@@ -2844,14 +2844,15 @@ transforms = torchvision.transforms.Compose([tfms.Resize(32),
 dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
 dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True)
 
-transforms = torchvision.transforms.Compose([tfms.Resize(32),
-                                             tfms.ToTensor(),
-                                             tfms.Normalize(mean=(.5,),std=(0.5)),
-                                             # rescale the input to the -1,1 range,
-                                             # !its important to get good result
-                                             tfms.Lambda(lambda x: x*2-1)])
-dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
-dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
+#cifar10
+# transforms = torchvision.transforms.Compose([tfms.Resize(32),
+#                                              tfms.ToTensor(),
+#                                              tfms.Normalize(mean=(.5,),std=(0.5)),
+#                                              # rescale the input to the -1,1 range,
+#                                              # !its important to get good result
+#                                              tfms.Lambda(lambda x: x*2-1)])
+# dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
+# dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
 
 # transforms = torchvision.transforms.Compose([tfms.Resize(32),
 #                                              tfms.ToTensor(),
@@ -2875,6 +2876,14 @@ dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size,
                                          drop_last=False)
 
 # now let us train
+#fp16 sometimes mess with the results, and causes high loss! 
+# I trained my best model without, so if something weird happens
+# disable the fp16 traininghere (it should work ok though so in case
+# it ever happened again disable it. for the record for mnist we should
+# be getting 0.2190 around 160/180 epochs). with fp16 it takes 36 
+# minutes to reach 180 epochs (each epoch takes around 4 minutes
+# without fp16 eacy epoch takes around 7 minutes)
+use_fp16=False
 epochs = 3000
 epoch_start=0
 num_timesteps = 200
@@ -2886,9 +2895,9 @@ embd_size = 64
 lr = 0.0001
 interval = 20
 # mnist is 1 channel, and cifar10 is 3!
-in_channels = 3
+in_channels = 1 if isinstance(dt_tr, torchvision.datasets.MNIST) else 3
 base_fmap_size = 64
-checkpoint_name = 'diffusion_cifar.pth'
+checkpoint_name = f'diffusion_{dt_tr.__class__.__name__.lower()}.pth'
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -2904,15 +2913,22 @@ optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # different cases! feel free to choose and play with other schedulers and optimizers
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
 
+scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
+
 load_checkpoint = Path(f"{fldr}/{checkpoint_name}").exists()
 if load_checkpoint:
     checkpoint = torch.load(f"{fldr}/{checkpoint_name}")
+    print(f'{checkpoint.keys()}')
     epoch_start = checkpoint["epoch"]
+    use_fp16 = checkpoint.get("use_fp16",False)
     model.unet_model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
     scheduler.load_state_dict(checkpoint["scheduler"])
 
 print(f'running on    : {device}/{model.device}')
+print(f'checkpointname: {checkpoint_name}')
+print(f'is resumed    : {load_checkpoint}')
+print(f'uses FP16     : {use_fp16}')
 print(f'num_epochs    : {epochs}')
 print(f'epoch_start   : {epoch_start}')
 print(f'interval      : {interval}')
@@ -2930,43 +2946,55 @@ for epoch in tqdm(range(epoch_start, epochs)):
         # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
         # but it only works at the tensor creation time! i.e. before a tensor is created
         # ithas to be called.
-        imgs = imgs.to(model.device)
-        t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
-        predicted_noises, noises = model(imgs, t)
-        
-        loss = F.l1_loss(predicted_noises, noises)
-        losses.append(loss.item())
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+        with torch.cuda.amp.autocast(enabled=use_fp16):
+            imgs = imgs.to(model.device)
+            t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
+            predicted_noises, noises = model(imgs, t)
+            loss = F.l1_loss(predicted_noises, noises)
+
+            losses.append(loss.item())
+            optimizer.zero_grad()
+            # loss.backward()
+            # optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            # scheduler.step()
         
     if epoch%interval==0:
-        model.eval()
-        print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
-        model.display_sample(input_channel=model.in_channels,
-                             batch_size=64,
-                             image_height=32,
-                             image_width=32,
-                             num_images=10,
-                             fig_size=(64,32),
-                             title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
-        torch.save({"epoch":epoch,
-                    "state_dict":model.unet_model.state_dict(),
-                    "optimizer":optimizer.state_dict(),
-                    "scheduler":scheduler.state_dict()},
-                   f"{fldr}/{checkpoint_name}")
+        with torch.cuda.amp.autocast(enabled=use_fp16):
+            model.eval()
+            print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
+            model.display_sample(input_channel=model.in_channels,
+                                batch_size=64,
+                                image_height=32,
+                                image_width=32,
+                                num_images=20,
+                                fig_size=(64,32),
+                                title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
+            torch.save({"epoch":epoch,
+                        "use_fp16":use_fp16,
+                        "state_dict":model.unet_model.state_dict(),
+                        "optimizer":optimizer.state_dict(),
+                        "scheduler":scheduler.state_dict()},
+                    f"{fldr}/{checkpoint_name}")
 
 # mnist: 
 # we startedwith a loss of 0.2835 and achieved a loss of 0.2028 at 1760 epochs, 
 # we saw that as early as 20 epochs we had a somewhat good result which got constant
 # improvement. since our lr was small, it obviously took a lot, the more the model is
 # trained, the more prominent/sharper the final images become. 
+# we also noticed that proper range for our images matter, if we dont rescale our final
+# images from (-1,1) back to (0,1) we will get darker images becasue matplotlib uses 0-1
+# for float images, and 0-255 for integer images, it clips the values smaller than 0 so
+# it causes the images not to display accurately. this is more prominent when we train a
+# color image  like from cifar10 datasets.
 # we also see that if we try different shapes, like different widths, hieght we get 
 # the output but they dont look good. larger sizes also show this fact that our model
 # works well on the image dimensions it was trained on! we trained it 32x32 so it performs
 # well on this resolution. try 32x64, and 64x64 and see the result
-
+# for cifar10, the loss ddint go down like mnist and stayed the same for 1000 epochs at 0.3533
+# so I lowered the lr again. followed by removing mean/std etc
 #%%
 model.display_sample(input_channel=model.in_channels,
                     batch_size=64,
