@@ -2645,13 +2645,16 @@ class UnetModel(nn.Module):
         # encoder
         for i in range(4):
             drpout = None if i<6 else 0.1
-            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
-            fmap *=2
+            # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
+            # this will result in a much smaller model and the roughly the same performance
+            self.encoder.append(ResBlock(fmap, fmap+64, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
+            fmap +=64
         # decoder
         for i in range(4):
             drpout = None if i<6 else 0.1
-            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
-            fmap //=2
+            # likewise instead of dividing by 2, lets subtract
+            self.decoder.append(ResBlock(fmap, fmap-64, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
+            fmap -=64
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
         #!todo: .add bn and relu to final_conv -
@@ -2661,7 +2664,9 @@ class UnetModel(nn.Module):
         #!todo: then test if all is ok, and merge, but before that test these separately
         # instead of just a single conv layer that produces our final shape, we can use a deeper block
         # this allows us to not drastically shrink the output featuremaps, and hence get a much better
-        # result and faster convergence. (we achieve the same loss at half the epochs 0.2125@140 vs 0.2122@240)
+        # result and faster convergence. (we achieve the same loss at nearly one third of the epochs)
+        # sidenote: removing the bn from the final_conv, and make it like this ( and use silo), 
+        # increased our convergence speed by nearly 3 folds!
         self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3, stride=1, padding=1, bias=False),
                                         nn.BatchNorm2d(fmap//2),
                                         nn.SiLU(),
@@ -2922,8 +2927,8 @@ dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size,
 # I trained my best model without, so if something weird happens
 # disable the fp16 traininghere (it should work ok though so in case
 # it ever happened again disable it. for the record for mnist we should
-# be getting 0.2190 around 160/180 epochs). with fp16 it takes 36 
-# minutes to reach 180 epochs (each epoch takes around 4 minutes
+# be getting 0.2170 around 60/80 epochs). with fp16 it takes 16 
+# minutes to reach 80 epochs (each epoch takes around 4 minutes
 # without fp16 eacy epoch takes around 7 minutes)
 use_fp16=True
 epochs = 3000
