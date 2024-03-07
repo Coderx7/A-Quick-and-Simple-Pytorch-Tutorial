@@ -2645,19 +2645,20 @@ class UnetModel(nn.Module):
         
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
+        # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
+        # this will result in a much smaller model and the roughly the same performance
+        self.growth_value=  128#64
         # encoder
         for i in range(4):
             drpout = None if i<6 else 0.1
-            # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
-            # this will result in a much smaller model and the roughly the same performance
-            self.encoder.append(ResBlock(fmap, fmap+64, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
-            fmap +=64
+            self.encoder.append(ResBlock(fmap, fmap+self.growth_value, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
+            fmap +=self.growth_value
         # decoder
         for i in range(4):
             drpout = None if i<6 else 0.1
             # likewise instead of dividing by 2, lets subtract
-            self.decoder.append(ResBlock(fmap, fmap-64, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
-            fmap -=64
+            self.decoder.append(ResBlock(fmap, fmap-self.growth_value, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
+            fmap -=self.growth_value
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
         #!todo: .add bn and relu to final_conv -
@@ -2914,7 +2915,7 @@ def get_dataset(name='mnist'):
     #concat the train/val splits 
     return torch.utils.data.ConcatDataset([dt_tr, dt_val])
 
-dataset_name = 'mnist'
+dataset_name = 'cifar'
 dataset = get_dataset(dataset_name)
 
 batch_size = 256
