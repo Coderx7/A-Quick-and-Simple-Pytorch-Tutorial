@@ -2495,6 +2495,32 @@ sample_plot_image(model,num_images=10, device=device)
 # 6. a training loop to train our model
 
 from typing import Tuple
+# lets import what we need
+import sys,os,math,random
+from pathlib import Path
+import numpy as np
+from tqdm import tqdm
+# from tqdm.notebook import tqdm
+
+import torch
+# for pylance so we get autocomplete for submodules!
+import torch.utils
+import torch.utils.data
+
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision
+# for pylance intellisense to work properly!
+import torchvision.utils
+import torchvision.datasets.utils
+
+import torchvision.transforms as tfms
+import matplotlib.pyplot as plt
+
+fldr="/media/hossein/SSD1/code_dl/"
+
+print(f'{torch.__version__}')
+print(f'{sys.version}')
 
 # since we need to encode our timesteps to 
 # use them in our model we need to use a method 
@@ -2526,6 +2552,7 @@ class ResBlock(nn.Module):
                  act=nn.ReLU(),
                  time_embd_size=32, 
                  is_encoder=True,
+                 dropout=None,
                  device='cpu',) -> None:
         super().__init__()
 
@@ -2533,7 +2560,8 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
         self.time_embd_size = time_embd_size
         self.device = device
-
+        self.drpout = dropout
+        
         if is_encoder:
             # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
             # the inputsize at each step, thats why we are using strides of 2. obviously in a realworld
@@ -2574,6 +2602,7 @@ class ResBlock(nn.Module):
                                #! batchnorm may not be needed, since we want to apply a linear transformation only
                                nn.BatchNorm2d(out_channels)
                               )
+        self.drpout = nn.Identity() if self.drpout is None else nn.Dropout2d(self.drpout)
 
     def forward (self, x, t):
         identity = x
@@ -2585,7 +2614,7 @@ class ResBlock(nn.Module):
         #! some people add the timeembedding to the skip_connection
         identity = self.h(identity)
         # print(f'{output.shape=} {identity.shape=}')
-        return output + identity
+        return self.drpout(output + identity)
 
 
 x0 = torch.randn(size=(3,1,32,32))
@@ -2604,6 +2633,7 @@ class UnetModel(nn.Module):
         self.base_fmap_size = base_fmap_size
         self.embd_size = embd_size
         self.device = device
+        # self.dropout_last = dropout_last
         
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size, kernel_size=3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
@@ -2613,17 +2643,19 @@ class UnetModel(nn.Module):
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
         # encoder
-        for _ in range(4):
-            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True, device=self.device))
+        for i in range(4):
+            drpout = None if i<6 else 0.1
+            self.encoder.append(ResBlock(fmap, fmap*2, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
             fmap *=2
         # decoder
-        for _ in range(4):
-            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False, device=self.device))
+        for i in range(4):
+            drpout = None if i<6 else 0.1
+            self.decoder.append(ResBlock(fmap, fmap//2, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
             fmap //=2
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
         self.final_conv = nn.Sequential(nn.Conv2d(fmap, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
-                                        nn.BatchNorm2d(in_channels), 
+                                        # nn.BatchNorm2d(in_channels),
                                         )
         
     def forward(self, input_images, timesteps):
@@ -2648,7 +2680,7 @@ class UnetModel(nn.Module):
 x = torch.randn(size=(3,1,32,32))
 m = UnetModel()
 m(x,t).shape
- 
+print(m) 
 # lets create our class
 class DiffusionMnist(nn.Module):
     def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, device = 'cpu') -> None:
@@ -2834,38 +2866,30 @@ class DiffusionMnist(nn.Module):
         return img_grid
 
 # now lets grab our data
-transforms = torchvision.transforms.Compose([tfms.Resize(32),
-                                             tfms.ToTensor(),
-                                            #  tfms.Normalize(mean=(.5,),std=(0.5)),
-                                             # rescale the input to the -1,1 range,
-                                             # !its important to get good result
-                                             tfms.Lambda(lambda x: x*2-1)])
-# we can test mnist and then other datasets such as cifar10 etc 
-dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
-dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True)
+def get_dataset(name='mnist'):
+    transforms = torchvision.transforms.Compose([tfms.Resize(32),
+                                                tfms.ToTensor(),
+                                                # rescale the input to the -1,1 range,
+                                                # !its important to get good result
+                                                tfms.Lambda(lambda x: x*2-1)])
+    if name.lower() in 'mnist':
+        # we can test mnist and then other datasets such as cifar10 etc 
+        dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
+        dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True)
+    elif name.lower() in 'cifar10':
+        dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
+        dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
+    elif name.lower() in 'stanfordcars':# cars
+        # issue https://github.com/pytorch/vision/issues/7545 dataset is no more availabe!
+        dt_tr = torchvision.datasets.StanfordCars(f'{fldr}/data',split='train', transform=transforms, download=True )
+        dt_val = torchvision.datasets.StanfordCars(f'{fldr}/data',split='test', transform=transforms, download=True )
+    else:
+        raise Exception(f'Unknown dataset name ({name}) entered')
+    #concat the train/val splits 
+    return torch.utils.data.ConcatDataset([dt_tr, dt_val])
 
-#cifar10
-# transforms = torchvision.transforms.Compose([tfms.Resize(32),
-#                                              tfms.ToTensor(),
-#                                              tfms.Normalize(mean=(.5,),std=(0.5)),
-#                                              # rescale the input to the -1,1 range,
-#                                              # !its important to get good result
-#                                              tfms.Lambda(lambda x: x*2-1)])
-# dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
-# dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
-
-# transforms = torchvision.transforms.Compose([tfms.Resize(32),
-#                                              tfms.ToTensor(),
-#                                             #  tfms.Normalize(mean=(.5,),std=(0.5)),
-#                                              # rescale the input to the -1,1 range,
-#                                              # !its important to get good result
-#                                              tfms.Lambda(lambda x: x*2-1)])
-# dt_tr = torchvision.datasets.StanfordCars(f'{fldr}/data',split='train', transform=transforms, download=True )
-# dt_val = torchvision.datasets.StanfordCars(f'{fldr}/data',split='test', transform=transforms, download=True )
-
-
-#concat the train/val splits 
-dataset = torch.utils.data.ConcatDataset([dt_tr,dt_val])
+dataset_name = 'mnist'
+dataset = get_dataset(dataset_name)
 
 batch_size = 256
 num_workers = 8
@@ -2883,9 +2907,11 @@ dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size,
 # be getting 0.2190 around 160/180 epochs). with fp16 it takes 36 
 # minutes to reach 180 epochs (each epoch takes around 4 minutes
 # without fp16 eacy epoch takes around 7 minutes)
-use_fp16=False
+use_fp16=True
 epochs = 3000
 epoch_start=0
+# !higher numbers like 800 seem not to perform well, at least in my limited experiments
+# needs more testing
 num_timesteps = 200
 embd_size = 64
 # the learning rate is very important, 
@@ -2895,9 +2921,11 @@ embd_size = 64
 lr = 0.0001
 interval = 20
 # mnist is 1 channel, and cifar10 is 3!
-in_channels = 1 if isinstance(dt_tr, torchvision.datasets.MNIST) else 3
+in_channels = 1 if 'mnist' in dataset_name else 3
 base_fmap_size = 64
-checkpoint_name = f'diffusion_{dt_tr.__class__.__name__.lower()}.pth'
+
+load_checkpoint = False
+checkpoint_name = f'diffusion_{dataset_name}.pth'
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -2912,11 +2940,15 @@ optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # so I just set it at 3000 to mean donot change it! why use it then? to test with
 # different cases! feel free to choose and play with other schedulers and optimizers
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
-
 scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
 
-load_checkpoint = Path(f"{fldr}/{checkpoint_name}").exists()
-if load_checkpoint:
+# calculate model parameters
+num_params = np.sum(p.numel() for p in model.parameters())
+num_params_enc = np.sum(p.numel() for p in model.unet_model.encoder.parameters())
+num_params_dec = np.sum(p.numel() for p in model.unet_model.decoder.parameters())
+
+
+if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     checkpoint = torch.load(f"{fldr}/{checkpoint_name}")
     print(f'{checkpoint.keys()}')
     epoch_start = checkpoint["epoch"]
@@ -2938,6 +2970,9 @@ print(f'batch_size    : {batch_size}')
 print(f'learning_rate : {lr}')
 print(f'in_channels   : {in_channels}')
 print(f'base_fmap_size: {base_fmap_size}')
+print(f'model n_params: {num_params:,}')
+print(f'enc n_params  : {num_params_enc:,}')
+print(f'dec n_params  : {num_params_dec:,}')
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
@@ -2948,7 +2983,15 @@ for epoch in tqdm(range(epoch_start, epochs)):
         # ithas to be called.
         with torch.cuda.amp.autocast(enabled=use_fp16):
             imgs = imgs.to(model.device)
-            t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
+            # pick a timestep
+            # t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
+             
+            # making the times close to the end more probable
+            # instead of using a uniform distribution for taking the t
+            # we instead pick the ones with higher probablities (which means
+            # the ones at the very end have higher probabilities)
+            probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
+            t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
             loss = F.l1_loss(predicted_noises, noises)
 
