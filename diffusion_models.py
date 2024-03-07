@@ -2599,8 +2599,11 @@ class ResBlock(nn.Module):
         # we have to use a second conv to make them compatible 
         layer,ksize,stride,padding = (nn.Conv2d, 3,2,1) if is_encoder else (nn.ConvTranspose2d, 4,2,1)
         self.h = nn.Sequential(layer(in_channels, out_channels, kernel_size=ksize, stride=stride, padding=padding, bias=False),
-                               #! batchnorm may not be needed, since we want to apply a linear transformation only
-                               nn.BatchNorm2d(out_channels)
+                               # batchnorm is not needed, since we want to apply 
+                               # a linear transformation only, and in fact no bn 
+                               # improves our loss a bit more and increases our 
+                               # inference and convergence speed as well
+                               #nn.BatchNorm2d(out_channels)
                               )
         self.drpout = nn.Identity() if self.drpout is None else nn.Dropout2d(self.drpout)
 
