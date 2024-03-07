@@ -2654,8 +2654,26 @@ class UnetModel(nn.Module):
             fmap //=2
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
-        self.final_conv = nn.Sequential(nn.Conv2d(fmap, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
-                                        # nn.BatchNorm2d(in_channels),
+        #!todo: .add bn and relu to final_conv -
+        #!todo: make final_conv deeper, first conv(fmap,fmap//2),bn,relu, cnn instead of cnn
+        #       so its not downsampled drastically all of a sudden, and also a nonlinearityis usedaswell
+        #!todo: then add more layers to block so we dont downsample at a rapid pace
+        #!todo: then test if all is ok, and merge, but before that test these separately
+        # instead of just a single conv layer that produces our final shape, we can use a deeper block
+        # this allows us to not drastically shrink the output featuremaps, and hence get a much better
+        # result and faster convergence. (we achieve the same loss at half the epochs 0.2125@140 vs 0.2122@240)
+        self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3, stride=1, padding=1, bias=False),
+                                        nn.BatchNorm2d(fmap//2),
+                                        nn.ReLU(),
+                                        # note that we dont use any bn or act here, using bn
+                                        # just hinders the convergence, think about it, we want
+                                        # specific distribution for our images/noise and certainly
+                                        # dont want to take all images/noisy inputs in our batch to influence our
+                                        # current image/noise, remember that unet tries to generate the
+                                        # noise we added to our image.our noise for each sample is different
+                                        # so it makes sense not to distort it with the stats(mean/var)
+                                        # of the whole batch!
+                                        nn.Conv2d(fmap//2, in_channels, kernel_size=3, stride=1, padding=1, bias=False)
                                         )
         
     def forward(self, input_images, timesteps):
