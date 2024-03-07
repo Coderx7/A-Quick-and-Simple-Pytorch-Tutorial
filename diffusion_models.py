@@ -2549,7 +2549,7 @@ class ResBlock(nn.Module):
                  in_channels,
                  out_channels,
                  use_bn=True, 
-                 act=nn.ReLU(),
+                 act=nn.SiLU(),
                  time_embd_size=32, 
                  is_encoder=True,
                  dropout=None,
@@ -2591,7 +2591,7 @@ class ResBlock(nn.Module):
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       nn.Linear(self.time_embd_size, out_channels),
                                       nn.BatchNorm1d(out_channels),
-                                      nn.ReLU())
+                                      nn.SiLU())
 
         # in ou case our skip-connection differs from our output 
         # (channel number is increased for each block) so the input
@@ -2637,7 +2637,7 @@ class UnetModel(nn.Module):
         
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size, kernel_size=3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
-                                     nn.ReLU())
+                                     nn.SiLU())
         fmap = base_fmap_size
         
         self.encoder = nn.ModuleList()
@@ -2664,7 +2664,7 @@ class UnetModel(nn.Module):
         # result and faster convergence. (we achieve the same loss at half the epochs 0.2125@140 vs 0.2122@240)
         self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3, stride=1, padding=1, bias=False),
                                         nn.BatchNorm2d(fmap//2),
-                                        nn.ReLU(),
+                                        nn.SiLU(),
                                         # note that we dont use any bn or act here, using bn
                                         # just hinders the convergence, think about it, we want
                                         # specific distribution for our images/noise and certainly
