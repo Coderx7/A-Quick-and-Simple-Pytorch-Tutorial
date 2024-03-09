@@ -2797,7 +2797,8 @@ class DiffusionMnist(nn.Module):
                 noise = torch.clamp(noise, -1.0, 1.0)
                 if i%step_size==0:
                     plt.subplot(1, num_images, (i//step_size)+1)
-                    plt.imshow(self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel)))
+                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+                    plt.imshow(img)
                     plt.title(title)
             # show the image
             plt.show()
@@ -2805,6 +2806,29 @@ class DiffusionMnist(nn.Module):
         if is_training:
             model.train()
 
+    @torch.no_grad()
+    def gen_images(self, timestep, input_channel=1, batch_size=1, image_height=32, image_width=32):
+        #ideally we would refactor dsplayimage and this method so that display image uses this
+        #this method would take a previous_noise and thus would be used inside the loop and yeild
+        #the result. but for now, im adding this like this
+        # set the model in eval mode first
+        is_training=model.training
+        if model.training:
+            model.eval()
+        with torch.device(self.device):
+            # create noise 
+            noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+            timestep = torch.tensor([timestep], dtype=torch.long)
+            noise = self._sample(noise, timestep)
+            # This is to maintain the natural range of the distribution
+            # its important, or otherwise we get a very blury almost all noise image
+            noise = torch.clamp(noise, -1.0, 1.0)
+            img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+        # restore the model status
+        if is_training:
+            model.train()
+        return img
+    
     @torch.no_grad()
     def _sample(self, input_images, timesteps):
         # Check whether input_images is a batch of images or a single one
@@ -2834,7 +2858,7 @@ class DiffusionMnist(nn.Module):
         # otherwise we'd face an error. torch.all() would work regardless but to convey and
         # make sure timesteps needs to be 1 dimensional here, we use ==
         if timesteps == 0:
-            return model_mean.to(device)
+            return model_mean.to(self.device)
         else:
             noise = torch.randn_like(input_images, device=self.device)
             # get the posterior variance for the current timestep
@@ -2881,7 +2905,7 @@ class DiffusionMnist(nn.Module):
         return values_at_t.reshape(shape)
 
     @torch.no_grad()
-    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1))->torch.Tensor:
+    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1))->np.ndarray:
         imgs = imgs_tensor.permute(0,2,3,1).detach().cpu()
         img_rows = []
         # how many images do we want in each row
@@ -2970,7 +2994,8 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 # without fp16 eacy epoch takes around 7 minutes)
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-dataset_name = 'cifar'
+dataset_name = 'mnist'
+
 load_checkpoint = False
 checkpoint_name = f'diffusion_{dataset_name}.pth'
 
@@ -2986,7 +3011,15 @@ image_size = 32
 dataset = get_dataset(dataset_name, size=image_size, mode='val')
 # !higher numbers like 800 seem not to perform well, at least in my limited experiments
 # needs more testing, higher timestep seems to affect loss at least in cifar case
-num_timesteps = 400
+# 200 works prefect for mnist
+# I noticed with a low timestep_num like 100, the generation takes longer
+# to generate good images, when we used num_timesteps=200, as early 
+# as 20 epochs we had prefect numbers formed, however, when t=100, 
+# even til epoch 80 we had giberish yet clean/smooth images (this shows
+# the importance of timesteps. the higher the timesteps, the better the 
+# results the earlier! likewise it affects time loss as well. 
+# so for mnist, a timestep of 200/400 seem like a good choice
+num_timesteps = 200
 embd_size = 64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
@@ -3080,12 +3113,23 @@ for epoch in tqdm(range(epoch_start, epochs)):
             scaler.update()
     
     scheduler.step()
+    # with torch.cuda.amp.autocast(enabled=use_fp16):
+    #     # save image for each epoch
+    #     model.eval()
+    #     img_gen = model.gen_images(model.num_timesteps,
+    #                                model.in_channels, 
+    #                                batch_size=9,
+    #                                image_height=image_size,
+    #                                image_width=image_size)
+    #     fname = f"{fldr}/imgs_gen/{dataset_name}_img_{epoch}.jpg"
+    #     Image.fromarray(img_gen).save(fname)
+    
     if epoch%interval==0:
         with torch.cuda.amp.autocast(enabled=use_fp16):
             model.eval()
             print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
             model.display_sample(input_channel=model.in_channels,
-                                batch_size=4,
+                                batch_size=64,
                                 image_height=image_size,
                                 image_width=image_size,
                                 num_images=10,
@@ -3120,7 +3164,7 @@ model.display_sample(input_channel=model.in_channels,
                     image_height=image_size,
                     image_width=image_size,
                     num_images=10,
-                    fig_size=(128,64),
+                    fig_size=(64,32),
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
 
