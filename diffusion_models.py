@@ -2638,7 +2638,7 @@ class UnetModel(nn.Module):
         self.device = device
         # self.dropout_last = dropout_last
         
-        self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size, kernel_size=3, padding=1,bias=False),
+        self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size,3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
                                      nn.SiLU())
         fmap = base_fmap_size
@@ -2651,19 +2651,24 @@ class UnetModel(nn.Module):
         # encoder
         for i in range(4):
             drpout = None if i<6 else 0.1
-            self.encoder.append(ResBlock(fmap, fmap+self.growth_value, time_embd_size=embd_size, is_encoder=True, device=self.device, dropout=drpout))
+            self.encoder.append(ResBlock(fmap, fmap+self.growth_value, 
+                                         time_embd_size=embd_size, 
+                                         is_encoder=True, 
+                                         device=self.device, 
+                                         dropout=drpout))
             fmap +=self.growth_value
         # decoder
         for i in range(4):
             drpout = None if i<6 else 0.1
             # likewise instead of dividing by 2, lets subtract
-            self.decoder.append(ResBlock(fmap, fmap-self.growth_value, time_embd_size=embd_size, is_encoder=False, device=self.device, dropout=drpout))
+            self.decoder.append(ResBlock(fmap, fmap-self.growth_value, 
+                                         time_embd_size=embd_size, 
+                                         is_encoder=False, 
+                                         device=self.device, 
+                                         dropout=drpout))
             fmap -=self.growth_value
         # print(f'{self.encoder=}')
         # print(f'{self.decoder=}')
-        #!todo: .add bn and relu to final_conv -
-        #!todo: make final_conv deeper, first conv(fmap,fmap//2),bn,relu, cnn instead of cnn
-        #       so its not downsampled drastically all of a sudden, and also a nonlinearityis usedaswell
         #!todo: then add more layers to block so we dont downsample at a rapid pace
         #!todo: then test if all is ok, and merge, but before that test these separately
         # instead of just a single conv layer that produces our final shape, we can use a deeper block
@@ -2671,18 +2676,23 @@ class UnetModel(nn.Module):
         # result and faster convergence. (we achieve the same loss at nearly one third of the epochs)
         # sidenote: removing the bn from the final_conv, and make it like this ( and use silo), 
         # increased our convergence speed by nearly 3 folds!
-        self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3, stride=1, padding=1, bias=False),
+        self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3,padding=1, bias=False),
+                                        #!todo: maybe we want to remove this
                                         nn.BatchNorm2d(fmap//2),
                                         nn.SiLU(),
                                         # note that we dont use any bn or act here, using bn
                                         # just hinders the convergence, think about it, we want
                                         # specific distribution for our images/noise and certainly
-                                        # dont want to take all images/noisy inputs in our batch to influence our
-                                        # current image/noise, remember that unet tries to generate the
-                                        # noise we added to our image.our noise for each sample is different
-                                        # so it makes sense not to distort it with the stats(mean/var)
-                                        # of the whole batch!
-                                        nn.Conv2d(fmap//2, in_channels, kernel_size=3, stride=1, padding=1, bias=False)
+                                        # dont want to take all images/noisy inputs in our batch  
+                                        # to influence our current image/noise, remember that unet 
+                                        # tries to generate the noise we added to our image.
+                                        # our noise for each sample is different so it makes sense
+                                        # not to distort it with the stats(mean/var) of the whole 
+                                        # batch! this is especially the case for more complex data
+                                        # such as natural images of the cifar10 dataset. having a 
+                                        # bn after this conv just wont allow for meaningful generation!
+                                        # even for as many as 2200 epochs!
+                                        nn.Conv2d(fmap//2,in_channels,kernel_size=3,padding=1,bias=False)
                                         )
         
     def forward(self, input_images, timesteps):
@@ -2702,12 +2712,16 @@ class UnetModel(nn.Module):
         out = self.final_conv(out)
         # use tanh to make the values be in range -1,1
         # as our inputs range is -1,1
-        return F.tanh(out)
+        # todo: test without tanh at the end and see if that affects anything in any way
+        # by removing this tanh, our loss in cifar10, with 10k imgs, starts at 0.07 instead 
+        # of 0.3530!(image was resized to 128x128 instead of 32x32(which becomes 0.15) bytheway) and the patterns are much more visible 
+        # return F.tanh(out)
+        return out
 
 x = torch.randn(size=(3,1,32,32))
 m = UnetModel()
 m(x,t).shape
-print(m) 
+# print(m) 
 # lets create our class
 class DiffusionMnist(nn.Module):
     def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, device = 'cpu') -> None:
@@ -2718,7 +2732,7 @@ class DiffusionMnist(nn.Module):
         self.num_timesteps = num_timesteps
         self.device = device
         
-        self.unet_model = UnetModel(in_channels=in_channels, base_fmap_size=base_fmap_size, embd_size=embd_size, device=device)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
         self._init_parameters()
@@ -2790,7 +2804,7 @@ class DiffusionMnist(nn.Module):
         # restore the model status
         if is_training:
             model.train()
-            
+
     @torch.no_grad()
     def _sample(self, input_images, timesteps):
         # Check whether input_images is a batch of images or a single one
@@ -2886,45 +2900,65 @@ class DiffusionMnist(nn.Module):
         # normalize the image to be in range (0-1) since
         # matplotlib uses 0-1 for floats and 0-255 for int
         # images. we just reverse the process we used for converting
-        # 0-1 to (-1,1) range
-        # print(f'img_grid range: ({img_grid.min()}, {img_grid.max()})')
+        # (0-1) to (-1,1).
+        # rescale the image to 0-1 range
         img_grid = (img_grid+1)/2
-        # print(f'img_grid range: ({img_grid.min()}, {img_grid.max()})') 
         return img_grid
 
 # now lets grab our data
-def get_dataset(name='mnist'):
-    transforms = torchvision.transforms.Compose([tfms.Resize(32),
-                                                tfms.ToTensor(),
-                                                # rescale the input to the -1,1 range,
-                                                # !its important to get good result
-                                                tfms.Lambda(lambda x: x*2-1)])
+def get_dataset(name='mnist',size=32, mode='val', transforms=None):
+    """returns the dataloader object for the specified dataset.
+
+    Args:
+        name (str, optional): name of the dataset to load('mnist,cifar10'). Defaults to 'mnist'.
+        size (int, optional): image to be resized to. Defaults to 32.
+        mode (str, optional): specifies how the dataset to be retrieved. the modes include
+        ['train', 'val', 'both']. Defaults to 'val'.
+
+    Returns:
+        DataLoader: returns a Dataloader
+    """
+    if transforms is None:
+        transforms = torchvision.transforms.Compose([tfms.Resize(size),
+                                                    tfms.ToTensor(),
+                                                    # rescale the input to the -1,1 range,
+                                                    # !its important to get good result
+                                                    tfms.Lambda(lambda x: x*2-1)
+                                                    ])
     if name.lower() in 'mnist':
         # we can test mnist and then other datasets such as cifar10 etc 
         dt_tr = torchvision.datasets.MNIST(f'{fldr}/data',True, transform=transforms, download=True )
         dt_val = torchvision.datasets.MNIST(f'{fldr}/data',False, transform=transforms, download=True)
+    
     elif name.lower() in 'cifar10':
         dt_tr = torchvision.datasets.CIFAR10(f'{fldr}/data',True, transform=transforms, download=True )
         dt_val = torchvision.datasets.CIFAR10(f'{fldr}/data',False, transform=transforms, download=True )
+    
     elif name.lower() in 'stanfordcars':# cars
         # issue https://github.com/pytorch/vision/issues/7545 dataset is no more availabe!
         dt_tr = torchvision.datasets.StanfordCars(f'{fldr}/data',split='train', transform=transforms, download=True )
         dt_val = torchvision.datasets.StanfordCars(f'{fldr}/data',split='test', transform=transforms, download=True )
+    
     else:
         raise Exception(f'Unknown dataset name ({name}) entered')
-    #concat the train/val splits 
-    return torch.utils.data.ConcatDataset([dt_tr, dt_val])
+    
+    if 'train' == mode:
+        return dt_tr
+    elif 'val' == mode:
+        return dt_val
+    elif 'both' == mode:
+        # concat the train/val splits 
+        return torch.utils.data.ConcatDataset([dt_tr, dt_val])
+    else:
+        raise Exception(f"Unknown mode ({name}) entered.(valid modes are ['train','val','both'])")
 
-dataset_name = 'cifar'
-dataset = get_dataset(dataset_name)
-
-batch_size = 256
-num_workers = 8
-# set drop_last=True so, the batch sizes all are the same
-dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, 
-                                         num_workers=num_workers, 
-                                         pin_memory=True,
-                                         drop_last=False)
+def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
+    # set drop_last=True so, the batch sizes all are the same
+    return torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size,
+                                        shuffle=True, 
+                                        num_workers=num_workers, 
+                                        pin_memory=True,
+                                        drop_last=drop_last)
 
 # now let us train
 #fp16 sometimes mess with the results, and causes high loss! 
@@ -2935,27 +2969,39 @@ dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size,
 # minutes to reach 80 epochs (each epoch takes around 4 minutes
 # without fp16 eacy epoch takes around 7 minutes)
 use_fp16=True
-epochs = 3000
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+dataset_name = 'cifar'
+load_checkpoint = False
+checkpoint_name = f'diffusion_{dataset_name}.pth'
+
+batch_size = 32
+num_workers = 8
+epochs = 6000
 epoch_start=0
+step_size=7000
+interval = 20
+
+# resize image
+image_size = 32
+dataset = get_dataset(dataset_name, size=image_size, mode='val')
 # !higher numbers like 800 seem not to perform well, at least in my limited experiments
-# needs more testing
-num_timesteps = 200
+# needs more testing, higher timestep seems to affect loss at least in cifar case
+num_timesteps = 400
 embd_size = 64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
-# work and results in noise and high loss (0.3793)
+# work and results in noise and high loss (0.3793) # 20-0.25
+# in cifar, with t=200, loss becomes nan in epoch 40, while with t=400 it goes strong
+# so I increased the t to 600, and started the training to see how it goes
+# with large lr like 0.001, if we dont use bn in the final_conv, we get nans.
+# with larger imagesize (i.e. 64) large lr like 0.001 causes nans! even with bn in fnal_con 
+# and even with t=800(32isok)
 lr = 0.0001
-interval = 20
+
 # mnist is 1 channel, and cifar10 is 3!
 in_channels = 1 if 'mnist' in dataset_name else 3
 base_fmap_size = 64
-
-load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}.pth'
-
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 model = DiffusionMnist(in_channels=in_channels, 
                        base_fmap_size=base_fmap_size,
                        embd_size=embd_size, 
@@ -2966,14 +3012,13 @@ optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
 # so I just set it at 3000 to mean donot change it! why use it then? to test with
 # different cases! feel free to choose and play with other schedulers and optimizers
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3000,gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size,gamma=0.1)
 scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
 
 # calculate model parameters
-num_params = np.sum(p.numel() for p in model.parameters())
-num_params_enc = np.sum(p.numel() for p in model.unet_model.encoder.parameters())
-num_params_dec = np.sum(p.numel() for p in model.unet_model.decoder.parameters())
-
+num_params = np.sum([p.numel() for p in model.parameters()])
+num_params_enc = np.sum([p.numel() for p in model.unet_model.encoder.parameters()])
+num_params_dec = np.sum([p.numel() for p in model.unet_model.decoder.parameters()])
 
 if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     checkpoint = torch.load(f"{fldr}/{checkpoint_name}")
@@ -2985,18 +3030,21 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     scheduler.load_state_dict(checkpoint["scheduler"])
 
 print(f'running on    : {device}/{model.device}')
+print(f'dataset length: {len(dataset):,}')
+print(f'image size    : {image_size}')
+print(f'in_channels   : {in_channels}')
+print(f'base_fmap_size: {base_fmap_size}')
 print(f'checkpointname: {checkpoint_name}')
 print(f'is resumed    : {load_checkpoint}')
 print(f'uses FP16     : {use_fp16}')
+print(f'batch_size    : {batch_size}')
 print(f'num_epochs    : {epochs}')
 print(f'epoch_start   : {epoch_start}')
 print(f'interval      : {interval}')
 print(f'n_timestep    : {model.num_timesteps}')
 print(f'embd_size     : {model.embd_size}')
-print(f'batch_size    : {batch_size}')
 print(f'learning_rate : {lr}')
-print(f'in_channels   : {in_channels}')
-print(f'base_fmap_size: {base_fmap_size}')
+print(f'step_size     : {step_size}')
 print(f'model n_params: {num_params:,}')
 print(f'enc n_params  : {num_params_enc:,}')
 print(f'dec n_params  : {num_params_dec:,}')
@@ -3004,21 +3052,22 @@ print(f'dec n_params  : {num_params_dec:,}')
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
     model.train()
-    for i, (imgs,_) in tqdm(enumerate(dataloader)):
+    for i, (imgs,_) in tqdm(enumerate(get_dataloader(dataset,
+                                                     batch_size=batch_size,
+                                                     num_workers=num_workers))):
         # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
         # but it only works at the tensor creation time! i.e. before a tensor is created
         # ithas to be called.
         with torch.cuda.amp.autocast(enabled=use_fp16):
             imgs = imgs.to(model.device)
             # pick a timestep
-            # t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
-             
+            t = torch.randint(low=0, high=num_timesteps, size=(imgs.size(0),),device=device).long()
             # making the times close to the end more probable
             # instead of using a uniform distribution for taking the t
             # we instead pick the ones with higher probablities (which means
             # the ones at the very end have higher probabilities)
-            probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
-            t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
+            # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
+            # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
             loss = F.l1_loss(predicted_noises, noises)
 
@@ -3029,17 +3078,17 @@ for epoch in tqdm(range(epoch_start, epochs)):
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            # scheduler.step()
-        
+    
+    scheduler.step()
     if epoch%interval==0:
         with torch.cuda.amp.autocast(enabled=use_fp16):
             model.eval()
             print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
             model.display_sample(input_channel=model.in_channels,
-                                batch_size=64,
-                                image_height=32,
-                                image_width=32,
-                                num_images=20,
+                                batch_size=4,
+                                image_height=image_size,
+                                image_width=image_size,
+                                num_images=10,
                                 fig_size=(64,32),
                                 title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
             torch.save({"epoch":epoch,
@@ -3067,11 +3116,11 @@ for epoch in tqdm(range(epoch_start, epochs)):
 # so I lowered the lr again. followed by removing mean/std etc
 #%%
 model.display_sample(input_channel=model.in_channels,
-                    batch_size=64,
-                    image_height=32,
-                    image_width=32,
-                    num_images=20,
-                    fig_size=(256,128),
+                    batch_size=1,
+                    image_height=image_size,
+                    image_width=image_size,
+                    num_images=10,
+                    fig_size=(128,64),
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
 
