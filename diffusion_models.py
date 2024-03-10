@@ -2498,6 +2498,7 @@ from typing import Tuple
 # lets import what we need
 import sys,os,math,random
 from pathlib import Path
+from PIL import Image
 import numpy as np
 from tqdm import tqdm
 # from tqdm.notebook import tqdm
@@ -2541,6 +2542,11 @@ class SinusoidalPositionalEncoding(nn.Module):
             pos_vec[:,1::2] = torch.cos(positions * div_term)
             return pos_vec
 
+class Swish(nn.Module):
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+
+
 # we need a block to do conv on the images and timesteps
 # we can do this using functions, but a class/module form
 # is more prefered
@@ -2581,12 +2587,17 @@ class ResBlock(nn.Module):
             # we can use ksize=4 with stride=2 pad=1 or ksize=2 with stride=2 and padding=0 to double the fmap size
             # the difference between them is that the larger kernel size, results in a smoother output, and its
             # more common in generative models.
-            self.conv = nn.Sequential(nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
+            #! use upsample layer insteda of contransposed, 
+            self.conv = nn.Sequential(
+                                      nn.Upsample(scale_factor=2),
+                                      nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      # nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
                                       # we use a separate conv layer becasue contransposed is usually only used for upsampling
                                       # the learning part happens in the normal conv layer
-                                      nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      # nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
-                                      act)
+                                      act
+                                      )
 
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       nn.Linear(self.time_embd_size, out_channels),
@@ -2640,7 +2651,7 @@ class UnetModel(nn.Module):
         
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size,3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
-                                     nn.SiLU())
+                                    nn.SiLU())
         fmap = base_fmap_size
         
         self.encoder = nn.ModuleList()
@@ -2712,9 +2723,9 @@ class UnetModel(nn.Module):
         out = self.final_conv(out)
         # use tanh to make the values be in range -1,1
         # as our inputs range is -1,1
-        # todo: test without tanh at the end and see if that affects anything in any way
         # by removing this tanh, our loss in cifar10, with 10k imgs, starts at 0.07 instead 
         # of 0.3530!(image was resized to 128x128 instead of 32x32(which becomes 0.15) bytheway) and the patterns are much more visible 
+        # this also is the case for mnist. tanh just destroys the output! for somereason!
         # return F.tanh(out)
         return out
 
@@ -2723,16 +2734,254 @@ m = UnetModel()
 m(x,t).shape
 # print(m) 
 # lets create our class
+
+
+# import math
+# import torch
+# from torch import nn
+# from torch.nn import init
+# from torch.nn import functional as F
+
+# class Swish(nn.Module):
+#     def forward(self, x):
+#         return x * torch.sigmoid(x)
+
+# class TimeEmbedding(nn.Module):
+#     def __init__(self, T, d_model, dim):
+#         assert d_model % 2 == 0
+#         super().__init__()
+#         emb = torch.arange(0, d_model, step=2) / d_model * math.log(10000)
+#         emb = torch.exp(-emb)
+#         pos = torch.arange(T).float()
+#         emb = pos[:, None] * emb[None, :]
+#         assert list(emb.shape) == [T, d_model // 2]
+#         emb = torch.stack([torch.sin(emb), torch.cos(emb)], dim=-1)
+#         assert list(emb.shape) == [T, d_model // 2, 2]
+#         emb = emb.view(T, d_model)
+
+#         self.timembedding = nn.Sequential(
+#             nn.Embedding.from_pretrained(emb),
+#             nn.Linear(d_model, dim),
+#             Swish(),
+#             nn.Linear(dim, dim),
+#         )
+#         self.initialize()
+
+#     def initialize(self):
+#         for module in self.modules():
+#             if isinstance(module, nn.Linear):
+#                 init.xavier_uniform_(module.weight)
+#                 init.zeros_(module.bias)
+
+#     def forward(self, t):
+#         emb = self.timembedding(t)
+#         return emb
+
+# class DownSample(nn.Module):
+#     def __init__(self, in_ch):
+#         super().__init__()
+#         self.main = nn.Conv2d(in_ch, in_ch, 3, stride=2, padding=1)
+#         self.initialize()
+
+#     def initialize(self):
+#         init.xavier_uniform_(self.main.weight)
+#         init.zeros_(self.main.bias)
+
+#     def forward(self, x, temb):
+#         x = self.main(x)
+#         return x
+
+# class UpSample(nn.Module):
+#     def __init__(self, in_ch):
+#         super().__init__()
+#         self.main = nn.Conv2d(in_ch, in_ch, 3, stride=1, padding=1)
+#         self.initialize()
+
+#     def initialize(self):
+#         init.xavier_uniform_(self.main.weight)
+#         init.zeros_(self.main.bias)
+
+#     def forward(self, x, temb):
+#         _, _, H, W = x.shape
+#         x = F.interpolate(
+#             x, scale_factor=2, mode='nearest')
+#         x = self.main(x)
+#         return x
+
+# class AttnBlock(nn.Module):
+#     def __init__(self, in_ch):
+#         super().__init__()
+#         self.group_norm = nn.GroupNorm(32, in_ch)
+#         self.proj_q = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+#         self.proj_k = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+#         self.proj_v = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+#         self.proj = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+#         self.initialize()
+
+#     def initialize(self):
+#         for module in [self.proj_q, self.proj_k, self.proj_v, self.proj]:
+#             init.xavier_uniform_(module.weight)
+#             init.zeros_(module.bias)
+#         init.xavier_uniform_(self.proj.weight, gain=1e-5)
+
+#     def forward(self, x):
+#         B, C, H, W = x.shape
+#         h = self.group_norm(x)
+#         q = self.proj_q(h)
+#         k = self.proj_k(h)
+#         v = self.proj_v(h)
+
+#         q = q.permute(0, 2, 3, 1).view(B, H * W, C)
+#         k = k.view(B, C, H * W)
+#         w = torch.bmm(q, k) * (int(C) ** (-0.5))
+#         assert list(w.shape) == [B, H * W, H * W]
+#         w = F.softmax(w, dim=-1)
+
+#         v = v.permute(0, 2, 3, 1).view(B, H * W, C)
+#         h = torch.bmm(w, v)
+#         assert list(h.shape) == [B, H * W, C]
+#         h = h.view(B, H, W, C).permute(0, 3, 1, 2)
+#         h = self.proj(h)
+
+#         return x + h
+
+# class ResBlock(nn.Module):
+#     def __init__(self, in_ch, out_ch, tdim, dropout, attn=False):
+#         super().__init__()
+#         self.block1 = nn.Sequential(
+#             nn.GroupNorm(32, in_ch),
+#             Swish(),
+#             nn.Conv2d(in_ch, out_ch, 3, stride=1, padding=1),
+#         )
+#         self.temb_proj = nn.Sequential(
+#             Swish(),
+#             nn.Linear(tdim, out_ch),
+#         )
+#         self.block2 = nn.Sequential(
+#             nn.GroupNorm(32, out_ch),
+#             Swish(),
+#             nn.Dropout(dropout),
+#             nn.Conv2d(out_ch, out_ch, 3, stride=1, padding=1),
+#         )
+#         if in_ch != out_ch:
+#             self.shortcut = nn.Conv2d(in_ch, out_ch, 1, stride=1, padding=0)
+#         else:
+#             self.shortcut = nn.Identity()
+#         if attn:
+#             self.attn = AttnBlock(out_ch)
+#         else:
+#             self.attn = nn.Identity()
+#         self.initialize()
+
+#     def initialize(self):
+#         for module in self.modules():
+#             if isinstance(module, (nn.Conv2d, nn.Linear)):
+#                 init.xavier_uniform_(module.weight)
+#                 init.zeros_(module.bias)
+#         init.xavier_uniform_(self.block2[-1].weight, gain=1e-5)
+
+#     def forward(self, x, temb):
+#         h = self.block1(x)
+#         h += self.temb_proj(temb)[:, :, None, None]
+#         h = self.block2(h)
+
+#         h = h + self.shortcut(x)
+#         h = self.attn(h)
+#         return h
+
+# class UNet(nn.Module):
+#     def __init__(self, T, ch, ch_mult, attn, num_res_blocks, dropout):
+#         super().__init__()
+#         assert all([i < len(ch_mult) for i in attn]), 'attn index out of bound'
+#         tdim = ch * 4
+#         self.time_embedding = TimeEmbedding(T, ch, tdim)
+
+#         self.head = nn.Conv2d(3, ch, kernel_size=3, stride=1, padding=1)
+#         self.downblocks = nn.ModuleList()
+#         chs = [ch]  # record output channel when dowmsample for upsample
+#         now_ch = ch
+#         for i, mult in enumerate(ch_mult):
+#             out_ch = ch * mult
+#             for _ in range(num_res_blocks):
+#                 self.downblocks.append(ResBlock(
+#                     in_ch=now_ch, out_ch=out_ch, tdim=tdim,
+#                     dropout=dropout, attn=(i in attn)))
+#                 now_ch = out_ch
+#                 chs.append(now_ch)
+#             if i != len(ch_mult) - 1:
+#                 self.downblocks.append(DownSample(now_ch))
+#                 chs.append(now_ch)
+
+#         self.middleblocks = nn.ModuleList([
+#             ResBlock(now_ch, now_ch, tdim, dropout, attn=True),
+#             ResBlock(now_ch, now_ch, tdim, dropout, attn=False),
+#         ])
+
+#         self.upblocks = nn.ModuleList()
+#         for i, mult in reversed(list(enumerate(ch_mult))):
+#             out_ch = ch * mult
+#             for _ in range(num_res_blocks + 1):
+#                 self.upblocks.append(ResBlock(
+#                     in_ch=chs.pop() + now_ch, out_ch=out_ch, tdim=tdim,
+#                     dropout=dropout, attn=(i in attn)))
+#                 now_ch = out_ch
+#             if i != 0:
+#                 self.upblocks.append(UpSample(now_ch))
+#         assert len(chs) == 0
+
+#         self.tail = nn.Sequential(
+#             nn.GroupNorm(32, now_ch),
+#             Swish(),
+#             nn.Conv2d(now_ch, 3, 3, stride=1, padding=1)
+#         )
+#         self.initialize()
+
+#     def initialize(self):
+#         init.xavier_uniform_(self.head.weight)
+#         init.zeros_(self.head.bias)
+#         init.xavier_uniform_(self.tail[-1].weight, gain=1e-5)
+#         init.zeros_(self.tail[-1].bias)
+
+#     def forward(self, x, t):
+#         # Timestep embedding
+#         temb = self.time_embedding(t)
+#         # Downsampling
+#         h = self.head(x)
+#         hs = [h]
+#         for layer in self.downblocks:
+#             h = layer(h, temb)
+#             hs.append(h)
+#         # Middle
+#         for layer in self.middleblocks:
+#             h = layer(h, temb)
+#         # Upsampling
+#         for layer in self.upblocks:
+#             if isinstance(layer, ResBlock):
+#                 h = torch.cat([h, hs.pop()], dim=1)
+#             h = layer(h, temb)
+#         h = self.tail(h)
+
+#         assert len(hs) == 0
+#         return h
+    
+# batch_size = 8
+# model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
+# x = torch.randn(batch_size, 3, 32, 32)
+# t = torch.randint(1000, (batch_size, ))
+# y = model(x, t)
+
 class DiffusionMnist(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, device = 'cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, linear_scheduler=True, device = 'cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.embd_size = embd_size
         self.num_timesteps = num_timesteps
         self.device = device
+        self.linear_scheduler = linear_scheduler
         
         self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
         self._init_parameters()
@@ -2811,19 +3060,34 @@ class DiffusionMnist(nn.Module):
         #ideally we would refactor dsplayimage and this method so that display image uses this
         #this method would take a previous_noise and thus would be used inside the loop and yeild
         #the result. but for now, im adding this like this
+        # note that the timestep should not be exactly the same as  the number of timesteps, that is
+        # since our arrays are 0 based, we can have 0 up to num_timsteps-1 only. if we try to get
+        # a value = num_timesteps, we will face weird error like "RuntimeError: GET was unable to find an engine to execute this computation"
+        # which is not really showing the real cause of error especially when dealing with autocast and fp16
+        # training
+        # assert timestep<self.num_timesteps, f'Given timestep is too large!. the given timestep({timestep}) must be less than the total number of timesteps({self.num_timesteps})'
         # set the model in eval mode first
         is_training=model.training
         if model.training:
             model.eval()
+        img=None
         with torch.device(self.device):
-            # create noise 
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
-            timestep = torch.tensor([timestep], dtype=torch.long)
-            noise = self._sample(noise, timestep)
-            # This is to maintain the natural range of the distribution
-            # its important, or otherwise we get a very blury almost all noise image
-            noise = torch.clamp(noise, -1.0, 1.0)
-            img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+            # set a stepsize so we display only num_images intermediate images for our diffusion process
+            # step_size = self.num_timesteps//10
+            # now reverse the timestep in denoising 
+            for i in range(0, self.num_timesteps)[::-1]:
+                # create noise
+                t = torch.tensor([i], dtype=torch.long)
+                noise = self._sample(noise, t)
+                # This is to maintain the natural range of the distribution
+                # its important, or otherwise we get a very blury almost all noise image
+                noise = torch.clamp(noise, -1.0, 1.0)
+                if i==timestep:
+                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+                    # plt.imshow(img)
+                    # plt.show()
+                    break
         # restore the model status
         if is_training:
             model.train()
@@ -2865,13 +3129,17 @@ class DiffusionMnist(nn.Module):
             posterior_variance_t = self._get_value_for_timestep_t(self.posterior_variance, timesteps, is_batch)
             return model_mean + torch.sqrt(posterior_variance_t)*noise
 
-    def _init_parameters(self):
+    def _init_parameters(self,beta_start=0.001, beta_end=0.02):
         # β
-        self.betas = self._create_betas_linear()
+        if self.linear_scheduler:
+            self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
+        else:
+            self.betas = self._create_betas_cosine(self.num_timesteps)
+            
         # α 
         self.alphas = 1.0 - self.betas
         # ̅α 
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=-1).to(self.device)
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0).to(self.device)
         # √̅α
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         # √1-̅α 
@@ -2895,6 +3163,20 @@ class DiffusionMnist(nn.Module):
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
         return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
+
+    @torch.no_grad()
+    def _create_betas_cosine(self, timesteps, s = 0.008):
+        """
+        cosine schedule
+        as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
+        ref: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/beb2f2d8dd9b4f2bd5be4719f37082fe061ee450/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L387
+        """
+        steps = timesteps + 1
+        x = torch.linspace(0, timesteps, steps, device=self.device)
+        alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return torch.clip(betas, 0, 0.999)
 
     @torch.no_grad()
     def _get_value_for_timestep_t(self, tensors:torch.Tensor, timestep_indexes:torch.Tensor, use_batch=True):
@@ -2994,11 +3276,14 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 # without fp16 eacy epoch takes around 7 minutes)
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-dataset_name = 'mnist'
-
+dataset_name = 'cifar'
 load_checkpoint = False
 checkpoint_name = f'diffusion_{dataset_name}.pth'
-
+# note large batchsize such as 256 lead to wrose result and much slower convergence!
+# try batchsize of 32 and 256 for example and see the very first epochs how the results
+# show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
+# note that too small of a batch also doesnt work, it results in more noisy output?! try 
+# batchsize of 2 for example and see what I mean.
 batch_size = 32
 num_workers = 8
 epochs = 6000
@@ -3007,20 +3292,29 @@ step_size=7000
 interval = 20
 
 # resize image
-image_size = 32
-dataset = get_dataset(dataset_name, size=image_size, mode='val')
+image_size = 64
+transforms2 = torchvision.transforms.Compose([tfms.Resize(image_size),
+                                              #tfms.Grayscale(),
+                                              tfms.ToTensor(),
+                                              # rescale the input to the -1,1 range,
+                                              # !its important to get good result
+                                              tfms.Lambda(lambda x: x*2-1)
+                                              ])
+dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=transforms2)
 # !higher numbers like 800 seem not to perform well, at least in my limited experiments
 # needs more testing, higher timestep seems to affect loss at least in cifar case
 # 200 works prefect for mnist
 # I noticed with a low timestep_num like 100, the generation takes longer
 # to generate good images, when we used num_timesteps=200, as early 
-# as 20 epochs we had prefect numbers formed, however, when t=100, 
+# as 40 epochs we had prefect numbers formed, however, when t=100, 
 # even til epoch 80 we had giberish yet clean/smooth images (this shows
 # the importance of timesteps. the higher the timesteps, the better the 
 # results the earlier! likewise it affects time loss as well. 
 # so for mnist, a timestep of 200/400 seem like a good choice
-num_timesteps = 200
-embd_size = 64
+# for cifar seems a higher number is a btter choice, like 400/800
+#todo: make model larger
+num_timesteps = 400
+embd_size = 32
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3038,8 +3332,16 @@ base_fmap_size = 64
 model = DiffusionMnist(in_channels=in_channels, 
                        base_fmap_size=base_fmap_size,
                        embd_size=embd_size, 
-                       num_timesteps=num_timesteps, 
+                       num_timesteps=num_timesteps,
+                       linear_scheduler=True,
                        device=device)
+# sidenote: recall 
+# the variance schedule beta(β) tells us how much noise we want to add in each time steps.
+# we linearly increase it until we reach a maximum value of 0.02. if we wouldnt increase it at all,
+# it would take for ever to endup with pure noise (full noise image). therefore the authors
+# defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
+# we get to keep about an image when transitioning to another/next image.
+model._init_parameters(beta_start=0.0001,beta_end=0.02)
 
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -3113,20 +3415,27 @@ for epoch in tqdm(range(epoch_start, epochs)):
             scaler.update()
     
     scheduler.step()
-    # with torch.cuda.amp.autocast(enabled=use_fp16):
-    #     # save image for each epoch
-    #     model.eval()
-    #     img_gen = model.gen_images(model.num_timesteps,
-    #                                model.in_channels, 
-    #                                batch_size=9,
-    #                                image_height=image_size,
-    #                                image_width=image_size)
-    #     fname = f"{fldr}/imgs_gen/{dataset_name}_img_{epoch}.jpg"
-    #     Image.fromarray(img_gen).save(fname)
+       
     
     if epoch%interval==0:
         with torch.cuda.amp.autocast(enabled=use_fp16):
             model.eval()
+            # save image for each epoch
+            img_gen = model.gen_images(0,
+                                    model.in_channels, 
+                                    batch_size=64,
+                                    image_height=image_size,
+                                    image_width=image_size)
+            dir_path = f"{fldr}/imgs_gen/"
+            fname = f"{dataset_name}_img_{epoch}.jpg"
+            if not os.path.exists(dir_path):
+                os.mkdir(dir_path)
+            # we need to convert our 0-1 range image to a proper format pil supports
+            # otherwise we get Cannot handle this data type: (1, 1, 3), <f4 which simply
+            # means, our image has 32-bit floating point numbers in it. pil requires
+            # uint8 numbers, i.e. 0-255. so to convert our 0-1 range to 0-255 we simply
+            # do this (img*255).astype(np.unit8)
+            Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
             print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
             model.display_sample(input_channel=model.in_channels,
                                 batch_size=64,
@@ -3167,9 +3476,30 @@ model.display_sample(input_channel=model.in_channels,
                     fig_size=(64,32),
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
+#%%
+from PIL import Image
+from pathlib import Path
 
-
-
+mod = DiffusionMnist(in_channels=in_channels, 
+                       base_fmap_size=base_fmap_size,
+                       embd_size=embd_size, 
+                       num_timesteps=num_timesteps,
+                       linear_scheduler=True,
+                       device='cuda')
+mod.to('cuda')
+mod.eval()
+img_gen = mod.gen_images(1,input_channel=in_channels)
+print(f'{img_gen.shape=}')
+dir_path = f"{fldr}/imgs_gen/"
+fname = f"{dataset_name}_img_{3}.jpg"
+if not os.path.exists(dir_path):
+    os.mkdir(dir_path)
+# we need to convert our 0-1 range image to a proper format pil supports
+# otherwise we get Cannot handle this data type: (1, 1, 3), <f4 which simply
+# means, our image has 32-bit floating point numbers in it. pil requires
+# uint8 numbers, i.e. 0-255. so to convert our 0-1 range to 0-255 we simply
+# do this (img*255).astype(np.unit8)
+Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
 
 
 
