@@ -2616,6 +2616,9 @@ class ResBlock(nn.Module):
                                # inference and convergence speed as well
                                #nn.BatchNorm2d(out_channels)
                               )
+        self.conv2 = nn.Sequential(nn.Conv2d(out_channels, out_channels,3,1,1,bias=False ),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.SiLU())
         self.drpout = nn.Identity() if self.drpout is None else nn.Dropout2d(self.drpout)
 
     def forward (self, x, t):
@@ -2625,6 +2628,8 @@ class ResBlock(nn.Module):
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
         output = self.conv(x) + time_embeddings[..., None,None]
+        #additional operation 
+        output = self.conv2(output) 
         #! some people add the timeembedding to the skip_connection
         identity = self.h(identity)
         # print(f'{output.shape=} {identity.shape=}')
@@ -2660,8 +2665,9 @@ class UnetModel(nn.Module):
         # this will result in a much smaller model and the roughly the same performance
         self.growth_value=  128#64
         # encoder
-        for i in range(4):
-            drpout = None if i<6 else 0.1
+        for i in range(5):
+            # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
+            drpout = None if i<2 else 0.1
             self.encoder.append(ResBlock(fmap, fmap+self.growth_value, 
                                          time_embd_size=embd_size, 
                                          is_encoder=True, 
@@ -2669,8 +2675,8 @@ class UnetModel(nn.Module):
                                          dropout=drpout))
             fmap +=self.growth_value
         # decoder
-        for i in range(4):
-            drpout = None if i<6 else 0.1
+        for i in range(5):
+            drpout = None if i<2 else 0.1
             # likewise instead of dividing by 2, lets subtract
             self.decoder.append(ResBlock(fmap, fmap-self.growth_value, 
                                          time_embd_size=embd_size, 
@@ -3267,6 +3273,24 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
                                         drop_last=drop_last)
 
 # now let us train
+# - I made the network larger, 5 blocks instead of 4/ 
+# - and also I added a second conv in the resblock 
+# - after the concat of conv and timeembdedding
+# - then trained the model and noticed our 54million model
+# - which has roughly the same parameter count for encoder and decoder
+# - started to generate pattern, but after some time the same pattern
+# - got replicated. signalling we may very well be overfitting so 
+# - now im using dropout layers at the end of all resblocks to see how it goes
+# - only the first two blocks dont have dropouts and we are using train+val this time
+# todo beofre that lets decrease timesteps to 800 and use no drpout, and use val to see how it performs
+# todo next we need to change betas_start = 0.0001 and see how it affects the result as well(did it+drp+val)
+# ok ok. now booth images
+# sidenotes:
+# Number of Timesteps: The number of timesteps in a diffusion model corresponds to the number of steps in the Markov chain that transitions from the data distribution to the noise distribution. A larger number of timesteps can potentially result in a more accurate approximation of the data distribution, but it also increases the computational cost and complexity of the model. If you’re finding that your model is not learning effectively or is producing identical images, reducing the number of timesteps could be worth trying. However, this is a hyperparameter that you would typically tune based on the performance of your model on a validation set.
+# Starting Value of Betas: The starting value of betas determines the amount of noise added in the first step of the diffusion process. A larger starting value means more noise is added initially, which could make the learning task more difficult for the model. On the other hand, a smaller starting value means less noise is added, which could make the learning task easier but might also result in less diverse generated images. Again, the optimal value for this hyperparameter can depend on your specific task and dataset, and it’s something you would typically tune based on model performance.
+
+
+
 #fp16 sometimes mess with the results, and causes high loss! 
 # I trained my best model without, so if something weird happens
 # disable the fp16 traininghere (it should work ok though so in case
@@ -3277,8 +3301,8 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
-load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}.pth'
+load_checkpoint = True
+checkpoint_name = f'diffusion_{dataset_name}980.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3292,7 +3316,7 @@ step_size=7000
 interval = 20
 
 # resize image
-image_size = 64
+image_size = 32
 transforms2 = torchvision.transforms.Compose([tfms.Resize(image_size),
                                               #tfms.Grayscale(),
                                               tfms.ToTensor(),
@@ -3300,6 +3324,7 @@ transforms2 = torchvision.transforms.Compose([tfms.Resize(image_size),
                                               # !its important to get good result
                                               tfms.Lambda(lambda x: x*2-1)
                                               ])
+
 dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=transforms2)
 # !higher numbers like 800 seem not to perform well, at least in my limited experiments
 # needs more testing, higher timestep seems to affect loss at least in cifar case
@@ -3312,9 +3337,15 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # results the earlier! likewise it affects time loss as well. 
 # so for mnist, a timestep of 200/400 seem like a good choice
 # for cifar seems a higher number is a btter choice, like 400/800
-#todo: make model larger
-num_timesteps = 400
-embd_size = 32
+#todo: make model larger, it worked and did better we ultimately reached 0.210 using mse loss
+#todo: and around 0.09xx from epoch 2600 we used mse loss and trained until 5480 epochs at which
+#todo point I ended the training because I used a lower dropout (0.05) and it overfitted the model
+#todo so it started repeating a single image so I gave up. prior to that it was starting to create 
+#todo much better images, but since it was slow, I lowered the lr to 0.00001 after 1072 epochs
+#next i plan on using 500 for timesteps and use attenstions to see if that makes anydifference
+#also I used val for cifar10 only
+num_timesteps = 800
+embd_size = 64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3324,7 +3355,8 @@ embd_size = 32
 # with large lr like 0.001, if we dont use bn in the final_conv, we get nans.
 # with larger imagesize (i.e. 64) large lr like 0.001 causes nans! even with bn in fnal_con 
 # and even with t=800(32isok)
-lr = 0.0001
+#after 1072 epochs
+lr = 0.00001
 
 # mnist is 1 channel, and cifar10 is 3!
 in_channels = 1 if 'mnist' in dataset_name else 3
@@ -3404,7 +3436,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
-            loss = F.l1_loss(predicted_noises, noises)
+            loss = F.mse_loss(predicted_noises, noises)
 
             losses.append(loss.item())
             optimizer.zero_grad()
@@ -3436,7 +3468,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # uint8 numbers, i.e. 0-255. so to convert our 0-1 range to 0-255 we simply
             # do this (img*255).astype(np.unit8)
             Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
-            print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f}')
+            print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f} | lr:{scheduler.get_last_lr()[-1]:.1e}')
             model.display_sample(input_channel=model.in_channels,
                                 batch_size=64,
                                 image_height=image_size,
