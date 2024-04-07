@@ -2496,12 +2496,15 @@ sample_plot_image(model,num_images=10, device=device)
 
 from typing import Tuple
 # lets import what we need
+import time 
+from datetime import datetime
 import sys,os,math,random,copy
 from pathlib import Path
 from PIL import Image
 import numpy as np
 from tqdm import tqdm
 # from tqdm.notebook import tqdm
+
 
 import torch
 # for pylance so we get autocomplete for submodules!
@@ -2984,7 +2987,7 @@ from torch.nn import functional as F
 from torch.utils import data
 from torchvision import datasets, transforms, utils
 from torchvision.transforms import functional as TF
-from tqdm.notebook import tqdm, trange
+# from tqdm.notebook import tqdm, trange
 
 # Utilities
 
@@ -3089,7 +3092,7 @@ class DFLX(nn.Module):
                                       nn.BatchNorm1d(embd_size),
                                       nn.SiLU())
         self.net = nn.Sequential(   # 32x32
-            ResConvBlock(in_channels , c, c),# 3+16+4
+            ResConvBlock(in_channels +embd_size, c, c),# 3+16+4
             ResConvBlock(c, c, c),
             SkipBlock([
                 nn.AvgPool2d(2),  # 32x32 -> 16x16
@@ -3120,13 +3123,27 @@ class DFLX(nn.Module):
         )
 
     def forward(self, input,t):
-        # tstep = self.time_mlp(t)
-        # timestep_embd = expand_to_planes(tstep, input.shape)
-        # print(f'{timestep_embd.shape=} {tstep.shape=}')
-        # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
-        # class_embed = expand_to_planes(self.class_embed(cond), input.shape)
-        return self.net(input)
-        # return self.net(torch.cat([input,timestep_embd], dim=1))
+        try:
+            tstep = self.time_mlp(t)
+            timestep_embd = expand_to_planes(tstep, input.shape)
+            # print(f'{input.shape=} {timestep_embd.shape=} {tstep.shape=}')
+            # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
+            # class_embed = expand_to_planes(self.class_embed(cond), input.shape)
+            # return self.net(input)
+            return self.net(torch.cat([input,timestep_embd], dim=1))
+        except Exception as exp:
+            tstep = self.time_mlp(t)
+            # timestep_embd = expand_to_planes(tstep, input.shape)
+            # print(tstep[..., None, None].shape) #(1,16,1,1)
+            # !becasue here we are trying to use a single timestep for a batch of images we fail
+            # at the expansion part, so here what I did (im not sure if its ok yet!) is to
+            # expand the batch dimension so we get the timesteps aligned for each image and see how it goes!
+            # hopefully its ok!
+            timestep_embd = tstep[..., None, None].repeat([input.shape[0], 1, input.shape[2], input.shape[3]])
+            # print(f'{input.shape=} {timestep_embd.shape=} {tstep.shape=}')
+            # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
+            return self.net(torch.cat([input,timestep_embd], dim=1))
+            
 
 #side note:
 # I only changed the architecture, and it improved the results drastically! 
@@ -3138,10 +3155,13 @@ class DFLX(nn.Module):
 # not that it lacks paramaters, but it can not process the input properly!(the discriminative power is not there)
 #al so the new model doesnt employ the unetarchi tecture the way we  created one, that is
 # theres no connection between encoder and decoders featuremaps, its just an ordinary
-# hour glass architecture! at epoch 200, we have vibrant images, just like cifar, however
+# hour glass architecture! at epoch 200/400, we have vibrant images, just like cifar, however
 # the composition isno t there, i.e. while the overall images are natural looking, thecon tent are demorphed!
 #not  yet properly formed. I guesswecan  a ttributed this to sampling/lack of conditioninga t this point
 # Next: add timestep information and see how that goes!
+# running with timestep with bn seems to make results very blury/grimish/grayish like before!
+# it may very well have been the addition of timesteps like this! that contributed to this issue
+# lets see how it goes!
 # 
 # Next revert to base model and use the new sampling method instead!
 
@@ -3491,7 +3511,7 @@ use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
 load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}_gdflx.pth'
+checkpoint_name = f'diffusion_{dataset_name}_newarch_with_ts.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3592,23 +3612,26 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     scaler.load_state_dict(checkpoint["scaler"])
     model_ema.unet_model.load_state_dict(checkpoint["model_ema"])
 
-print(f'running on    : {device}/{model.device}')
-print(f'dataset length: {len(dataset):,}')
-print(f'image size    : {image_size}')
-print(f'in_channels   : {in_channels}')
-print(f'base_fmap_size: {base_fmap_size}')
-print(f'checkpointname: {checkpoint_name}')
-print(f'is resumed    : {load_checkpoint}')
-print(f'uses FP16     : {use_fp16}')
-print(f'batch_size    : {batch_size}')
-print(f'num_epochs    : {epochs}')
-print(f'epoch_start   : {epoch_start}')
-print(f'interval      : {interval}')
-print(f'n_timestep    : {model.num_timesteps}')
-print(f'embd_size     : {model.embd_size}')
-print(f'learning_rate : {lr}')
-print(f'step_size     : {step_size}')
-print(f'model n_params: {num_params:,}')
+current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
+
+print(f'running on     : {device}/{model.device}')
+print(f'experiment date: {current_time}')
+print(f'dataset length : {len(dataset):,}')
+print(f'image size     : {image_size}')
+print(f'in_channels    : {in_channels}')
+print(f'base_fmap_size : {base_fmap_size}')
+print(f'checkpointname : {checkpoint_name}')
+print(f'is resumed     : {load_checkpoint}')
+print(f'uses FP16      : {use_fp16}')
+print(f'batch_size     : {batch_size}')
+print(f'num_epochs     : {epochs}')
+print(f'epoch_start    : {epoch_start}')
+print(f'interval       : {interval}')
+print(f'n_timestep     : {model.num_timesteps}')
+print(f'embd_size      : {model.embd_size}')
+print(f'learning_rate  : {lr}')
+print(f'step_size      : {step_size}')
+print(f'model n_params : {num_params:,}')
 # print(f'enc n_params  : {num_params_enc:,}')
 # print(f'dec n_params  : {num_params_dec:,}')
 
@@ -3645,7 +3668,6 @@ for epoch in tqdm(range(epoch_start, epochs)):
             scaler.update()
             
     scheduler.step()
-       
     
     if epoch%interval==0:
         with torch.cuda.amp.autocast(enabled=use_fp16):
@@ -3656,7 +3678,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
                                     batch_size=64,
                                     image_height=image_size,
                                     image_width=image_size)
-            dir_path = f"{fldr}/imgs_gen/"
+            dir_path = f"{fldr}/imgs_gen_{current_time}/"
             fname = f"{dataset_name}_img_{epoch}.jpg"
             if not os.path.exists(dir_path):
                 os.mkdir(dir_path)
