@@ -2627,10 +2627,10 @@ class ResBlock(nn.Module):
     def forward (self, x, t):
         identity = x
         # get time embeddigs 
-        time_embeddings = self.time_mlp(t)
+        # time_embeddings = self.time_mlp(t)
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
-        output = self.conv(x) + time_embeddings[..., None,None]
+        output = self.conv(x) #+ time_embeddings[..., None,None]
         #additional operation 
         output = self.conv2(output) 
         #! some people add the timeembedding to the skip_connection
@@ -3089,10 +3089,12 @@ class DFLX(nn.Module):
         # self.class_embed = nn.Embedding(10, 4)
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=embd_size, device=device),
                                       nn.Linear(embd_size, embd_size),
-                                      nn.BatchNorm1d(embd_size),
-                                      nn.SiLU())
+                                    #   nn.BatchNorm1d(embd_size),
+                                    #   nn.ReLU()
+                                      )
         self.net = nn.Sequential(   # 32x32
-            ResConvBlock(in_channels +embd_size, c, c),# 3+16+4
+            #!to use timebeding use in_channels+embd_size below
+            ResConvBlock(in_channels , c, c),# ResConvBlock(in_channels +embd_size, c, c)
             ResConvBlock(c, c, c),
             SkipBlock([
                 nn.AvgPool2d(2),  # 32x32 -> 16x16
@@ -3129,8 +3131,8 @@ class DFLX(nn.Module):
             # print(f'{input.shape=} {timestep_embd.shape=} {tstep.shape=}')
             # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
             # class_embed = expand_to_planes(self.class_embed(cond), input.shape)
-            # return self.net(input)
-            return self.net(torch.cat([input,timestep_embd], dim=1))
+            return self.net(input)
+            # return self.net(torch.cat([input,timestep_embd], dim=1))
         except Exception as exp:
             tstep = self.time_mlp(t)
             # timestep_embd = expand_to_planes(tstep, input.shape)
@@ -3142,8 +3144,8 @@ class DFLX(nn.Module):
             timestep_embd = tstep[..., None, None].repeat([input.shape[0], 1, input.shape[2], input.shape[3]])
             # print(f'{input.shape=} {timestep_embd.shape=} {tstep.shape=}')
             # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
-            return self.net(torch.cat([input,timestep_embd], dim=1))
-            
+            # return self.net(torch.cat([input,timestep_embd], dim=1))
+            return self.net(input)
 
 #side note:
 # I only changed the architecture, and it improved the results drastically! 
@@ -3162,7 +3164,9 @@ class DFLX(nn.Module):
 # running with timestep with bn seems to make results very blury/grimish/grayish like before!
 # it may very well have been the addition of timesteps like this! that contributed to this issue
 # lets see how it goes!
-# 
+# Ok I tested with timsetps, with bn and without it, with silu and relu, it doesnt make any difference
+# even without bn and without any activation functions, it just makes the output blury/ grayish
+# without timesteps, it just creates very vibrant images very quickly and very well!
 # Next revert to base model and use the new sampling method instead!
 
 class DiffusionMnist(nn.Module):
@@ -3175,8 +3179,8 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         
-        # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
-        self.unet_model = DFLX(in_channels, base_fmap_size, embd_size=embd_size)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        # self.unet_model = DFLX(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
@@ -3511,7 +3515,7 @@ use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
 load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}_newarch_with_ts.pth'
+checkpoint_name = f'diffusion_{dataset_name}_newarch_no_ts.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
