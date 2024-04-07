@@ -2496,7 +2496,7 @@ sample_plot_image(model,num_images=10, device=device)
 
 from typing import Tuple
 # lets import what we need
-import sys,os,math,random
+import sys,os,math,random,copy
 from pathlib import Path
 from PIL import Image
 import numpy as np
@@ -2976,6 +2976,175 @@ m(x,t).shape
 # t = torch.randint(1000, (batch_size, ))
 # y = model(x, t)
 
+from contextlib import contextmanager
+from copy import deepcopy
+import math
+
+from torch.nn import functional as F
+from torch.utils import data
+from torchvision import datasets, transforms, utils
+from torchvision.transforms import functional as TF
+from tqdm.notebook import tqdm, trange
+
+# Utilities
+
+@contextmanager
+def train_mode(model, mode=True):
+    """A context manager that places a model into training mode and restores
+    the previous mode on exit."""
+    modes = [module.training for module in model.modules()]
+    try:
+        yield model.train(mode)
+    finally:
+        for i, module in enumerate(model.modules()):
+            module.training = modes[i]
+
+
+def eval_mode(model):
+    """A context manager that places a model into evaluation mode and restores
+    the previous mode on exit."""
+    return train_mode(model, False)
+
+
+@torch.no_grad()
+def ema_update(model, averaged_model, decay):
+    """Incorporates updated model parameters into an exponential moving averaged
+    version of a model. It should be called after each optimizer step."""
+    model_params = dict(model.named_parameters())
+    averaged_params = dict(averaged_model.named_parameters())
+    assert model_params.keys() == averaged_params.keys()
+
+    for name, param in model_params.items():
+        averaged_params[name].mul_(decay).add_(param, alpha=1 - decay)
+
+    model_buffers = dict(model.named_buffers())
+    averaged_buffers = dict(averaged_model.named_buffers())
+    assert model_buffers.keys() == averaged_buffers.keys()
+
+    for name, buf in model_buffers.items():
+        averaged_buffers[name].copy_(buf)
+
+
+# Define the model (a residual U-Net)
+
+class ResidualBlock(nn.Module):
+    def __init__(self, main, skip=None):
+        super().__init__()
+        self.main = nn.Sequential(*main)
+        self.skip = skip if skip else nn.Identity()
+
+    def forward(self, input):
+        return self.main(input) + self.skip(input)
+
+
+class ResConvBlock(ResidualBlock):
+    def __init__(self, c_in, c_mid, c_out, dropout_last=True):
+        skip = None if c_in == c_out else nn.Conv2d(c_in, c_out, 1, bias=False)
+        super().__init__([
+            nn.Conv2d(c_in, c_mid, 3, padding=1),
+            nn.Dropout2d(0.1, inplace=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(c_mid, c_out, 3, padding=1),
+            nn.Dropout2d(0.1, inplace=True) if dropout_last else nn.Identity(),
+            nn.ReLU(inplace=True),
+        ], skip)
+
+
+class SkipBlock(nn.Module):
+    def __init__(self, main, skip=None):
+        super().__init__()
+        self.main = nn.Sequential(*main)
+        self.skip = skip if skip else nn.Identity()
+
+    def forward(self, input):
+        return torch.cat([self.main(input), self.skip(input)], dim=1)
+
+
+class FourierFeatures(nn.Module):
+    def __init__(self, in_features, out_features, std=1.):
+        super().__init__()
+        assert out_features % 2 == 0
+        self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
+
+    def forward(self, input):
+        f = 2 * math.pi * input @ self.weight.T
+        return torch.cat([f.cos(), f.sin()], dim=-1)
+
+
+def expand_to_planes(input, shape):
+    return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
+
+
+class DFLX(nn.Module):
+    def __init__(self,in_channels=3, c=64, embd_size=16,device='cuda'):
+        super().__init__()
+        #c = 64  # The base channel count
+
+        # The inputs to timestep_embed will approximately fall into the range
+        # -10 to 10, so use std 0.2 for the Fourier Features.
+        # self.timestep_embed = FourierFeatures(1, 16, std=0.2)
+        # self.class_embed = nn.Embedding(10, 4)
+        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=embd_size, device=device),
+                                      nn.Linear(embd_size, embd_size),
+                                      nn.BatchNorm1d(embd_size),
+                                      nn.SiLU())
+        self.net = nn.Sequential(   # 32x32
+            ResConvBlock(in_channels , c, c),# 3+16+4
+            ResConvBlock(c, c, c),
+            SkipBlock([
+                nn.AvgPool2d(2),  # 32x32 -> 16x16
+                ResConvBlock(c, c * 2, c * 2),
+                ResConvBlock(c * 2, c * 2, c * 2),
+                SkipBlock([
+                    nn.AvgPool2d(2),  # 16x16 -> 8x8
+                    ResConvBlock(c * 2, c * 4, c * 4),
+                    ResConvBlock(c * 4, c * 4, c * 4),
+                    SkipBlock([
+                        nn.AvgPool2d(2),  # 8x8 -> 4x4
+                        ResConvBlock(c * 4, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 4),
+                        nn.Upsample(scale_factor=2),
+                    ]),  # 4x4 -> 8x8
+                    ResConvBlock(c * 8, c * 4, c * 4),
+                    ResConvBlock(c * 4, c * 4, c * 2),
+                    nn.Upsample(scale_factor=2),
+                ]),  # 8x8 -> 16x16
+                ResConvBlock(c * 4, c * 2, c * 2),
+                ResConvBlock(c * 2, c * 2, c),
+                nn.Upsample(scale_factor=2),
+            ]),  # 16x16 -> 32x32
+            ResConvBlock(c * 2, c, c),
+            ResConvBlock(c, c, 3, dropout_last=False),
+        )
+
+    def forward(self, input,t):
+        # tstep = self.time_mlp(t)
+        # timestep_embd = expand_to_planes(tstep, input.shape)
+        # print(f'{timestep_embd.shape=} {tstep.shape=}')
+        # timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
+        # class_embed = expand_to_planes(self.class_embed(cond), input.shape)
+        return self.net(input)
+        # return self.net(torch.cat([input,timestep_embd], dim=1))
+
+#side note:
+# I only changed the architecture, and it improved the results drastically! 
+# I mean, I didnt even feed it the timesteps! theres no conditioning (like class conditioning)
+# or any thing related to timesteps! and it produces more vibrant colors! as early as 20-40 epochs!
+# with lr= 0.00002. 0.0002 seems to converge faster!we reach 0.0547 at e40! with
+# good, i.e. much more vibrant pictures than before!
+# so I guess whent he images are grim/darkish/ it means the model is underfittin!
+# not that it lacks paramaters, but it can not process the input properly!(the discriminative power is not there)
+#al so the new model doesnt employ the unetarchi tecture the way we  created one, that is
+# theres no connection between encoder and decoders featuremaps, its just an ordinary
+# hour glass architecture! at epoch 200, we have vibrant images, just like cifar, however
+# the composition isno t there, i.e. while the overall images are natural looking, thecon tent are demorphed!
+#not  yet properly formed. I guesswecan  a ttributed this to sampling/lack of conditioninga t this point
+# Next: add timestep information and see how that goes!
+# 
+# Next revert to base model and use the new sampling method instead!
+
 class DiffusionMnist(nn.Module):
     def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, linear_scheduler=True, device = 'cpu') -> None:
         super().__init__()
@@ -2986,7 +3155,8 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         
-        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        self.unet_model = DFLX(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
@@ -3217,6 +3387,25 @@ class DiffusionMnist(nn.Module):
         img_grid = (img_grid+1)/2
         return img_grid
 
+# taken from : https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=s8IFYM8fy5h8
+@torch.no_grad()
+def ema_update(model, averaged_model, decay):
+    """Incorporates updated model parameters into an exponential moving averaged
+    version of a model. It should be called after each optimizer step."""
+    model_params = dict(model.named_parameters())
+    averaged_params = dict(averaged_model.named_parameters())
+    assert model_params.keys() == averaged_params.keys()
+
+    for name, param in model_params.items():
+        averaged_params[name].mul_(decay).add_(param, alpha=1 - decay)
+
+    model_buffers = dict(model.named_buffers())
+    averaged_buffers = dict(averaged_model.named_buffers())
+    assert model_buffers.keys() == averaged_buffers.keys()
+
+    for name, buf in model_buffers.items():
+        averaged_buffers[name].copy_(buf)
+
 # now lets grab our data
 def get_dataset(name='mnist',size=32, mode='val', transforms=None):
     """returns the dataloader object for the specified dataset.
@@ -3301,8 +3490,8 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
-load_checkpoint = True
-checkpoint_name = f'diffusion_{dataset_name}980.pth'
+load_checkpoint = False
+checkpoint_name = f'diffusion_{dataset_name}_gdflx.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3344,8 +3533,8 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 #todo much better images, but since it was slow, I lowered the lr to 0.00001 after 1072 epochs
 #next i plan on using 500 for timesteps and use attenstions to see if that makes anydifference
 #also I used val for cifar10 only
-num_timesteps = 800
-embd_size = 64
+num_timesteps = 500
+embd_size = 16#64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3355,8 +3544,8 @@ embd_size = 64
 # with large lr like 0.001, if we dont use bn in the final_conv, we get nans.
 # with larger imagesize (i.e. 64) large lr like 0.001 causes nans! even with bn in fnal_con 
 # and even with t=800(32isok)
-#after 1072 epochs
-lr = 0.00001
+#after 1740 epochs
+lr = 0.0002 #0.00002
 
 # mnist is 1 channel, and cifar10 is 3!
 in_channels = 1 if 'mnist' in dataset_name else 3
@@ -3367,6 +3556,9 @@ model = DiffusionMnist(in_channels=in_channels,
                        num_timesteps=num_timesteps,
                        linear_scheduler=True,
                        device=device)
+# to increase performance
+# model.compile()
+model_ema = copy.deepcopy(model)
 # sidenote: recall 
 # the variance schedule beta(β) tells us how much noise we want to add in each time steps.
 # we linearly increase it until we reach a maximum value of 0.02. if we wouldnt increase it at all,
@@ -3384,8 +3576,10 @@ scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
 
 # calculate model parameters
 num_params = np.sum([p.numel() for p in model.parameters()])
-num_params_enc = np.sum([p.numel() for p in model.unet_model.encoder.parameters()])
-num_params_dec = np.sum([p.numel() for p in model.unet_model.decoder.parameters()])
+# num_params_enc = np.sum([p.numel() for p in model.unet_model.encoder.parameters()])
+# num_params_dec = np.sum([p.numel() for p in model.unet_model.decoder.parameters()])
+
+ema_decay = 0.998
 
 if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     checkpoint = torch.load(f"{fldr}/{checkpoint_name}")
@@ -3395,6 +3589,8 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     model.unet_model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
     scheduler.load_state_dict(checkpoint["scheduler"])
+    scaler.load_state_dict(checkpoint["scaler"])
+    model_ema.unet_model.load_state_dict(checkpoint["model_ema"])
 
 print(f'running on    : {device}/{model.device}')
 print(f'dataset length: {len(dataset):,}')
@@ -3413,8 +3609,8 @@ print(f'embd_size     : {model.embd_size}')
 print(f'learning_rate : {lr}')
 print(f'step_size     : {step_size}')
 print(f'model n_params: {num_params:,}')
-print(f'enc n_params  : {num_params_enc:,}')
-print(f'dec n_params  : {num_params_dec:,}')
+# print(f'enc n_params  : {num_params_enc:,}')
+# print(f'dec n_params  : {num_params_dec:,}')
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
@@ -3444,8 +3640,10 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # optimizer.step()
             scaler.scale(loss).backward()
             scaler.step(optimizer)
+            #update ema
+            ema_update(model, model_ema, 0.95 if epoch < 20 else ema_decay)
             scaler.update()
-    
+            
     scheduler.step()
        
     
@@ -3480,7 +3678,9 @@ for epoch in tqdm(range(epoch_start, epochs)):
                         "use_fp16":use_fp16,
                         "state_dict":model.unet_model.state_dict(),
                         "optimizer":optimizer.state_dict(),
-                        "scheduler":scheduler.state_dict()},
+                        "scheduler":scheduler.state_dict(),
+                        "scaler":scaler.state_dict(),
+                        'model_ema': model_ema.state_dict(),},
                     f"{fldr}/{checkpoint_name}")
 
 # mnist: 
@@ -3509,48 +3709,1228 @@ model.display_sample(input_channel=model.in_channels,
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
 #%%
+# test with otherpeoples implementation
+# Imports
+
+from contextlib import contextmanager
+from copy import deepcopy
+import math
+
+from IPython import display
+from matplotlib import pyplot as plt
+import torch
+from torch import optim, nn
+from torch.nn import functional as F
+from torch.utils import data
+from torchvision import datasets, transforms, utils
+from torchvision.transforms import functional as TF
+from tqdm.notebook import tqdm, trange
+
+# Utilities
+
+@contextmanager
+def train_mode(model, mode=True):
+    """A context manager that places a model into training mode and restores
+    the previous mode on exit."""
+    modes = [module.training for module in model.modules()]
+    try:
+        yield model.train(mode)
+    finally:
+        for i, module in enumerate(model.modules()):
+            module.training = modes[i]
+
+
+def eval_mode(model):
+    """A context manager that places a model into evaluation mode and restores
+    the previous mode on exit."""
+    return train_mode(model, False)
+
+
+@torch.no_grad()
+def ema_update(model, averaged_model, decay):
+    """Incorporates updated model parameters into an exponential moving averaged
+    version of a model. It should be called after each optimizer step."""
+    model_params = dict(model.named_parameters())
+    averaged_params = dict(averaged_model.named_parameters())
+    assert model_params.keys() == averaged_params.keys()
+
+    for name, param in model_params.items():
+        averaged_params[name].mul_(decay).add_(param, alpha=1 - decay)
+
+    model_buffers = dict(model.named_buffers())
+    averaged_buffers = dict(averaged_model.named_buffers())
+    assert model_buffers.keys() == averaged_buffers.keys()
+
+    for name, buf in model_buffers.items():
+        averaged_buffers[name].copy_(buf)
+
+
+# Define the model (a residual U-Net)
+
+class ResidualBlock(nn.Module):
+    def __init__(self, main, skip=None):
+        super().__init__()
+        self.main = nn.Sequential(*main)
+        self.skip = skip if skip else nn.Identity()
+
+    def forward(self, input):
+        return self.main(input) + self.skip(input)
+
+
+class ResConvBlock(ResidualBlock):
+    def __init__(self, c_in, c_mid, c_out, dropout_last=True):
+        skip = None if c_in == c_out else nn.Conv2d(c_in, c_out, 1, bias=False)
+        super().__init__([
+            nn.Conv2d(c_in, c_mid, 3, padding=1),
+            nn.Dropout2d(0.1, inplace=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(c_mid, c_out, 3, padding=1),
+            nn.Dropout2d(0.1, inplace=True) if dropout_last else nn.Identity(),
+            nn.ReLU(inplace=True),
+        ], skip)
+
+
+class SkipBlock(nn.Module):
+    def __init__(self, main, skip=None):
+        super().__init__()
+        self.main = nn.Sequential(*main)
+        self.skip = skip if skip else nn.Identity()
+
+    def forward(self, input):
+        return torch.cat([self.main(input), self.skip(input)], dim=1)
+
+
+class FourierFeatures(nn.Module):
+    def __init__(self, in_features, out_features, std=1.):
+        super().__init__()
+        assert out_features % 2 == 0
+        self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
+
+    def forward(self, input):
+        f = 2 * math.pi * input @ self.weight.T
+        return torch.cat([f.cos(), f.sin()], dim=-1)
+
+
+def expand_to_planes(input, shape):
+    return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
+
+
+class Diffusion(nn.Module):
+    def __init__(self):
+        super().__init__()
+        c = 64  # The base channel count
+
+        # The inputs to timestep_embed will approximately fall into the range
+        # -10 to 10, so use std 0.2 for the Fourier Features.
+        self.timestep_embed = FourierFeatures(1, 16, std=0.2)
+        self.class_embed = nn.Embedding(10, 4)
+
+        self.net = nn.Sequential(   # 32x32
+            ResConvBlock(3 , c, c),# 3+16+4
+            ResConvBlock(c, c, c),
+            SkipBlock([
+                nn.AvgPool2d(2),  # 32x32 -> 16x16
+                ResConvBlock(c, c * 2, c * 2),
+                ResConvBlock(c * 2, c * 2, c * 2),
+                SkipBlock([
+                    nn.AvgPool2d(2),  # 16x16 -> 8x8
+                    ResConvBlock(c * 2, c * 4, c * 4),
+                    ResConvBlock(c * 4, c * 4, c * 4),
+                    SkipBlock([
+                        nn.AvgPool2d(2),  # 8x8 -> 4x4
+                        ResConvBlock(c * 4, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 8),
+                        ResConvBlock(c * 8, c * 8, c * 4),
+                        nn.Upsample(scale_factor=2),
+                    ]),  # 4x4 -> 8x8
+                    ResConvBlock(c * 8, c * 4, c * 4),
+                    ResConvBlock(c * 4, c * 4, c * 2),
+                    nn.Upsample(scale_factor=2),
+                ]),  # 8x8 -> 16x16
+                ResConvBlock(c * 4, c * 2, c * 2),
+                ResConvBlock(c * 2, c * 2, c),
+                nn.Upsample(scale_factor=2),
+            ]),  # 16x16 -> 32x32
+            ResConvBlock(c * 2, c, c),
+            ResConvBlock(c, c, 3, dropout_last=False),
+        )
+
+    def forward(self, input, log_snrs, cond):
+        timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
+        class_embed = expand_to_planes(self.class_embed(cond), input.shape)
+        return self.net(torch.cat([input], dim=1))
+
+# Define the noise schedule and sampling loop
+
+def get_alphas_sigmas(log_snrs):
+    """Returns the scaling factors for the clean image (alpha) and for the
+    noise (sigma), given the log SNR for a timestep."""
+    return log_snrs.sigmoid().sqrt(), log_snrs.neg().sigmoid().sqrt()
+
+
+def get_ddpm_schedule(t):
+    """Returns log SNRs for the noise schedule from the DDPM paper."""
+    return -torch.special.expm1(1e-4 + 10 * t**2).log()
+
+
+@torch.no_grad()
+def sample(model, x, steps, eta, classes):
+    """Draws samples from a model given starting noise."""
+    ts = x.new_ones([x.shape[0]])
+
+    # Create the noise schedule
+    t = torch.linspace(1, 0, steps + 1)[:-1]
+    log_snrs = get_ddpm_schedule(t)
+    alphas, sigmas = get_alphas_sigmas(log_snrs)
+
+    # The sampling loop
+    for i in trange(steps):
+
+        # Get the model output (v, the predicted velocity)
+        with torch.cuda.amp.autocast():
+            v = model(x, ts * log_snrs[i], classes).float()
+
+        # Predict the noise and the denoised image
+        pred = x * alphas[i] - v * sigmas[i]
+        eps = x * sigmas[i] + v * alphas[i]
+
+        # If we are not on the last timestep, compute the noisy image for the
+        # next timestep.
+        if i < steps - 1:
+            # If eta > 0, adjust the scaling factor for the predicted noise
+            # downward according to the amount of additional noise to add
+            ddim_sigma = eta * (sigmas[i + 1]**2 / sigmas[i]**2).sqrt() * \
+                (1 - alphas[i]**2 / alphas[i + 1]**2).sqrt()
+            adjusted_sigma = (sigmas[i + 1]**2 - ddim_sigma**2).sqrt()
+
+            # Recombine the predicted noise and predicted denoised image in the
+            # correct proportions for the next step
+            x = pred * alphas[i + 1] + eps * adjusted_sigma
+
+            # Add the correct amount of fresh noise
+            if eta:
+                x += torch.randn_like(x) * ddim_sigma
+
+    # If we are on the last timestep, output the denoised image
+    return pred
+
+
+# Visualize the noise schedule
+
+%config InlineBackend.figure_format = 'retina'
+plt.rcParams['figure.dpi'] = 100
+
+t_vis = torch.linspace(0, 1, 1000)
+log_snrs_vis = get_ddpm_schedule(t_vis)
+alphas_vis, sigmas_vis = get_alphas_sigmas(log_snrs_vis)
+
+print('The noise schedule:')
+
+plt.plot(t_vis, alphas_vis, label='alpha (signal level)')
+plt.plot(t_vis, sigmas_vis, label='sigma (noise level)')
+plt.legend()
+plt.xlabel('timestep')
+plt.grid()
+plt.show()
+
+plt.plot(t_vis, log_snrs_vis, label='log SNR')
+plt.legend()
+plt.xlabel('timestep')
+plt.grid()
+plt.show()
+
+
+# Prepare the dataset
+
+batch_size = 100
+
+tf = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize([0.5], [0.5]),
+])
+train_set = datasets.CIFAR10('data', train=True, download=True, transform=tf)
+train_dl = data.DataLoader(train_set, batch_size, shuffle=True,
+                           num_workers=4, persistent_workers=True, pin_memory=True)
+val_set = datasets.CIFAR10('data', train=False, download=True, transform=tf)
+val_dl = data.DataLoader(val_set, batch_size,
+                         num_workers=4, persistent_workers=True, pin_memory=True)
+
+
+# Create the model and optimizer
+
+seed = 0
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print('Using device:', device)
+torch.manual_seed(0)
+
+model = Diffusion().to(device)
+model_ema = deepcopy(model)
+print('Model parameters:', sum(p.numel() for p in model.parameters()))
+
+opt = optim.Adam(model.parameters(), lr=2e-4)
+scaler = torch.cuda.amp.GradScaler()
+epoch = 0
+
+# Use a low discrepancy quasi-random sequence to sample uniformly distributed
+# timesteps. This considerably reduces the between-batch variance of the loss.
+rng = torch.quasirandom.SobolEngine(1, scramble=True)
+
+
+# Actually train the model
+
+ema_decay = 0.998
+
+# The number of timesteps to use when sampling
+steps = 500
+
+# The amount of noise to add each timestep when sampling
+# 0 = no noise (DDIM)
+# 1 = full noise (DDPM)
+eta = 1.
+
+
+def eval_loss(model, rng, reals, classes):
+    # Draw uniformly distributed continuous timesteps
+    t = rng.draw(reals.shape[0])[:, 0].to(device)
+
+    # Calculate the noise schedule parameters for those timesteps
+    log_snrs = get_ddpm_schedule(t)
+    alphas, sigmas = get_alphas_sigmas(log_snrs)
+    weights = log_snrs.exp() / log_snrs.exp().add(1)
+
+    # Combine the ground truth images and the noise
+    alphas = alphas[:, None, None, None]
+    sigmas = sigmas[:, None, None, None]
+    noise = torch.randn_like(reals)
+    noised_reals = reals * alphas + noise * sigmas
+    targets = noise * alphas - reals * sigmas
+
+    # Compute the model output and the loss.
+    with torch.cuda.amp.autocast():
+        v = model(noised_reals, log_snrs, classes)
+        return (v - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
+
+
+def train():
+    for i, (reals, classes) in enumerate(tqdm(train_dl)):
+        opt.zero_grad()
+        reals = reals.to(device)
+        classes = classes.to(device)
+
+        # Evaluate the loss
+        loss = eval_loss(model, rng, reals, classes)
+
+        # Do the optimizer step and EMA update
+        scaler.scale(loss).backward()
+        scaler.step(opt)
+        ema_update(model, model_ema, 0.95 if epoch < 20 else ema_decay)
+        scaler.update()
+
+        if i % 50 == 0:
+            tqdm.write(f'Epoch: {epoch}, iteration: {i}, loss: {loss.item():g}')
+
+
+@torch.no_grad()
+@torch.random.fork_rng()
+@eval_mode(model_ema)
+def val():
+    tqdm.write('\nValidating...')
+    torch.manual_seed(seed)
+    rng = torch.quasirandom.SobolEngine(1, scramble=True)
+    total_loss = 0
+    count = 0
+    for i, (reals, classes) in enumerate(tqdm(val_dl)):
+        reals = reals.to(device)
+        classes = classes.to(device)
+
+        loss = eval_loss(model_ema, rng, reals, classes)
+
+        total_loss += loss.item() * len(reals)
+        count += len(reals)
+    loss = total_loss / count
+    tqdm.write(f'Validation: Epoch: {epoch}, loss: {loss:g}')
+
+
+@torch.no_grad()
+@torch.random.fork_rng()
+@eval_mode(model_ema)
+def demo():
+    tqdm.write('\nSampling...')
+    torch.manual_seed(seed)
+
+    noise = torch.randn([100, 3, 32, 32], device=device)
+    fakes_classes = torch.arange(10, device=device).repeat_interleave(10, 0)
+    fakes = sample(model_ema, noise, steps, eta, fakes_classes)
+
+    grid = utils.make_grid(fakes, 10).cpu()
+    filename = f'demo_{epoch:05}.png'
+    TF.to_pil_image(grid.add(1).div(2).clamp(0, 1)).save(filename)
+    display.display(display.Image(filename))
+    tqdm.write('')
+
+
+def save():
+    filename = 'cifar_diffusion.pth'
+    obj = {
+        'model': model.state_dict(),
+        'model_ema': model_ema.state_dict(),
+        'opt': opt.state_dict(),
+        'scaler': scaler.state_dict(),
+        'epoch': epoch,
+    }
+    torch.save(obj, filename)
+
+
+try:
+    val()
+    demo()
+    while True:
+        print('Epoch', epoch)
+        train()
+        epoch += 1
+        if epoch % 5 == 0:
+            val()
+            demo()
+        save()
+except KeyboardInterrupt:
+    pass
+
+#%%
+from typing import Dict, Tuple
+from tqdm import tqdm
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import models, transforms
+from torchvision.datasets import MNIST
+from torchvision.datasets import CIFAR10
+from torchvision.utils import save_image, make_grid
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+import numpy as np
+import os
+# import wandb
+
+device = "cuda"
+
+#define ResNet style convolutional block for UNET
+class ResidualConvBlock(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, is_res: bool = False
+    ) -> None:
+        super().__init__()
+        self.same_channels = in_channels==out_channels
+        self.is_res = is_res
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, 3, 1, 1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.is_res:
+            x1 = self.conv1(x)
+            x2 = self.conv2(x1)
+            # this adds on correct residual in case channels have increased
+            if self.same_channels:
+                out = x + x2
+            else:
+                out = x1 + x2 
+            return out / 1.414
+        else:
+            x1 = self.conv1(x)
+            x2 = self.conv2(x1)
+            return x2
+
+
+# process and downscale the image feature maps
+class UnetDown(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(UnetDown, self).__init__()
+        layers = [ResidualConvBlock(in_channels, out_channels), nn.MaxPool2d(2)]
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
+
+# process and upscale the image feature maps
+class UnetUp(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(UnetUp, self).__init__()
+        layers = [
+            nn.ConvTranspose2d(in_channels, out_channels, 2, 2),
+            ResidualConvBlock(out_channels, out_channels),
+            ResidualConvBlock(out_channels, out_channels),
+        ]
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x, skip):
+        x = torch.cat((x, skip), 1)
+        x = self.model(x)
+        return x
+
+#define embedding layer 
+class EmbedFC(nn.Module):
+    def __init__(self, input_dim, emb_dim):
+        super(EmbedFC, self).__init__()
+        self.input_dim = input_dim
+        layers = [
+            nn.Linear(input_dim, emb_dim),
+            nn.GELU(),
+            nn.Linear(emb_dim, emb_dim),
+        ]
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = x.view(-1, self.input_dim)
+        return self.model(x)
+
+
+#implement Context UNET 
+class ContextUnet(nn.Module):
+    def __init__(self, in_channels, n_feat = 256, n_classes=10):
+        super(ContextUnet, self).__init__()
+
+        self.in_channels = in_channels
+        self.n_feat = n_feat
+        self.n_classes = n_classes
+
+        self.init_conv = ResidualConvBlock(in_channels, n_feat, is_res=True)
+
+        self.down1 = UnetDown(n_feat, n_feat)
+        self.down2 = UnetDown(n_feat, 2 * n_feat)
+
+        self.to_vec = nn.Sequential(nn.AvgPool2d(8), nn.GELU())
+
+        self.timeembed1 = EmbedFC(1, 2*n_feat)
+        self.timeembed2 = EmbedFC(1, 1*n_feat)
+        self.contextembed1 = EmbedFC(n_classes, 2*n_feat)
+        self.contextembed2 = EmbedFC(n_classes, 1*n_feat)
+
+        self.up0 = nn.Sequential(
+            # nn.ConvTranspose2d(6 * n_feat, 2 * n_feat, 7, 7), # when concat temb and cemb end up w 6*n_feat
+            nn.ConvTranspose2d(2 * n_feat, 2 * n_feat, 8, 8), # otherwise just have 2*n_feat
+            nn.GroupNorm(8, 2 * n_feat),
+            nn.ReLU(),
+        )
+
+        self.up1 = UnetUp(4 * n_feat, n_feat)
+        self.up2 = UnetUp(2 * n_feat, n_feat)
+        self.out = nn.Sequential(
+            nn.Conv2d(2 * n_feat, n_feat, 3, 1, 1),
+            nn.GroupNorm(8, n_feat),
+            nn.ReLU(),
+            nn.Conv2d(n_feat, self.in_channels, 3, 1, 1),
+        )
+    
+    #implement multi hot enconding function to produce multi category images 
+    def one_hot(self,c,num_classes):
+        c_return = torch.zeros(len(c),num_classes)
+        for i,value in enumerate(c):
+            c_return[i, value] = 1.0
+        return c_return     
+
+    def forward(self, x, c, t, context_mask):
+        # x is (noisy) image, c is context label, t is timestep, 
+        # context_mask says which samples to block the context on
+
+        x = self.init_conv(x)
+        down1 = self.down1(x)
+        down2 = self.down2(down1)
+        hiddenvec = self.to_vec(down2)
+
+        # convert context to one hot embedding
+        c = self.one_hot(c, self.n_classes)
+        
+        # mask out context if context_mask == 1
+        context_mask = context_mask[:, None]
+        context_mask = context_mask.repeat(1,self.n_classes)
+        context_mask = (-1*(1-context_mask)) # need to flip 0 <-> 1
+        c = c.to(device)* context_mask
+        
+        # embed context, time step
+        cemb1 = self.contextembed1(c).view(-1, self.n_feat * 2, 1, 1)
+        temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
+        cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
+        temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
+
+
+        up1 = self.up0(hiddenvec)
+        up2 = self.up1(cemb1*up1+ temb1, down2) 
+        up3 = self.up2(cemb2*up2+ temb2, down1)
+        out = self.out(torch.cat((up3, x), 1))
+        return out
+
+
+# returns pre-computed schedules for DDPM sampling, training process.
+def ddpm_schedules(beta1, beta2, T):
+
+    assert beta1 < beta2 < 1.0, "beta1 and beta2 must be in (0, 1)"
+
+    beta_t = (beta2 - beta1) * torch.arange(0, T + 1, dtype=torch.float32) / T + beta1
+    sqrt_beta_t = torch.sqrt(beta_t)
+    alpha_t = 1 - beta_t
+    log_alpha_t = torch.log(alpha_t)
+    alphabar_t = torch.cumsum(log_alpha_t, dim=0).exp()
+
+    sqrtab = torch.sqrt(alphabar_t)
+    oneover_sqrta = 1 / torch.sqrt(alpha_t)
+
+    sqrtmab = torch.sqrt(1 - alphabar_t)
+    mab_over_sqrtmab_inv = (1 - alpha_t) / sqrtmab
+
+    return {
+        "alpha_t": alpha_t,  # \alpha_t
+        "log_alpha_t": log_alpha_t,
+        "oneover_sqrta": oneover_sqrta,  # 1/\sqrt{\alpha_t}
+        "sqrt_beta_t": sqrt_beta_t,  # \sqrt{\beta_t}
+        "alphabar_t": alphabar_t,  # \bar{\alpha_t}
+        "sqrtab": sqrtab,  # \sqrt{\bar{\alpha_t}}
+        "sqrtmab": sqrtmab,  # \sqrt{1-\bar{\alpha_t}}
+        "mab_over_sqrtmab": mab_over_sqrtmab_inv,  # (1-\alpha_t)/\sqrt{1-\bar{\alpha_t}}
+    }
+
+
+#implement diffusion model
+class DDPM(nn.Module):
+    def __init__(self, nn_model, betas, n_T, device, drop_prob=0.1):
+        super(DDPM, self).__init__()
+        self.nn_model = nn_model.to(device)
+
+        # register_buffer allows accessing dictionary produced by ddpm_schedules
+        # e.g. can access self.sqrtab later
+        for k, v in ddpm_schedules(betas[0], betas[1], n_T).items():
+            self.register_buffer(k, v)
+
+        self.n_T = n_T
+        self.device = device
+        self.drop_prob = drop_prob
+        self.loss_mse = nn.MSELoss()
+
+    def forward(self, x, c):
+
+        _ts = torch.randint(1, self.n_T+1, (x.shape[0],)).to(self.device)  # t ~ Uniform(0, n_T)
+        noise = torch.randn_like(x)  # eps ~ N(0, 1)
+
+        x_t = (
+            self.sqrtab[_ts, None, None, None] * x
+            + self.sqrtmab[_ts, None, None, None] * noise
+        )  # This is the x_t, which is sqrt(alphabar) x_0 + sqrt(1-alphabar) * eps
+        # We should predict the "error term" from this x_t. Loss is what we return.
+
+        # dropout context with some probability
+        context_mask = torch.bernoulli(torch.zeros_like(c)+self.drop_prob).to(self.device)
+        
+        # return MSE between added noise, and our predicted noise
+        return self.loss_mse(noise, self.nn_model(x_t, c, _ts / self.n_T, context_mask))
+    
+    def sample_single(self, n_sample, size, device, c, guide_w = 0.0):
+           
+        x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1), sample initial noise
+       
+        #c = c.repeat(int(n_sample/c.shape[0]))
+    
+        # don't drop context at test time
+        context_mask = torch.zeros(1).to(device)
+        if c.dim()== 1:
+            c = c.repeat(2)
+        else:
+            c = c.repeat(2,1)
+
+        context_mask = context_mask.repeat(2)
+
+        context_mask[n_sample:] = 1. # makes second half of batch context free
+
+        x_i_store = [] # keep track of generated steps in case want to plot something 
+        print()
+        for i in range(self.n_T, 0, -1):
+            print(f'sampling timestep {i}',end='\r')
+            t_is = torch.tensor([i / self.n_T]).to(device)
+            t_is = t_is.repeat(n_sample,1,1,1)
+
+            # double batch
+            x_i = x_i.repeat(2,1,1,1)
+            t_is = t_is.repeat(2,1,1,1)
+
+            z = torch.randn(n_sample, * size).to(device) if i > 1 else 0
+
+            # split predictions and compute weighting
+            eps = self.nn_model(x_i, c, t_is, context_mask)
+            eps1 = eps[:n_sample]
+            eps2 = eps[n_sample:]
+            eps = (1+guide_w)*eps1 - guide_w*eps2
+            x_i = x_i[:n_sample]
+            x_i = (
+                self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+                + self.sqrt_beta_t[i] * z
+            )
+            if i%20==0 or i==self.n_T or i<8:
+                x_i_store.append(x_i.detach().cpu().numpy())
+        
+        x_i_store = np.array(x_i_store)
+        return x_i, x_i_store
+
+
+    def sample(self, n_sample, size, device, guide_w = 0.0):
+        # we follow the guidance sampling scheme described in 'Classifier-Free Diffusion Guidance'
+        # to make the fwd passes efficient, we concat two versions of the dataset,
+        # one with context_mask=0 and the other context_mask=1
+        # we then mix the outputs with the guidance scale, w
+        # where w>0 means more guidance
+
+        x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1), sample initial noise
+        c_i = torch.arange(0,10).to(device) # context for us just cycles throught the mnist labels
+        c_i = c_i.repeat(int(n_sample/c_i.shape[0]))
+
+        # don't drop context at test time
+        context_mask = torch.zeros_like(c_i).to(device)
+
+        # double the batch
+        c_i = c_i.repeat(2)
+        context_mask = context_mask.repeat(2)
+        context_mask[n_sample:] = 1. # makes second half of batch context free
+
+        x_i_store = [] # keep track of generated steps in case want to plot something 
+        print()
+        for i in range(self.n_T, 0, -1):
+            print(f'sampling timestep {i}',end='\r')
+            t_is = torch.tensor([i / self.n_T]).to(device)
+            t_is = t_is.repeat(n_sample,1,1,1)
+
+            # double batch
+            x_i = x_i.repeat(2,1,1,1)
+            t_is = t_is.repeat(2,1,1,1)
+
+            z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
+
+            # split predictions and compute weighting
+            eps = self.nn_model(x_i, c_i, t_is, context_mask)
+            eps1 = eps[:n_sample]
+            eps2 = eps[n_sample:]
+            eps = (1+guide_w)*eps1 - guide_w*eps2
+            x_i = x_i[:n_sample]
+            x_i = (
+                self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+                + self.sqrt_beta_t[i] * z
+            )
+            if i%20==0 or i==self.n_T or i<8:
+                x_i_store.append(x_i.detach().cpu().numpy())
+        
+        x_i_store = np.array(x_i_store)
+        return x_i, x_i_store
+
+
+def train_cifar():
+
+    #define hyperparameters
+    n_epoch = 1
+    batch_size = 256
+    n_T = 400 # 500
+    device = "cuda"
+    n_classes = 10
+    n_feat = 128 
+    lrate = 1e-4
+    save_model = True
+    save_dir = './louisdata/diffusion_outputs10/'
+    ws_test = [0.0, 0.5, 2.0] # strength of generative guidance
+    
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    #instantiate model
+    ddpm = DDPM(nn_model=ContextUnet(in_channels=3, n_feat=n_feat, n_classes=n_classes), betas=(1e-4, 0.02), n_T=n_T, device=device, drop_prob=0.1)
+    ddpm.to(device)
+
+    # optionally load a model
+    # ddpm.load_state_dict(torch.load("./data/diffusion_outputs/ddpm_unet01_mnist_9.pth"))
+
+    tf = transforms.Compose([transforms.ToTensor()]) 
+
+    #load dataset
+    dataset = CIFAR10("./datapics", train=True, download=True, transform=tf)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=5)
+    optim = torch.optim.Adam(ddpm.parameters(), lr=lrate)
+
+    for ep in range(n_epoch):
+        
+        print(f'epoch {ep}')
+        ddpm.train()
+
+        # linear lrate decay
+        optim.param_groups[0]['lr'] = lrate*(1-ep/n_epoch)
+
+        pbar = tqdm(dataloader)
+        loss_ema = None
+        for x, c in pbar:
+            optim.zero_grad()
+            x = x.to(device)
+            c = c.to(device)
+            loss = ddpm(x, c)
+            loss.backward()
+            if loss_ema is None:
+                loss_ema = loss.item()
+            else:
+                loss_ema = 0.95 * loss_ema + 0.05 * loss.item()
+            pbar.set_description(f"loss: {loss_ema:.4f}")
+            optim.step()
+
+        
+        # for eval, save an image of currently generated samples (top rows)
+        # followed by real images (bottom rows)
+        ddpm.eval()
+        with torch.no_grad():
+            n_sample = 4*n_classes
+            for w_i, w in enumerate(ws_test):
+                x_gen, x_gen_store = ddpm.sample(n_sample, (3, 32, 32), device, guide_w=w)
+
+                # append some real images at bottom, order by class also
+                x_real = torch.Tensor(x_gen.shape).to(device)
+                for k in range(n_classes):
+                    for j in range(int(n_sample/n_classes)):
+                        try: 
+                            idx = torch.squeeze((c == k).nonzero())[j]
+                        except:
+                            idx = 0
+                        x_real[k+(j*n_classes)] = x[idx]
+
+                x_all = torch.cat([x_gen, x_real])
+                grid = make_grid(x_all*-1 + 1, nrow=10)
+                save_image(grid, save_dir + f"image_ep{ep}_w{w}.png")
+                print('saved image at ' + save_dir + f"image_ep{ep}_w{w}.png")
+        # optionally save model
+        if save_model and ep%1 == 0:
+            torch.save(ddpm.state_dict(), save_dir + f"model_{ep}.pth")
+            print('saved model at ' + save_dir + f"model_{ep}.pth")
+
+if __name__ == "__main__":
+    train_cifar()
+
+
+
+#%%
+
+import os
+# os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+import torch
+import torch.nn as nn
+from matplotlib import pyplot as plt
+from tqdm import tqdm
+from torch import optim
+import logging
+from torch.utils.tensorboard import SummaryWriter
+
+logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt='%I:%M:%S')
+
+import os
+import torch
+import torchvision
 from PIL import Image
-from pathlib import Path
-
-mod = DiffusionMnist(in_channels=in_channels, 
-                       base_fmap_size=base_fmap_size,
-                       embd_size=embd_size, 
-                       num_timesteps=num_timesteps,
-                       linear_scheduler=True,
-                       device='cuda')
-mod.to('cuda')
-mod.eval()
-img_gen = mod.gen_images(1,input_channel=in_channels)
-print(f'{img_gen.shape=}')
-dir_path = f"{fldr}/imgs_gen/"
-fname = f"{dataset_name}_img_{3}.jpg"
-if not os.path.exists(dir_path):
-    os.mkdir(dir_path)
-# we need to convert our 0-1 range image to a proper format pil supports
-# otherwise we get Cannot handle this data type: (1, 1, 3), <f4 which simply
-# means, our image has 32-bit floating point numbers in it. pil requires
-# uint8 numbers, i.e. 0-255. so to convert our 0-1 range to 0-255 we simply
-# do this (img*255).astype(np.unit8)
-Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
+from matplotlib import pyplot as plt
+from torch.utils.data import DataLoader
 
 
+def plot_images(images):
+    plt.figure(figsize=(32, 32))
+    plt.imshow(torch.cat([
+        torch.cat([i for i in images.cpu()], dim=-1),
+    ], dim=-2).permute(1, 2, 0).cpu())
+    plt.show()
 
 
+def save_images(images, path, **kwargs):
+    grid = torchvision.utils.make_grid(images, **kwargs)
+    ndarr = grid.permute(1, 2, 0).to('cpu').numpy()
+    im = Image.fromarray(ndarr)
+    im.save(path)
 
 
+def get_data(image_size,dataset_path,batch_size):
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.Resize(80),  # args.image_size + 1/4 *args.image_size
+        torchvision.transforms.RandomResizedCrop(image_size, scale=(0.8, 1.0)),
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    dataset = torchvision.datasets.ImageFolder(dataset_path, transform=transforms)
+    # dataset = torchvision.datasets.CIFAR10(dataset_path,False,download=True,transform=transforms)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    return dataloader
 
 
+def setup_logging(run_name):
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("results", exist_ok=True)
+    os.makedirs(os.path.join("models", run_name), exist_ok=True)
+    os.makedirs(os.path.join("results", run_name), exist_ok=True)
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
+class EMA:
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+        self.step = 0
+
+    def update_model_average(self, ma_model, current_model):
+        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+            old_weight, up_weight = ma_params.data, current_params.data
+            ma_params.data = self.update_average(old_weight, up_weight)
+
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
+
+    def step_ema(self, ema_model, model, step_start_ema=2000):
+        if self.step < step_start_ema:
+            self.reset_parameters(ema_model, model)
+            self.step += 1
+            return
+        self.update_model_average(ema_model, model)
+        self.step += 1
+
+    def reset_parameters(self, ema_model, model):
+        ema_model.load_state_dict(model.state_dict())
 
 
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels, out_channels, mid_channels=None, residual=False):
+        super().__init__()
+        self.residual = residual
+        if not mid_channels:
+            mid_channels = out_channels
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU(),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(1, out_channels),
+        )
+
+    def forward(self, x):
+        if self.residual:
+            return F.gelu(x + self.double_conv(x))
+        else:
+            return self.double_conv(x)
 
 
+class Down(nn.Module):
+    def __init__(self, in_channels, out_channels, emb_dim=256):
+        super().__init__()
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, in_channels, residual=True),
+            DoubleConv(in_channels, out_channels),
+        )
+
+        self.emb_layer = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(
+                emb_dim,
+                out_channels
+            ),
+        )
+
+    def forward(self, x, t):
+        x = self.maxpool_conv(x)
+        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1])
+        return x + emb
 
 
+class Up(nn.Module):
+    def __init__(self, in_channels, out_channels, emb_dim=256):
+        super().__init__()
 
+        self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        self.conv = nn.Sequential(
+            DoubleConv(in_channels, in_channels, residual=True),
+            DoubleConv(in_channels, out_channels, in_channels // 2),
+        )
+
+        self.emb_layer = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(
+                emb_dim,
+                out_channels
+            ),
+        )
+
+    def forward(self, x, skip_x, t):
+        x = self.up(x)
+        x = torch.cat([skip_x, x], dim=1)
+        x = self.conv(x)
+        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1])
+        return x + emb
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, channels, size):
+        super(SelfAttention, self).__init__()
+        self.channels = channels
+        self.size = size
+        self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
+        self.ln = nn.LayerNorm([channels])
+        self.ff_self = nn.Sequential(
+            nn.LayerNorm([channels]),
+            nn.Linear(channels, channels),
+            nn.GELU(),
+            nn.Linear(channels, channels),
+        )
+
+    def forward(self, x):
+        x = x.view(-1, self.channels, self.size * self.size).swapaxes(1, 2)
+        x_ln = self.ln(x)
+        attention_value, _ = self.mha(x_ln, x_ln, x_ln)
+        attention_value = attention_value + x
+        attention_value = self.ff_self(attention_value) + attention_value
+        return attention_value.swapaxes(2, 1).view(-1, self.channels, self.size, self.size)
+
+
+class UNet(nn.Module):
+    def __init__(self, c_in=3, c_out=3, time_dim=256, device="cuda"):
+        super().__init__()
+        self.device = device
+        self.time_dim = time_dim
+        # Downsample
+        self.inc = DoubleConv(c_in, 64)
+        self.down1 = Down(64, 128)
+        self.sa1 = SelfAttention(128, 32)
+        self.down2 = Down(128, 256)
+        self.sa2 = SelfAttention(256, 16)
+        self.down3 = Down(256, 256)
+        self.sa3 = SelfAttention(256, 8)
+
+        # bottleneck
+        self.bot1 = DoubleConv(256, 512)
+        self.bot2 = DoubleConv(512, 512)
+        self.bot3 = DoubleConv(512, 256)
+
+        # upsample
+        self.up1 = Up(512, 128)
+        self.sa4 = SelfAttention(128, 16)
+        self.up2 = Up(256, 64)
+        self.sa5 = SelfAttention(64, 32)
+        self.up3 = Up(128, 64)
+        self.sa6 = SelfAttention(64, 64)
+        self.outc = nn.Conv2d(64, c_out, kernel_size=1)
+
+    def pos_encoding(self, t, channels):
+        inv_freq = 1.0 / (
+                10000
+                ** (torch.arange(0, channels, 2, device=self.device).float() / channels)
+        )
+        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=1)
+        return pos_enc
+
+    def forward(self, x, t):
+        t = t.unsqueeze(-1).type(torch.float)
+        t = self.pos_encoding(t, self.time_dim)
+
+        x1 = self.inc(x)
+        x2 = self.down1(x1, t)
+        x2 = self.sa1(x2)
+        x3 = self.down2(x2, t)
+        x3 = self.sa2(x3)
+        x4 = self.down3(x3, t)
+        x4 = self.sa3(x4)
+
+        x4 = self.bot1(x4)
+        x4 = self.bot2(x4)
+        x4 = self.bot3(x4)
+
+        x = self.up1(x4, x3, t)
+        x = self.sa4(x)
+        x = self.up2(x, x2, t)
+        x = self.sa5(x)
+        x = self.up3(x, x1, t)
+        x = self.sa6(x)
+        output = self.outc(x)
+        return output
+
+
+class UNet_conditional(nn.Module):
+    def __init__(self, c_in=3, c_out=3, time_dim=256, num_classes=None, device="cuda"):
+        super().__init__()
+        self.device = device
+        self.time_dim = time_dim
+        # Downsample
+        self.inc = DoubleConv(c_in, 64)
+        self.down1 = Down(64, 128)
+        self.sa1 = SelfAttention(128, 32)
+        self.down2 = Down(128, 256)
+        self.sa2 = SelfAttention(256, 16)
+        self.down3 = Down(256, 256)
+        self.sa3 = SelfAttention(256, 8)
+
+        # bottleneck
+        self.bot1 = DoubleConv(256, 512)
+        self.bot2 = DoubleConv(512, 512)
+        self.bot3 = DoubleConv(512, 256)
+
+        # upsample
+        self.up1 = Up(512, 128)
+        self.sa4 = SelfAttention(128, 16)
+        self.up2 = Up(256, 64)
+        self.sa5 = SelfAttention(64, 32)
+        self.up3 = Up(128, 64)
+        self.sa6 = SelfAttention(64, 64)
+        self.outc = nn.Conv2d(64, c_out, kernel_size=1)
+
+        if num_classes is not None:
+            self.label_emb = nn.Embedding(num_classes, time_dim)
+
+    def pos_encoding(self, t, channels):
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, channels, 2, device=self.device).float() / channels))
+        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=1)
+        return pos_enc
+
+    def forward(self, x, t, y):
+        t = t.unsqueeze(-1).type(torch.float)
+        t = self.pos_encoding(t, self.time_dim)
+
+        if y is not None:
+            t += self.label_emb(y)
+
+        x1 = self.inc(x)
+        x2 = self.down1(x1, t)
+        x2 = self.sa1(x2)
+        x3 = self.down2(x2, t)
+        x3 = self.sa2(x3)
+        x4 = self.down3(x3, t)
+        x4 = self.sa3(x4)
+
+        x4 = self.bot1(x4)
+        x4 = self.bot2(x4)
+        x4 = self.bot3(x4)
+
+        x = self.up1(x4, x3, t)
+        x = self.sa4(x)
+        x = self.up2(x, x2, t)
+        x = self.sa5(x)
+        x = self.up3(x, x1, t)
+        x = self.sa6(x)
+        output = self.outc(x)
+        return output
+
+
+class Diffusion:
+    def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=64, device='cuda'):
+        self.noise_steps = noise_steps
+        self.beta_start = beta_start
+        self.beta_end = beta_end
+        self.img_size = img_size
+        self.device = device
+
+        self.beta = self.prepare_noise_schedule().to(device)
+        self.alpha = 1. - self.beta
+        self.alpha_hat = torch.cumprod(self.alpha, dim=0)
+
+    def prepare_noise_schedule(self):
+        return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
+
+    def noise_images(self, x, t):
+        sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None]
+        sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
+        Ɛ = torch.randn_like(x)
+        return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * Ɛ, Ɛ
+
+    def sample_timesteps(self, n):
+        return torch.randint(low=1, high=self.noise_steps, size=(n,))
+
+    def sample(self, model, n):
+        logging.info(f"Sampling {n} new images....")
+        model.eval()
+        with torch.no_grad():
+            x = torch.randn((n, 3, self.img_size, self.img_size)).to(self.device)
+            for i in tqdm(reversed(range(1, self.noise_steps)), position=0):
+                t = (torch.ones(n) * i).long().to(self.device)
+                predicted_noise = model(x, t)
+                alpha = self.alpha[t][:, None, None, None]
+                alpha_hat = self.alpha_hat[t][:, None, None, None]
+                beta = self.beta[t][:, None, None, None]
+                if i > 1:
+                    noise = torch.randn_like(x)
+                else:
+                    noise = torch.zeros_like(x)
+                # this algorithm is from the paper
+                x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
+        model.train()
+        x = (x.clamp(-1, 1) + 1) / 2
+        x = (x * 255).type(torch.uint8)
+        return x
+
+
+def train(run_name, epochs,batch_size,image_size, dataset_path, device = "cuda", lr = 3e-4):
+    setup_logging(run_name)
+    device = device
+    dataloader = get_data(image_size, dataset_path, batch_size)
+    model = UNet().to(device)
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
+    mse = nn.MSELoss()
+    diffusion = Diffusion(img_size=image_size, device=device)
+    logger = SummaryWriter(os.path.join("runs", run_name))
+    l = len(dataloader)
+
+    for epoch in range(epochs):
+        logging.info(f"Starting epoch {epoch}:")
+        pbar = tqdm(dataloader)
+        for i, (images, _) in enumerate(pbar):
+            images = images.to(device)
+            t = diffusion.sample_timesteps(images.shape[0]).to(device)
+            x_t, noise = diffusion.noise_images(images, t)
+            predicted_noise = model(x_t, t)
+            loss = mse(noise, predicted_noise)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            pbar.set_postfix(MSE=loss.item())
+            logger.add_scalar("MSE", loss.item(), global_step=epoch * l + i)
+
+        sampled_images = diffusion.sample(model, n=images.shape[0])
+        save_images(sampled_images, os.path.join("results", run_name, f"{epoch}.jpg"))
+        torch.save(model.state_dict(), os.path.join("models", run_name, f"ckpt.pt"))
+
+
+fldr = "/media/hossein/SSD1/code_dl"
+def launch():
+    train(run_name="DDPM_Uncondtional", epochs = 500,
+          batch_size = 2, image_size = 64, dataset_path = f"{fldr}/data/landscape_dataset",
+          device = "cuda",lr = 3e-4)
+
+launch()
+    # device = "cuda"
+    # model = UNet().to(device)
+    # ckpt = torch.load("models/DDPM_Uncondtional/ckpt.pt")
+    # model.load_state_dict(ckpt)
+    # diffusion = Diffusion(img_size=64, device=device)
+    # for i in range(3):
+    #     x = diffusion.sample(model, 8)
+    #     print(x.shape)
+    #     plt.figure(figsize=(32, 32))
+    #     plt.imshow(torch.cat([
+    #         torch.cat([i for i in x.cpu()], dim=-1),
+    #     ], dim=-2).permute(1, 2, 0).cpu())
+    #     plt.axis('off')
+    #     plt.savefig(f'samples/ddpm_unconditional_{i}.png', bbox_inches='tight')
+    # plt.show()
 
 
 
