@@ -3078,7 +3078,7 @@ def expand_to_planes(input, shape):
     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
 
 
-class DFLX(nn.Module):
+class DiffusionNew(nn.Module):
     def __init__(self,in_channels=3, c=64, embd_size=16,device='cuda'):
         super().__init__()
         #c = 64  # The base channel count
@@ -3179,8 +3179,8 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         
-        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
-        # self.unet_model = DFLX(in_channels, base_fmap_size, embd_size=embd_size)
+        # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
@@ -3741,7 +3741,7 @@ model.display_sample(input_channel=model.in_channels,
 from contextlib import contextmanager
 from copy import deepcopy
 import math
-
+from datetime import datetime
 from IPython import display
 from matplotlib import pyplot as plt
 import torch
@@ -3750,7 +3750,7 @@ from torch.nn import functional as F
 from torch.utils import data
 from torchvision import datasets, transforms, utils
 from torchvision.transforms import functional as TF
-from tqdm.notebook import tqdm, trange
+# from tqdm.notebook import tqdm, trange
 
 # Utilities
 
@@ -3970,8 +3970,9 @@ plt.show()
 # Prepare the dataset
 
 batch_size = 100
-
+img_size = 64
 tf = transforms.Compose([
+    transforms.Resize(size=(img_size)),
     transforms.ToTensor(),
     transforms.Normalize([0.5], [0.5]),
 ])
@@ -3984,6 +3985,19 @@ val_dl = data.DataLoader(val_set, batch_size,
 
 
 # Create the model and optimizer
+# sidenote:
+#Ino  ticed when I trained the plain version (i.e with no conditioning, and timestep)
+# as we trained more,the images kept getting more blurier/grimish/darker! possibly
+# signifying overfitting! this is clearly visible by viewing the saved samples in 
+# /imgs_gen_newarch_20240408_21_47_07 directory where contains the samples for
+# our plain version. 
+# next im going to enble class conditioning part and see how that affects the results
+#
+#
+# next im going to enable thetime step part and see how that affects the results 
+#
+# now im going to enable both conditionings (class conditioning and timestep) and see
+# how it affects the result
 
 seed = 0
 
@@ -4015,8 +4029,14 @@ steps = 500
 # 0 = no noise (DDIM)
 # 1 = full noise (DDPM)
 eta = 1.
+fldr = "/media/hossein/SSD1/code_dl"
+current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
+img_dir_path = f"{fldr}/imgs_gen_newarch_{current_time}/"
 
-
+if not os.path.exists(img_dir_path):
+    os.makedirs(img_dir_path)
+    print(f"directory '{img_dir_path}' created!")
+    
 def eval_loss(model, rng, reals, classes):
     # Draw uniformly distributed continuous timesteps
     t = rng.draw(reals.shape[0])[:, 0].to(device)
@@ -4086,12 +4106,12 @@ def demo():
     tqdm.write('\nSampling...')
     torch.manual_seed(seed)
 
-    noise = torch.randn([100, 3, 32, 32], device=device)
+    noise = torch.randn([100, 3, img_size, img_size], device=device)
     fakes_classes = torch.arange(10, device=device).repeat_interleave(10, 0)
     fakes = sample(model_ema, noise, steps, eta, fakes_classes)
 
     grid = utils.make_grid(fakes, 10).cpu()
-    filename = f'demo_{epoch:05}.png'
+    filename = f'{img_dir_path}/demo_{epoch:05}.png'
     TF.to_pil_image(grid.add(1).div(2).clamp(0, 1)).save(filename)
     display.display(display.Image(filename))
     tqdm.write('')
@@ -4108,11 +4128,11 @@ def save():
     }
     torch.save(obj, filename)
 
-
+epochs = 2000
 try:
     val()
     demo()
-    while True:
+    while epoch<epochs:
         print('Epoch', epoch)
         train()
         epoch += 1
