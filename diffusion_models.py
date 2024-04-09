@@ -3852,7 +3852,7 @@ class Diffusion(nn.Module):
         self.class_embed = nn.Embedding(10, 4)
 
         self.net = nn.Sequential(   # 32x32
-            ResConvBlock(3 , c, c),# 3+16+4
+            ResConvBlock(3 +4, c, c),# 3+16+4
             ResConvBlock(c, c, c),
             SkipBlock([
                 nn.AvgPool2d(2),  # 32x32 -> 16x16
@@ -3885,7 +3885,7 @@ class Diffusion(nn.Module):
     def forward(self, input, log_snrs, cond):
         timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
         class_embed = expand_to_planes(self.class_embed(cond), input.shape)
-        return self.net(torch.cat([input], dim=1))
+        return self.net(torch.cat([input,class_embed], dim=1))
 
 # Define the noise schedule and sampling loop
 
@@ -3986,13 +3986,20 @@ val_dl = data.DataLoader(val_set, batch_size,
 
 # Create the model and optimizer
 # sidenote:
-#Ino  ticed when I trained the plain version (i.e with no conditioning, and timestep)
+# I noticed when I trained the plain version (i.e with no conditioning, and timestep)
 # as we trained more,the images kept getting more blurier/grimish/darker! possibly
 # signifying overfitting! this is clearly visible by viewing the saved samples in 
 # /imgs_gen_newarch_20240408_21_47_07 directory where contains the samples for
-# our plain version. 
-# next im going to enble class conditioning part and see how that affects the results
-#
+# our plain version. I trained for 1000 epochs, lets now go for the next round
+# 
+# now im going to enble class conditioning part and see how that affects the results
+# it creates better image, but as we train more, the images seem toget   blurier/grimish/darker
+# basically the quality decreases, up around 150 epochs, the images seem vibrant and 
+# somewhat distinguishable,but as we train more, they become, worse! 
+# it seems the model is overfitting! also  size=32x32 shouldbe  enough, if images are developed
+# properly,they should be clear! if not it means the model hasnt learned properly!
+# so for the next round im going to use img_size=32x32 to make training much faster!
+# 720 epochs took around 12 hours now!(with img-size=64)
 #
 # next im going to enable thetime step part and see how that affects the results 
 #
@@ -4118,7 +4125,7 @@ def demo():
 
 
 def save():
-    filename = 'cifar_diffusion.pth'
+    filename = 'cifar_diffusion_plain_class_conditioned.pth'
     obj = {
         'model': model.state_dict(),
         'model_ema': model_ema.state_dict(),
