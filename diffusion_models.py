@@ -3805,11 +3805,11 @@ class ResidualBlock(nn.Module):
 
 
 class ResConvBlock(ResidualBlock):
-    def __init__(self, c_in, c_mid, c_out, dropout_last=False): #!it was True by default (to get the best result itmust be True)
+    def __init__(self, c_in, c_mid, c_out, dropout_last=True): #!its True by default (to get the best result itmust be True)
         skip = None if c_in == c_out else nn.Conv2d(c_in, c_out, 1, bias=False)
         super().__init__([
             nn.Conv2d(c_in, c_mid, 3, padding=1),
-            # nn.Dropout2d(0.1, inplace=True), #! this must be enabled to get the best results
+            nn.Dropout2d(0.1, inplace=True), #! this must be enabled to get the best results
             nn.ReLU(inplace=True),
             nn.Conv2d(c_mid, c_out, 3, padding=1),
             nn.Dropout2d(0.1, inplace=True) if dropout_last else nn.Identity(),
@@ -4024,6 +4024,14 @@ val_dl = data.DataLoader(val_set, batch_size,
 #
 # next lets disable all the dropouts in all layers and see how that affects the output, whether what we see as grimish images
 # linked to overfitting or not!
+# ok there doesnt seem to be anything bad happening, the network is performing fine signifying
+# the dropout didnt play a crucial role in this. the architecture and timeembedding has the highest impact
+# on the model.(the sampling part remains) (also we have pretty good looking images in 670 epochs)
+# 
+# next try this on our own architecture and see how that affects the output, before that
+# it may very well be a good idea to use the new loss instead and see how that impacts the result
+# and whether the loss plays the actual role here in getting fast convergence /vibrant colors or not!
+# or use the new noise scheduler (logsnr) as noise scheduler has a significant impact on the result
 # 
 #
 seed = 0
@@ -4177,6 +4185,9 @@ try:
     demo()
 except KeyboardInterrupt:
     pass
+#%%
+import numpy as np
+print(np.mean(losses),len(losses))
 #%%
 from typing import Dict, Tuple
 from tqdm import tqdm
