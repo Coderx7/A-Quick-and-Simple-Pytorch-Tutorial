@@ -3852,7 +3852,7 @@ class Diffusion(nn.Module):
         self.class_embed = nn.Embedding(10, 4)
 
         self.net = nn.Sequential(   # 32x32
-            ResConvBlock(3 +4, c, c),# 3+16+4
+            ResConvBlock(3 +16, c, c),# 3+16+4
             ResConvBlock(c, c, c),
             SkipBlock([
                 nn.AvgPool2d(2),  # 32x32 -> 16x16
@@ -3885,7 +3885,7 @@ class Diffusion(nn.Module):
     def forward(self, input, log_snrs, cond):
         timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
         class_embed = expand_to_planes(self.class_embed(cond), input.shape)
-        return self.net(torch.cat([input,class_embed], dim=1))
+        return self.net(torch.cat([input,timestep_embed], dim=1))
 
 # Define the noise schedule and sampling loop
 
@@ -3970,7 +3970,7 @@ plt.show()
 # Prepare the dataset
 
 batch_size = 100
-img_size = 64
+img_size = 32
 tf = transforms.Compose([
     transforms.Resize(size=(img_size)),
     transforms.ToTensor(),
@@ -3995,7 +3995,8 @@ val_dl = data.DataLoader(val_set, batch_size,
 # now im going to enble class conditioning part and see how that affects the results
 # it creates better image, but as we train more, the images seem toget   blurier/grimish/darker
 # basically the quality decreases, up around 150 epochs, the images seem vibrant and 
-# somewhat distinguishable,but as we train more, they become, worse! 
+# somewhat distinguishable,but as we train more, they become, worse! (sometimes better though!
+# look at the result you;ll see the network fixes some images while ruins others)
 # it seems the model is overfitting! also  size=32x32 shouldbe  enough, if images are developed
 # properly,they should be clear! if not it means the model hasnt learned properly!
 # so for the next round im going to use img_size=32x32 to make training much faster!
@@ -4125,7 +4126,7 @@ def demo():
 
 
 def save():
-    filename = 'cifar_diffusion_plain_class_conditioned.pth'
+    filename = 'cifar_diffusion_plain_timestep.pth'
     obj = {
         'model': model.state_dict(),
         'model_ema': model_ema.state_dict(),
