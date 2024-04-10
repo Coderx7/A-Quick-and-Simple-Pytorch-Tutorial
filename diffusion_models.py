@@ -4011,8 +4011,15 @@ val_dl = data.DataLoader(val_set, batch_size,
 # actual images. so the timestep is absolutely important.(by the way it took around 6 hours to do 1025 epochs!) 
 #
 # now im going to enable both conditionings (class conditioning and timestep) and see
-# how it affects the result
-#
+# how it affects the result, it improved the results, using conditioning 
+# we can specify the class we want to generate and hence we can better examine the output
+# using the timesteps, it gives us vibrant colors and as we continue, we achieve better image generations
+# compare the images in /imgs_gen_newarch_20240410_13_43_51 which are trained with 
+# timesteps embedding only with our new results in /imgs_gen_newarch_20240410_07_42_35
+# which contains class embeddings as well. the quality is the same, and class embedding
+# allows us to generate images for each class individually which is very helpful in generation
+# but for the model itself, the timesteps is needed but class emebedding is optional!
+# we achieved a loss of 0.032852 in epoch 1058.
 #
 #
 # next lets disable all the dropouts in all layers and see how that affects the output, whether what we see as grimish images
@@ -4045,7 +4052,7 @@ ema_decay = 0.998
 
 # The number of timesteps to use when sampling
 steps = 500
-
+losses = []
 # The amount of noise to add each timestep when sampling
 # 0 = no noise (DDIM)
 # 1 = full noise (DDPM)
@@ -4117,6 +4124,7 @@ def val():
         total_loss += loss.item() * len(reals)
         count += len(reals)
     loss = total_loss / count
+    losses.append(loss)
     tqdm.write(f'Validation: Epoch: {epoch}, loss: {loss:g}')
 
 
@@ -4163,7 +4171,12 @@ try:
         save()
 except KeyboardInterrupt:
     pass
-
+#%%
+try:
+    val()
+    demo()
+except KeyboardInterrupt:
+    pass
 #%%
 from typing import Dict, Tuple
 from tqdm import tqdm
