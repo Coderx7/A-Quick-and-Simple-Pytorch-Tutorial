@@ -3750,7 +3750,8 @@ from torch.nn import functional as F
 from torch.utils import data
 from torchvision import datasets, transforms, utils
 from torchvision.transforms import functional as TF
-# from tqdm.notebook import tqdm, trange
+from tqdm.notebook import tqdm, trange
+
 
 # Utilities
 
@@ -3852,7 +3853,7 @@ class Diffusion(nn.Module):
         self.class_embed = nn.Embedding(10, 4)
 
         self.net = nn.Sequential(   # 32x32
-            ResConvBlock(3 +16, c, c),# 3+16+4
+            ResConvBlock(3+16+4, c, c),# 3+16+4
             ResConvBlock(c, c, c),
             SkipBlock([
                 nn.AvgPool2d(2),  # 32x32 -> 16x16
@@ -3885,7 +3886,7 @@ class Diffusion(nn.Module):
     def forward(self, input, log_snrs, cond):
         timestep_embed = expand_to_planes(self.timestep_embed(log_snrs[:, None]), input.shape)
         class_embed = expand_to_planes(self.class_embed(cond), input.shape)
-        return self.net(torch.cat([input,timestep_embed], dim=1))
+        return self.net(torch.cat([input,class_embed, timestep_embed], dim=1))
 
 # Define the noise schedule and sampling loop
 
@@ -4000,13 +4001,24 @@ val_dl = data.DataLoader(val_set, batch_size,
 # it seems the model is overfitting! also  size=32x32 shouldbe  enough, if images are developed
 # properly,they should be clear! if not it means the model hasnt learned properly!
 # so for the next round im going to use img_size=32x32 to make training much faster!
-# 720 epochs took around 12 hours now!(with img-size=64)
+# 720 epochs took around 12 hours now!(with img-size=64) see the result in (imgs_gen_newarch_20240409_14_03_45)
 #
-# next im going to enable thetime step part and see how that affects the results 
+# now im going to enable thetime step part and see how that affects the results 
+# right off the bat, it seems the images are more vibrant and staying more vibrant than 
+# the plain mode where no conditioning (class or timestep) was used. see up to epoch 250
+# for this run(imgs_gen_newarch_20240410_07_42_35) vs the plain version(imgs_gen_newarch_20240408_21_47_07)
+# the results are just way better, even at 750 epochs, they are still vibrant and resemble
+# actual images. so the timestep is absolutely important.(by the way it took around 6 hours to do 1025 epochs!) 
 #
 # now im going to enable both conditionings (class conditioning and timestep) and see
 # how it affects the result
-
+#
+#
+#
+# next lets disable all the dropouts in all layers and see how that affects the output, whether what we see as grimish images
+# linked to overfitting or not!
+# 
+#
 seed = 0
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -4015,6 +4027,7 @@ torch.manual_seed(0)
 
 model = Diffusion().to(device)
 model_ema = deepcopy(model)
+print(f'model: {model}')
 print('Model parameters:', sum(p.numel() for p in model.parameters()))
 
 opt = optim.Adam(model.parameters(), lr=2e-4)
@@ -4095,7 +4108,7 @@ def val():
     rng = torch.quasirandom.SobolEngine(1, scramble=True)
     total_loss = 0
     count = 0
-    for i, (reals, classes) in enumerate(tqdm(val_dl)):
+    for i, (reals, classes) in enumerate(tqdm(val_dl,leave=False)):
         reals = reals.to(device)
         classes = classes.to(device)
 
@@ -4126,7 +4139,7 @@ def demo():
 
 
 def save():
-    filename = 'cifar_diffusion_plain_timestep.pth'
+    filename = 'cifar_diffusion_plain_class_condition_and_timestep.pth'
     obj = {
         'model': model.state_dict(),
         'model_ema': model_ema.state_dict(),
