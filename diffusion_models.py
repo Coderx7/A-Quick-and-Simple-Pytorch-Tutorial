@@ -3374,7 +3374,7 @@ class DiffusionMnist(nn.Module):
         #                             self.alphas_cumprod_prev,
         #                             self.sqrt_recip_alphas,
         #                             self.posterior_variance)])
-            
+
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
         return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
@@ -3654,10 +3654,73 @@ print(f'model n_params : {num_params:,}')
 # print(f'enc n_params  : {num_params_enc:,}')
 # print(f'dec n_params  : {num_params_dec:,}')
 
+# this section (loss and its dependencies) are added in april 4 2024 - 
+# for our new round of enhancements to see whats preventing us to achieve good results
+
+# Use a low discrepancy quasi-random sequence to sample uniformly distributed
+# timesteps. This considerably reduces the between-batch variance of the loss.
+rng = torch.quasirandom.SobolEngine(1, scramble=True)
+
+# by default we use a linear scheduler, but here we use log_snr 
+def get_alphas_sigmas(log_snrs):
+    """Returns the scaling factors for the clean image (alpha) and for the
+    noise (sigma), given the log SNR for a timestep."""
+    # these are basically the equivalent of 
+    # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
+    return (log_snrs.sigmoid().sqrt(), 
+            log_snrs.neg().sigmoid().sqrt())
+
+def get_ddpm_schedule(t):
+    """Returns log SNRs for the noise schedule from the DDPM paper."""
+    #expm1 is the efficient implementation of (exp - 1) 
+    # this is akin to our self.alphas = 1.0 - self.betas which is then used to create alphas_cumprod
+    # which is then fed to create sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod
+    out = -torch.special.expm1(1e-4 + 10 * t**2).log()
+    # print(f'{t=} {out=}')
+    return out
+
+def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning, enable_fp16):
+    # Draw uniformly distributed continuous timesteps
+    # t = torch.linspace(1, 0, num_timesteps + 1)[:-1]
+    # t.shape is torch.Size([32]) a float number for each example in the batch
+    t = rng.draw(imgs.shape[0])[:, 0].to(device)
+    # print(f'{t.shape=}')
+    # Calculate the noise schedule parameters for those timesteps
+    log_snrs_timestepinfos = get_ddpm_schedule(t)
+    alphas, sigmas = get_alphas_sigmas(log_snrs_timestepinfos)
+    weights = log_snrs_timestepinfos.exp() / log_snrs_timestepinfos.exp().add(1)
+    
+    # Combine the ground truth images and the noise
+    alphas = alphas[:, None, None, None]
+    sigmas = sigmas[:, None, None, None]
+    noise = torch.randn_like(imgs)
+    # our own formula in diffusion process was
+    # basically our model returns noisy_image and noise and here we have
+    # noisy_image and targets!
+    # noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
+    noised_reals = imgs * alphas + noise * sigmas
+    targets = noise * alphas - imgs * sigmas
+    
+    # Compute the model output and the loss.
+    with torch.cuda.amp.autocast(enabled=enable_fp16):
+        # since our model works with discrete timesteps, not logsnr_timesteps which are floats
+        # we send t (becasue our diffusion model still uses the linear base formula which
+        # works with discrete timesteps )
+        # we will change this when we also change our diffusion model
+        v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
+        return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
+
+#TODO:
+#! this loss needs to change for our qrchitecture, so we need to create a loss
+# for our linear sampler first, asses its output and then have a second version
+# that also includes the fusion_forward part and sampling methods as well (they need to
+# be compatible, i.e. they all either use linear scheduler or log-snr scheduler
+# for fusion_forward, loss and sampling)
+
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
     model.train()
-    for i, (imgs,_) in tqdm(enumerate(get_dataloader(dataset,
+    for i, (imgs,class_labels) in tqdm(enumerate(get_dataloader(dataset,
                                                      batch_size=batch_size,
                                                      num_workers=num_workers))):
         # sidenote: since torch 2.0.0 we can use torch.device as a context manager!
@@ -3674,7 +3737,8 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
-            loss = F.mse_loss(predicted_noises, noises)
+            # loss = F.mse_loss(predicted_noises, noises)
+            loss = eval_loss(model, rng, imgs, t, class_labels, enable_fp16=use_fp16)
 
             losses.append(loss.item())
             optimizer.zero_grad()
