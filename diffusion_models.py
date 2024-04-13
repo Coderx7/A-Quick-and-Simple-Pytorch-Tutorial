@@ -3759,7 +3759,7 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         # our model returns predicted_noise and noise and here we have
         # noisy_image and targets!
         v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
-        return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
+        return (v1 - targets).pow(2).mean([1, 2, 3]).mean()#.mul(weights).mean()
 
 #TODO:
 #! this loss needs to change for our qrchitecture, so we need to create a loss
@@ -3773,9 +3773,11 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
 # but after 1500 epochs, the noise was just too much and loss wouldnt decrease, it would fluctuate around
 # 0.2250 to 0.23. so 
 # 1. now im going to decrease lr each 500 epochs and see how that impacts the result
-# 2. remove the exp par in the weight part and see how that affects the noise/result (maybe it does)
+# 2. remove the exp par in the weight part and see how that affects the noise/result (maybe it does) 
+# ok it didnt change anything and increased the loss (possibly because themagnitude of weight became larger)
 # 3. check the result and somehow try to subtract the actual noise as well and see what happens!
-# 
+# 4. use v2 (pure noise) - target! and see how that affects
+# 5. remove weights and see how it affects the outcome
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
