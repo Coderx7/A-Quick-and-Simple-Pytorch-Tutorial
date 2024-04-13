@@ -3758,8 +3758,8 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         # we will change this when we also change our diffusion model
         # our model returns predicted_noise and noise and here we have
         # noisy_image and targets!
-        v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
-        return (v1 - targets).pow(2).mean([1, 2, 3]).mean()#.mul(weights).mean()
+        predicted_noise,pure_noise = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
+        return (predicted_noise - pure_noise).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 #TODO:
 #! this loss needs to change for our qrchitecture, so we need to create a loss
@@ -3777,7 +3777,9 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
 # ok it didnt change anything and increased the loss (possibly because themagnitude of weight became larger)
 # 3. check the result and somehow try to subtract the actual noise as well and see what happens!
 # 4. use v2 (pure noise) - target! and see how that affects
-# 5. remove weights and see how it affects the outcome
+# 5. remove weights and see how it affects the outcome - removing it seems to make things a bit better but
+# the loss lovers around 0.3650 and with a lr decrease it gets down to around 0.3591 and hovers around that
+# 6. use purenoise instead of target!
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
