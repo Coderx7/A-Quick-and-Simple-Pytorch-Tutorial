@@ -3787,7 +3787,9 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # 9. but I guess we need to remove the diffusion part in the loss, and use the one in forward pass
 # I guess the noise need to be the same fr this to work. and since the whole diffusion process is
 # taking place, we may as well use the information from the forward pass and return the noise from forward
-
+# 10. OK that did it :) that was the catch, so to get the best result, we needed to have the proper loss
+# next we are going to use timeembedding and other things:)
+# 11.before that lets use weights and see how it performs and then go for other things!
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
