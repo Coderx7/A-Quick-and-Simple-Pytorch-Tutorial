@@ -3738,6 +3738,7 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
     sqrt_one_minus_alphas_cumprod_t = model._get_value_for_timestep_t(sqrt_one_minus_alphas_cumprod, timestep_discrete, is_batch)
     # now calculate the mean + variance to get the noisy image
     # noisy_images = (sqrt_alphas_cumprod_t * imgs) + (sqrt_one_minus_alphas_cumprod_t * noise)
+    # removing exp() will increase the loss and doesnt change the outcome significantly 
     weights = sqrt_alphas_cumprod_t.exp() / sqrt_one_minus_alphas_cumprod_t.exp().add(1)
     
     # Combine the ground truth images and the noise
