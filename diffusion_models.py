@@ -3686,6 +3686,9 @@ def get_ddpm_schedule(t):
     # print(f'{t=} {out=}')
     return out
 
+# side note:
+# the image results for this loss function resides in /imgs_gen_20240412_21_25_50 
+# read the explanation below (sidenotes 2) to learn more about the changes and why this version is wrong
 def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning, enable_fp16):
     # Draw uniformly distributed continuous timesteps
     # t = torch.linspace(1, 0, num_timesteps + 1)[:-1]
@@ -3785,27 +3788,33 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # be compatible, i.e. they all either use linear scheduler or log-snr scheduler
 # for fusion_forward, loss and sampling)
 # 
-# sidenote
+# sidenote - these all have been tested in April 13 2024, so the dir images with the date 20240413 belong to these tests
 # the usage of our loss seems to have improved the results compared to the initial loss (new loss with logsnr)
 # but after 1500 epochs, the noise was just too much and loss wouldnt decrease, it would fluctuate around
-# 0.2250 to 0.23. so 
+# 0.2250 to 0.23. (img dir /imgs_gen_20240413_11_20_37) so
 # 1. now im going to decrease lr each 500 epochs and see how that impacts the result
 # 2. remove the exp par in the weight part and see how that affects the noise/result (maybe it does) 
 # ok it didnt change anything and increased the loss (possibly because themagnitude of weight became larger)
 # 3. check the result and somehow try to subtract the actual noise as well and see what happens!
 # 4. use v2 (pure noise) - target! and see how that affects
 # 5. remove weights and see how it affects the outcome - removing it seems to make things a bit better but
-# the loss lovers around 0.3650 and with a lr decrease it gets down to around 0.3591 and hovers around that
-# 6. use purenoise instead of target! - loss came down to 0.1615 in 60 epochs, but the result was worst!
-# 7. so now im removing the weights and trying again to see how that impacts the result! - didint do anything!
-# 8.reverting back to use target but this time use the pure_noise from model! its better 
+# the loss lovers around 0.3650 and with a lr decrease it gets down to around 0.3591 and hovers around that (dir /imgs_gen_20240413_14_42_23)
+# 6. use purenoise instead of target! - loss came down to 0.1615 in 60 epochs, but the result was worst! (dir /imgs_gen_20240413_17_45_21)
+# 7. so now im removing the weights and trying again to see how that impacts the result! - didint do anything! (dir /imgs_gen_20240413_17_53_50)
+# 8.reverting back to use target but this time use the pure_noise from model! its better (image dir imgs_gen_20240413_18_19_00 )
 # 9. but I guess we need to remove the diffusion part in the loss, and use the one in forward pass
 # I guess the noise need to be the same fr this to work. and since the whole diffusion process is
 # taking place, we may as well use the information from the forward pass and return the noise from forward
 # 10. OK that did it :) that was the catch, so to get the best result, we needed to have the proper loss
+# the results for this run reside in /imgs_gen_20240413_20_22_33 directory. 
 # next we are going to use timeembedding and other things:)
 # 11.before that lets use weights and see how it performs and then go for other things!
-
+# the weights doesnt seem to affect the outcome, the instances are still vibrant like before, and still deformed
+# the loss is lower though, like in epoch 1240 we have a loss = 0.0685. and like before it fluctuates 
+# (goes to 0.0700 and 0.0682 and up and down again) the result for this run resides in /imgs_gen_20240413_23_40_20
+# 12.next im going to use torch mse() and use timestep to see how it affects the result
+# 
+#
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
     model.train()
