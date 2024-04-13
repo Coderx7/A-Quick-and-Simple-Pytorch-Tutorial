@@ -2493,7 +2493,8 @@ sample_plot_image(model,num_images=10, device=device)
 # 4. a sampling function/method so we can generate new images from noise using our model
 # 5. a dataset of images and the required dataloader. 
 # 6. a training loop to train our model
-
+#
+# ref read https://betterprogramming.pub/diffusion-models-ddpms-ddims-and-classifier-free-guidance-e07b297b2869#092e
 from typing import Tuple
 # lets import what we need
 import time 
@@ -3183,6 +3184,11 @@ class DiffusionNew(nn.Module):
 # so we would like to first update the loss and see its impact
 # second we will be going to update the new scheduler and use that instead to see its impact 
 # and third the combination of both to see if we get the same effect of the new architecture with our base architecture! 
+# I tried a sloppy version the new loss but it seems after 1600 epochs its not improving anything
+# I guess because the loss is tightly coupled with the scheduler type and sampling/forward diffusion process
+# so I need to create a loss based on our linear scheduler first, and then add the second type of scheduler
+# that comes from the DDIM (Denoising Diffusion Implicit Models) paper. see the comments for the loss below
+# TODO: add the loss functions to the model itself so they change based on the type of scheduler automatically!
 
 class DiffusionMnist(nn.Module):
     def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, linear_scheduler=True, device = 'cpu') -> None:
@@ -3695,8 +3701,6 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
     sigmas = sigmas[:, None, None, None]
     noise = torch.randn_like(imgs)
     # our own formula in diffusion process was
-    # basically our model returns noisy_image and noise and here we have
-    # noisy_image and targets!
     # noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
     noised_reals = imgs * alphas + noise * sigmas
     targets = noise * alphas - imgs * sigmas
@@ -3707,6 +3711,72 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         # we send t (becasue our diffusion model still uses the linear base formula which
         # works with discrete timesteps )
         # we will change this when we also change our diffusion model
+        # our model returns predicted_noise and noise and here we have
+        # noisy_image and targets!
+        v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
+        return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
+
+def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning, num_timesteps, enable_fp16, device, start=0.0001, end=0.02):
+    # Draw uniformly distributed continuous timesteps
+    # t = torch.linspace(1, 0, num_timesteps + 1)[:-1]
+    # t.shape is (32,) a float number for each example in the batch
+    # t = rng.draw(imgs.shape[0])[:, 0].to(device)
+    
+    # Calculate the noise schedule parameters for those timesteps
+    # akin to our self.alphas = 1.0 - self.betas
+    # log_snrs_timestepinfos = get_ddpm_schedule(t)
+    # akin to sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t
+    # alphas, sigmas = get_alphas_sigmas(log_snrs_timestepinfos)
+    # weights = log_snrs_timestepinfos.exp() / log_snrs_timestepinfos.exp().add(1)
+    
+    # Combine the ground truth images and the noise
+    # alphas = alphas[:, None, None, None]
+    # sigmas = sigmas[:, None, None, None]
+    # noise = torch.randn_like(imgs)
+    # our own formula in diffusion process was
+    # noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
+    # noised_reals = imgs * alphas + noise * sigmas
+    # targets = noise * alphas - imgs * sigmas
+    is_batch = imgs.ndim>3
+    betas = torch.linspace(start=start, end=end, steps=num_timesteps, device=device)
+    # α 
+    alphas = 1.0 - betas
+    # ̅α 
+    alphas_cumprod = torch.cumprod(alphas, dim=0).to(device)
+    # √̅α
+    sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+    # √1-̅α 
+    sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
+    # alphas_prev
+    # alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], pad=(1,0), value=-1.0)
+    # sqrt_recip_alphas = torch.sqrt(1.0/alphas)
+    # get the custom t specific values for sqrt_alphas_cumprod etc
+    # forward diffusion 
+    noise = torch.randn_like(imgs)
+    # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
+    sqrt_alphas_cumprod_t = model._get_value_for_timestep_t(sqrt_alphas_cumprod, timestep_indexes=timestep_discrete, use_batch=is_batch)
+    sqrt_one_minus_alphas_cumprod_t = model._get_value_for_timestep_t(sqrt_one_minus_alphas_cumprod, timestep_discrete, is_batch)
+    # now calculate the mean + variance to get the noisy image
+    # noisy_images = (sqrt_alphas_cumprod_t * imgs) + (sqrt_one_minus_alphas_cumprod_t * noise)
+    weights = sqrt_alphas_cumprod_t.exp() / sqrt_one_minus_alphas_cumprod_t.exp().add(1)
+    
+    # Combine the ground truth images and the noise
+    # alphas = alphas[:, None, None, None]
+    # sigmas = sigmas[:, None, None, None]
+    alphas = sqrt_alphas_cumprod_t
+    sigmas = sqrt_one_minus_alphas_cumprod_t
+    
+    noised_reals = imgs * alphas + noise * sigmas
+    targets = noise * alphas - imgs * sigmas
+    
+    # Compute the model output and the loss.
+    with torch.cuda.amp.autocast(enabled=enable_fp16):
+        # since our model works with discrete timesteps, not logsnr_timesteps which are floats
+        # we send t (becasue our diffusion model still uses the linear base formula which
+        # works with discrete timesteps )
+        # we will change this when we also change our diffusion model
+        # our model returns predicted_noise and noise and here we have
+        # noisy_image and targets!
         v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
         return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
@@ -3738,7 +3808,10 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
             # loss = F.mse_loss(predicted_noises, noises)
-            loss = eval_loss(model, rng, imgs, t, class_labels, enable_fp16=use_fp16)
+            loss = eval_loss(model, rng, imgs, t, class_labels,
+                             num_timesteps=num_timesteps, 
+                             enable_fp16=use_fp16, 
+                             device=device)
 
             losses.append(loss.item())
             optimizer.zero_grad()
