@@ -3690,6 +3690,10 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
     # Draw uniformly distributed continuous timesteps
     # t = torch.linspace(1, 0, num_timesteps + 1)[:-1]
     # t.shape is torch.Size([32]) a float number for each example in the batch
+    # the rng is used so that the random numbers in diffusion forward and here produce the same numbers
+    # so basically the same diffusion forward takes place here and we get the same noisy_image,noise
+    # that was used to forward the model here, so ultimately we use the right noise on creating the target
+    # and subtract from the predicted noise. I explained this in our own version better. 
     t = rng.draw(imgs.shape[0])[:, 0].to(device)
     # print(f'{t.shape=}')
     # Calculate the noise schedule parameters for those timesteps
@@ -3761,6 +3765,17 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
         # noisy_image and targets!
         # predicted_noise,pure_noise = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
         targets = pure_noise * alphas - imgs * sigmas
+        # calculate Mean Squared Error (MSE) here (the weighted version of course! note the mult at the end)
+        # pow(2) squares each element in the error tensor. this has the effect of making larger errors
+        # more significant, which can be desirable in many contexts. 
+        # This is a common step in many loss functions, including the MSE.
+        # the mean([1, 2, 3]) calculates the mean (average) of the squared errors over the 
+        # dimensions 1, 2, and 3 of the tensor. The result is a single scalar value that represents 
+        # the average squared error between the predicted noise and the target values
+        # and this so far gives us a number for each sample in our batch, therefore we do a final mean()
+        # to get a single value for loss. note that we also incorporate a weight in our loss which 
+        # improves our result!
+        # F.mse_loss(predicted_noise, targets)
         return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 #TODO:
