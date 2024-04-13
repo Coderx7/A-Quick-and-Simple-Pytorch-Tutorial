@@ -3761,7 +3761,7 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
         # noisy_image and targets!
         # predicted_noise,pure_noise = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
         targets = pure_noise * alphas - imgs * sigmas
-        return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mean()#.mul(weights).mean()
+        return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 #TODO:
 #! this loss needs to change for our qrchitecture, so we need to create a loss
