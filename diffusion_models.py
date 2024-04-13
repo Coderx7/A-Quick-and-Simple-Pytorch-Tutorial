@@ -3546,7 +3546,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=7000
+step_size=1000 # 7000
 interval = 20
 
 # resize image
