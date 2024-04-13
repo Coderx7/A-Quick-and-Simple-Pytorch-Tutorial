@@ -3717,26 +3717,6 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning, num_timesteps, enable_fp16, device, start=0.0001, end=0.02):
-    # Draw uniformly distributed continuous timesteps
-    # t = torch.linspace(1, 0, num_timesteps + 1)[:-1]
-    # t.shape is (32,) a float number for each example in the batch
-    # t = rng.draw(imgs.shape[0])[:, 0].to(device)
-    
-    # Calculate the noise schedule parameters for those timesteps
-    # akin to our self.alphas = 1.0 - self.betas
-    # log_snrs_timestepinfos = get_ddpm_schedule(t)
-    # akin to sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t
-    # alphas, sigmas = get_alphas_sigmas(log_snrs_timestepinfos)
-    # weights = log_snrs_timestepinfos.exp() / log_snrs_timestepinfos.exp().add(1)
-    
-    # Combine the ground truth images and the noise
-    # alphas = alphas[:, None, None, None]
-    # sigmas = sigmas[:, None, None, None]
-    # noise = torch.randn_like(imgs)
-    # our own formula in diffusion process was
-    # noisy_images = (sqrt_alphas_cumprod_t * input_images) + (sqrt_one_minus_alphas_cumprod_t * actual_noises)
-    # noised_reals = imgs * alphas + noise * sigmas
-    # targets = noise * alphas - imgs * sigmas
     is_batch = imgs.ndim>3
     betas = torch.linspace(start=start, end=end, steps=num_timesteps, device=device)
     # α 
@@ -3786,6 +3766,15 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
 # that also includes the fusion_forward part and sampling methods as well (they need to
 # be compatible, i.e. they all either use linear scheduler or log-snr scheduler
 # for fusion_forward, loss and sampling)
+# 
+# sidenote
+# the usage of our loss seems to have improved the results compared to the initial loss (new loss with logsnr)
+# but after 1500 epochs, the noise was just too much and loss wouldnt decrease, it would fluctuate around
+# 0.2250 to 0.23. so 
+# 1. now im going to decrease lr each 500 epochs and see how that impacts the result
+# 2. remove the exp par in the weight part and see how that affects the noise/result (maybe it does)
+# 3. check the result and somehow try to subtract the actual noise as well and see what happens!
+# 
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
