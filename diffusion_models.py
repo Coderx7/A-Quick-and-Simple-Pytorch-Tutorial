@@ -2550,6 +2550,8 @@ class Swish(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x)
 
+def expand_to_planes(input, shape):
+    return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
 
 # we need a block to do conv on the images and timesteps
 # we can do this using functions, but a class/module form
@@ -2572,6 +2574,9 @@ class ResBlock(nn.Module):
         self.device = device
         self.drpout = dropout
         
+        # fuse timesteps as channels to first conv
+        # in_channels += self.time_embd_size
+
         if is_encoder:
             # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
             # the inputsize at each step, thats why we are using strides of 2. obviously in a realworld
@@ -2583,7 +2588,7 @@ class ResBlock(nn.Module):
             # sidenote 2: since we are also dealing with timesteps, we want to combine both inputs and
             # utilize it in our model. time information allows the model to learn to deal wil different
             # levels of noise properly.
-            self.conv = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1),
+            self.conv = nn.Sequential(nn.Conv2d(in_channels + self.time_embd_size, out_channels, kernel_size=3, stride=2, padding=1),
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
                                       act)
         else:
@@ -2594,7 +2599,7 @@ class ResBlock(nn.Module):
             #! use upsample layer insteda of contransposed, 
             self.conv = nn.Sequential(
                                       nn.Upsample(scale_factor=2),
-                                      nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      nn.Conv2d(in_channels + self.time_embd_size, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
                                       # nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
                                       # we use a separate conv layer becasue contransposed is usually only used for upsampling
                                       # the learning part happens in the normal conv layer
@@ -2604,8 +2609,10 @@ class ResBlock(nn.Module):
                                       )
 
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
-                                      nn.Linear(self.time_embd_size, out_channels),
-                                      nn.BatchNorm1d(out_channels),
+                                      # instead of projection to (embd_size, out_channels)
+                                      # we use embd_size only
+                                      nn.Linear(self.time_embd_size, self.time_embd_size),
+                                      nn.BatchNorm1d(self.time_embd_size),
                                       nn.SiLU())
 
         # in ou case our skip-connection differs from our output 
@@ -2631,9 +2638,14 @@ class ResBlock(nn.Module):
         time_embeddings = self.time_mlp(t)
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
-        output = self.conv(x) + time_embeddings[..., None,None]
-        #additional operation 
-        output = self.conv2(output) 
+        # output = self.conv(x) + time_embeddings[..., None,None]
+        time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
+        # print(f'{x.shape=} {time_embeddings.shape=}')
+        fused_inputs = torch.cat([x,time_embeddings], dim=1)
+        # print(f'{fused_inputs.shape=}')
+        output = self.conv(fused_inputs)
+        # additional operation 
+        output = self.conv2(output)
         #! some people add the timeembedding to the skip_connection
         identity = self.h(identity)
         # print(f'{output.shape=} {identity.shape=}')
