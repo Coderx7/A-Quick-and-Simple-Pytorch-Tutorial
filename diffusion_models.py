@@ -2612,8 +2612,10 @@ class ResBlock(nn.Module):
                                       # instead of projection to (embd_size, out_channels)
                                       # we use embd_size only
                                       nn.Linear(self.time_embd_size, self.time_embd_size),
-                                      nn.BatchNorm1d(self.time_embd_size),
-                                      nn.SiLU())
+                                    # disable bn and nonlinearity to see how it affects the result 
+                                    # nn.BatchNorm1d(self.time_embd_size),
+                                    # nn.SiLU()
+                                      )
 
         # in ou case our skip-connection differs from our output 
         # (channel number is increased for each block) so the input
@@ -3796,9 +3798,17 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # 13.next increase the embedding to 64 and see how it affects it. (dir /imgs_gen_20240414_11_36_49)
 # loss at epoch 660 is 0.0729 , at 1340 is around 0.0708 and at 1400 is 0.0695 and at 1520 0.0708
 # it improved the loss but the result doesnt seem good enough, before I use class condition for 
-# better tracking the results (each class) lets work more on timeembedding fusion part:
+# better tracking the results (each class) lets work more on timeembedding fusion part: 
 # 14.next change the way timeembedding is being fed to the network(use channels instead?)
-#
+# got loss = 0.0732 at 1000, 0.0710 at epoch 1400, 0.0706 at 1500, 0.0704 at 2000, 0.0693 at 2040. (dir /imgs_gen_20240414_15_27_57)
+# looking at the results, I dont see signifcant improvement compared to previous form (adding timeembeeding to conv(x))
+# or any improvements at all for that matter! need to work with timeembedding more. 
+# but before that, itd be a good idea to implement class conditioning so we can better see if all classes 
+# are generated the same, or some are better than others. 
+# 15. before that lets test the model with no bn and silu for time embedding and see how that affects
+# this:
+# 16. add class conditions to better assess the network performance. 
+# 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
     model.train()
