@@ -3580,7 +3580,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 #next i plan on using 500 for timesteps and use attenstions to see if that makes anydifference
 #also I used val for cifar10 only
 num_timesteps = 500
-embd_size = 16#64
+embd_size = 64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3725,48 +3725,13 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device):
-    # is_batch = imgs.ndim>3
-    # betas = torch.linspace(start=start, end=end, steps=num_timesteps, device=device)
-    # α 
-    # alphas = 1.0 - betas
-    # ̅α 
-    # alphas_cumprod = torch.cumprod(alphas, dim=0).to(device)
-    # √̅α
-    # sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
-    # √1-̅α 
-    # sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
-    # alphas_prev
-    # alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], pad=(1,0), value=-1.0)
-    # sqrt_recip_alphas = torch.sqrt(1.0/alphas)
-    # get the custom t specific values for sqrt_alphas_cumprod etc
-    # forward diffusion 
-    # noise = torch.randn_like(imgs)
-    # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
-    # sqrt_alphas_cumprod_t = model._get_value_for_timestep_t(sqrt_alphas_cumprod, timestep_indexes=timestep_discrete, use_batch=is_batch)
-    # sqrt_one_minus_alphas_cumprod_t = model._get_value_for_timestep_t(sqrt_one_minus_alphas_cumprod, timestep_discrete, is_batch)
-    # now calculate the mean + variance to get the noisy image
-    # noisy_images = (sqrt_alphas_cumprod_t * imgs) + (sqrt_one_minus_alphas_cumprod_t * noise)
     # removing exp() will increase the loss and doesnt change the outcome significantly 
     weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
-    
     # Combine the ground truth images and the noise
-    # alphas = alphas[:, None, None, None]
-    # sigmas = sigmas[:, None, None, None]
     alphas = model.sqrt_alphas_cumprod_t
     sigmas = model.sqrt_one_minus_alphas_cumprod_t
-    
-    # noised_reals = imgs * alphas + noise * sigmas
-    # targets = noise * alphas - imgs * sigmas
-    
     # Compute the model output and the loss.
     with torch.cuda.amp.autocast(enabled=enable_fp16):
-        # since our model works with discrete timesteps, not logsnr_timesteps which are floats
-        # we send t (becasue our diffusion model still uses the linear base formula which
-        # works with discrete timesteps )
-        # we will change this when we also change our diffusion model
-        # our model returns predicted_noise and noise and here we have
-        # noisy_image and targets!
-        # predicted_noise,pure_noise = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
         targets = pure_noise * alphas - imgs * sigmas
         # calculate Mean Squared Error (MSE) here (the weighted version of course! note the mult at the end)
         # pow(2) squares each element in the error tensor. this has the effect of making larger errors
@@ -3812,8 +3777,15 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # the weights doesnt seem to affect the outcome, the instances are still vibrant like before, and still deformed
 # the loss is lower though, like in epoch 1240 we have a loss = 0.0685. and like before it fluctuates 
 # (goes to 0.0700 and 0.0682 and up and down again) the result for this run resides in /imgs_gen_20240413_23_40_20
-# 12.next im going to use torch mse() and use timestep to see how it affects the result
-# 
+# 12.next im going to use torch mse() and use timestep to see how it affects the result (img dir /imgs_gen_20240414_04_35_42)
+# the result isnt good as I expected (dir /imgs_gen_20240414_04_35_42) even after 3000 epochs, 
+# we achieved a loss of 0.0713 at epoch 1400 and 0.0676 at 3300, and it could be due to 
+# small embedding size of 16 or the way is being fused. 
+# 13.next increase the embedding to 64 and see how it affects it. (dir /imgs_gen_20240414_11_36_49)
+# loss at epoch 660 is 0.0729 , at 1340 is around 0.0708 and at 1400 is 0.0695 and at 1520 0.0708
+# it improved the loss but the result doesnt seem good enough, before I use class condition for 
+# better tracking the results (each class) lets work more on timeembedding fusion part:
+# 14.next change the way timeembedding is being fed to the network(use channels instead?)
 #
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
