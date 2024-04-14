@@ -2628,10 +2628,10 @@ class ResBlock(nn.Module):
     def forward (self, x, t):
         identity = x
         # get time embeddigs 
-        # time_embeddings = self.time_mlp(t)
+        time_embeddings = self.time_mlp(t)
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
-        output = self.conv(x) #+ time_embeddings[..., None,None]
+        output = self.conv(x) + time_embeddings[..., None,None]
         #additional operation 
         output = self.conv2(output) 
         #! some people add the timeembedding to the skip_connection
@@ -3537,7 +3537,7 @@ use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
 load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}_newarch_no_ts.pth'
+checkpoint_name = f'diffusion_{dataset_name}_basearch_ts.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3547,7 +3547,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=1000 # 7000
+step_size=7000
 interval = 20
 
 # resize image
@@ -3778,7 +3778,7 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
         # and this so far gives us a number for each sample in our batch, therefore we do a final mean()
         # to get a single value for loss. note that we also incorporate a weight in our loss which 
         # improves our result!
-        # F.mse_loss(predicted_noise, targets)
+        # return F.mse_loss(predicted_noise, targets).mul(weights).mean()
         return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 #TODO:
