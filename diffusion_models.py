@@ -3806,8 +3806,15 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # but before that, itd be a good idea to implement class conditioning so we can better see if all classes 
 # are generated the same, or some are better than others. 
 # 15. before that lets test the model with no bn and silu for time embedding and see how that affects
-# this:
-# 16. add class conditions to better assess the network performance. 
+# this: not sure if it affected much, I guess it made convergence much faster? especially at the begining
+# check dir(/imgs_gen_20240414_19_33_55) and compare it with the previous run. 
+# loss wise, we got 0.0720 at 700, 0.0705 at 1000 and 0.0715 at 1400 and 0.0713 at 1500 , and 0.0694 at 1600
+# so we have higher loss for the same epoch compared to the previous run where timeembedding used 
+# nonlinearity and batchnorm. I noticed some classes seemed to have better reconstructions than others, 
+# you could see dog, horses, airplains and birds, maybe some fish or sharks, but not very good, so it wasnt
+# deformed blocks of colors! see the directory for samples. 
+# anyway to get better idea we need to have some conditions and see how each class is doing!so next
+# # 16. add class conditions to better assess the network performance. 
 # 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
