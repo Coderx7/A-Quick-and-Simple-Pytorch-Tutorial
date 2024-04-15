@@ -2588,7 +2588,7 @@ class ResBlock(nn.Module):
             # sidenote 2: since we are also dealing with timesteps, we want to combine both inputs and
             # utilize it in our model. time information allows the model to learn to deal wil different
             # levels of noise properly.
-            self.conv = nn.Sequential(nn.Conv2d(in_channels + self.time_embd_size, out_channels, kernel_size=3, stride=2, padding=1),
+            self.conv = nn.Sequential(nn.Conv2d(in_channels , out_channels, kernel_size=3, stride=2, padding=1),
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
                                       act)
         else:
@@ -2599,7 +2599,7 @@ class ResBlock(nn.Module):
             #! use upsample layer insteda of contransposed, 
             self.conv = nn.Sequential(
                                       nn.Upsample(scale_factor=2),
-                                      nn.Conv2d(in_channels + self.time_embd_size, out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      nn.Conv2d(in_channels , out_channels, kernel_size=3, stride=1,padding=1,bias=False),
                                       # nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
                                       # we use a separate conv layer becasue contransposed is usually only used for upsampling
                                       # the learning part happens in the normal conv layer
@@ -2611,9 +2611,9 @@ class ResBlock(nn.Module):
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       # instead of projection to (embd_size, out_channels)
                                       # we use embd_size only
-                                      nn.Linear(self.time_embd_size, self.time_embd_size),
+                                      nn.Linear(self.time_embd_size, out_channels),#self.time_embd_size
                                     # disable bn and nonlinearity to see how it affects the result 
-                                    nn.BatchNorm1d(self.time_embd_size),
+                                    nn.BatchNorm1d(out_channels), #self.time_embd_size
                                     nn.SiLU()
                                       )
 
@@ -2637,15 +2637,15 @@ class ResBlock(nn.Module):
     def forward (self, x, t):
         identity = x
         # get time embeddigs 
-        time_embeddings = self.time_mlp(t)
+        # time_embeddings = self.time_mlp(t)
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
-        # output = self.conv(x) + time_embeddings[..., None,None]
-        time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
+        output = self.conv(x) #+ time_embeddings[..., None,None]
+        # time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
         # print(f'{x.shape=} {time_embeddings.shape=}')
-        fused_inputs = torch.cat([x,time_embeddings], dim=1)
+        # fused_inputs = torch.cat([x,time_embeddings], dim=1)
         # print(f'{fused_inputs.shape=}')
-        output = self.conv(fused_inputs)
+        # output = self.conv(fused_inputs)
         # additional operation 
         output = self.conv2(output)
         #! some people add the timeembedding to the skip_connection
@@ -2713,8 +2713,8 @@ class UnetModel(nn.Module):
         # increased our convergence speed by nearly 3 folds!
         self.final_conv = nn.Sequential(nn.Conv2d(fmap, fmap//2, kernel_size=3,padding=1, bias=False),
                                         #!todo: maybe we want to remove this
-                                        nn.BatchNorm2d(fmap//2),
-                                        nn.SiLU(),
+                                        # nn.BatchNorm2d(fmap//2),
+                                        # nn.SiLU(),
                                         # note that we dont use any bn or act here, using bn
                                         # just hinders the convergence, think about it, we want
                                         # specific distribution for our images/noise and certainly
@@ -2759,240 +2759,6 @@ m(x,t).shape
 # print(m) 
 # lets create our class
 
-
-# import math
-# import torch
-# from torch import nn
-# from torch.nn import init
-# from torch.nn import functional as F
-
-# class Swish(nn.Module):
-#     def forward(self, x):
-#         return x * torch.sigmoid(x)
-
-# class TimeEmbedding(nn.Module):
-#     def __init__(self, T, d_model, dim):
-#         assert d_model % 2 == 0
-#         super().__init__()
-#         emb = torch.arange(0, d_model, step=2) / d_model * math.log(10000)
-#         emb = torch.exp(-emb)
-#         pos = torch.arange(T).float()
-#         emb = pos[:, None] * emb[None, :]
-#         assert list(emb.shape) == [T, d_model // 2]
-#         emb = torch.stack([torch.sin(emb), torch.cos(emb)], dim=-1)
-#         assert list(emb.shape) == [T, d_model // 2, 2]
-#         emb = emb.view(T, d_model)
-
-#         self.timembedding = nn.Sequential(
-#             nn.Embedding.from_pretrained(emb),
-#             nn.Linear(d_model, dim),
-#             Swish(),
-#             nn.Linear(dim, dim),
-#         )
-#         self.initialize()
-
-#     def initialize(self):
-#         for module in self.modules():
-#             if isinstance(module, nn.Linear):
-#                 init.xavier_uniform_(module.weight)
-#                 init.zeros_(module.bias)
-
-#     def forward(self, t):
-#         emb = self.timembedding(t)
-#         return emb
-
-# class DownSample(nn.Module):
-#     def __init__(self, in_ch):
-#         super().__init__()
-#         self.main = nn.Conv2d(in_ch, in_ch, 3, stride=2, padding=1)
-#         self.initialize()
-
-#     def initialize(self):
-#         init.xavier_uniform_(self.main.weight)
-#         init.zeros_(self.main.bias)
-
-#     def forward(self, x, temb):
-#         x = self.main(x)
-#         return x
-
-# class UpSample(nn.Module):
-#     def __init__(self, in_ch):
-#         super().__init__()
-#         self.main = nn.Conv2d(in_ch, in_ch, 3, stride=1, padding=1)
-#         self.initialize()
-
-#     def initialize(self):
-#         init.xavier_uniform_(self.main.weight)
-#         init.zeros_(self.main.bias)
-
-#     def forward(self, x, temb):
-#         _, _, H, W = x.shape
-#         x = F.interpolate(
-#             x, scale_factor=2, mode='nearest')
-#         x = self.main(x)
-#         return x
-
-# class AttnBlock(nn.Module):
-#     def __init__(self, in_ch):
-#         super().__init__()
-#         self.group_norm = nn.GroupNorm(32, in_ch)
-#         self.proj_q = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-#         self.proj_k = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-#         self.proj_v = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-#         self.proj = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-#         self.initialize()
-
-#     def initialize(self):
-#         for module in [self.proj_q, self.proj_k, self.proj_v, self.proj]:
-#             init.xavier_uniform_(module.weight)
-#             init.zeros_(module.bias)
-#         init.xavier_uniform_(self.proj.weight, gain=1e-5)
-
-#     def forward(self, x):
-#         B, C, H, W = x.shape
-#         h = self.group_norm(x)
-#         q = self.proj_q(h)
-#         k = self.proj_k(h)
-#         v = self.proj_v(h)
-
-#         q = q.permute(0, 2, 3, 1).view(B, H * W, C)
-#         k = k.view(B, C, H * W)
-#         w = torch.bmm(q, k) * (int(C) ** (-0.5))
-#         assert list(w.shape) == [B, H * W, H * W]
-#         w = F.softmax(w, dim=-1)
-
-#         v = v.permute(0, 2, 3, 1).view(B, H * W, C)
-#         h = torch.bmm(w, v)
-#         assert list(h.shape) == [B, H * W, C]
-#         h = h.view(B, H, W, C).permute(0, 3, 1, 2)
-#         h = self.proj(h)
-
-#         return x + h
-
-# class ResBlock(nn.Module):
-#     def __init__(self, in_ch, out_ch, tdim, dropout, attn=False):
-#         super().__init__()
-#         self.block1 = nn.Sequential(
-#             nn.GroupNorm(32, in_ch),
-#             Swish(),
-#             nn.Conv2d(in_ch, out_ch, 3, stride=1, padding=1),
-#         )
-#         self.temb_proj = nn.Sequential(
-#             Swish(),
-#             nn.Linear(tdim, out_ch),
-#         )
-#         self.block2 = nn.Sequential(
-#             nn.GroupNorm(32, out_ch),
-#             Swish(),
-#             nn.Dropout(dropout),
-#             nn.Conv2d(out_ch, out_ch, 3, stride=1, padding=1),
-#         )
-#         if in_ch != out_ch:
-#             self.shortcut = nn.Conv2d(in_ch, out_ch, 1, stride=1, padding=0)
-#         else:
-#             self.shortcut = nn.Identity()
-#         if attn:
-#             self.attn = AttnBlock(out_ch)
-#         else:
-#             self.attn = nn.Identity()
-#         self.initialize()
-
-#     def initialize(self):
-#         for module in self.modules():
-#             if isinstance(module, (nn.Conv2d, nn.Linear)):
-#                 init.xavier_uniform_(module.weight)
-#                 init.zeros_(module.bias)
-#         init.xavier_uniform_(self.block2[-1].weight, gain=1e-5)
-
-#     def forward(self, x, temb):
-#         h = self.block1(x)
-#         h += self.temb_proj(temb)[:, :, None, None]
-#         h = self.block2(h)
-
-#         h = h + self.shortcut(x)
-#         h = self.attn(h)
-#         return h
-
-# class UNet(nn.Module):
-#     def __init__(self, T, ch, ch_mult, attn, num_res_blocks, dropout):
-#         super().__init__()
-#         assert all([i < len(ch_mult) for i in attn]), 'attn index out of bound'
-#         tdim = ch * 4
-#         self.time_embedding = TimeEmbedding(T, ch, tdim)
-
-#         self.head = nn.Conv2d(3, ch, kernel_size=3, stride=1, padding=1)
-#         self.downblocks = nn.ModuleList()
-#         chs = [ch]  # record output channel when dowmsample for upsample
-#         now_ch = ch
-#         for i, mult in enumerate(ch_mult):
-#             out_ch = ch * mult
-#             for _ in range(num_res_blocks):
-#                 self.downblocks.append(ResBlock(
-#                     in_ch=now_ch, out_ch=out_ch, tdim=tdim,
-#                     dropout=dropout, attn=(i in attn)))
-#                 now_ch = out_ch
-#                 chs.append(now_ch)
-#             if i != len(ch_mult) - 1:
-#                 self.downblocks.append(DownSample(now_ch))
-#                 chs.append(now_ch)
-
-#         self.middleblocks = nn.ModuleList([
-#             ResBlock(now_ch, now_ch, tdim, dropout, attn=True),
-#             ResBlock(now_ch, now_ch, tdim, dropout, attn=False),
-#         ])
-
-#         self.upblocks = nn.ModuleList()
-#         for i, mult in reversed(list(enumerate(ch_mult))):
-#             out_ch = ch * mult
-#             for _ in range(num_res_blocks + 1):
-#                 self.upblocks.append(ResBlock(
-#                     in_ch=chs.pop() + now_ch, out_ch=out_ch, tdim=tdim,
-#                     dropout=dropout, attn=(i in attn)))
-#                 now_ch = out_ch
-#             if i != 0:
-#                 self.upblocks.append(UpSample(now_ch))
-#         assert len(chs) == 0
-
-#         self.tail = nn.Sequential(
-#             nn.GroupNorm(32, now_ch),
-#             Swish(),
-#             nn.Conv2d(now_ch, 3, 3, stride=1, padding=1)
-#         )
-#         self.initialize()
-
-#     def initialize(self):
-#         init.xavier_uniform_(self.head.weight)
-#         init.zeros_(self.head.bias)
-#         init.xavier_uniform_(self.tail[-1].weight, gain=1e-5)
-#         init.zeros_(self.tail[-1].bias)
-
-#     def forward(self, x, t):
-#         # Timestep embedding
-#         temb = self.time_embedding(t)
-#         # Downsampling
-#         h = self.head(x)
-#         hs = [h]
-#         for layer in self.downblocks:
-#             h = layer(h, temb)
-#             hs.append(h)
-#         # Middle
-#         for layer in self.middleblocks:
-#             h = layer(h, temb)
-#         # Upsampling
-#         for layer in self.upblocks:
-#             if isinstance(layer, ResBlock):
-#                 h = torch.cat([h, hs.pop()], dim=1)
-#             h = layer(h, temb)
-#         h = self.tail(h)
-
-#         assert len(hs) == 0
-#         return h
-    
-# batch_size = 8
-# model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
-# x = torch.randn(batch_size, 3, 32, 32)
-# t = torch.randint(1000, (batch_size, ))
-# y = model(x, t)
 
 from contextlib import contextmanager
 from copy import deepcopy
@@ -3343,7 +3109,7 @@ class DiffusionMnist(nn.Module):
         # print(f'{sqrt_recip_alphas_t.shape=}')
         # now call the denoising model noise_prediction 
         # print(f'timesteps.shape={tuple(timesteps.shape)}')
-        predicted_noise = self.forward_unet(input_images, timesteps.repeat(input_images.size(0)))
+        predicted_noise = self.forward_unet(input_images, timesteps)#timesteps.repeat(input_images.size(0))
         # calculate the model mean
         model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
         
@@ -3830,7 +3596,12 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # changes, and only repeated the timesteps for image generation (becasue our unet now treats timesteps as channels
 # ) the outcome was the same. so itsnot sampling. I then changed the loss, and immediately saw the network
 # started creating new images (no more balck and white patches), ok it created completely black images as well!
-# need to work on it more!
+# need to work on it more! ok it wasnt sampling, and it wasnt loss, its the architecture itself. 
+# i went ahead and removed bn and activation from timeembedding and nans in the loss stopped! but weird
+# black white spots in the images remained! see dir /imgs_gen_20240415_18_06_15 and previous dirs from 
+# the imgs_gen_20240415_17_03_36 up to /imgs_gen_20240415_17_58_15 you'll understand the type of images
+# im talking about. our last experiment as seen in /imgs_gen_20240415_18_06_15 didnt change much!
+# now im going to remove timeembedding and see how that goes!:
 # 
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
 # scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
@@ -3886,18 +3657,19 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
-            loss = F.mse_loss(predicted_noises, noises)
-            # loss = eval_loss(model, rng, imgs, 
-            #                  predicted_noises, 
-            #                  noises,
-            #                  enable_fp16=use_fp16, 
-            #                  device=device)
+            # loss = F.mse_loss(predicted_noises, noises)
+            loss = eval_loss(model, rng, imgs, 
+                             predicted_noises, 
+                             noises,
+                             enable_fp16=use_fp16, 
+                             device=device)
 
             losses.append(loss.item())
             optimizer.zero_grad()
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()
+            # print(f'grad: {next(model.unet_model.parameters()).grad.mean()}')
             scaler.step(optimizer)
             #update ema
             ema_update(model, model_ema, 0.95 if epoch < 20 else ema_decay)
