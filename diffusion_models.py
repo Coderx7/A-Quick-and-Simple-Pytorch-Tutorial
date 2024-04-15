@@ -3214,8 +3214,8 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         
-        # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
-        self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
@@ -3274,8 +3274,8 @@ class DiffusionMnist(nn.Module):
                 # specific value. This is useful when we need a tensor of a certain size, but don’t
                 # care about the exact values because they’re all going to be the same. we could also 
                 # simply use torch.tensor([i])
-                # t = torch.full(size=(1,), fill_value=t, dtype=torch.long)
-                timestep = torch.tensor([i], dtype=torch.long)
+                timestep = torch.full(size=(batch_size,), fill_value=i, dtype=torch.long)
+                # timestep = torch.tensor([i], dtype=torch.long)
                 noise = self._sample(noise, timestep)
                 # This is to maintain the natural range of the distribution
                 # its important, or otherwise we get a very blury almost all noise image
@@ -3314,7 +3314,8 @@ class DiffusionMnist(nn.Module):
             # now reverse the timestep in denoising 
             for i in range(0, self.num_timesteps)[::-1]:
                 # create noise
-                t = torch.tensor([i], dtype=torch.long)
+                t = torch.tensor([i], dtype=torch.long).repeat(batch_size)
+                # print(f't.shape={tuple(t.shape)}')
                 noise = self._sample(noise, t)
                 # This is to maintain the natural range of the distribution
                 # its important, or otherwise we get a very blury almost all noise image
@@ -3339,7 +3340,9 @@ class DiffusionMnist(nn.Module):
         sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
         # get the sqrt_recip_alphas for current timestep
         sqrt_recip_alphas_t = self._get_value_for_timestep_t(self.sqrt_recip_alphas, timesteps, is_batch)
+        # print(f'{sqrt_recip_alphas_t.shape=}')
         # now call the denoising model noise_prediction 
+        # print(f'timesteps.shape={tuple(timesteps.shape)}')
         predicted_noise = self.forward_unet(input_images, timesteps)
         # calculate the model mean
         model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
@@ -3357,7 +3360,7 @@ class DiffusionMnist(nn.Module):
         # sidenote2: note that since our timestep is always 1 dimensional its ok to do ==
         # otherwise we'd face an error. torch.all() would work regardless but to convey and
         # make sure timesteps needs to be 1 dimensional here, we use ==
-        if timesteps == 0:
+        if timesteps[0] == 0:
             return model_mean.to(self.device)
         else:
             noise = torch.randn_like(input_images, device=self.device)
@@ -3656,6 +3659,7 @@ current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
 
 print(f'running on     : {device}/{model.device}')
 print(f'experiment date: {current_time}')
+print(f'model in use:  : {model.unet_model._get_name()}')
 print(f'dataset length : {len(dataset):,}')
 print(f'image size     : {image_size}')
 print(f'in_channels    : {in_channels}')
@@ -3816,6 +3820,10 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # anyway to get better idea we need to have some conditions and see how each class is doing!so next
 # # 16. add class conditions to better assess the network performance. 
 # 
+# warning - everything that I have written here is wrong! becasue all this time, the NewArch was being used
+# instead of basearch! I have to redo all the tests again!
+
+
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
     model.train()
