@@ -2613,8 +2613,8 @@ class ResBlock(nn.Module):
                                       # we use embd_size only
                                       nn.Linear(self.time_embd_size, self.time_embd_size),
                                     # disable bn and nonlinearity to see how it affects the result 
-                                    # nn.BatchNorm1d(self.time_embd_size),
-                                    # nn.SiLU()
+                                    nn.BatchNorm1d(self.time_embd_size),
+                                    nn.SiLU()
                                       )
 
         # in ou case our skip-connection differs from our output 
@@ -3274,8 +3274,8 @@ class DiffusionMnist(nn.Module):
                 # specific value. This is useful when we need a tensor of a certain size, but don’t
                 # care about the exact values because they’re all going to be the same. we could also 
                 # simply use torch.tensor([i])
-                timestep = torch.full(size=(batch_size,), fill_value=i, dtype=torch.long)
-                # timestep = torch.tensor([i], dtype=torch.long)
+                # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
+                timestep = torch.tensor([i], dtype=torch.long)
                 noise = self._sample(noise, timestep)
                 # This is to maintain the natural range of the distribution
                 # its important, or otherwise we get a very blury almost all noise image
@@ -3314,7 +3314,7 @@ class DiffusionMnist(nn.Module):
             # now reverse the timestep in denoising 
             for i in range(0, self.num_timesteps)[::-1]:
                 # create noise
-                t = torch.tensor([i], dtype=torch.long).repeat(batch_size)
+                t = torch.tensor([i], dtype=torch.long)#.repeat(batch_size)
                 # print(f't.shape={tuple(t.shape)}')
                 noise = self._sample(noise, t)
                 # This is to maintain the natural range of the distribution
@@ -3343,7 +3343,7 @@ class DiffusionMnist(nn.Module):
         # print(f'{sqrt_recip_alphas_t.shape=}')
         # now call the denoising model noise_prediction 
         # print(f'timesteps.shape={tuple(timesteps.shape)}')
-        predicted_noise = self.forward_unet(input_images, timesteps)
+        predicted_noise = self.forward_unet(input_images, timesteps.repeat(input_images.size(0)))
         # calculate the model mean
         model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
         
@@ -3360,7 +3360,7 @@ class DiffusionMnist(nn.Module):
         # sidenote2: note that since our timestep is always 1 dimensional its ok to do ==
         # otherwise we'd face an error. torch.all() would work regardless but to convey and
         # make sure timesteps needs to be 1 dimensional here, we use ==
-        if timesteps[0] == 0:
+        if timesteps == 0:
             return model_mean.to(self.device)
         else:
             noise = torch.randn_like(input_images, device=self.device)
@@ -3820,9 +3820,51 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # anyway to get better idea we need to have some conditions and see how each class is doing!so next
 # # 16. add class conditions to better assess the network performance. 
 # 
-# warning - everything that I have written here is wrong! becasue all this time, the NewArch was being used
-# instead of basearch! I have to redo all the tests again!
-
+# warning - after trying to add class conditions to base I noticed all this time, i have been training 
+# the new arch and not the base arch! so everything that I have written here is wrong! 
+# becasue all this time, the NewArch was being used instead of basearch! I have to redo all the tests again!
+# so I reverted back the class conditioning and tried to use our base which I faced some errors, in the sampling part
+# I did some work the errors went away but I started getting weird images, see dir /imgs_gen_20240415_12_50_16 , /imgs_gen_20240415_13_02_02
+# when asked about this, this is what I've gotten as answer why im getting this all of a sudden
+# it seems ive messed up the sampling process! I need to fix - ok I changed the sampling and removed all the
+# changes, and only repeated the timesteps for image generation (becasue our unet now treats timesteps as channels
+# ) the outcome was the same. so itsnot sampling. I then changed the loss, and immediately saw the network
+# started creating new images (no more balck and white patches), ok it created completely black images as well!
+# need to work on it more!
+# 
+# The image you've shared appears to have a pattern of black and white patches with irregular shapes 
+# scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
+# output.
+# This kind of output doesn't necessarily mean that the model is overfitting or underfitting. 
+# Overfitting typically results in the model generating images that are too similar to the 
+# training data, while underfitting would result in the model not capturing enough detail from 
+# the training data. However, the image you've shared doesn't clearly indicate either of these issues.
+# Here are a few possibilities that might cause such output:
+# 1. **Insufficient Training**: If the model hasn't been trained for enough epochs or if the dataset
+#  is too small, the model might not have learned the underlying distribution of the data well enough, 
+#  resulting in noisy or incoherent outputs.
+# 2. **Incorrect Hyperparameters**: The learning rate, batch size, number of layers, etc., could be 
+#  set incorrectly for your specific task or dataset, causing the model to fail to learn effectively.
+# 3. **Model Architecture Issues**: There might be issues with the model architecture itself. 
+#  For instance, if the architecture is too simple, it might not be capable of capturing the 
+#  complexity of the data. Conversely, if it's too complex, it might be prone to overfitting or 
+#  might be difficult to train effectively.
+# 4. **Bugs in the Code**: There could be bugs in the implementation of the model, the training loop,
+#  the data loading or preprocessing, etc., that are causing unexpected results.
+#  To debug this, you could try the following:
+#  - Check your training and validation losses during training. If your training loss is much lower
+#  than your validation loss, it might be a sign of overfitting. If both are high, it might be
+#  underfitting.
+# - Try visualizing the outputs at different stages of training to see how they evolve.
+# - Review your code and model architecture to make sure they're implemented correctly.
+# - Experiment with different hyperparameters or try using a different model architecture.
+# - Make sure your training data is correctly preprocessed and loaded into the model.
+# Source: Conversation with Bing, 4/15/2024
+# (1) https://app.emaze.com/@AOTITCTTW. https://app.emaze.com/@AOTITCTTW.
+# (2) https://www.filedanstachambre.com. https://www.filedanstachambre.com/.
+# (3) https://www.dazeddigital.com/artsandculture/article/16061/1/hacked-burned-tech-news. https://www.dazeddigital.com/artsandculture/article/16061/1/hacked-burned-tech-news.
+# (4) https://www.researchgate.net/figure/The-microstructure-of-reconstructed-soil-with-QSGS.... https://www.researchgate.net/figure/The-microstructure-of-reconstructed-soil-with-QSGS-method-White-for-pore-and-black-for_fig2_321323596.
+# (5) https://www.dreamstime.com/stock-images-set-20-monochrome-simply-seamless-patterns.... https://www.dreamstime.com/stock-images-set-20-monochrome-simply-seamless-patterns-image23144904.
 
 for epoch in tqdm(range(epoch_start, epochs)):
     losses = []
@@ -3844,12 +3886,12 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
             predicted_noises, noises = model(imgs, t)
-            # loss = F.mse_loss(predicted_noises, noises)
-            loss = eval_loss(model, rng, imgs, 
-                             predicted_noises, 
-                             noises,
-                             enable_fp16=use_fp16, 
-                             device=device)
+            loss = F.mse_loss(predicted_noises, noises)
+            # loss = eval_loss(model, rng, imgs, 
+            #                  predicted_noises, 
+            #                  noises,
+            #                  enable_fp16=use_fp16, 
+            #                  device=device)
 
             losses.append(loss.item())
             optimizer.zero_grad()
