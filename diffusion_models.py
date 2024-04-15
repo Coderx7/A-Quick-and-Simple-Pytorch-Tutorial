@@ -3601,7 +3601,12 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # black white spots in the images remained! see dir /imgs_gen_20240415_18_06_15 and previous dirs from 
 # the imgs_gen_20240415_17_03_36 up to /imgs_gen_20240415_17_58_15 you'll understand the type of images
 # im talking about. our last experiment as seen in /imgs_gen_20240415_18_06_15 didnt change much!
-# now im going to remove timeembedding and see how that goes!:
+# now im going to remove timeembedding and see how that goes!: ok it seems after removing the timeembedding
+# the model is geenrating expected vibrant images(deformed still at 120 epochs loss : 0.0806)
+# ok it created images like newarch with no timeembedding, our loss at epoch 1000 and 1300 is 0.0743
+# it fluctuates around that (i.e. sometimes it was 0.0736 0.0751 etc) at epoch 700 its 0.0745
+# 1.now before we work on timemebedding fusion, lets see if how our basenetwork performs
+# if we make it smaller 
 # 
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
 # scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
