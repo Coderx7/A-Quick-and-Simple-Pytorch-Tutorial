@@ -2681,7 +2681,7 @@ class UnetModel(nn.Module):
         self.decoder = nn.ModuleList()
         # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
         # this will result in a much smaller model and the roughly the same performance
-        self.growth_value=  128#64
+        self.growth_value=  64#128
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
@@ -3604,9 +3604,16 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # now im going to remove timeembedding and see how that goes!: ok it seems after removing the timeembedding
 # the model is geenrating expected vibrant images(deformed still at 120 epochs loss : 0.0806)
 # ok it created images like newarch with no timeembedding, our loss at epoch 1000 and 1300 is 0.0743
-# it fluctuates around that (i.e. sometimes it was 0.0736 0.0751 etc) at epoch 700 its 0.0745
-# 1.now before we work on timemebedding fusion, lets see if how our basenetwork performs
-# if we make it smaller 
+# it fluctuates around that (i.e. sometimes it was 0.0736 0.0751 etc) at epoch 700 its 0.0745 see images
+# in /imgs_gen_20240415_19_26_32. 
+# now before we work on timemebedding fusion, lets see if how our basenetwork performs
+# if we make it smaller. 
+# 1.next make basearch smaller (use base_increase_ratio 0 64 instead of 128) model param=17m vs 54m
+# directory is /imgs_gen_20240415_22_43_52 . ok right off the bat, it seems to me, the images are lower quality
+# they are not as clear as they were when using the larger model. but other than that, the overall quality
+# seems roughly speaking the same, the loss is also nearly the same, at 520 we have 0.0760, and at 
+# 720 we have  0.0764 and at 980 we have a loss = 0.739 and at 1000 we have 0.0749 and 1300 lossis 0.0 741
+# and it fluctuates like before around that number abit(0.0735,etc ).
 # 
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
 # scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
