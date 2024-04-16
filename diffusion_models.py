@@ -2562,7 +2562,8 @@ class ResBlock(nn.Module):
                  out_channels,
                  use_bn=True, 
                  act=nn.SiLU(),
-                 time_embd_size=32, 
+                 time_embd_size=32,
+                 time_embd_as_channels=True,
                  is_encoder=True,
                  dropout=None,
                  device='cpu',) -> None:
@@ -2573,9 +2574,15 @@ class ResBlock(nn.Module):
         self.time_embd_size = time_embd_size
         self.device = device
         self.drpout = dropout
+        self.time_embd_as_channels = time_embd_as_channels
         
         # fuse timesteps as channels to first conv
-        # in_channels += self.time_embd_size
+        if time_embd_as_channels:
+            input_channels = in_channels + self.time_embd_size
+            tembd_output_channels = time_embd_size
+        else:
+            input_channels = in_channels
+            tembd_output_channels = out_channels
 
         if is_encoder:
             # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
@@ -2588,7 +2595,7 @@ class ResBlock(nn.Module):
             # sidenote 2: since we are also dealing with timesteps, we want to combine both inputs and
             # utilize it in our model. time information allows the model to learn to deal wil different
             # levels of noise properly.
-            self.conv = nn.Sequential(nn.Conv2d(in_channels , out_channels, kernel_size=3, stride=2, padding=1),
+            self.conv = nn.Sequential(nn.Conv2d(input_channels , out_channels, kernel_size=3, stride=2, padding=1),
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
                                       act)
         else:
@@ -2599,7 +2606,7 @@ class ResBlock(nn.Module):
             #! use upsample layer insteda of contransposed, 
             self.conv = nn.Sequential(
                                       nn.Upsample(scale_factor=2),
-                                      nn.Conv2d(in_channels , out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      nn.Conv2d(input_channels , out_channels, kernel_size=3, stride=1,padding=1,bias=False),
                                       # nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
                                       # we use a separate conv layer becasue contransposed is usually only used for upsampling
                                       # the learning part happens in the normal conv layer
@@ -2611,10 +2618,10 @@ class ResBlock(nn.Module):
         self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       # instead of projection to (embd_size, out_channels)
                                       # we use embd_size only
-                                      nn.Linear(self.time_embd_size, out_channels),#self.time_embd_size
-                                    # disable bn and nonlinearity to see how it affects the result 
-                                    nn.BatchNorm1d(out_channels), #self.time_embd_size
-                                    nn.SiLU()
+                                      nn.Linear(self.time_embd_size, tembd_output_channels),#self.time_embd_size
+                                      # disable bn and nonlinearity to see how it affects the result 
+                                      nn.BatchNorm1d(tembd_output_channels), #self.time_embd_size
+                                      nn.SiLU()
                                       )
 
         # in ou case our skip-connection differs from our output 
@@ -2637,15 +2644,18 @@ class ResBlock(nn.Module):
     def forward (self, x, t):
         identity = x
         # get time embeddigs 
-        # time_embeddings = self.time_mlp(t)
+        time_embeddings = self.time_mlp(t)
         # combine the time embedding and input images, we 
         # add an extra dim to time_embd to make them compatible
-        output = self.conv(x) #+ time_embeddings[..., None,None]
-        # time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
-        # print(f'{x.shape=} {time_embeddings.shape=}')
-        # fused_inputs = torch.cat([x,time_embeddings], dim=1)
-        # print(f'{fused_inputs.shape=}')
-        # output = self.conv(fused_inputs)
+        if not self.time_embd_as_channels:
+            output = self.conv(x) + time_embeddings[..., None,None]
+        else:
+            time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
+            # print(f'{x.shape=} {time_embeddings.shape=}')
+            fused_inputs = torch.cat([x,time_embeddings], dim=1)
+            # print(f'{fused_inputs.shape=}')
+            output = self.conv(fused_inputs)
+        
         # additional operation 
         output = self.conv2(output)
         #! some people add the timeembedding to the skip_connection
@@ -3109,7 +3119,7 @@ class DiffusionMnist(nn.Module):
         # print(f'{sqrt_recip_alphas_t.shape=}')
         # now call the denoising model noise_prediction 
         # print(f'timesteps.shape={tuple(timesteps.shape)}')
-        predicted_noise = self.forward_unet(input_images, timesteps)#timesteps.repeat(input_images.size(0))
+        predicted_noise = self.forward_unet(input_images, timesteps.repeat(input_images.size(0)))
         # calculate the model mean
         model_mean =  sqrt_recip_alphas_t * (input_images - betas_t*predicted_noise/sqrt_one_minus_alphas_cumprod_t)
         
@@ -3613,8 +3623,10 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # they are not as clear as they were when using the larger model. but other than that, the overall quality
 # seems roughly speaking the same, the loss is also nearly the same, at 520 we have 0.0760, and at 
 # 720 we have  0.0764 and at 980 we have a loss = 0.739 and at 1000 we have 0.0749 and 1300 lossis 0.0 741
-# and it fluctuates like before around that number abit(0.0735,etc ).
+# and it fluctuates like before around that number abit(0.0735,etc ). 
 # 
+#2. next change how timeembding is fused: 
+#
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
 # scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
 # output.
