@@ -2550,8 +2550,22 @@ class Swish(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x)
 
+class FourierFeatures(nn.Module):
+    def __init__(self, in_features, out_features, std=1.):
+        super().__init__()
+        assert out_features % 2 == 0
+        self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
+
+    def forward(self, input):
+        print(input.shape)
+        f = 2 * math.pi * input @ self.weight.T
+        return torch.cat([f.cos(), f.sin()], dim=-1)
+
+
 def expand_to_planes(input, shape):
     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
+
+
 
 # we need a block to do conv on the images and timesteps
 # we can do this using functions, but a class/module form
@@ -2562,7 +2576,7 @@ class ResBlock(nn.Module):
                  out_channels,
                  use_bn=True, 
                  act=nn.SiLU(),
-                 time_embd_size=32,
+                 time_embd_size=16,
                  time_embd_as_channels=True,
                  is_encoder=True,
                  dropout=None,
@@ -2615,13 +2629,14 @@ class ResBlock(nn.Module):
                                       act
                                       )
 
-        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
+        self.time_mlp = nn.Sequential(FourierFeatures(1,time_embd_size,std=0.2),
+                                     #SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       # instead of projection to (embd_size, out_channels)
                                       # we use embd_size only
-                                      nn.Linear(self.time_embd_size, tembd_output_channels),#self.time_embd_size
+                                    #   nn.Linear(tembd_output_channels, tembd_output_channels),#self.time_embd_size
                                       # disable bn and nonlinearity to see how it affects the result 
-                                      nn.BatchNorm1d(tembd_output_channels), #self.time_embd_size
-                                      nn.SiLU()
+                                    #   nn.BatchNorm1d(tembd_output_channels), #self.time_embd_size
+                                    #   nn.SiLU()
                                       )
 
         # in ou case our skip-connection differs from our output 
@@ -2644,18 +2659,21 @@ class ResBlock(nn.Module):
     def forward (self, x, t):
         identity = x
         # get time embeddigs 
-        time_embeddings = self.time_mlp(t)
-        # combine the time embedding and input images, we 
-        # add an extra dim to time_embd to make them compatible
-        if not self.time_embd_as_channels:
-            output = self.conv(x) + time_embeddings[..., None,None]
+        if t is None:
+            output = self.conv(x)
         else:
-            time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
-            # print(f'{x.shape=} {time_embeddings.shape=}')
-            fused_inputs = torch.cat([x,time_embeddings], dim=1)
-            # print(f'{fused_inputs.shape=}')
-            output = self.conv(fused_inputs)
-        
+            time_embeddings = self.time_mlp(t)
+            # combine the time embedding and input images, we 
+            # add an extra dim to time_embd to make them compatible
+            if not self.time_embd_as_channels:
+                output = self.conv(x) + time_embeddings[..., None,None]
+            else:
+                time_embeddings = time_embeddings[..., None, None].repeat([1, 1, x.shape[2], x.shape[3]])
+                # print(f'{x.shape=} {time_embeddings.shape=}')
+                fused_inputs = torch.cat([x,time_embeddings], dim=1)
+                # print(f'{fused_inputs.shape=}')
+                output = self.conv(fused_inputs)
+
         # additional operation 
         output = self.conv2(output)
         #! some people add the timeembedding to the skip_connection
@@ -2666,7 +2684,7 @@ class ResBlock(nn.Module):
 
 x0 = torch.randn(size=(3,1,32,32))
 x1 = torch.randn(size=(3,64, 2,2))
-t = torch.randint(0,200,size=(3,))
+t = torch.randint(0,200,size=(3,1))
 
 enc0 = ResBlock(1,64)
 print(f'{enc0(x0,t).shape=}')
@@ -2751,7 +2769,10 @@ class UnetModel(nn.Module):
 
         for l in self.decoder:
             skip = skip_connections.pop()
-            out = l(out+skip, timesteps)
+            # skip connections play a crucial role, without them either the convergence is extremely hindered
+            # or nothing really comes out of it except apparent noise! (at least up until 80 epochs which I tested)
+            # lets only feed the timesteps to the encoder
+            out = l(out+skip, timesteps) #out+skip,timesteps
             # print(f'decoder:{out.shape=}')
             
         out = self.final_conv(out)
@@ -2864,10 +2885,8 @@ class FourierFeatures(nn.Module):
         f = 2 * math.pi * input @ self.weight.T
         return torch.cat([f.cos(), f.sin()], dim=-1)
 
-
 def expand_to_planes(input, shape):
     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
-
 
 class DiffusionNew(nn.Module):
     def __init__(self,in_channels=3, c=64, embd_size=16,device='cuda'):
@@ -3012,7 +3031,8 @@ class DiffusionMnist(nn.Module):
         return predicted_noises, actual_noises
     
     def forward_unet(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> torch.Tensor:
-        predicted_noise = self.unet_model(input_images, timesteps)
+        # timesteps need to have shape (batch,1) becasue im using the new timestep form (Foriour!)
+        predicted_noise = self.unet_model(input_images, timesteps.view(-1,1))
         return predicted_noise
     
     def forward_diffusion(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -3520,7 +3540,13 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
 
 def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device):
     # removing exp() will increase the loss and doesnt change the outcome significantly 
-    weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
+    # in the original version alphas were log, so doing exp() would turn them into probablities
+    # but here they are not logs so doing exp is meaning less on them
+    # !adding a log to see how that affects it
+    # weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
+    # weights2 = model.sqrt_alphas_cumprod_t / model.sqrt_one_minus_alphas_cumprod_t.add(1)
+    # print(f'{torch.norm(weights)=}')
+    # print(f'{torch.norm(weights2)=}')
     # Combine the ground truth images and the noise
     alphas = model.sqrt_alphas_cumprod_t
     sigmas = model.sqrt_one_minus_alphas_cumprod_t
@@ -3537,7 +3563,7 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
         # and this so far gives us a number for each sample in our batch, therefore we do a final mean()
         # to get a single value for loss. note that we also incorporate a weight in our loss which 
         # improves our result!
-        # return F.mse_loss(predicted_noise, targets).mul(weights).mean()
+        return F.mse_loss(predicted_noise, targets).mean()#.mul(weights).mean()
         return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
 #TODO:
@@ -3625,7 +3651,12 @@ def eval_loss(model, rng, imgs, predicted_noise, pure_noise,enable_fp16, device)
 # 720 we have  0.0764 and at 980 we have a loss = 0.739 and at 1000 we have 0.0749 and 1300 lossis 0.0 741
 # and it fluctuates like before around that number abit(0.0735,etc ). 
 # 
-#2. next change how timeembding is fused: 
+#2. next change how timeembding is fused: nothing changes, both form of timeembedding causes weird images
+# black and white spots, or blobs in the image. alhamdolelah I noticed, this happens when I use the new loss
+# and when timeembedding is used the new loss causes this weird issue. this doesnt happen when we use mse loss
+# so now I need to either find a new formula for timeembedding or fix the loss (see /imgs_gen_20240416_18_18_21
+# for samples of using mse loss with base arch and timeembedding)
+#
 #
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
 # scattered throughout, which could be indicative of noise or generation errors in the DDPM model's 
@@ -3680,8 +3711,11 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # the ones at the very end have higher probabilities)
             # probs = torch.linspace(0,1,steps=num_timesteps,device=device).softmax(dim=-1)
             # t = torch.multinomial(probs, num_samples=imgs.size(0),replacement=True).long()
+            # print(f'{t.shape=}')
             predicted_noises, noises = model(imgs, t)
+            # this works with timeembedding, but results are not good, they are grimish/blury!
             # loss = F.mse_loss(predicted_noises, noises)
+            # this loss fails with timembedding
             loss = eval_loss(model, rng, imgs, 
                              predicted_noises, 
                              noises,
@@ -3726,7 +3760,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
                                 image_height=image_size,
                                 image_width=image_size,
                                 num_images=10,
-                                fig_size=(64,32),
+                                fig_size=(24,6),
                                 title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
             torch.save({"epoch":epoch,
                         "use_fp16":use_fp16,
