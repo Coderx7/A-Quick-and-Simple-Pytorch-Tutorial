@@ -3674,7 +3674,9 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
 # but anyway, the architecture is not the issue, but the way timeembedding is fed + our new loss!
 # Ok. we tested the loss, we tested the architecture, we tested different forms of timeembedding
 # now its time to switch to the logsnr version and use that for cifar10 becasue normal loss isnt good enough
-# 3.add logsnr loss to the model. use the basearch
+# 3.add logsnr loss to the model. use the basearch 
+# see and use this link first :
+# https://github.com/coderpiaobozhe/classifier-free-diffusion-guidance-Pytorch/blob/master/diffusion.py
 #
 #
 # The image you've shared appears to have a pattern of black and white patches with irregular shapes 
