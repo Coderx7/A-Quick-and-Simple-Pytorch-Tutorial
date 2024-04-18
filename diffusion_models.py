@@ -3005,6 +3005,7 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         
+        
         # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
         self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
@@ -3162,7 +3163,13 @@ class DiffusionMnist(nn.Module):
             posterior_variance_t = self._get_value_for_timestep_t(self.posterior_variance, timesteps, is_batch)
             return model_mean + torch.sqrt(posterior_variance_t)*noise
 
-    def _init_parameters(self,beta_start=0.001, beta_end=0.02):
+    def _init_parameters(self, beta_start=0.001, beta_end=0.02):
+        if self.linear_scheduler:
+            self._init_parameters_linear(beta_start, beta_end)
+        else:
+            self._init_parameters_log(beta_start, beta_end)
+        
+    def _init_parameters_linear(self,beta_start=0.001, beta_end=0.02):
         # β
         if self.linear_scheduler:
             self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
@@ -3192,6 +3199,61 @@ class DiffusionMnist(nn.Module):
         #                             self.alphas_cumprod_prev,
         #                             self.sqrt_recip_alphas,
         #                             self.posterior_variance)])
+
+    def _init_parameters_log(self, beta_start=0.001, beta_end=0.02):
+        
+        self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
+        # α 
+        self.alphas = 1.0 - self.betas
+        # take the log so its numerically more stable (as we multiply many floats down the road(i.e. cumprod))
+        self.log_alphas = torch.log(self.alphas)
+        # since we are using logs now, we use sum instead of product,
+        # so we use cumsum instead of cumprod
+        self.log_alphas_cum = torch.cumsum(self.log_alphas, dim = 0).to(self.device)
+        # doing an exp on log, gives us back the original values of alphas prior to the log 
+        # (exp reverses the log!) 
+        # sidenote that our input is not logprobablity, so doing exp wont give us probablities here
+        # we just used log so we convert our prod to sum for numerical stability, and then to get back
+        # our expected values, run exp on them
+        self.alphas_cum = torch.exp(self.log_alphas_cum)
+        
+        self.log_alphas_cum_prev = F.pad(self.log_alphas_cum[:-1],[1,0],'constant', 0)
+        # reverse the log and get the actual alphas_cum_prev values
+        self.alphas_cum_prev = torch.exp(self.log_alphas_cum_prev)
+        self.log_one_minus_alphas_cum_prev = torch.log(1.0 - self.alphas_cum_prev)
+
+        # calculate parameters for q(x_t|x_{t-1})
+        # taking the sqrt, since we are dealing with logs, 0.5*log_sth calculates the sqrt 
+        # sidenote: The logarithm rules state that log(a^b) = b * log(a). 
+        # So if we have log(a) and we want to find log(sqrt(a)), we can use this rule to
+        # rewrite sqrt(a) as a^(1/2). So log(sqrt(a)) becomes 1/2 * log(a) or 0.5 * log(a).
+        self.log_sqrt_alphas = 0.5 * self.log_alphas
+        # again the same trick like before
+        self.sqrt_alphas = torch.exp(self.log_sqrt_alphas)
+        # self.sqrt_alphas = torch.sqrt(self.alphas)
+
+        # calculate parameters for q(x_t|x_0)
+        # take sqrt
+        self.log_sqrt_alphas_cum = 0.5 * self.log_alphas_cum
+        # reverse the log to get the actual values we want
+        self.sqrt_alphas_cum = torch.exp(self.log_sqrt_alphas_cum)
+        # self.sqrt_alphas_cum = torch.sqrt(self.alphas_cum)
+        self.log_one_minus_alphas_cum = torch.log(1.0 - self.alphas_cum)
+        self.sqrt_one_minus_alphas_cum = torch.exp(0.5 * self.log_one_minus_alphas_cum)
+        
+        # calculate parameters for q(x_{t-1}|x_t,x_0)
+        # log calculation clipped because the \tilde{\beta} = 0 at the beginning
+        self.tilde_betas = self.betas * torch.exp(self.log_one_minus_alphas_cum_prev - self.log_one_minus_alphas_cum)
+        self.log_tilde_betas_clipped = torch.log(torch.cat((self.tilde_betas[1].view(-1), self.tilde_betas[1:]), 0))
+        self.mu_coef_x0 = self.betas * torch.exp(0.5 * self.log_alphas_cum_prev - self.log_one_minus_alphas_cum)
+        self.mu_coef_xt = torch.exp(0.5 * self.log_alphas + self.log_one_minus_alphas_cum_prev - self.log_one_minus_alphas_cum)
+        self.vars = torch.cat((self.tilde_betas[1:2],self.betas[1:]), 0)
+        self.coef1 = torch.exp(-self.log_sqrt_alphas)
+        self.coef2 = self.coef1 * self.betas / self.sqrt_one_minus_alphas_cum
+        # calculate parameters for predicted x_0
+        self.sqrt_recip_alphas_cum = torch.exp(-self.log_sqrt_alphas_cum)
+        # self.sqrt_recip_alphas_bar = torch.sqrt(1.0 / self.alphas_bar)
+        self.sqrt_recipm1_alphas_cum = torch.exp(self.log_one_minus_alphas_cum - self.log_sqrt_alphas_cum)
 
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
@@ -3537,7 +3599,8 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
 
 def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, device):
     # removing exp() will increase the loss and doesnt change the outcome significantly 
-    # in the original version alphas were log, so doing exp() would turn them into probablities
+    # in the original version alphas were log, so doing exp() would reverse the log and get us the 
+    # actual value, the logs are simply used for numerical stability in multiplications etc.
     # but here they are not logs so doing exp is meaning less on them
     # !adding a log to see how that affects it
     # weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
@@ -3550,7 +3613,8 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
     # Compute the model output and the loss.
     with torch.cuda.amp.autocast(enabled=enable_fp16):
         # noisy_images = (model.sqrt_alphas_cumprod_t * imgs) + (model.sqrt_one_minus_alphas_cumprod_t * pure_noise)
-        targets = pure_noise * alphas - imgs * sigmas
+        # targets = pure_noise * alphas - imgs * sigmas
+        targets = pure_noise*alphas - imgs *sigmas
         
         # is_batch = imgs.ndim>3
         # betas_t = model._get_value_for_timestep_t(model.betas, ts, is_batch) 
