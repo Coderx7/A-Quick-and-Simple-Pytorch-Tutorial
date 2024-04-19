@@ -3186,6 +3186,7 @@ class DiffusionMnist(nn.Module):
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
         # alphas_prev
         self.alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], pad=(1,0), value=-1.0)
+        # !this maybe wrong! and I should instead do 1/torch.sqrt(self.alphas)! 
         self.sqrt_recip_alphas = torch.sqrt(1.0/self.alphas)
         # These calculations are part of the reverse process of the diffusion model, 
         # where the model gradually denoises an image starting from pure noise. 
@@ -3193,12 +3194,6 @@ class DiffusionMnist(nn.Module):
         # used in the calculation of the Gaussian distribution from which the denoised 
         # image is sampled at each time step.
         self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
-        # print([t.device for t in (self.betas,self.alphas ,self.alphas_cumprod,
-        #                             self.sqrt_alphas_cumprod,
-        #                             self.sqrt_one_minus_alphas_cumprod,
-        #                             self.alphas_cumprod_prev,
-        #                             self.sqrt_recip_alphas,
-        #                             self.posterior_variance)])
 
     def _init_parameters_log(self, beta_start=0.001, beta_end=0.02):
         
@@ -3243,13 +3238,26 @@ class DiffusionMnist(nn.Module):
         
         # calculate parameters for q(x_{t-1}|x_t,x_0)
         # log calculation clipped because the \tilde{\beta} = 0 at the beginning
+        # self.posterior_variance is self.posterior_variance from linear implementation, since we have logs here, division
+        # is turned into a subtraction! also note that they are logs of (1-alphas_cum_prev) and (1-alphas_cum) respectively!
         self.tilde_betas = self.betas * torch.exp(self.log_one_minus_alphas_cum_prev - self.log_one_minus_alphas_cum)
         self.log_tilde_betas_clipped = torch.log(torch.cat((self.tilde_betas[1].view(-1), self.tilde_betas[1:]), 0))
         self.mu_coef_x0 = self.betas * torch.exp(0.5 * self.log_alphas_cum_prev - self.log_one_minus_alphas_cum)
         self.mu_coef_xt = torch.exp(0.5 * self.log_alphas + self.log_one_minus_alphas_cum_prev - self.log_one_minus_alphas_cum)
         self.vars = torch.cat((self.tilde_betas[1:2],self.betas[1:]), 0)
-        self.coef1 = torch.exp(-self.log_sqrt_alphas)
-        self.coef2 = self.coef1 * self.betas / self.sqrt_one_minus_alphas_cum
+        
+        # this is equivalent to 1/sqrt(self.alphas) or as we call it self.sqrt_recip_alphas
+        # sidenote:
+        # remember that here torch.exp(-self.log_sqrt_alphas) is equivalent to taking the reciprocal of the 
+        # square root of the original self.alphas values (recall that self.log_alphas was calculated as the
+        # log of self.alphas).
+        # self.log_sqrt_alphas = 0.5 * self.log_alphas calculates the log of the square root of self.alphas.
+        # -self.log_sqrt_alphas negates this, which according to the rules of logarithms, is equivalent to taking
+        # the reciprocal (1/value) in the original domain before the log was applied.
+        # torch.exp(-self.log_sqrt_alphas) then applies the exponential function to convert from the log domain 
+        # back to the original domain, giving the reciprocal of the square root of self.alphas.
+        self.recip_sqrt_alphas = torch.exp(-self.log_sqrt_alphas)
+        self.coef2 = self.recip_sqrt_alphas * self.betas / self.sqrt_one_minus_alphas_cum
         # calculate parameters for predicted x_0
         self.sqrt_recip_alphas_cum = torch.exp(-self.log_sqrt_alphas_cum)
         # self.sqrt_recip_alphas_bar = torch.sqrt(1.0 / self.alphas_bar)
@@ -3602,7 +3610,8 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
     # in the original version alphas were log, so doing exp() would reverse the log and get us the 
     # actual value, the logs are simply used for numerical stability in multiplications etc.
     # but here they are not logs so doing exp is meaning less on them
-    # !adding a log to see how that affects it
+    # adding a log and exp here doesnt do much, we need to incorporate this in previous operations as well
+    # to get meaningful improvement.
     # weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
     weights = model.sqrt_alphas_cumprod_t / model.sqrt_one_minus_alphas_cumprod_t.add(1)
     # print(f'{torch.norm(weights)=}')
@@ -3613,6 +3622,7 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
     # Compute the model output and the loss.
     with torch.cuda.amp.autocast(enabled=enable_fp16):
         # noisy_images = (model.sqrt_alphas_cumprod_t * imgs) + (model.sqrt_one_minus_alphas_cumprod_t * pure_noise)
+        # using log-exp versions of this doesnt work either!
         # targets = pure_noise * alphas - imgs * sigmas
         targets = pure_noise*alphas - imgs *sigmas
         
