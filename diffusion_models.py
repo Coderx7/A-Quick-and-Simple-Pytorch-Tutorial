@@ -2652,6 +2652,7 @@ class ResBlock(nn.Module):
 
     def forward (self, x, t):
         identity = x
+        # print(f'{t.shape=} {x.shape=}')
         # get time embeddigs 
         if t is None:
             output = self.conv(x)
@@ -2929,6 +2930,7 @@ class DiffusionNew(nn.Module):
 
     def forward(self, input,t):
         time_embeddings = self.time_mlp(t)
+        # print(f'{time_embeddings[..., None,None].shape=} {input.shape=}')
         output = self.conv1(input)+time_embeddings[..., None,None]
         return self.net(output)
         # try:
@@ -3005,7 +3007,7 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         # use new betas for schduler stuff!
-        self.use_new_betas = True
+        self.use_new_betas = False
         self.eta = eta
         
         self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
@@ -3041,33 +3043,38 @@ class DiffusionMnist(nn.Module):
         is_batch = input_images.ndim>3
         # Create a noise tensor with the same dimensions as input_images
         actual_noises = torch.randn_like(input_images)
-        # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
-        # note: I set them as instance attribute so during loss calculation I can use them! need to refactor later
-        self.sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
-        self.sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
-        # now calculate the mean + variance to get the noisy image
-        noisy_images = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * actual_noises)
-        if self.use_new_betas:
+        
+        if not self.use_new_betas:
+            # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
+            # note: I set them as instance attribute so during loss calculation I can use them! need to refactor later
+            self.sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
+            self.sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
+            # now calculate the mean + variance to get the noisy image
+            noisy_images = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * actual_noises)
+            self.targets = (self.sqrt_alphas_cumprod_t * actual_noises) - (self.sqrt_one_minus_alphas_cumprod_t * input_images)
+        else:
             # this creates a t with batch_size number, basically a float for each sample in input
             # Draw uniformly distributed continuous timesteps
             # the diffusion process here and in sampling is different even in original impl
             # in the sampling part, it uses linear betas but here during diffusion process
             # it opts to use a different way, grabs a few float numbers( as many as batchsize )
             # then create logsnr from this, does a feedforward and gets the predicted noise!
-            t = rng.draw(input_images.size(0))[:, 0].to(self.device)
+            # t = rng.draw(input_images.size(0))[:, 0].to(self.device)
+            t = self._get_value_for_timestep_t(self.betas, timestep_indexes=timesteps, use_batch=is_batch)
             # Calculate the noise schedule parameters for those timesteps
             # grabs 32 numbers!
-            self.loss_log_snrs = get_ddpm_schedule(t)
-            self.loss_alphas, self.loss_sigmas = get_alphas_sigmas(self.loss_log_snrs)
-            self.loss_weights = self.loss_log_snrs.exp() / self.loss_log_snrs.exp().add(1)
+            self.log_snrs_loss = -torch.special.expm1(1e-4 + 10 * t**2).log()
+            self.alphas_loss = self.log_snrs_loss.sigmoid().sqrt()
+            self.sigmas_loss = self.log_snrs_loss.neg().sigmoid().sqrt()
+            self.weights_loss = self.log_snrs_loss.exp() / self.log_snrs_loss.exp().add(1)
 
             # Combine the ground truth images and the noise
-            self.loss_alphas = self.loss_alphas[:, None, None, None]
-            self.loss_sigmas = self.loss_sigmas[:, None, None, None]
+            self.alphas_loss = self.alphas_loss
+            self.sigmas_loss = self.sigmas_loss
             # noise = torch.randn_like(input_images)
-            noisy_images = input_images * self.loss_alphas + actual_noises * self.loss_sigmas
-            self.targets = actual_noises * self.loss_alphas - input_images * self.loss_sigmas
-        
+            noisy_images = input_images * self.alphas_loss + actual_noises * self.sigmas_loss
+            self.targets = actual_noises * self.alphas_loss - input_images * self.sigmas_loss
+            # print(f'{noisy_images.shape} {self.targets.shape=} {actual_noises.shape=}')
         # return the noisy_image along with the actual noise
         return noisy_images, actual_noises
 
@@ -3652,6 +3659,7 @@ model_ema = copy.deepcopy(model)
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
 model._init_parameters(beta_start=0.0001,beta_end=0.02)
+model.use_new_betas = False
 
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -3765,7 +3773,7 @@ def eval_loss(model, rng, imgs, timestep_discrete, class_labels_for_conditioning
         v1,v2 = model(noised_reals, timestep_discrete) #log_snrs_timestepinfos)
         return (v1 - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
 
-def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, device):
+def eval_loss(model, imgs, predicted_noise, pure_noise,enable_fp16, device):
     # removing exp() will increase the loss and doesnt change the outcome significantly 
     # in the original version alphas were log, so doing exp() would reverse the log and get us the 
     # actual value, the logs are simply used for numerical stability in multiplications etc.
@@ -3780,17 +3788,20 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
         # Combine the ground truth images and the noise
         alphas = model.sqrt_alphas_cumprod_t
         sigmas = model.sqrt_one_minus_alphas_cumprod_t
-    else:
-        weights = model.alphas_log_snrs.exp() / model.alphas_log_snrs.exp().add(1)
-        alphas = model.alphas[:, None, None, None]
-        sigmas = model.sigmas[:, None, None, None]
-        print(f'{alphas.shape=} {sigmas.shape=}')
-    # Compute the model output and the loss.
-    with torch.cuda.amp.autocast(enabled=enable_fp16):
         # noisy_images = (model.sqrt_alphas_cumprod_t * imgs) + (model.sqrt_one_minus_alphas_cumprod_t * pure_noise)
         # using log-exp versions of this doesnt work either!
         # targets = pure_noise * alphas - imgs * sigmas
         targets = pure_noise*alphas - imgs *sigmas
+    else:
+        weights = model.weights_loss
+        # print(f'{model.alphas_loss.shape=} {model.sigmas_loss.shape=}')
+        targets = model.targets
+        # Compute the model output and the loss.
+    with torch.cuda.amp.autocast(enabled=enable_fp16):
+        # # noisy_images = (model.sqrt_alphas_cumprod_t * imgs) + (model.sqrt_one_minus_alphas_cumprod_t * pure_noise)
+        # # using log-exp versions of this doesnt work either!
+        # # targets = pure_noise * alphas - imgs * sigmas
+        # targets = pure_noise*alphas - imgs *sigmas
         
         # is_batch = imgs.ndim>3
         # betas_t = model._get_value_for_timestep_t(model.betas, ts, is_batch) 
@@ -3977,8 +3988,8 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # this works with timeembedding, but results are not good, they are grimish/blury!
             # loss = F.mse_loss(predicted_noises, noises)
             # this loss fails with timembedding
-            loss = eval_loss(model, rng, imgs, 
-                             t,
+            loss = eval_loss(model, 
+                             imgs, 
                              predicted_noises, 
                              noises,
                              enable_fp16=use_fp16, 
