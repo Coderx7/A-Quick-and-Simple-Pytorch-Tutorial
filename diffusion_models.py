@@ -2996,7 +2996,7 @@ class DiffusionNew(nn.Module):
 # TODO: add the loss functions to the model itself so they change based on the type of scheduler automatically!
 
 class DiffusionMnist(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, linear_scheduler=True, device = 'cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, embd_size=32, num_timesteps=200, linear_scheduler=True, eta=True, device = 'cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
@@ -3004,10 +3004,12 @@ class DiffusionMnist(nn.Module):
         self.num_timesteps = num_timesteps
         self.device = device
         self.linear_scheduler = linear_scheduler
+        # use new betas for schduler stuff!
+        self.use_new_betas = True
+        self.eta = eta
         
-        
-        # self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
-        self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
+        # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
         # lets initialize our attributes for the forward_diffusion process 
@@ -3045,6 +3047,27 @@ class DiffusionMnist(nn.Module):
         self.sqrt_one_minus_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_one_minus_alphas_cumprod, timesteps, is_batch)
         # now calculate the mean + variance to get the noisy image
         noisy_images = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * actual_noises)
+        if self.use_new_betas:
+            # this creates a t with batch_size number, basically a float for each sample in input
+            # Draw uniformly distributed continuous timesteps
+            # the diffusion process here and in sampling is different even in original impl
+            # in the sampling part, it uses linear betas but here during diffusion process
+            # it opts to use a different way, grabs a few float numbers( as many as batchsize )
+            # then create logsnr from this, does a feedforward and gets the predicted noise!
+            t = rng.draw(input_images.size(0))[:, 0].to(self.device)
+            # Calculate the noise schedule parameters for those timesteps
+            # grabs 32 numbers!
+            self.loss_log_snrs = get_ddpm_schedule(t)
+            self.loss_alphas, self.loss_sigmas = get_alphas_sigmas(self.loss_log_snrs)
+            self.loss_weights = self.loss_log_snrs.exp() / self.loss_log_snrs.exp().add(1)
+
+            # Combine the ground truth images and the noise
+            self.loss_alphas = self.loss_alphas[:, None, None, None]
+            self.loss_sigmas = self.loss_sigmas[:, None, None, None]
+            # noise = torch.randn_like(input_images)
+            noisy_images = input_images * self.loss_alphas + actual_noises * self.loss_sigmas
+            self.targets = actual_noises * self.loss_alphas - input_images * self.loss_sigmas
+        
         # return the noisy_image along with the actual noise
         return noisy_images, actual_noises
 
@@ -3062,8 +3085,9 @@ class DiffusionMnist(nn.Module):
             plt.axis("off")
             # set a stepsize so we display only num_images intermediate images for our diffusion process
             step_size = self.num_timesteps//num_images
+            range_ = range(0,self.num_timesteps) if self.use_new_betas else range(0, self.num_timesteps)[::-1]
             # now reverse the timestep in denoising 
-            for i in range(0, self.num_timesteps)[::-1]:
+            for i in range_:
                 # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
                 # its is used when we want to create a tensor of a certain size and fill it with a 
                 # specific value. This is useful when we need a tensor of a certain size, but don’t
@@ -3071,7 +3095,10 @@ class DiffusionMnist(nn.Module):
                 # simply use torch.tensor([i])
                 # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
                 timestep = torch.tensor([i], dtype=torch.long)
-                noise = self._sample(noise, timestep)
+                if self.use_new_betas:
+                    noise = self._sample_2(noise, timestep)
+                else:
+                    noise = self._sample(noise, timestep)
                 # This is to maintain the natural range of the distribution
                 # its important, or otherwise we get a very blury almost all noise image
                 noise = torch.clamp(noise, -1.0, 1.0)
@@ -3106,12 +3133,16 @@ class DiffusionMnist(nn.Module):
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
             # set a stepsize so we display only num_images intermediate images for our diffusion process
             # step_size = self.num_timesteps//10
-            # now reverse the timestep in denoising 
-            for i in range(0, self.num_timesteps)[::-1]:
+            # now reverse the timestep in denoising
+            range_ = range(0,self.num_timesteps) if self.use_new_betas else range(0, self.num_timesteps)[::-1]
+            for i in range_:
                 # create noise
                 t = torch.tensor([i], dtype=torch.long)#.repeat(batch_size)
                 # print(f't.shape={tuple(t.shape)}')
-                noise = self._sample(noise, t)
+                if self.use_new_betas:
+                    noise = self._sample_2(noise, t) 
+                else:
+                    noise = self._sample(noise, t)
                 # This is to maintain the natural range of the distribution
                 # its important, or otherwise we get a very blury almost all noise image
                 noise = torch.clamp(noise, -1.0, 1.0)
@@ -3164,72 +3195,45 @@ class DiffusionMnist(nn.Module):
             return model_mean + torch.sqrt(posterior_variance_t)*noise
 
     @torch.no_grad()
-    def _sample_2(self, model, img, steps, eta, classes):
+    def _sample_2(self, img, t):
         """Draws samples from a model given starting noise."""
-        ts = img.new_ones([img.shape[0]])
-        # Create the noise schedule
-        # create a 1-D tensor t with steps number of elements that are evenly spaced between 1 and 0, not including 0.
-        # note that we have steps+1 and a [:-1] at the end so that ultimately we take steps number of elements
-        # we start at 1 and go toward 0 (0 not included)
-        t = torch.linspace(1, 0, steps + 1)[:-1]
-        
-        # by default we use a linear scheduler, but here we use log_snr 
-        # log SNRs for the noise schedule from the DDPM paper
-        # expm1 is the efficient implementation of (exp - 1) 
-        # this is akin to our self.alphas = 1.0 - self.betas which is then used to create alphas_cumprod
-        # which is then fed to create sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod
-        # sidenote: 
-        #`-torch.special.expm1(1e-4 + 10 * t**2).log().sigmoid()` could be used to create a custom schedule 
-        # for the noise levels or variance reduction factors at each time step in the diffusion process.
-        # Here's a breakdown:
-        # torch.special.expm1(1e-4 + 10 * t**2): This part of the expression could be used to create a non-linear schedule 
-        #           that starts near zero when `t` is close to zero and increases as `t` increases. 
-        #           The `expm1` function computes `exp(x) - 1`, which is approximately equal to `x` for small `x`, so this part of 
-        #           the expression starts near `1e-4` when `t` is close to zero.
-        # .log()`: Taking the logarithm of the previous expression could be used to create a schedule that increases more slowly
-        #          as `t` increases. This could be useful if you want the noise levels or variance reduction factors to increase quickly
-        #          at first and then more slowly.
-        # .sigmoid()`: Applying the sigmoid function at the end squashes the output into the range (0, 1). 
-        # This could be useful if you want the noise levels or variance reduction factors to be probabilities 
-        # or normalized values.
-        # So, this expression could be used to create a custom schedule for the noise levels or variance reduction factors
-        # in a diffusion model that has certain desirable properties, such as starting near zero, increasing more slowly over
-        # time, and being normalized to the range (0, 1).
-        log_snrs = -torch.special.expm1(1e-4 + 10 * t**2).log()
-        # Returns the scaling factors for the clean image (alpha) and for the
-        # noise (sigma), given the log SNR for a timestep."""
-        # these are basically the equivalent of 
-        # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
-        alphas = log_snrs.sigmoid().sqrt()
-        sigmas = log_snrs.neg().sigmoid().sqrt()
-
         # The sampling loop
-        for i in trange(steps):
+        # img = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+        # !note we dont reverse the timesteps here!
+        # if things didnt go right, fix this, so this sampler uses the normal loop!
+        # ! currently added two ranges in gen_images and display images need to test
+        # for i in range(self.num_timesteps):
+        # Get the model output (v, the predicted velocity)
+        with torch.cuda.amp.autocast():
+            # the same as repeating that timestep for batch-size times!
+            # ts = img.new_ones([img.shape[0]])
+            # ts * alphas_log_snrs[i]
+            # TODO: note we are using the raw alphas_log_snr (our betas infact here! and getting betas_t)
+            # TODO: instead of using the pure timestep t! maybe our model needs to change this, as we use
+            # TODO: an embedding which requires integer values as index, while the values of betas(alphas_log_snrs)
+            # Also note that the values used to feed the network (timeembedding wise) are very small around 0.0001
+            # and maybe this is why this works but ours doesnt as our magnitude may be through the roof! also 
+            # note that,
+            # are obviously floats
+            timestep_batch = self.alphas_log_snrs[t].repeat(img.size(0))
+            predicted_noise = self.unet_model(img, timestep_batch).float()
 
-            # Get the model output (v, the predicted velocity)
-            with torch.cuda.amp.autocast():
-                predicted_noise = model(img, ts * log_snrs[i], classes).float()
-
-            # Predict the noise and the denoised image
-            pred = img * alphas[i] - predicted_noise * sigmas[i]
-            eps = img * sigmas[i] + predicted_noise * alphas[i]
-
-            # If we are not on the last timestep, compute the noisy image for the
-            # next timestep.
-            if i < steps - 1:
-                # If eta > 0, adjust the scaling factor for the predicted noise
-                # downward according to the amount of additional noise to add
-                ddim_sigma = eta * (sigmas[i + 1]**2 / sigmas[i]**2).sqrt() * (1 - alphas[i]**2 / alphas[i + 1]**2).sqrt()
-                adjusted_sigma = (sigmas[i + 1]**2 - ddim_sigma**2).sqrt()
-
-                # Recombine the predicted noise and predicted denoised image in the
-                # correct proportions for the next step
-                img = pred * alphas[i + 1] + eps * adjusted_sigma
-
-                # Add the correct amount of fresh noise
-                if eta:
-                    img += torch.randn_like(img) * ddim_sigma
-
+        # Predict the noise and the denoised image
+        pred = img * self.alphas[t] - predicted_noise * self.sigmas[t]
+        noisy_image = img * self.sigmas[t] + predicted_noise * self.alphas[t]
+        # If we are not on the last timestep, compute the noisy image for the
+        # next timestep.
+        if t < self.num_timesteps - 1:
+            # If eta > 0, adjust the scaling factor for the predicted noise
+            # downward according to the amount of additional noise to add
+            ddim_sigma = self.eta * (self.sigmas[t + 1]**2 / self.sigmas[t]**2).sqrt() * (1 - self.alphas[t]**2 / self.alphas[t + 1]**2).sqrt()
+            adjusted_sigma = (self.sigmas[t + 1]**2 - ddim_sigma**2).sqrt()
+            # Recombine the predicted noise and predicted denoised image in the
+            # correct proportions for the next step
+            img = pred * self.alphas[t + 1] + noisy_image * adjusted_sigma
+            # Add the correct amount of fresh noise
+            if self.eta:
+                img += torch.randn_like(img) * ddim_sigma
         # If we are on the last timestep, output the denoised image
         return pred
 
@@ -3264,6 +3268,41 @@ class DiffusionMnist(nn.Module):
         # used in the calculation of the Gaussian distribution from which the denoised 
         # image is sampled at each time step.
         self.posterior_variance = self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        
+        # second method (ddim?)
+        # by default we use a linear scheduler, but here we use log_snr 
+        # 
+        # log SNRs for the noise schedule from the DDPM paper
+        # expm1 is the efficient implementation of (exp - 1) (this is especially important when dealing with tiny floats!)
+        # this is akin to our self.alphas = 1.0 - self.betas which is then used to create alphas_cumprod
+        # which is then fed to create sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod
+        # sidenote: 
+        #`-torch.special.expm1(1e-4 + 10 * t**2).log().sigmoid()` is used to create a custom schedule 
+        # for the noise levels or variance reduction factors at each time step in the diffusion process.
+        # 
+        # torch.special.expm1(1e-4 + 10 * t**2): This part of the expression is used to create a non-linear schedule 
+        # that starts near zero when `t` is close to zero and increases as `t` increases. 
+        # The `expm1` function computes `exp(x) - 1`, which is approximately equal to `x` for small `x`, so this part of 
+        # the expression starts near `1e-4` when `t` is close to zero.
+        # 
+        # .log()`: Taking the logarithm of the previous expression is used to create a schedule that increases more slowly
+        # as `t` increases. This could be useful if you want the noise levels or variance reduction factors to increase quickly
+        # at first and then more slowly.
+        # 
+        # .sigmoid()`: Applying the sigmoid function at the end squashes the output into the range (0, 1). 
+        # This is useful if we want the noise levels or variance reduction factors to be probabilities 
+        # or normalized values as later we use them to calculate a weight matrix for our loss.
+        # So, this expression is used to create a custom schedule for the noise levels or variance reduction factors
+        # in our diffusion model which has certain desirable properties, such as starting near zero, increasing more slowly over
+        # time, and being normalized to the range (0, 1).
+        # the values are between -10 and 9.21 when used with betas in range (1,0)
+        self.alphas_log_snrs = -torch.special.expm1(1e-4 + 10 * self.betas**2).log()
+        # the scaling factors for the clean image (alpha) and the
+        # noise (sigma), given the log SNR for a timestep.
+        # these are basically the equivalent of 
+        # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
+        self.alphas = self.alphas_log_snrs.sigmoid().sqrt()
+        self.sigmas = self.alphas_log_snrs.neg().sigmoid().sqrt()
 
     #sidenote concerning init_parameters and sampling techniques: 
     # A Gaussian distribution and a posterior distribution are two different concepts in statistics and probability theory:
@@ -3378,7 +3417,15 @@ class DiffusionMnist(nn.Module):
 
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
-        return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
+        if self.use_new_betas:
+            # Create the noise schedule
+            # this is akin to our betas
+            # create a 1-D tensor t with steps number of elements that are evenly spaced between 1 and 0, not including 0.
+            # note that we have steps+1 and a [:-1] at the end so that ultimately we take steps number of elements
+            # we start at 1 and go toward 0 (0 not included)
+            return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
+        else: 
+            return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
 
     @torch.no_grad()
     def _create_betas_cosine(self, timesteps, s = 0.008):
@@ -3725,13 +3772,19 @@ def eval_loss(model, rng, imgs, ts, predicted_noise, pure_noise,enable_fp16, dev
     # but here they are not logs so doing exp is meaning less on them
     # adding a log and exp here doesnt do much, we need to incorporate this in previous operations as well
     # to get meaningful improvement.
-    # weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
-    weights = model.sqrt_alphas_cumprod_t / model.sqrt_one_minus_alphas_cumprod_t.add(1)
-    # print(f'{torch.norm(weights)=}')
-    # print(f'{torch.norm(weights2)=}')
-    # Combine the ground truth images and the noise
-    alphas = model.sqrt_alphas_cumprod_t
-    sigmas = model.sqrt_one_minus_alphas_cumprod_t
+    if not model.use_new_betas:
+        # weights = model.sqrt_alphas_cumprod_t.exp() / model.sqrt_one_minus_alphas_cumprod_t.exp().add(1)
+        weights = model.sqrt_alphas_cumprod_t / model.sqrt_one_minus_alphas_cumprod_t.add(1)
+        # print(f'{torch.norm(weights)=}')
+        # print(f'{torch.norm(weights2)=}')
+        # Combine the ground truth images and the noise
+        alphas = model.sqrt_alphas_cumprod_t
+        sigmas = model.sqrt_one_minus_alphas_cumprod_t
+    else:
+        weights = model.alphas_log_snrs.exp() / model.alphas_log_snrs.exp().add(1)
+        alphas = model.alphas[:, None, None, None]
+        sigmas = model.sigmas[:, None, None, None]
+        print(f'{alphas.shape=} {sigmas.shape=}')
     # Compute the model output and the loss.
     with torch.cuda.amp.autocast(enabled=enable_fp16):
         # noisy_images = (model.sqrt_alphas_cumprod_t * imgs) + (model.sqrt_one_minus_alphas_cumprod_t * pure_noise)
@@ -4006,6 +4059,7 @@ model.display_sample(input_channel=model.in_channels,
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
 
 #%%
+# taken from https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=blNYA6yzzuXY&uniqifier=2
 # test with otherpeoples implementation
 # Imports
 
@@ -4184,7 +4238,6 @@ def sample(model, img, steps, eta, classes):
 
     # The sampling loop
     for i in trange(steps):
-
         # Get the model output (v, the predicted velocity)
         with torch.cuda.amp.autocast():
             predicted_noise = model(img, ts * log_snrs[i], classes).float()
