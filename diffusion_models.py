@@ -3007,8 +3007,11 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         # use new betas for schduler stuff!
-        self.use_new_betas = False
+        self.use_new_scheduler = False
         self.eta = eta
+        # Use a low discrepancy quasi-random sequence to sample uniformly distributed
+        # timesteps. This considerably reduces the between-batch variance of the loss.
+        self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
         
         self.unet_model = UnetModel(in_channels, base_fmap_size, embd_size=embd_size, device=device)
         # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
@@ -3034,7 +3037,7 @@ class DiffusionMnist(nn.Module):
     def forward_unet(self, input_images:torch.Tensor, timesteps:torch.Tensor) -> torch.Tensor:
         # timesteps need to have shape (batch,1) becasue im using the new timestep form (Foriour!)
         # only when we are using foriour implementation for timeembedding
-        # timesteps=timesteps.view(-1,1)
+        # timesteps=timesteps.view(-1,1), edit manage this inside foriour forward!
         predicted_noise = self.unet_model(input_images, timesteps)
         return predicted_noise
     
@@ -3044,7 +3047,7 @@ class DiffusionMnist(nn.Module):
         # Create a noise tensor with the same dimensions as input_images
         actual_noises = torch.randn_like(input_images)
         
-        if not self.use_new_betas:
+        if not self.use_new_scheduler:
             # Get sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod for current timesteps
             # note: I set them as instance attribute so during loss calculation I can use them! need to refactor later
             self.sqrt_alphas_cumprod_t = self._get_value_for_timestep_t(self.sqrt_alphas_cumprod, timestep_indexes=timesteps, use_batch=is_batch)
@@ -3052,6 +3055,7 @@ class DiffusionMnist(nn.Module):
             # now calculate the mean + variance to get the noisy image
             noisy_images = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * actual_noises)
             self.targets = (self.sqrt_alphas_cumprod_t * actual_noises) - (self.sqrt_one_minus_alphas_cumprod_t * input_images)
+            # self.targets2 = (self.sqrt_alphas_cumprod_t * actual_noises) + (self.sqrt_one_minus_alphas_cumprod_t * input_images)
         else:
             # this creates a t with batch_size number, basically a float for each sample in input
             # Draw uniformly distributed continuous timesteps
@@ -3059,7 +3063,7 @@ class DiffusionMnist(nn.Module):
             # in the sampling part, it uses linear betas but here during diffusion process
             # it opts to use a different way, grabs a few float numbers( as many as batchsize )
             # then create logsnr from this, does a feedforward and gets the predicted noise!
-            # t = rng.draw(input_images.size(0))[:, 0].to(self.device)
+            # t = self.rng.draw(input_images.size(0))[:, 0].to(self.device)
             t = self._get_value_for_timestep_t(self.betas, timestep_indexes=timesteps, use_batch=is_batch)
             # Calculate the noise schedule parameters for those timesteps
             # grabs 32 numbers!
@@ -3069,8 +3073,8 @@ class DiffusionMnist(nn.Module):
             self.weights_loss = self.log_snrs_loss.exp() / self.log_snrs_loss.exp().add(1)
 
             # Combine the ground truth images and the noise
-            self.alphas_loss = self.alphas_loss
-            self.sigmas_loss = self.sigmas_loss
+            # self.alphas_loss = self.alphas_loss[:,None,None,None]
+            # self.sigmas_loss = self.sigmas_loss[:,None,None,None]
             # noise = torch.randn_like(input_images)
             noisy_images = input_images * self.alphas_loss + actual_noises * self.sigmas_loss
             self.targets = actual_noises * self.alphas_loss - input_images * self.sigmas_loss
@@ -3092,7 +3096,7 @@ class DiffusionMnist(nn.Module):
             plt.axis("off")
             # set a stepsize so we display only num_images intermediate images for our diffusion process
             step_size = self.num_timesteps//num_images
-            range_ = range(0,self.num_timesteps) if self.use_new_betas else range(0, self.num_timesteps)[::-1]
+            range_ = range(0,self.num_timesteps) if self.use_new_scheduler else range(0, self.num_timesteps)[::-1]
             # now reverse the timestep in denoising 
             for i in range_:
                 # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
@@ -3102,7 +3106,7 @@ class DiffusionMnist(nn.Module):
                 # simply use torch.tensor([i])
                 # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
                 timestep = torch.tensor([i], dtype=torch.long)
-                if self.use_new_betas:
+                if self.use_new_scheduler:
                     noise = self._sample_2(noise, timestep)
                 else:
                     noise = self._sample(noise, timestep)
@@ -3141,12 +3145,12 @@ class DiffusionMnist(nn.Module):
             # set a stepsize so we display only num_images intermediate images for our diffusion process
             # step_size = self.num_timesteps//10
             # now reverse the timestep in denoising
-            range_ = range(0,self.num_timesteps) if self.use_new_betas else range(0, self.num_timesteps)[::-1]
+            range_ = range(0,self.num_timesteps) if self.use_new_scheduler else range(0, self.num_timesteps)[::-1]
             for i in range_:
                 # create noise
                 t = torch.tensor([i], dtype=torch.long)#.repeat(batch_size)
                 # print(f't.shape={tuple(t.shape)}')
-                if self.use_new_betas:
+                if self.use_new_scheduler:
                     noise = self._sample_2(noise, t) 
                 else:
                     noise = self._sample(noise, t)
@@ -3424,7 +3428,7 @@ class DiffusionMnist(nn.Module):
 
     @torch.no_grad()
     def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
-        if self.use_new_betas:
+        if self.use_new_scheduler:
             # Create the noise schedule
             # this is akin to our betas
             # create a 1-D tensor t with steps number of elements that are evenly spaced between 1 and 0, not including 0.
@@ -3480,6 +3484,51 @@ class DiffusionMnist(nn.Module):
         # rescale the image to 0-1 range
         img_grid = (img_grid+1)/2
         return img_grid
+
+    def eval_loss(self, imgs, predicted_noise, pure_noise, enable_fp16, device):
+        with torch.cuda.amp.autocast(enabled=enable_fp16):
+            # removing exp() will increase the loss and doesnt change the outcome significantly 
+            # in the original version alphas were log, so doing exp() would reverse the log and get us the 
+            # actual value, the logs are simply used for numerical stability in multiplications etc.
+            # but here they are not logs so doing exp is meaning less on them
+            # adding a log and exp here doesnt do much, we need to incorporate this in previous operations as well
+            # to get meaningful improvement.
+            if not self.use_new_scheduler:
+                weights = self.sqrt_alphas_cumprod_t / self.sqrt_one_minus_alphas_cumprod_t.add(1)
+                alphas = self.sqrt_alphas_cumprod_t
+                sigmas = self.sqrt_one_minus_alphas_cumprod_t
+                # Combine the ground truth images and the noise
+                # using log-exp versions of this doesnt work either!
+                # targets = pure_noise*alphas - imgs*sigmas
+                targets = self.targets
+            else:
+                weights = self.weights_loss
+                targets = self.targets
+                # Compute the model output and the loss.
+            # calculate Mean Squared Error (MSE) here (the weighted version of course! note the mult at the end)
+            # pow(2) squares each element in the error tensor. this has the effect of making larger errors
+            # more significant, which can be desirable in many contexts. 
+            # This is a common step in many loss functions, including the MSE.
+            # the mean([1, 2, 3]) calculates the mean (average) of the squared errors over the 
+            # dimensions 1, 2, and 3 of the tensor. The result is a single scalar value that represents 
+            # the average squared error between the predicted noise and the target values
+            # and this so far gives us a number for each sample in our batch, therefore we do a final mean()
+            # to get a single value for loss. note that we also incorporate a weight in our loss which 
+            # improves our result!
+            # return (predicted_noise - targets).pow(2).mean([1, 2, 3]).mul(weights).mean()
+            # simplified version: 
+            # return F.mse_loss(predicted_noise, targets).mul(weights).mean()
+            # return F.mse_loss(predicted_noise,  targets)
+            # test with predicted noise : sqrt_alphas_cumprod*input_imgs + sqrt_one_minus_a_c*predicted_noise
+            # self.target3 = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * predicted_noises)
+            l2 = F.mse_loss((self.sqrt_one_minus_alphas_cumprod_t * predicted_noise),
+                            (self.sqrt_one_minus_alphas_cumprod_t * pure_noise))
+            # now incorporate target, but for the imgs*sigmas, use l2! or something like that
+            # targets = pure_noise*alphas - imgs*sigmas -> targets = pure_noise*alphas - mse(imgs*sigmas, predictednoise*sigmas)
+            # return F.mse_loss(predicted_noise, pure_noise) - l2
+            targets = (self.sqrt_alphas_cumprod_t * pure_noise) - (self.sqrt_one_minus_alphas_cumprod_t * imgs)
+            return F.mse_loss(predicted_noise,  targets)
+            
 
 # taken from : https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=s8IFYM8fy5h8
 @torch.no_grad()
@@ -3659,7 +3708,6 @@ model_ema = copy.deepcopy(model)
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
 model._init_parameters(beta_start=0.0001,beta_end=0.02)
-model.use_new_betas = False
 
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -3690,7 +3738,8 @@ current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
 
 print(f'running on     : {device}/{model.device}')
 print(f'experiment date: {current_time}')
-print(f'model in use:  : {model.unet_model._get_name()}')
+print(f'model in use   : {model.unet_model._get_name()}')
+print(f'new algorithm  : {model.use_new_scheduler}')
 print(f'dataset length : {len(dataset):,}')
 print(f'image size     : {image_size}')
 print(f'in_channels    : {in_channels}')
@@ -3988,12 +4037,11 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # this works with timeembedding, but results are not good, they are grimish/blury!
             # loss = F.mse_loss(predicted_noises, noises)
             # this loss fails with timembedding
-            loss = eval_loss(model, 
-                             imgs, 
-                             predicted_noises, 
-                             noises,
-                             enable_fp16=use_fp16, 
-                             device=device)
+            loss = model.eval_loss(imgs, 
+                                   predicted_noises, 
+                                   noises,
+                                   enable_fp16=use_fp16, 
+                                   device=device)
 
             losses.append(loss.item())
             optimizer.zero_grad()
