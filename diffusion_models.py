@@ -3521,13 +3521,13 @@ class DiffusionMnist(nn.Module):
             # return F.mse_loss(predicted_noise,  targets)
             # test with predicted noise : sqrt_alphas_cumprod*input_imgs + sqrt_one_minus_a_c*predicted_noise
             # self.target3 = (self.sqrt_alphas_cumprod_t * input_images) + (self.sqrt_one_minus_alphas_cumprod_t * predicted_noises)
-            l2 = F.mse_loss((self.sqrt_one_minus_alphas_cumprod_t * predicted_noise),
-                            (self.sqrt_one_minus_alphas_cumprod_t * pure_noise))
+            # l2 = F.mse_loss((self.sqrt_one_minus_alphas_cumprod_t * predicted_noise),
+            #                 (self.sqrt_one_minus_alphas_cumprod_t * pure_noise))
             # now incorporate target, but for the imgs*sigmas, use l2! or something like that
             # targets = pure_noise*alphas - imgs*sigmas -> targets = pure_noise*alphas - mse(imgs*sigmas, predictednoise*sigmas)
             # return F.mse_loss(predicted_noise, pure_noise) - l2
             targets = (self.sqrt_alphas_cumprod_t * pure_noise) - (self.sqrt_one_minus_alphas_cumprod_t * imgs)
-            return F.mse_loss(predicted_noise,  targets)
+            return F.mse_loss(predicted_noise,  targets).mul(weights).mean()
             
 
 # taken from : https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=s8IFYM8fy5h8
@@ -3643,7 +3643,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=7000
+step_size=2000
 interval = 20
 
 # resize image
@@ -3707,7 +3707,20 @@ model_ema = copy.deepcopy(model)
 # it would take for ever to endup with pure noise (full noise image). therefore the authors
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
-model._init_parameters(beta_start=0.0001,beta_end=0.02)
+model._init_parameters(beta_start=0.0001,beta_end=0.01)
+# sideinfo
+# 0.02 is too much when timemebedding is used 
+# 0.002 doesnt create any issues for the new loss and trainig goes on smoothly, however, images are not vibrant like before
+# 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!
+# setting beta_end to 0.002 resulted in loss of 0.0951 at 2820 epochs /imgs_gen_20240422_14_38_27 
+# with the new loss (without weights multiplication)
+# the default value of 0.02 would destroy the loss and images would be black and white blobs!
+# with weights, it seems its loss and quality is improved (beta_start=0.0001 and end=0.002)
+# dir is /imgs_gen_20240422_18_39_26 loss at 1700 is 0.687 ,2300 is 0.663, 2820 is 0.655 and at 3240 is 0.648
+# while the loss is down, the images are not vibrant, its as if we are doing simple mse_loss or l1 loss!
+# using a beta_end = 0.01 creates vibrant images, and low loss even at the very begining 0.0560!
+# see /imgs_gen_20240422_23_21_34
+# 
 
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
