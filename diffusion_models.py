@@ -95,6 +95,8 @@ import os
 import sys
 import time
 import random
+import PIL.ImageDraw
+import PIL.ImageFont
 import numpy as np
 # import urllib
 import requests
@@ -3153,7 +3155,7 @@ class DiffusionMnist(nn.Module):
             model.train()
 
     @torch.no_grad()
-    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, seed=0):
+    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, add_labels=False, seed=0):
         #ideally we would refactor dsplayimage and this method so that display image uses this
         #this method would take a previous_noise and thus would be used inside the loop and yeild
         #the result. but for now, im adding this like this
@@ -3187,7 +3189,7 @@ class DiffusionMnist(nn.Module):
                 # its important, or otherwise we get a very blury almost all noise image
                 noise = torch.clamp(noise, -1.0, 1.0)
                 if i==timestep:
-                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel), add_labels=add_labels)
                     # plt.imshow(img)
                     # plt.show()
                     break
@@ -3490,7 +3492,7 @@ class DiffusionMnist(nn.Module):
         return values_at_t.reshape(shape)
 
     @torch.no_grad()
-    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1))->np.ndarray:
+    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1), add_labels=False)->np.ndarray:
         imgs = imgs_tensor.permute(0,2,3,1).detach().cpu()
         img_rows = []
         # how many images do we want in each row
@@ -3512,6 +3514,24 @@ class DiffusionMnist(nn.Module):
         # (0-1) to (-1,1).
         # rescale the image to 0-1 range
         img_grid = (img_grid+1)/2
+        if add_labels:
+            # add labels to the image
+            classes = ['airplane','automobile','bird','cat','deer','dog','frog','horse','ship','truck']
+            # convert to PIL so we can easily add a margin to it
+            img_grid_pil = Image.fromarray((img_grid * 255).astype(np.uint8))
+            margin = 32
+            total_width = img_grid_pil.width + margin
+            total_height = img_grid_pil.height
+            img_new = Image.new('RGB', (total_width, total_height), (255,255,255))
+            img_new.paste(img_grid_pil, (margin,0))
+            img_grid_pil = PIL.ImageDraw.Draw(img_new)
+            # font = PIL.ImageFont.load_default(15)
+            font = PIL.ImageFont.truetype('arial.ttf')
+            y_offset=0
+            for cls in classes:
+                img_grid_pil.text((0,y_offset), text=cls, fill='black', align='center', font=font)
+                y_offset += img_shape[1]
+            img_grid = np.array(img_grid_pil)
         return img_grid
 
     def eval_loss(self, imgs, predicted_noise, pure_noise, enable_fp16, device):
@@ -3762,7 +3782,16 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # adding class conditions, added torch.manual_seed(0) in display_image and gen_images so we get
 # the same images each time! set lrscheduler step = 3000 instead of previously 2000. the rest are
 # the same. dir is /imgs_gen_20240423_18_05_27 (previous run without torch.manual_seed is /imgs_gen_20240423_17_31_08)
-# 
+# sidenote the cifar10 classes are as follows:airplane,automobile,bird,cat,deer,dog,frog,horse,ship,truck
+# it seems we are overfitting as the loss hasnt decreased since epoch 2100 and we are 2900 (0.0354)
+# and we see that the images are overwhlemed with similar effects, objects vanish in each class
+# instead you see cloud things, its very vibrant and beautiful but you dont see your objects,
+# some classes are better than others, but nonetheless,its not satisfactory. loss is a good measure
+# here, as if we go lower, we get better results, so next round can be one of the followings:
+# 1.test more class embeddings 
+# 2.test with channels form 
+# 3.remove time and class embds from decoder and only feed once from encoder
+# 4.use more dropouts 
 #
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
