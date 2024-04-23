@@ -3108,14 +3108,17 @@ class DiffusionMnist(nn.Module):
         return noisy_images, actual_noises
 
     @torch.no_grad()
-    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', fig_size=(8,6)):
+    def display_sample(self, input_channel=1, batch_size=1, image_height=32, image_width=32, num_images=20, title='', seed=0,fig_size=(8,6)):
         # set the model in eval mode first
         is_training=model.training
         if model.training:
             model.eval()
         with torch.device(self.device):
+            # Set the random seed to a fixed value
+            torch.manual_seed(seed)
             # create noise 
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
+            classes = torch.arange(10).repeat_interleave(batch_size//10,0)
             # configure out plot size and remove the axis for uncluttered output
             plt.figure(figsize=(fig_size))
             plt.axis("off")
@@ -3131,7 +3134,6 @@ class DiffusionMnist(nn.Module):
                 # simply use torch.tensor([i])
                 # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
                 timestep = torch.tensor([i], dtype=torch.long)
-                classes = torch.randint(0,10, size=(1,1))
                 if self.use_new_scheduler:
                     noise = self._sample_2(noise, timestep, classes)
                 else:
@@ -3151,7 +3153,7 @@ class DiffusionMnist(nn.Module):
             model.train()
 
     @torch.no_grad()
-    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32):
+    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, seed=0):
         #ideally we would refactor dsplayimage and this method so that display image uses this
         #this method would take a previous_noise and thus would be used inside the loop and yeild
         #the result. but for now, im adding this like this
@@ -3167,6 +3169,7 @@ class DiffusionMnist(nn.Module):
             model.eval()
         img=None
         with torch.device(self.device):
+            torch.manual_seed(seed)
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
             # set a stepsize so we display only num_images intermediate images for our diffusion process
             # step_size = self.num_timesteps//10
@@ -3274,13 +3277,13 @@ class DiffusionMnist(nn.Module):
         # If we are on the last timestep, output the denoised image
         return pred
 
-    def _init_parameters(self, beta_start=0.001, beta_end=0.02):
+    def _init_parameters(self, beta_start=0.0001, beta_end=0.01):
         if self.linear_scheduler:
             self._init_parameters_linear(beta_start, beta_end)
         else:
             self._init_parameters_log(beta_start, beta_end)
         
-    def _init_parameters_linear(self,beta_start=0.001, beta_end=0.02):
+    def _init_parameters_linear(self,beta_start=0.0001, beta_end=0.01):
         # β
         if self.linear_scheduler:
             self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
@@ -3347,7 +3350,7 @@ class DiffusionMnist(nn.Module):
     # - **Posterior Distribution**: In Bayesian statistics, a posterior distribution is the probability distribution that would express one's beliefs about an uncertain quantity after taking into account evidence. It contrasts with the prior distribution, which is the distribution that expresses one's beliefs about the same quantity before evidence is taken into account.
     # In the context of the code you're referring to, the Gaussian distribution is used to model the noise added at each step of the diffusion process, while the posterior distribution is the updated belief about the original data (or the clean image state) given the noisy observations at each step. The posterior distribution can also be a Gaussian distribution, but it's determined by the diffusion model and the observed data, not just a set of fixed parameters like the mean and variance.
     #
-    def _init_parameters_log(self, beta_start=0.001, beta_end=0.02):
+    def _init_parameters_log(self, beta_start=0.0001, beta_end=0.01):
         
         self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
         # α 
@@ -3453,7 +3456,7 @@ class DiffusionMnist(nn.Module):
         self.sqrt_recipm1_alphas_cum = torch.exp(self.log_one_minus_alphas_cum - self.log_sqrt_alphas_cum)
 
     @torch.no_grad()
-    def _create_betas_linear(self, start=0.001, end=0.02)-> torch.Tensor :
+    def _create_betas_linear(self, start=0.0001, end=0.01)-> torch.Tensor :
         if self.use_new_scheduler:
             # Create the noise schedule
             # this is akin to our betas
@@ -3670,7 +3673,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=2000
+step_size=3000
 interval = 20
 
 # resize image
@@ -3756,6 +3759,10 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # I spotted both, cars, ships, deer, horse, birds dogs and cats? but since its small its hard, 
 # also there seems to be more natural images than images of car, trucks, airplans, etc
 #
+# adding class conditions, added torch.manual_seed(0) in display_image and gen_images so we get
+# the same images each time! set lrscheduler step = 3000 instead of previously 2000. the rest are
+# the same. dir is /imgs_gen_20240423_18_05_27 (previous run without torch.manual_seed is /imgs_gen_20240423_17_31_08)
+# 
 #
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -4109,9 +4116,11 @@ for epoch in tqdm(range(epoch_start, epochs)):
         with torch.cuda.amp.autocast(enabled=use_fp16):
             model.eval()
             # save image for each epoch
+            classes = torch.arange(10,device=model.device).repeat_interleave(10,0)
             img_gen = model.gen_images(0,
-                                    model.in_channels, 
-                                    batch_size=64,
+                                    class_label=classes,
+                                    input_channel=model.in_channels,
+                                    batch_size=100,
                                     image_height=image_size,
                                     image_width=image_size)
             dir_path = f"{fldr}/imgs_gen_{current_time}/"
@@ -4126,7 +4135,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
             Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
             print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f} | lr:{scheduler.get_last_lr()[-1]:.1e}')
             model.display_sample(input_channel=model.in_channels,
-                                batch_size=64,
+                                batch_size=100,
                                 image_height=image_size,
                                 image_width=image_size,
                                 num_images=10,
