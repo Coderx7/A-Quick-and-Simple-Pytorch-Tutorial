@@ -3515,18 +3515,23 @@ class DiffusionMnist(nn.Module):
         # rescale the image to 0-1 range
         img_grid = (img_grid+1)/2
         if add_labels:
-            # add labels to the image
+            # add labels to the image - 
+            # TODO add loss as well
             classes = ['airplane','automobile','bird','cat','deer','dog','frog','horse','ship','truck']
             # convert to PIL so we can easily add a margin to it
             img_grid_pil = Image.fromarray((img_grid * 255).astype(np.uint8))
-            margin = 32
-            total_width = img_grid_pil.width + margin
+            width_margin = 32
+            height_margin = 32
+            total_width = img_grid_pil.width + width_margin
             total_height = img_grid_pil.height
             img_new = Image.new('RGB', (total_width, total_height), (255,255,255))
-            img_new.paste(img_grid_pil, (margin,0))
+            img_new.paste(img_grid_pil, (width_margin, height_margin))
             img_grid_pil = PIL.ImageDraw.Draw(img_new)
             # font = PIL.ImageFont.load_default(15)
             font = PIL.ImageFont.truetype('arial.ttf')
+            # add loss placeholder?
+            img_grid_pil.text((height_margin,height_margin//2), text=f'Epoch: 2000 | Loss: {0.98745:.4f}', fill='black', align='center', font=font)
+            
             y_offset=0
             for cls in classes:
                 img_grid_pil.text((0,y_offset), text=cls, fill='black', align='center', font=font)
