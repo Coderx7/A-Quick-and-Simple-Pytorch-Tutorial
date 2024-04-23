@@ -3693,7 +3693,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=3000
+step_size=2000
 interval = 20
 
 # resize image
@@ -3763,7 +3763,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # sideinfo
 # 0.02 is too much when timemebedding is used 
 # 0.002 doesnt create any issues for the new loss and trainig goes on smoothly, however, images are not vibrant like before
-# 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!
+# 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!(compare with before which the loss was 0.9xx)
 # setting beta_end to 0.002 resulted in loss of 0.0951 at 2820 epochs /imgs_gen_20240422_14_38_27 
 # with the new loss (without weights multiplication)
 # the default value of 0.02 would destroy the loss and images would be black and white blobs!
@@ -3778,15 +3778,19 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # now I guess the next thing to do is to add class condition and see all classes for easier verification
 # I spotted both, cars, ships, deer, horse, birds dogs and cats? but since its small its hard, 
 # also there seems to be more natural images than images of car, trucks, airplans, etc
-#
+# 
+# sidenote the cifar10 classes are as follows:
+# airplane,automobile,bird,cat,deer,dog,frog,horse,ship,truck
+# 
 # adding class conditions, added torch.manual_seed(0) in display_image and gen_images so we get
 # the same images each time! set lrscheduler step = 3000 instead of previously 2000. the rest are
 # the same. dir is /imgs_gen_20240423_18_05_27 (previous run without torch.manual_seed is /imgs_gen_20240423_17_31_08)
-# sidenote the cifar10 classes are as follows:airplane,automobile,bird,cat,deer,dog,frog,horse,ship,truck
 # it seems we are overfitting as the loss hasnt decreased since epoch 2100 and we are 2900 (0.0354)
 # and we see that the images are overwhlemed with similar effects, objects vanish in each class
 # instead you see cloud things, its very vibrant and beautiful but you dont see your objects,
-# some classes are better than others, but nonetheless,its not satisfactory. loss is a good measure
+# some classes are better than others, but nonetheless,its not satisfactory. 
+# the loss at 3300 is 0.296 and seems to be decreasing. the lrschedule decay was the right choice
+# and it seems decaying at 2000 was better than decaying at 3000. anyway loss is a good measure
 # here, as if we go lower, we get better results, so next round can be one of the followings:
 # 1.test more class embeddings 
 # 2.test with channels form 
