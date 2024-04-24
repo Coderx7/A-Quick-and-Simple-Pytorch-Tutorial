@@ -1706,7 +1706,7 @@ display_images(prompt, result)
 #%%
 # we are going to use mnist dataset and create a diffusion model to generate digits for us
 # lets import what we need
-import sys,os,math,random
+import sys,os,math,random,platform
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
@@ -2501,8 +2501,9 @@ from typing import Tuple
 # lets import what we need
 import time 
 from datetime import datetime
-import sys,os,math,random,copy
+import sys,os,math,random,copy,platform
 from pathlib import Path
+import PIL
 from PIL import Image
 import numpy as np
 from tqdm import tqdm
@@ -3155,7 +3156,7 @@ class DiffusionMnist(nn.Module):
             model.train()
 
     @torch.no_grad()
-    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, add_labels=False, seed=0):
+    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, title='', add_labels=False, seed=0):
         #ideally we would refactor dsplayimage and this method so that display image uses this
         #this method would take a previous_noise and thus would be used inside the loop and yeild
         #the result. but for now, im adding this like this
@@ -3189,7 +3190,7 @@ class DiffusionMnist(nn.Module):
                 # its important, or otherwise we get a very blury almost all noise image
                 noise = torch.clamp(noise, -1.0, 1.0)
                 if i==timestep:
-                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel), add_labels=add_labels)
+                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel), title=title, add_labels=add_labels)
                     # plt.imshow(img)
                     # plt.show()
                     break
@@ -3492,7 +3493,7 @@ class DiffusionMnist(nn.Module):
         return values_at_t.reshape(shape)
 
     @torch.no_grad()
-    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1), add_labels=False)->np.ndarray:
+    def _create_image_from_batch(self, imgs_tensor:torch.Tensor, img_shape=(32,32,1), title='', add_labels=False)->np.ndarray:
         imgs = imgs_tensor.permute(0,2,3,1).detach().cpu()
         img_rows = []
         # how many images do we want in each row
@@ -3514,29 +3515,35 @@ class DiffusionMnist(nn.Module):
         # (0-1) to (-1,1).
         # rescale the image to 0-1 range
         img_grid = (img_grid+1)/2
-        if add_labels:
+        # convert to PIL
+        img_grid = Image.fromarray((img_grid * 255).astype(np.uint8))
+        if title or add_labels:
             # add labels to the image - 
             # TODO add loss as well
-            classes = ['airplane','automobile','bird','cat','deer','dog','frog','horse','ship','truck']
+            classes = ['plane','car','bird','cat','deer','dog','frog','horse','ship','truck']
             # convert to PIL so we can easily add a margin to it
-            img_grid_pil = Image.fromarray((img_grid * 255).astype(np.uint8))
-            width_margin = 32
-            height_margin = 32
-            total_width = img_grid_pil.width + width_margin
-            total_height = img_grid_pil.height
+            # img_grid_pil = Image.fromarray((img_grid * 255).astype(np.uint8))
+            width_margin = 40 if add_labels else 0
+            height_margin = 32 if title else 0
+            total_width = img_grid.width + width_margin
+            total_height = img_grid.height +height_margin
             img_new = Image.new('RGB', (total_width, total_height), (255,255,255))
-            img_new.paste(img_grid_pil, (width_margin, height_margin))
-            img_grid_pil = PIL.ImageDraw.Draw(img_new)
-            # font = PIL.ImageFont.load_default(15)
-            font = PIL.ImageFont.truetype('arial.ttf')
+            img_new.paste(img_grid, (width_margin, height_margin))
+            img_grid_draw = PIL.ImageDraw.Draw(img_new)
+            font = PIL.ImageFont.load_default()
+            # font = PIL.ImageFont.truetype('./arial.ttf')
             # add loss placeholder?
-            img_grid_pil.text((height_margin,height_margin//2), text=f'Epoch: 2000 | Loss: {0.98745:.4f}', fill='black', align='center', font=font)
-            
-            y_offset=0
-            for cls in classes:
-                img_grid_pil.text((0,y_offset), text=cls, fill='black', align='center', font=font)
-                y_offset += img_shape[1]
-            img_grid = np.array(img_grid_pil)
+            if title:
+                img_grid_draw.text((width_margin+int(img_shape[0]*2.5), height_margin//2),
+                               text=title,
+                               fill='black', align='center', font=font)
+            y_offset=img_shape[0]+img_shape[0]//4 if title else img_shape[0]//4
+            h_offset = img_shape[1]//3
+            if add_labels:
+                for cls in classes:
+                    img_grid_draw.text((h_offset,y_offset), text=cls, fill='black', align='right', font=font)
+                    y_offset += img_shape[0]
+            img_grid = img_new
         return img_grid
 
     def eval_loss(self, imgs, predicted_noise, pure_noise, enable_fp16, device):
@@ -3583,7 +3590,7 @@ class DiffusionMnist(nn.Module):
             # targets = pure_noise*alphas - imgs*sigmas -> targets = pure_noise*alphas - mse(imgs*sigmas, predictednoise*sigmas)
             # return F.mse_loss(predicted_noise, pure_noise) - l2
             return F.mse_loss(predicted_noise,  targets).mul(weights).mean()
-            
+
 
 # taken from : https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=s8IFYM8fy5h8
 @torch.no_grad()
@@ -3795,7 +3802,8 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # instead you see cloud things, its very vibrant and beautiful but you dont see your objects,
 # some classes are better than others, but nonetheless,its not satisfactory. 
 # the loss at 3300 is 0.296 and seems to be decreasing. the lrschedule decay was the right choice
-# and it seems decaying at 2000 was better than decaying at 3000. anyway loss is a good measure
+# and it seems decaying at 2000 was better than decaying at 3000. we ultimately got 0.0263 at 5999.
+# anyway loss is a good measure
 # here, as if we go lower, we get better results, so next round can be one of the followings:
 # 1.test more class embeddings 
 # 2.test with channels form 
@@ -4160,7 +4168,9 @@ for epoch in tqdm(range(epoch_start, epochs)):
                                     input_channel=model.in_channels,
                                     batch_size=100,
                                     image_height=image_size,
-                                    image_width=image_size)
+                                    image_width=image_size,
+                                    title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}',
+                                    add_labels=True)
             dir_path = f"{fldr}/imgs_gen_{current_time}/"
             fname = f"{dataset_name}_img_{epoch}.jpg"
             if not os.path.exists(dir_path):
@@ -4170,7 +4180,8 @@ for epoch in tqdm(range(epoch_start, epochs)):
             # means, our image has 32-bit floating point numbers in it. pil requires
             # uint8 numbers, i.e. 0-255. so to convert our 0-1 range to 0-255 we simply
             # do this (img*255).astype(np.unit8)
-            Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
+            # Image.fromarray((img_gen * 255).astype(np.uint8)).save(os.path.join(dir_path, fname))
+            img_gen.save(os.path.join(dir_path, fname))
             print(f'Epoch: {epoch}/{epochs} | Loss: {np.mean(losses):.4f} | lr:{scheduler.get_last_lr()[-1]:.1e}')
             model.display_sample(input_channel=model.in_channels,
                                 batch_size=100,
@@ -4206,13 +4217,22 @@ for epoch in tqdm(range(epoch_start, epochs)):
 # so I lowered the lr again. followed by removing mean/std etc
 #%%
 model.display_sample(input_channel=model.in_channels,
-                    batch_size=1,
+                    batch_size=100,
                     image_height=image_size,
                     image_width=image_size,
                     num_images=10,
-                    fig_size=(64,32),
+                    fig_size=(32,6),
                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}')
-
+#%%
+img = model.gen_images(0,
+                class_label=classes,
+                input_channel=model.in_channels,
+                batch_size=100,
+                image_height=image_size,
+                image_width=image_size,
+                title='Epoch 2000 | Loss: 0.0355',
+                add_labels=True)
+plt.imshow(np.array(img))
 #%%
 # taken from https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=blNYA6yzzuXY&uniqifier=2
 # test with otherpeoples implementation
