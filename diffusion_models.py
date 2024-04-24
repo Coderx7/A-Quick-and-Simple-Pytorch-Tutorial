@@ -2730,7 +2730,7 @@ class UnetModel(nn.Module):
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
-            drpout = None if i<2 else 0.1
+            drpout = None if i<6 else 0.1
             self.encoder.append(ResBlock(fmap, fmap+self.growth_value, 
                                          time_embd_size=time_embd_size,
                                          class_embd_size=class_embd_size, 
@@ -2740,7 +2740,7 @@ class UnetModel(nn.Module):
             fmap +=self.growth_value
         # decoder
         for i in range(5):
-            drpout = None if i<2 else 0.1
+            drpout = None if i<6 else 0.1
             # likewise instead of dividing by 2, lets subtract
             self.decoder.append(ResBlock(fmap, fmap-self.growth_value, 
                                          time_embd_size=time_embd_size,
@@ -3739,7 +3739,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 #also I used val for cifar10 only
 num_timesteps = 500
 time_embd_size = 64
-class_embd_size=4
+class_embd_size=16
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3805,10 +3805,17 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # and it seems decaying at 2000 was better than decaying at 3000. we ultimately got 0.0263 at 5999.
 # anyway loss is a good measure
 # here, as if we go lower, we get better results, so next round can be one of the followings:
-# 1.test more class embeddings 
+# 1.test more class embeddings - trying more class embeddings now:
+# the loss decreased at 2720 we are at 0.0296(reached 0.0299 at 2600), the images seem more prominent, 
+# but not much, the changes are very subtle after reaching the low 0.03xx and 0.029x and lower
+# signaling we should have gotton our bulk of image form by this loss, maybe lr is low? probably not!
+# it could be the addition doesnt really do much so using as channels might help or maybe the
+# overfitting is high and we need to add dropout more!
+# 
 # 2.test with channels form 
 # 3.remove time and class embds from decoder and only feed once from encoder
-# 4.use more dropouts 
+# 4.use more dropouts : started with droput for 5 layers of encoders and decoders of 0.1
+# dir is /imgs_gen_20240424_15_16_28
 #
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -3853,7 +3860,8 @@ print(f'num_epochs     : {epochs}')
 print(f'epoch_start    : {epoch_start}')
 print(f'interval       : {interval}')
 print(f'n_timestep     : {model.num_timesteps}')
-print(f'embd_size      : {model.time_embd_size}')
+print(f'time embd_size : {model.time_embd_size}')
+print(f'class embd_size: {model.class_embd_size}')
 print(f'learning_rate  : {lr}')
 print(f'step_size      : {step_size}')
 print(f'model n_params : {num_params:,}')
