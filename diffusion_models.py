@@ -3810,12 +3810,23 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # but not much, the changes are very subtle after reaching the low 0.03xx and 0.029x and lower
 # signaling we should have gotton our bulk of image form by this loss, maybe lr is low? probably not!
 # it could be the addition doesnt really do much so using as channels might help or maybe the
-# overfitting is high and we need to add dropout more!
+# overfitting is high and we need to add dropout more!(we achieved a loss of 0.0272 at 4280)
+# 2.use more dropouts : started with droput for 5 layers of encoders and decoders of 0.1
+# dir is /imgs_gen_20240424_15_16_28 . ok this worked apparently and both loss is lower, we have
+# 0.0299 in 1620!(previously we reached here at epoch 2600(see previous experiment)) 
+# and as Im writing this, we have 0.0194 at 4680! the images are much much better, we can now
+# clearly see horses, cars, trucks, ships, frogs, ships, etc whereas previously we really 
+# couldnt see them properly, they were very vague,but now you dont need to look hard to see 
+# each object/animal, they are very vividly obvious!some more than others!
+# since we decay the lr each 2000, it seems the convergence speed decreased after 4000, because
+# lr became too small. so at this rate, we can confidently say a better optimization (optimizer)
+# and lr scheduler can give us a much faster convergence much sooner. (tip seems the loss of around 0.015
+# or 0.017 should give us satisfactory results-use different seeds for gen_imgs and see the results)
 # 
-# 2.test with channels form 
-# 3.remove time and class embds from decoder and only feed once from encoder
-# 4.use more dropouts : started with droput for 5 layers of encoders and decoders of 0.1
-# dir is /imgs_gen_20240424_15_16_28
+#
+# 3.test with channels form 
+# 4.remove time and class embds from decoder and only feed once from encoder
+
 #
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
@@ -4236,10 +4247,11 @@ img = model.gen_images(0,
                 class_label=classes,
                 input_channel=model.in_channels,
                 batch_size=100,
-                image_height=image_size,
-                image_width=image_size,
-                title='Epoch 2000 | Loss: 0.0355',
-                add_labels=True)
+                image_height=32,
+                image_width=32,
+                title='Epoch ---- | Loss: 0.----',
+                add_labels=True,
+                seed=1)
 plt.imshow(np.array(img))
 #%%
 # taken from https://colab.research.google.com/drive/1IJkrrV-D7boSCLVKhi7t5docRYqORtm3#scrollTo=blNYA6yzzuXY&uniqifier=2
