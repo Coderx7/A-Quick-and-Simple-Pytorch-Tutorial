@@ -3743,7 +3743,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 200# 500
+num_timesteps = 250# 500
 time_embd_size = 64
 class_embd_size=16
 # the learning rate is very important, 
@@ -3780,14 +3780,15 @@ model_ema = copy.deepcopy(model)
 # use 0.008 for betas_end 
 model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # sideinfo
-# 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. with timesteps like 200 it seems to work fine with our new loss
-# # this implies betas values and timesteps are tightly coupled! (see notes 2.8 below) )
+# 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. 
+# with timesteps like 200 it seems to work fine with our new loss this implies betas values
+# and timesteps are tightly coupled! (see notes 2.8 below) )
 # 0.002 doesnt create any issues for the new loss and trainig goes on smoothly, however, images are not vibrant like before
 # 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!(compare with before which the loss was 0.9xx)
 # setting beta_end to 0.002 resulted in loss of 0.0951 at 2820 epochs /imgs_gen_20240422_14_38_27 
 # with the new loss (without weights multiplication)
-# 0.008 seems like a good choice (especially with timesteps around 500! see experiments notes below)
-# 
+# 0.008 seems like a good choice (especially with timesteps around 500! 800 and 1000 is too much, see experiments notes below)
+# 0.005 seems ok with 800 timesteps! 
 # the default value of 0.02 would destroy the loss and images would be black and white blobs!
 # with weights, it seems its loss and quality is improved (beta_start=0.0001 and end=0.002)
 # dir is /imgs_gen_20240422_18_39_26 loss at 1700 is 0.687 ,2300 is 0.663, 2820 is 0.655 and at 3240 is 0.648
@@ -3863,9 +3864,28 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # high timesteps, it created all of those issues (unstable loss, bad image generations 
 # (white/blackblos for images ) etc. we need to test with higher timesteps and see how that goes
 # we are getting worse loss compared to 0.008 and timesteps=500, e.g. 1660 we got 0.0298 while now
-# we are getting 0.0320 at 1660. 
-# 2.9 repeat this with a higher timesteps : 
-# 2.10: use timestep=1000 with betas_end=0.008 and see how it performs!
+# we are getting 0.0320 at 1660. we ultimately achieved 0.0211 at 4520 epochs, it slowed converging
+# from epoch 4000, as the lr decayed again and lr became small. overall, it achieved higher loss compared
+# to previous test with 500 timesteps, but it seems the images are kind of more visible? its hard to tell
+# really. lets try a higher timesteps
+# 
+# 2.9 repeat this with a higher timesteps : beta_ends=0.02 and timesteps=400 : 
+# its too high and causes black and white blobs in images. with timesteps=300 it seems fine but high 
+# though dir is /imgs_gen_20240425_22_46_28, using timesteps=250 seem a better choice.
+# 
+#
+# 2.10: use timestep=1000 with betas_end=0.008 and see how it performs: 1000 is too much for 0.008
+# so we see the white/black blobs in images, the loss decreases, so it means the sampling has issues
+# too many steps which ruins the images. we can always reduce the betas_end and see how it acts!
+# test with timesteps=800 betas_end=0.008 also shows the same symptoms, signaling its too many steps
+# test with timesteps=600 betas_end=0.008 seems fine-ish as well.
+# test with timesteps=800 betas_end=0.005 works fine though, and images look normal, 
+# test with timesteps=800 betas_end=0.007 seems high
+# test with timesteps=800 betas_end=0.006 seems fine-ish! loss decreases, and we dont see white/black blobs, but the quality of images
+# are not as good as higher beta_end values (like 0.008) at least now! it may be becasue the timestep is 
+# too high and needs to be lowered(lowering timesteps to 600 increased the loss a bit, but images seem
+# to be better formed at early epochs like 20!)
+# 
 #
 # 3.test with channels form 
 # 4.remove time and class embds from decoder and only feed once from encoder
@@ -3945,27 +3965,7 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
 
 current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
 dir_path = f"{fldr}/imgs_gen_{current_time}/"
-# print(f'running on     : {device}/{model.device}')
-# print(f'experiment date: {current_time}')
-# print(f'model in use   : {model.unet_model._get_name()}')
-# print(f'new algorithm  : {model.use_new_scheduler}')
-# print(f'dataset length : {len(dataset):,}')
-# print(f'image size     : {image_size}')
-# print(f'in_channels    : {in_channels}')
-# print(f'base_fmap_size : {base_fmap_size}')
-# print(f'checkpointname : {checkpoint_name}')
-# print(f'is resumed     : {load_checkpoint}')
-# print(f'uses FP16      : {use_fp16}')
-# print(f'batch_size     : {batch_size}')
-# print(f'num_epochs     : {epochs}')
-# print(f'epoch_start    : {epoch_start}')
-# print(f'interval       : {interval}')
-# print(f'n_timestep     : {model.num_timesteps}')
-# print(f'time embd_size : {model.time_embd_size}')
-# print(f'class embd_size: {model.class_embd_size}')
-# print(f'learning_rate  : {lr}')
-# print(f'step_size      : {step_size}')
-# print(f'model n_params : {num_params:,}')
+
 train_args = {
 'experiment date': current_time,
 'running on'     : f'{device}/{model.device}',
