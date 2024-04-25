@@ -2501,7 +2501,7 @@ from typing import Tuple
 # lets import what we need
 import time 
 from datetime import datetime
-import sys,os,math,random,copy,platform
+import sys,os,math,random,copy,platform,yaml
 from pathlib import Path
 import PIL
 from PIL import Image
@@ -3281,6 +3281,9 @@ class DiffusionMnist(nn.Module):
         return pred
 
     def _init_parameters(self, beta_start=0.0001, beta_end=0.01):
+        # save beta_start and beta_end for logging purposes 
+        self.beta_start = beta_start
+        self.beta_end = beta_end
         if self.linear_scheduler:
             self._init_parameters_linear(beta_start, beta_end)
         else:
@@ -3849,6 +3852,20 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # if 200 is low for cifar10 though! we need to use other values such as 300, 400, and maybe 450 to 
 # see which one is usebale with high betas_end values!
 # the directory is /imgs_gen_20240425_14_59_12 
+# side note: 
+# if we use high betas like betas_end=0.02, we need to use a lower timesteps, otherwise it 
+# results in white/black blobs in the image. the loss decreases but the images doesnt improve,
+# this signals us that the sampling part is doing sth wrong, either its too much iteration 
+# or too few iterations or maybe the values are out of range for somereasons, resulting in
+# weird image generations. if loss gives us nans, etc thats a loss issue and we need to 
+# check the betas value range and other operations involved. 
+# in our case as I mentioned previously it was betas range which was very large! coupled with
+# high timesteps, it created all of those issues (unstable loss, bad image generations 
+# (white/blackblos for images ) etc. we need to test with higher timesteps and see how that goes
+# we are getting worse loss compared to 0.008 and timesteps=500, e.g. 1660 we got 0.0298 while now
+# we are getting 0.0320 at 1660. 
+# 2.9 repeat this with a higher timesteps : 
+# 2.10: use timestep=1000 with betas_end=0.008 and see how it performs!
 #
 # 3.test with channels form 
 # 4.remove time and class embds from decoder and only feed once from encoder
@@ -3927,30 +3944,73 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     model_ema.unet_model.load_state_dict(checkpoint["model_ema"])
 
 current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
+dir_path = f"{fldr}/imgs_gen_{current_time}/"
+# print(f'running on     : {device}/{model.device}')
+# print(f'experiment date: {current_time}')
+# print(f'model in use   : {model.unet_model._get_name()}')
+# print(f'new algorithm  : {model.use_new_scheduler}')
+# print(f'dataset length : {len(dataset):,}')
+# print(f'image size     : {image_size}')
+# print(f'in_channels    : {in_channels}')
+# print(f'base_fmap_size : {base_fmap_size}')
+# print(f'checkpointname : {checkpoint_name}')
+# print(f'is resumed     : {load_checkpoint}')
+# print(f'uses FP16      : {use_fp16}')
+# print(f'batch_size     : {batch_size}')
+# print(f'num_epochs     : {epochs}')
+# print(f'epoch_start    : {epoch_start}')
+# print(f'interval       : {interval}')
+# print(f'n_timestep     : {model.num_timesteps}')
+# print(f'time embd_size : {model.time_embd_size}')
+# print(f'class embd_size: {model.class_embd_size}')
+# print(f'learning_rate  : {lr}')
+# print(f'step_size      : {step_size}')
+# print(f'model n_params : {num_params:,}')
+train_args = {
+'experiment date': current_time,
+'running on'     : f'{device}/{model.device}',
+'python version' : sys.version,
+'pytorch version': str(torch.__version__),
+'model in use'   : model.unet_model._get_name(),
+'new algorithm'  : model.use_new_scheduler,
+'linear_scheduler':model.linear_scheduler,
+'beta_start'     : model.beta_start,
+'beta_end'       : model.beta_end,
+'dataset length' : len(dataset),
+'image size'     : image_size,
+'in_channels'    : in_channels,
+'base_fmap_size' : base_fmap_size,
+'checkpointname' : checkpoint_name,
+'result path'    : dir_path,
+'is resumed'     : load_checkpoint,
+'uses FP16'      : use_fp16,
+'batch_size'     : batch_size,
+'num_epochs'     : epochs,
+'epoch_start'    : epoch_start,
+'interval'       : interval,
+'n_timestep'     : model.num_timesteps,
+'time embd_size' : model.time_embd_size,
+'class embd_size': model.class_embd_size,
+'learning_rate'  : lr,
+'step_size'      : step_size,
+'ema_decay'      : ema_decay,
+'model n_params' : int(num_params),
+'optimizer'      : str(optimizer),
+'scheduler'      : str(scheduler.__dict__),
+}
 
-print(f'running on     : {device}/{model.device}')
-print(f'experiment date: {current_time}')
-print(f'model in use   : {model.unet_model._get_name()}')
-print(f'new algorithm  : {model.use_new_scheduler}')
-print(f'dataset length : {len(dataset):,}')
-print(f'image size     : {image_size}')
-print(f'in_channels    : {in_channels}')
-print(f'base_fmap_size : {base_fmap_size}')
-print(f'checkpointname : {checkpoint_name}')
-print(f'is resumed     : {load_checkpoint}')
-print(f'uses FP16      : {use_fp16}')
-print(f'batch_size     : {batch_size}')
-print(f'num_epochs     : {epochs}')
-print(f'epoch_start    : {epoch_start}')
-print(f'interval       : {interval}')
-print(f'n_timestep     : {model.num_timesteps}')
-print(f'time embd_size : {model.time_embd_size}')
-print(f'class embd_size: {model.class_embd_size}')
-print(f'learning_rate  : {lr}')
-print(f'step_size      : {step_size}')
-print(f'model n_params : {num_params:,}')
-# print(f'enc n_params  : {num_params_enc:,}')
-# print(f'dec n_params  : {num_params_dec:,}')
+for k,v in train_args.items():
+    print(f'{k:<16}: {v}')
+
+# save the training args to disk
+if not os.path.exists(dir_path):
+    os.makedirs(dir_path)
+    
+train_args_cfg_path = os.path.join(dir_path,'args_train.yaml')
+if os.path.exists(train_args_cfg_path):
+    raise Exception("File already exists!")
+with open(train_args_cfg_path,'w') as train_conf:
+    yaml.dump(train_args, train_conf, sort_keys=False)
 
 # this section (loss and its dependencies) are added in april 4 2024 - 
 # for our new round of enhancements to see whats preventing us to achieve good results
@@ -4263,10 +4323,10 @@ for epoch in tqdm(range(epoch_start, epochs)):
                                     image_width=image_size,
                                     title=f'Epoch: {epoch} | Loss: {np.mean(losses):.4f}',
                                     add_labels=True)
-            dir_path = f"{fldr}/imgs_gen_{current_time}/"
+            # dir_path = f"{fldr}/imgs_gen_{current_time}/"
             fname = f"{dataset_name}_img_{epoch}.jpg"
-            if not os.path.exists(dir_path):
-                os.mkdir(dir_path)
+            # if not os.path.exists(dir_path):
+            #     os.mkdir(dir_path)
             # we need to convert our 0-1 range image to a proper format pil supports
             # otherwise we get Cannot handle this data type: (1, 1, 3), <f4 which simply
             # means, our image has 32-bit floating point numbers in it. pil requires
