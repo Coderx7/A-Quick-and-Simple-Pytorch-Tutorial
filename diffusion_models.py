@@ -3695,7 +3695,7 @@ use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
 load_checkpoint = False
-checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond.pth'
+checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond_new.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3735,9 +3735,12 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 #todo point I ended the training because I used a lower dropout (0.05) and it overfitted the model
 #todo so it started repeating a single image so I gave up. prior to that it was starting to create 
 #todo much better images, but since it was slow, I lowered the lr to 0.00001 after 1072 epochs
-#next i plan on using 500 for timesteps and use attenstions to see if that makes anydifference
-#also I used val for cifar10 only
-num_timesteps = 500
+#next i plan on using 500 for timesteps and use attenstions to see if that makes any
+# difference also I used val for cifar10 only
+# 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
+# 1000 is too much and results in the same black/white blobs we used to get when betas_end
+# was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
+num_timesteps = 200# 500
 time_embd_size = 64
 class_embd_size=16
 # the learning rate is very important, 
@@ -3771,13 +3774,17 @@ model_ema = copy.deepcopy(model)
 # it would take for ever to endup with pure noise (full noise image). therefore the authors
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
-model._init_parameters(beta_start=0.0001,beta_end=0.008)
+# use 0.008 for betas_end 
+model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # sideinfo
-# 0.02 is too much when timemebedding is used 
+# 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. with timesteps like 200 it seems to work fine with our new loss
+# # this implies betas values and timesteps are tightly coupled! (see notes 2.8 below) )
 # 0.002 doesnt create any issues for the new loss and trainig goes on smoothly, however, images are not vibrant like before
 # 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!(compare with before which the loss was 0.9xx)
 # setting beta_end to 0.002 resulted in loss of 0.0951 at 2820 epochs /imgs_gen_20240422_14_38_27 
 # with the new loss (without weights multiplication)
+# 0.008 seems like a good choice (especially with timesteps around 500! see experiments notes below)
+# 
 # the default value of 0.02 would destroy the loss and images would be black and white blobs!
 # with weights, it seems its loss and quality is improved (beta_start=0.0001 and end=0.002)
 # dir is /imgs_gen_20240422_18_39_26 loss at 1700 is 0.687 ,2300 is 0.663, 2820 is 0.655 and at 3240 is 0.648
@@ -3823,16 +3830,82 @@ model._init_parameters(beta_start=0.0001,beta_end=0.008)
 # and lr scheduler can give us a much faster convergence much sooner. (tip seems the loss of around 0.015
 # or 0.017 should give us satisfactory results-use different seeds for gen_imgs and see the results)
 # 
+# 2.5 test with new optimizer/schedueler to see how it affetcs it: 
+# dir /imgs_gen_20240425_09_31_16, it seems the timesteps of 1000 is too much, like before
+# 500 works fine for our default config/optimizer, and our new schduler/optimizer. 
+# for new config/optimizer(cosine,adamw) 1000 is too much and results in the same 
+# black/white blobs we used to get when betas_end was too high for our new loss. 
+# so we reverted back to 500 which seems to be working fine now! achieved a loss of 0.0230 at 3300
+# the images look much developed if we get lower loss in early epochs it seems, the lower the lr
+# gets the less the changes take place. see the image directory of this run and previous one
+# and you'll notice the rate of change grately decreases when lr gets decayed
+# 
+# 2.8 test end_betas=0.02 with lower timesteps maybe they are related and thats why our initial attempts with new loss
+# failed! test with 200 of timesteps and see what happens: 
+# as expected with timesteps=200, the issue
+# seems to go away, so betas_value have direct impact on timesteps and viceversa. maybe thats why
+# people opt to use logs and small values so they dont face such insatablity and issues during
+# training! now having lower timesteps can adversly impact the quality of generated images, Im not sure
+# if 200 is low for cifar10 though! we need to use other values such as 300, 400, and maybe 450 to 
+# see which one is usebale with high betas_end values!
+# the directory is /imgs_gen_20240425_14_59_12 
 #
 # 3.test with channels form 
 # 4.remove time and class embds from decoder and only feed once from encoder
+##########################
+# new scheduler!
+from torch.optim.lr_scheduler import _LRScheduler
 
-#
+class GradualWarmupScheduler(_LRScheduler):
+    def __init__(self, optimizer, multiplier, warm_epoch, after_scheduler = None, last_epoch = None):
+        self.multiplier = multiplier
+        self.total_epoch = warm_epoch
+        self.after_scheduler = after_scheduler
+        self.finished = False
+        self.last_epoch = last_epoch
+        self.base_lrs = None
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        if self.last_epoch > self.total_epoch:
+            if self.after_scheduler:
+                if not self.finished:
+                    self.after_scheduler.base_lrs = [base_lr * self.multiplier for base_lr in self.base_lrs]
+                    self.finished = True
+                return self.after_scheduler.get_last_lr()
+            return [base_lr * self.multiplier for base_lr in self.base_lrs]
+        return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
+    def state_dict(self):
+        warmdict = {key:value for key, value in self.__dict__.items() if (key != 'optimizer' and key != 'after_scheduler')}
+        cosdict = {key:value for key, value in self.after_scheduler.__dict__.items() if key != 'optimizer'}
+        return {'warmup':warmdict, 'afterscheduler':cosdict}
+    def load_state_dict(self, state_dict: dict):
+        self.after_scheduler.__dict__.update(state_dict['afterscheduler'])
+        self.__dict__.update(state_dict['warmup'])
+
+    def step(self, epoch=None, metrics=None):
+        if self.finished and self.after_scheduler:
+            if epoch is None:
+                self.after_scheduler.step(None)
+            else:
+                self.after_scheduler.step(epoch - self.total_epoch)
+        else:
+            return super(GradualWarmupScheduler, self).step(epoch)
+
+##########################
+
+
 optimizer = torch.optim.Adam(model.parameters(), lr = lr)
+# adamW is new addition
+# optimizer = torch.optim.AdamW(model.parameters(), lr = lr, weight_decay=1e-4)
 # 0.0001 is small enough and lowering it would imepede the convergence further
 # so I just set it at 3000 to mean donot change it! why use it then? to test with
 # different cases! feel free to choose and play with other schedulers and optimizers
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size,gamma=0.1)
+# new addition is these schedulers!
+# cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,epochs,eta_min = 0,last_epoch = -1)
+# scheduler = GradualWarmupScheduler(optimizer, 2.5,5,cosineScheduler,0)
+
 scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
 
 # calculate model parameters
