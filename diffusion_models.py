@@ -3938,7 +3938,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr = lr)
 # 0.0001 is small enough and lowering it would imepede the convergence further
 # so I just set it at 3000 to mean donot change it! why use it then? to test with
 # different cases! feel free to choose and play with other schedulers and optimizers
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size,gamma=0.1)
+# scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size,gamma=0.1)
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2000,5500],gamma=0.1)
 # new addition is these schedulers!
 # cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,epochs,eta_min = 0,last_epoch = -1)
 # scheduler = GradualWarmupScheduler(optimizer, 2.5,5,cosineScheduler,0)
