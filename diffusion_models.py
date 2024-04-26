@@ -3708,7 +3708,7 @@ batch_size = 32
 num_workers = 8
 epochs = 6000
 epoch_start=0
-step_size=2000
+step_size=[2000,5500]
 interval = 20
 
 # resize image
@@ -3757,6 +3757,8 @@ class_embd_size=16
 # and even with t=800(32isok)
 #after 1740 epochs
 lr = 0.0002 #0.00002
+# weight decay to fight overfitting!
+weight_decay = 0.0001#0
 
 # mnist is 1 channel, and cifar10 is 3!
 in_channels = 1 if 'mnist' in dataset_name else 3
@@ -3871,10 +3873,20 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # 
 # 2.9 repeat this with a higher timesteps : beta_ends=0.02 and timesteps=400 : 
 # its too high and causes black and white blobs in images. with timesteps=300 it seems fine but high 
-# though dir is /imgs_gen_20240425_22_46_28, using timesteps=250 seem a better choice.
+# though dir is /imgs_gen_20240425_22_46_28, using timesteps=250 seems a better choice and the result
+# dir is /imgs_gen_20240426_04_14_04, the result is by far better than anything else in terms of well formed
+# images, visible objects, etc. we have a loss=0.0209 at 2840 and all classes have good/well developed
+# images (could this be attributed to lr not being decayed too much or simply becasue of higher beta_end?
+# ) it seems as we go for more peochs, the quality of images decreases, although the loss decreases as well
+# check the result for like 1760, 2840, and 3600 for example. could be a sign of overfiting.
+# the loss is 0.0195 at 4000.
 # 
+# 2.9.1: try this with a weight decay=0.0001 to see if it affects it in a good way:   
 #
-# 2.10: use timestep=1000 with betas_end=0.008 and see how it performs: 1000 is too much for 0.008
+# 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
+# quickly and see if it gets the same clarity as 2.9 case before: 
+#
+# 2.11: use timestep=1000 with betas_end=0.008 and see how it performs: 1000 is too much for 0.008
 # so we see the white/black blobs in images, the loss decreases, so it means the sampling has issues
 # too many steps which ruins the images. we can always reduce the betas_end and see how it acts!
 # test with timesteps=800 betas_end=0.008 also shows the same symptoms, signaling its too many steps
@@ -3932,14 +3944,14 @@ class GradualWarmupScheduler(_LRScheduler):
 ##########################
 
 
-optimizer = torch.optim.Adam(model.parameters(), lr = lr)
+optimizer = torch.optim.Adam(model.parameters(), lr = lr,weight_decay=weight_decay)
 # adamW is new addition
 # optimizer = torch.optim.AdamW(model.parameters(), lr = lr, weight_decay=1e-4)
 # 0.0001 is small enough and lowering it would imepede the convergence further
 # so I just set it at 3000 to mean donot change it! why use it then? to test with
 # different cases! feel free to choose and play with other schedulers and optimizers
 # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size,gamma=0.1)
-scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2000,5500],gamma=0.1)
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=step_size,gamma=0.1)
 # new addition is these schedulers!
 # cosineScheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,epochs,eta_min = 0,last_epoch = -1)
 # scheduler = GradualWarmupScheduler(optimizer, 2.5,5,cosineScheduler,0)
@@ -3993,7 +4005,8 @@ train_args = {
 'time embd_size' : model.time_embd_size,
 'class embd_size': model.class_embd_size,
 'learning_rate'  : lr,
-'step_size'      : step_size,
+'weight_decay'   : weight_decay,
+'step_size'      : str(step_size),
 'ema_decay'      : ema_decay,
 'model n_params' : int(num_params),
 'optimizer'      : str(optimizer),
