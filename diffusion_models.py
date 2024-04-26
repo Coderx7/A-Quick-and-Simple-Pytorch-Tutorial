@@ -3743,7 +3743,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 250# 500
+num_timesteps = 400# 250 500
 time_embd_size = 64
 class_embd_size=16
 # the learning rate is very important, 
@@ -3780,14 +3780,15 @@ model_ema = copy.deepcopy(model)
 # it would take for ever to endup with pure noise (full noise image). therefore the authors
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
-# use 0.008 for betas_end 
-model._init_parameters(beta_start=0.0001,beta_end=0.02)
+# use 0.008 for betas_end , 0.02 with 250 timesteps
+model._init_parameters(beta_start=0.0001,beta_end=0.01)
 # sideinfo
 # 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. 
 # with timesteps like 200 it seems to work fine with our new loss this implies betas values
 # and timesteps are tightly coupled! (see notes 2.8 below) )
 # 0.002 doesnt create any issues for the new loss and trainig goes on smoothly, however, images are not vibrant like before
-# 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!(compare with before which the loss was 0.9xx)
+# 0.01 seems like a good fit, as the images are vibrant and the loss starts around 0.0560 already!
+# (compare with before which the loss was 0.9xx)
 # setting beta_end to 0.002 resulted in loss of 0.0951 at 2820 epochs /imgs_gen_20240422_14_38_27 
 # with the new loss (without weights multiplication)
 # 0.008 seems like a good choice (especially with timesteps around 500! 800 and 1000 is too much, see experiments notes below)
@@ -3886,11 +3887,32 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # is /imgs_gen_20240426_10_01_12 , the weight decay seems too much and loss decreases very slowly!
 # so im using weightdecay = 0.00001 instead this time, dir is /imgs_gen_20240426_10_21_49, it seems this 
 # is too muvch qas well since even after 1200 epoch our loss is 0.0505! and images are not formed properly!
+# 
 # 2.9.2: try with no weight decay and dropout=0.15 instead of the previous value of 0.1: result directory
-# is /imgs_gen_20240426_12_12_15
+# is /imgs_gen_20240426_12_12_15, images have become really clear and vibrant! like a clear arctic water!
+# see images in 860 epoch, and you'll notice what I mean. the saturation of color made it more beautiful
+# again we are seeing traing for too long doesnt help and the quality starts to plumet! at 3700 we have 
+# a loss=0.0198
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
-# quickly and see if it gets the same clarity as 2.9 case before: 
+# quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
+# the results are not good compared to the previous experiments. lets test this with 250 timesteps 
+# and check the results now: the dir is /imgs_gen_20240426_20_12_25 , right off the bat, the loss is
+# much higher compared to timesteps=500, and also compared to experiment 2.9(betas_end=0.02 and ts=250)
+# so the larger the betas_end, the lower the timesteps it requires to get a lower loss it seems
+# with a lower betas_ends, we need more timesteps to get lower loss. so I guess we need to test
+# this one more time. we can test with 0.008 and 650 ts and see how it fares!
+# 
+# 2.10.1: test with betass_end=0.008 and ts=650: 
+#
+# 2.10.2 try betas_end=0.015 and ts=400, (lowered it a bit to increase the ts to see how it goes):
+# as it seems, higher betas_end and lower ts gives us good results. dir is /imgs_gen_20240426_20_23_36
+# its a bit too much it seems, so instead im going to use ts=350 and see how that goes!:
+# the dir is /imgs_gen_20240426_21_21_38 , ts=350 was high, lowering it and trying again with 300
+# dir is /imgs_gen_20240426_22_24_34, too much, too much color is saturated. 
+# lets use 0.01 and ts=400 dir is 
+# 
+# (sidenote:we havent played with lr, I mean choose a larger lr might give us quicker results?!)
 #
 # 2.11: use timestep=1000 with betas_end=0.008 and see how it performs: 1000 is too much for 0.008
 # so we see the white/black blobs in images, the loss decreases, so it means the sampling has issues
