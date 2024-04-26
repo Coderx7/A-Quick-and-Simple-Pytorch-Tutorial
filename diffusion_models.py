@@ -2730,7 +2730,7 @@ class UnetModel(nn.Module):
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
-            drpout = None if i<6 else 0.1
+            drpout = None if i<6 else 0.15
             self.encoder.append(ResBlock(fmap, fmap+self.growth_value, 
                                          time_embd_size=time_embd_size,
                                          class_embd_size=class_embd_size, 
@@ -2740,7 +2740,7 @@ class UnetModel(nn.Module):
             fmap +=self.growth_value
         # decoder
         for i in range(5):
-            drpout = None if i<6 else 0.1
+            drpout = None if i<6 else 0.15
             # likewise instead of dividing by 2, lets subtract
             self.decoder.append(ResBlock(fmap, fmap-self.growth_value, 
                                          time_embd_size=time_embd_size,
@@ -3758,7 +3758,8 @@ class_embd_size=16
 #after 1740 epochs
 lr = 0.0002 #0.00002
 # weight decay to fight overfitting!
-weight_decay = 0.0001#0
+# it doesnt sit well with adam optimizer! 1e-4 and 1e-5 hinder the process drastically!
+weight_decay = 0
 
 # mnist is 1 channel, and cifar10 is 3!
 in_channels = 1 if 'mnist' in dataset_name else 3
@@ -3881,7 +3882,12 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # check the result for like 1760, 2840, and 3600 for example. could be a sign of overfiting.
 # the loss is 0.0195 at 4000.
 # 
-# 2.9.1: try this with a weight decay=0.0001 to see if it affects it in a good way:   
+# 2.9.1: try this with a weight decay=0.0001 to see if it affects it in a good way: the result directory  
+# is /imgs_gen_20240426_10_01_12 , the weight decay seems too much and loss decreases very slowly!
+# so im using weightdecay = 0.00001 instead this time, dir is /imgs_gen_20240426_10_21_49, it seems this 
+# is too muvch qas well since even after 1200 epoch our loss is 0.0505! and images are not formed properly!
+# 2.9.2: try with no weight decay and dropout=0.15 instead of the previous value of 0.1: result directory
+# is /imgs_gen_20240426_12_12_15
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: 
