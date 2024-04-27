@@ -2567,7 +2567,6 @@ class FourierFeatures(nn.Module):
 def expand_to_planes(input, shape):
     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
 
-
 # we need a block to do conv on the images and timesteps
 # we can do this using functions, but a class/module form
 # is more prefered
@@ -3747,7 +3746,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 450# 250 500
+num_timesteps = 250# 250 500
 time_embd_size = 64
 class_embd_size=16
 # the learning rate is very important, 
@@ -3785,8 +3784,8 @@ model_ema = copy.deepcopy(model)
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
 # use 0.008 for betas_end , 0.02 with 250 timesteps
-model._init_parameters(beta_start=0.0001,beta_end=0.01)
-# sideinfo
+model._init_parameters(beta_start=0.0001,beta_end=0.02)
+# sideinfo about betas_end value
 # 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. 
 # with timesteps like 200 it seems to work fine with our new loss this implies betas values
 # and timesteps are tightly coupled! (see notes 2.8 below) )
@@ -3879,7 +3878,8 @@ model._init_parameters(beta_start=0.0001,beta_end=0.01)
 # 
 # 2.9 repeat this with a higher timesteps : beta_ends=0.02 and timesteps=400 : 
 # its too high and causes black and white blobs in images. with timesteps=300 it seems fine but high 
-# though dir is /imgs_gen_20240425_22_46_28, using timesteps=250 seems a better choice and the result
+# though dir is /imgs_gen_20240425_22_46_28, 
+# using beta_ends=0.02 and timesteps=250 seems a better choice and the result
 # dir is /imgs_gen_20240426_04_14_04, the result is by far better than anything else in terms of well formed
 # images, visible objects, etc. we have a loss=0.0209 at 2840 and all classes have good/well developed
 # images (could this be attributed to lr not being decayed too much or simply becasue of higher beta_end?
@@ -3892,7 +3892,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.01)
 # so im using weightdecay = 0.00001 instead this time, dir is /imgs_gen_20240426_10_21_49, it seems this 
 # is too muvch qas well since even after 1200 epoch our loss is 0.0505! and images are not formed properly!
 # 
-# 2.9.2: try with no weight decay and dropout=0.15 instead of the previous value of 0.1: result directory
+# 2.9.2: try(beta_ends=0.02 and ts=250) with no weight decay and dropout=0.15 instead of the previous value of 0.1: result directory
 # is /imgs_gen_20240426_12_12_15, images have become really clear and vibrant! like a clear arctic water!
 # see images in 860 epoch, and you'll notice what I mean. the saturation of color made it more beautiful
 # again we are seeing traing for too long doesnt help and the quality starts to plumet! at 3700 we have 
@@ -3917,9 +3917,17 @@ model._init_parameters(beta_start=0.0001,beta_end=0.01)
 # lets use 0.01 and ts=400 dir is , dir is /imgs_gen_20240426_22_50_54, the images look very good
 # they are well formed, but I need to say, I guess they need a few more steps to get more refined
 # at 5820 our loss is 0.0192. 
-# 2.10.3: trying 0.01 with ts=450 now: dir is /imgs_gen_20240427_08_34_44 
+# 2.10.3: trying 0.01 with ts=450 now: dir is /imgs_gen_20240427_08_34_44 , the images towards the end
+# seem to be more stable, in that, I mean, after 2000 epochs, the images are mostly fixed, and around
+# 2300 onward, you can see, all images are almost fixed, but two images in that batch change as we
+# pass each epochs. we know when lr gets decayed, the rate of change for all images are reduced to
+# minor changes, and the bulk of changes happen before we decay the lr, as the lr gets smaller, the 
+# rate of change in images also gets smaller visibly. but to me this run looks the images are more robust
+# or wellformed! and they change less often than lets say the imgs_gen_20240426_22_50_54 experiment
+# which wass 0.01 and ts=400. check the image results and see for yourself (on second though, this may
+# not be true, and they seem like the same!?)
 # 
-# 2.10.4: now lets increase betas_start=0.00085, betas_end=0.01 and ts=1000 : 
+# 2.10.4: now lets increase betas_start=0.00085, betas_end=0.01 and ts=1000 : too high not good!
 # 
 # (sidenote:we havent played with lr, I mean choose a larger lr might give us quicker results?!)
 #
