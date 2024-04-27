@@ -3700,7 +3700,7 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
-load_checkpoint = False
+load_checkpoint = True
 checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond_new.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
@@ -3899,7 +3899,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # a loss=0.0198
 #
 # 2.9.3: try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: dir is /imgs_gen_20240427_14_09_24
-#  
+# around 1000,1200 images look good! 
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
@@ -4019,11 +4019,19 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
     print(f'{checkpoint.keys()}')
     epoch_start = checkpoint["epoch"]
     use_fp16 = checkpoint.get("use_fp16",False)
-    model.unet_model.load_state_dict(checkpoint["state_dict"])
+    try:
+        model.unet_model.load_state_dict(checkpoint["state_dict"])
+    except RuntimeError as ex:
+        weights = checkpoint["state_dict"]
+        # remove the unet_prefix, since its part of another nn.module(main diffusion model)
+        # its weights get the prefix of their parent (i.e. unet_model)
+        corrected_state_dict = {k.replace('unet_model.', ''): v for k, v in weights.items()}
+        model.unet_model.load_state_dict(corrected_state_dict)
+
     optimizer.load_state_dict(checkpoint["optimizer"])
     scheduler.load_state_dict(checkpoint["scheduler"])
     scaler.load_state_dict(checkpoint["scaler"])
-    model_ema.unet_model.load_state_dict(checkpoint["model_ema"])
+
 
 current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
 dir_path = f"{fldr}/imgs_gen_{current_time}/"
@@ -4411,7 +4419,7 @@ for epoch in tqdm(range(epoch_start, epochs)):
                         "optimizer":optimizer.state_dict(),
                         "scheduler":scheduler.state_dict(),
                         "scaler":scaler.state_dict(),
-                        'model_ema': model_ema.state_dict(),},
+                        'train_args':train_args,},
                     f"{fldr}/{checkpoint_name}")
 
 # mnist: 
