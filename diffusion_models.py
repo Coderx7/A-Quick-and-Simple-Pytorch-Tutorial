@@ -604,6 +604,10 @@ for module in modules:
 # checkpoint and subsequently fine-tuned on 595k steps at resolution 512x512 on "laion-aesthetics 
 # v2 5+" and 10% dropping of the text-conditioning to improve classifier-free guidance sampling.
 #
+#side note: april 27 2024 : 
+# https://huggingface.co/ByteDance/Hyper-SD 
+# generate images with 1 step! 
+#
 # repo_model_name = "CompVis/stable-diffusion-v1-4"
 repo_model_name = "runwayml/stable-diffusion-v1-5"
 # this is the latest base model its fp16 is 6.5Gb and offers native 1024x1024
@@ -3743,7 +3747,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 400# 250 500
+num_timesteps = 450# 250 500
 time_embd_size = 64
 class_embd_size=16
 # the learning rate is very important, 
@@ -3910,7 +3914,12 @@ model._init_parameters(beta_start=0.0001,beta_end=0.01)
 # its a bit too much it seems, so instead im going to use ts=350 and see how that goes!:
 # the dir is /imgs_gen_20240426_21_21_38 , ts=350 was high, lowering it and trying again with 300
 # dir is /imgs_gen_20240426_22_24_34, too much, too much color is saturated. 
-# lets use 0.01 and ts=400 dir is 
+# lets use 0.01 and ts=400 dir is , dir is /imgs_gen_20240426_22_50_54, the images look very good
+# they are well formed, but I need to say, I guess they need a few more steps to get more refined
+# at 5820 our loss is 0.0192. 
+# 2.10.3: trying 0.01 with ts=450 now: dir is /imgs_gen_20240427_08_34_44 
+# 
+# 2.10.4: now lets increase betas_start=0.00085, betas_end=0.01 and ts=1000 : 
 # 
 # (sidenote:we havent played with lr, I mean choose a larger lr might give us quicker results?!)
 #
