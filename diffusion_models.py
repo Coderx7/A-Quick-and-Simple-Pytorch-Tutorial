@@ -3700,7 +3700,7 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
-load_checkpoint = True
+load_checkpoint = False
 checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond_new.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
