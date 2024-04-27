@@ -2578,7 +2578,7 @@ class ResBlock(nn.Module):
                  act=nn.SiLU(),
                  time_embd_size=16,
                  class_embd_size=4,
-                 fuse_embd_as_channels=False,
+                 fuse_embd_as_channels=True,
                  is_encoder=True,
                  dropout=None,
                  device='cpu',) -> None:
@@ -3898,6 +3898,9 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # again we are seeing traing for too long doesnt help and the quality starts to plumet! at 3700 we have 
 # a loss=0.0198
 #
+# 2.9.3: try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: dir is /imgs_gen_20240427_14_09_24
+#  
+#
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
 # the results are not good compared to the previous experiments. lets test this with 250 timesteps 
@@ -3943,6 +3946,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # too high and needs to be lowered(lowering timesteps to 600 increased the loss a bit, but images seem
 # to be better formed at early epochs like 20!)
 # 
+# 2.12
 #
 # 3.test with channels form 
 # 4.remove time and class embds from decoder and only feed once from encoder
