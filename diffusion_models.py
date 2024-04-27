@@ -2645,7 +2645,8 @@ class ResBlock(nn.Module):
 
         # class embedding for class conditioning 
         self.class_embd = nn.Sequential(nn.Embedding(10, self.class_embd_size),
-                                        nn.Linear(self.class_embd_size, cembd_output_channels)
+                                        nn.Linear(self.class_embd_size, cembd_output_channels),
+                                        nn.ReLU(inplace=True),
                                        )
         
         # in ou case our skip-connection differs from our output 
@@ -3748,7 +3749,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
 num_timesteps = 250# 250 500
 time_embd_size = 64
-class_embd_size=16
+class_embd_size=64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3899,7 +3900,8 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # a loss=0.0198
 #
 # 2.9.3: try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: dir is /imgs_gen_20240427_14_09_24
-# around 1000,1200 images look good! 
+# around 1000,1200 images look good! now lets increase the class embedding size to see if it affects 
+# our classes better forms: dir is /imgs_gen_20240427_19_51_40 
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
