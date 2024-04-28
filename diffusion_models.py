@@ -2731,7 +2731,7 @@ class UnetModel(nn.Module):
         self.decoder = nn.ModuleList()
         # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
         # this will result in a much smaller model and the roughly the same performance
-        self.growth_value=  64#128
+        self.growth_value=  128#128
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
@@ -3907,7 +3907,12 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # we have so far got. but I also noticed even after 2000 epochs, when lr decays, we see more changes in images
 # they usually need to be minimal, i wonder why! could it be class embd overfitting? also i dont like
 # images towards the end.
-# 2.9.4:try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: make the network bigger!
+# 2.9.4:try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: use relu after emb in class embd
+# dir is /imgs_gen_20240428_04_52_02, the loss seems the same, the results doesnt seem to be any different
+# really! check the images and compare with previous experiment!
+#
+# 2.9.5:(beta_ends=0.02 and ts=250) with fuse_embds_as_channels and make the network bigger:
+# 
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
