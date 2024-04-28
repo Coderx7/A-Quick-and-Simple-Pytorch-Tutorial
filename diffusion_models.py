@@ -3974,8 +3974,12 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # test with betas = torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
 # dir is /imgs_gen_20240428_23_31_22, the loss is much higher 0.2191
 #
-# next test with sigmoid version!
+# 2.9.5.3: next test with sigmoid version!
 #
+# 2.9.5.4: next test our linear betas intact, but change cumprod to cumsum, becasue as you can guess
+# when we increase the timesteps, there will be more floats to multiply and this will cause
+# the numbers to shrink badly! and this may be what hinders our work, and why everyone uses log
+# and cumsum instead of cumprod!
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
