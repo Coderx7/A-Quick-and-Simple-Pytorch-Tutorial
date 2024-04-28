@@ -3912,6 +3912,18 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # really! check the images and compare with previous experiment!
 #
 # 2.9.5:(beta_ends=0.02 and ts=250) with fuse_embds_as_channels and make the network bigger:
+# dir is /imgs_gen_20240428_08_39_25 , the loss is much lower now, at 1460 we have loss=0.0187!
+# the images are more varied as apposed to previous where the majority of images for each class
+# looked kinda the same or similar, but now they are more varied, fromairplanes, trucks, etc are 
+# more varied it seems. so larger network gives better varity?! looking at the results I believe 
+# doing more timesteps should give us more accurate results, at 1680 we have a loss of 0.0179
+# but images are not clear as they should be! after 2000 epochs when lr decayed, our loss became
+# 1.0108 (at 2060 to be exact) which is pretty low, but the image quality is really not that different
+# than what it was around 800 epochs or 1500 epochs! even compared to other experiments here
+# using the smaller model(17m) version. this tells me the loss and sampling are not related necessarilily
+# and sampling has its own perks. like here I beleieve we need more timesteps to get crisper images
+# but to do that, with our current loss, we need to find a good spot for betas values. I guess
+# going log based betas should aleviate this issue but im not sure we need to test this out
 # 
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
