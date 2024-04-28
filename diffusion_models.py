@@ -2732,7 +2732,7 @@ class UnetModel(nn.Module):
         self.decoder = nn.ModuleList()
         # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
         # this will result in a much smaller model and the roughly the same performance
-        self.growth_value=  128#128
+        self.growth_value=  64#128
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
@@ -3477,7 +3477,16 @@ class DiffusionMnist(nn.Module):
             # we start at 1 and go toward 0 (0 not included)
             return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
         else: 
-            return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
+            # return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
+            # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
+            # an exponential schedule, where it increases slowly in the beginning and more rapidly towards the end.
+            return torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
+            # or a sigmoid schedule that increases slowly at first, more rapidly in the middle, and then slowly 
+            # again towards the end. This can mimic the behavior of a diffusion process more closely. 
+            # timesteps = torch.linspace(-6, 6, steps=self.num_timesteps, device=self.device)
+            # return torch.sigmoid(timesteps)
+
+
 
     @torch.no_grad()
     def _create_betas_cosine(self, timesteps, s = 0.008):
@@ -3703,8 +3712,8 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 use_fp16=True
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dataset_name = 'cifar'
-load_checkpoint = True
-checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond_new.pth'
+load_checkpoint = False
+checkpoint_name = f'diffusion_{dataset_name}_basearch_ts_cond_new_schedule.pth'
 # note large batchsize such as 256 lead to wrose result and much slower convergence!
 # try batchsize of 32 and 256 for example and see the very first epochs how the results
 # show. batch of 32 is way better than batch 256. this could be casued by batchnorm maybe?
@@ -3749,7 +3758,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 250# 250 500
+num_timesteps = 500# 250 500
 time_embd_size = 64
 class_embd_size=64
 # the learning rate is very important, 
@@ -3945,7 +3954,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # worse! we'll end it here then.(after some iterations, the images seem to be getting sharper, see epochs 4500
 # onward) 
 #
-# 2.9.5.2: test with a new betas and higher timesteps with smaller model: 
+# 2.9.5.2: test with a new betas and higher timesteps(ts=500) with smaller model: 
 # becasue beta values control the amount of noise added at each time step, the schedule of these beta values
 # (i.e., how they change over time) can significantly impact the model's performance.
 # When we increase the number of time steps, the same beta schedule might not be suitable anymore. 
@@ -3963,7 +3972,10 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # Remember, the optimal beta schedule can depend on many factors, including the specific dataset and model 
 # architecture!.
 # test with betas = torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
-
+# dir is /imgs_gen_20240428_23_31_22, the loss is much higher 0.2191
+#
+# next test with sigmoid version!
+#
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
