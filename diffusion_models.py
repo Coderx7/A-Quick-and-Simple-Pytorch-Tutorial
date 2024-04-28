@@ -2645,6 +2645,7 @@ class ResBlock(nn.Module):
 
         # class embedding for class conditioning 
         self.class_embd = nn.Sequential(nn.Embedding(10, self.class_embd_size),
+                                        nn.ReLU(inplace=True),
                                         nn.Linear(self.class_embd_size, cembd_output_channels),
                                         nn.ReLU(inplace=True),
                                        )
@@ -3901,7 +3902,12 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 #
 # 2.9.3: try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: dir is /imgs_gen_20240427_14_09_24
 # around 1000,1200 images look good! now lets increase the class embedding size to see if it affects 
-# our classes better forms: dir is /imgs_gen_20240427_19_51_40 
+# our classes better forms: dir is /imgs_gen_20240427_20_05_30 and also we used relu after class embds
+# itseems,havingrelu after class embedding is good, we ultimately got to 1.0181 as loss which isthe lowest
+# we have so far got. but I also noticed even after 2000 epochs, when lr decays, we see more changes in images
+# they usually need to be minimal, i wonder why! could it be class embd overfitting? also i dont like
+# images towards the end.
+# 2.9.4:try (beta_ends=0.02 and ts=250) with fuse_embds_as_channels: make the network bigger!
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
