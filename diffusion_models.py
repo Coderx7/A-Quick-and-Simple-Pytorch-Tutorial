@@ -3918,12 +3918,22 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # more varied it seems. so larger network gives better varity?! looking at the results I believe 
 # doing more timesteps should give us more accurate results, at 1680 we have a loss of 0.0179
 # but images are not clear as they should be! after 2000 epochs when lr decayed, our loss became
-# 1.0108 (at 2060 to be exact) which is pretty low, but the image quality is really not that different
-# than what it was around 800 epochs or 1500 epochs! even compared to other experiments here
-# using the smaller model(17m) version. this tells me the loss and sampling are not related necessarilily
+# 1.0108 (at 2060 to be exact (and 0.0076 at 2580!)) which is pretty low, but the image quality is really not that different
+# than what it was around 800 epochs or 1500 epochs!(towards the end i.e. 2580 some images are more
+# varied and formed compared to others, but some are very vague as well see the samples to know what
+# I mean ) even compared to other experiments here using the smaller model(17m) version. 
+# this tells me the loss and sampling are not related necessarilily
 # and sampling has its own perks. like here I beleieve we need more timesteps to get crisper images
 # but to do that, with our current loss, we need to find a good spot for betas values. I guess
 # going log based betas should aleviate this issue but im not sure we need to test this out
+# I also need to add that towards the end, some images are pretty good, again thevarietyis waybetter
+# than the smaller model. a few images have very sharp/crisp detailed images (ship, car, truck @ 2580)
+# but the rest are low quality/pixelated?! one epoch some images are crisp, the other epoch, some get
+# better but these get worse! see 2580, 2600 for example. its apparent throughout training!
+# update: upon further training and loss decreasing seems more images are getting crisper and more detailed
+# see 2880 with loss=0.0071( I guess at this point we need another lr decay! to stablize things!)
+# at 3920 we have a loss=0.0063 since 3780, and I want to decay the lr at 4000 epochs again to see
+# how it does (im loading the model now!)
 # 
 #
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
