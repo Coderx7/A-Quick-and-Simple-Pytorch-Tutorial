@@ -3935,8 +3935,36 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # see 2880 with loss=0.0071( I guess at this point we need another lr decay! to stablize things!)
 # at 3920 we have a loss=0.0063 since 3780, and I want to decay the lr at 4000 epochs again to see
 # how it does (im loading the model now!)
-# 
+# 2.9.5.1: resumed the model from epoch 3920, but upon resuming the loss shows as 0.0285! imgs are a bit weird
+# especially airplans, (they are brown! and very vague! rightfully showing how images look for that loss I guess!)
+# dir is /imgs_gen_20240428_19_39_53 , ok at 3940 it went back to 0.0063 and images are back like before!
+# the loss is 0.0055 at 4440, some images are now very crisp and detailed, but many are not. could this be
+# the traiing loss related after all? or the timesteps? I still guess its timesteps related(ask a question)
+# I dont see any improvements around 4720, in fact some images got worse, and flat out disapeared! while afew
+# others got better!, again signalying the last lr decay (2e-6) maybe too small and over training makethings 
+# worse! we'll end it here then.(after some iterations, the images seem to be getting sharper, see epochs 4500
+# onward) 
 #
+# 2.9.5.2: test with a new betas and higher timesteps with smaller model: 
+# becasue beta values control the amount of noise added at each time step, the schedule of these beta values
+# (i.e., how they change over time) can significantly impact the model's performance.
+# When we increase the number of time steps, the same beta schedule might not be suitable anymore. 
+# This is because the model now has more steps to transition from the data distribution to the noise distribution,
+# and the old schedule might either add too much noise too quickly or too slowly. this may very well explain 
+# why we face these issues when increasing timesteps.
+# For example, if we're using a linear schedule where beta increases linearly over time, this might be too 
+# aggressive when the number of time steps is increased. The model might add too much noise in the early 
+# steps, causing it to lose important information about the data. This could potentially explain why we're
+# seeing solid color images with higher time steps.
+# To address this, we could try using a different schedule for your beta values. For instance, we could try 
+# a schedule where beta increases slowly in the beginning and then more rapidly towards the end. 
+# This would allow the model to retain more information about the data in the early steps and might result 
+# in better quality images.
+# Remember, the optimal beta schedule can depend on many factors, including the specific dataset and model 
+# architecture!.
+# test with betas = torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
+
+# 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
 # the results are not good compared to the previous experiments. lets test this with 250 timesteps 
