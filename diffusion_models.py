@@ -3097,15 +3097,15 @@ class DiffusionMnist(nn.Module):
             # in the sampling part, it uses linear betas but here during diffusion process
             # it opts to use a different way, grabs a few float numbers( as many as batchsize )
             # then create logsnr from this, does a feedforward and gets the predicted noise!
-            # t = self.rng.draw(input_images.size(0))[:, 0].to(self.device)
-            t = self._get_value_for_timestep_t(self.betas, timestep_indexes=timesteps, use_batch=is_batch)
+            t = self.rng.draw(input_images.size(0))[:, 0].to(self.device)
+            # t = self._get_value_for_timestep_t(self.betas, timestep_indexes=timesteps, use_batch=is_batch)
             # Calculate the noise schedule parameters for those timesteps
             # grabs 32 numbers!
             self.log_snrs_loss = -torch.special.expm1(1e-4 + 10 * t**2).log()
             self.alphas_loss = self.log_snrs_loss.sigmoid().sqrt()
             self.sigmas_loss = self.log_snrs_loss.neg().sigmoid().sqrt()
             self.weights_loss = self.log_snrs_loss.exp() / self.log_snrs_loss.exp().add(1)
-
+            # print(f'{input_images.shape=} {self.alphas_loss.shape=}')
             # Combine the ground truth images and the noise
             # self.alphas_loss = self.alphas_loss[:,None,None,None]
             # self.sigmas_loss = self.sigmas_loss[:,None,None,None]
@@ -3363,7 +3363,13 @@ class DiffusionMnist(nn.Module):
     # In the context of the code you're referring to, the Gaussian distribution is used to model the noise added at each step of the diffusion process, while the posterior distribution is the updated belief about the original data (or the clean image state) given the noisy observations at each step. The posterior distribution can also be a Gaussian distribution, but it's determined by the diffusion model and the observed data, not just a set of fixed parameters like the mean and variance.
     #
     def _init_parameters_log(self, beta_start=0.0001, beta_end=0.01):
-        
+        # this method is not fully implemented! 
+        # this was adopted form a github repo doing classifer free impl, and how it does it 
+        # different than me, when I was just begining and couldnt get a decent output until
+        # i used the new loss and found its relationship with betas value and timesteps value
+        # so I leave this here to be for future references becasue i added my own comments
+        # for each line for what they do and why (they are not in the original repo)
+        # i might use them inthefure, but for now dont use it
         self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
         # α 
         self.alphas = 1.0 - self.betas
@@ -3467,6 +3473,21 @@ class DiffusionMnist(nn.Module):
         # self.sqrt_recip_alphas_cum = torch.sqrt(1.0 / self.alphas_cum)
         self.sqrt_recipm1_alphas_cum = torch.exp(self.log_one_minus_alphas_cum - self.log_sqrt_alphas_cum)
 
+    def _get_alphas_sigmas(self, log_snrs):
+        """Returns the scaling factors for the clean image (alpha) and for the
+        noise (sigma), given the log SNR for a timestep."""
+        # these are basically the equivalent of 
+        # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
+        return (log_snrs.sigmoid().sqrt(), log_snrs.neg().sigmoid().sqrt())
+
+    def _get_log_snrs(self, t):
+        """Returns log SNRs for the noise schedule from the DDPM paper."""
+        # expm1 is the efficient implementation of (exp - 1) 
+        # this is akin to our self.alphas = 1.0 - self.betas which is then used to create alphas_cumprod
+        # which is then fed to create sqrt_alphas_cumprod and sqrt_one_minus_alphas_cumprod
+        out = -torch.special.expm1(1e-4 + 10 * t**2).log()
+        return out
+
     @torch.no_grad()
     def _create_betas_linear(self, start=0.0001, end=0.01)-> torch.Tensor :
         if self.use_new_scheduler:
@@ -3476,17 +3497,22 @@ class DiffusionMnist(nn.Module):
             # note that we have steps+1 and a [:-1] at the end so that ultimately we take steps number of elements
             # we start at 1 and go toward 0 (0 not included)
             return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
-        else: 
-            return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
-            # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
+            # # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
             # an exponential schedule, where it increases slowly in the beginning and more rapidly towards the end.
             # return torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
             # or a sigmoid schedule that increases slowly at first, more rapidly in the middle, and then slowly 
             # again towards the end. This can mimic the behavior of a diffusion process more closely. 
             # timesteps = torch.linspace(-6, 6, steps=self.num_timesteps, device=self.device)
             # return torch.sigmoid(timesteps)
-
-
+            # we use the sigmoid solution
+            timesteps_log = self._get_log_snrs(self.timesteps)
+            # now lets calculate alphas and sigmas which are equivalent to 
+            # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t 
+            self.alphas, self.sigmas = self._get_alphas_sigmas(timesteps_log)
+            
+            
+        else: 
+            return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
 
     @torch.no_grad()
     def _create_betas_cosine(self, timesteps, s = 0.008):
@@ -3761,7 +3787,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 280# 250 500
+num_timesteps = 250# 250 500
 time_embd_size = 64
 class_embd_size=64
 # the learning rate is very important, 
@@ -4005,10 +4031,21 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # the images are saturated but not as much as the previous experiment. images look fine despite
 # saturated colors, around 780 we have a loss=0.0235 which is as good as ts=250, images also look
 # the same, a bit saturated, and maybe a bit more well formed, need a bit more epochs to say for sure
-# how much this 30 steps is contributing to any improvements or lack there any of!
+# how much this 30 steps is contributing to any improvements or a lack of any! its really hard to tell 
+# if they are different, may be a bit sharper? the loss is the same though! at 2200 epochs, 0.0091
 #
 # 2.9.5.6 :trying the 2.9.5 experiment with ts=100: im going to use ts=100 and see how that looks and affects the model, 
-# maybe I guess better intuition.
+# maybe I guess better intuition. dir is /imgs_gen_20240429_20_27_43 loss is very high, and images
+# at 40 epochs are not formed yet! they look like the pale images from before we used our new loss
+# so this is what it looks like to not have enough timesteps? so I guess when we used small beta_ends
+# and got images like this, this simply meant we need to increase the timesteps? we need to check this
+# out!(check 2.11 below). the loss at 500 is 0.0452, the quality is not good, lots of noise, images
+# are whashed out, barely visible. intrestingly, the actual objects of interest are visible around
+# epoch 660, they are getting formed, and more pronounced, the background are blured though, but the 
+# objects themselves are very visible. I want to see if ultimately given enough epochs, the yield
+# better/sharper images than other configurations! at 780 loss is 0.0384, and images are not getting
+# particularily good to be honest. i dont think they are improving or worth training!
+# 
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
@@ -4050,10 +4087,10 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # test with timesteps=600 betas_end=0.008 seems fine-ish as well.
 # test with timesteps=800 betas_end=0.005 works fine though, and images look normal, 
 # test with timesteps=800 betas_end=0.007 seems high
-# test with timesteps=800 betas_end=0.006 seems fine-ish! loss decreases, and we dont see white/black blobs, but the quality of images
-# are not as good as higher beta_end values (like 0.008) at least now! it may be becasue the timestep is 
-# too high and needs to be lowered(lowering timesteps to 600 increased the loss a bit, but images seem
-# to be better formed at early epochs like 20!)
+# test with timesteps=800 betas_end=0.006 seems fine-ish! loss decreases, and we dont see white/black blobs, 
+# but the quality of images are not as good as higher beta_end values (like 0.008) at least now! 
+# it may be becasue the timestep is too high and needs to be lowered(lowering timesteps to 600 
+# increased the loss a bit, but images seem to be better formed at early epochs like 20!)
 # 
 # 2.12
 #
