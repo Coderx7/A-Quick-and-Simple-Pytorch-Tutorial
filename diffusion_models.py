@@ -3972,7 +3972,9 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # Remember, the optimal beta schedule can depend on many factors, including the specific dataset and model 
 # architecture!.
 # test with betas = torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
-# dir is /imgs_gen_20240428_23_31_22, the loss is much higher 0.2191
+# dir is /imgs_gen_20240428_23_31_22, the loss is much higher 0.2191, up until epoch 2500 we have
+# a loss=0.0475, the images are washedout, and barely visible.lets increase the lr and see if that
+# changes anything, then lets change the start-end values for betas!
 #
 # 2.9.5.3: next test with sigmoid version!
 #
