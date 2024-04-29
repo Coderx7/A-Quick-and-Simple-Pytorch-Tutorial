@@ -2732,7 +2732,7 @@ class UnetModel(nn.Module):
         self.decoder = nn.ModuleList()
         # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
         # this will result in a much smaller model and the roughly the same performance
-        self.growth_value=  64#128
+        self.growth_value=  128#64
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
@@ -3301,7 +3301,7 @@ class DiffusionMnist(nn.Module):
             self.betas = self._create_betas_linear(start=beta_start, end=beta_end)
         else:
             self.betas = self._create_betas_cosine(self.num_timesteps)
-            
+
         # α (alphas typically represents the variance reduction factors at each time step)
         self.alphas = 1.0 - self.betas
         # ̅α 
@@ -3477,10 +3477,10 @@ class DiffusionMnist(nn.Module):
             # we start at 1 and go toward 0 (0 not included)
             return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
         else: 
-            # return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
+            return torch.linspace(start=start, end=end, steps=self.num_timesteps, device=self.device)
             # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
             # an exponential schedule, where it increases slowly in the beginning and more rapidly towards the end.
-            return torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
+            # return torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
             # or a sigmoid schedule that increases slowly at first, more rapidly in the middle, and then slowly 
             # again towards the end. This can mimic the behavior of a diffusion process more closely. 
             # timesteps = torch.linspace(-6, 6, steps=self.num_timesteps, device=self.device)
@@ -3606,7 +3606,9 @@ class DiffusionMnist(nn.Module):
             #                 (self.sqrt_one_minus_alphas_cumprod_t * pure_noise))
             # now incorporate target, but for the imgs*sigmas, use l2! or something like that
             # targets = pure_noise*alphas - imgs*sigmas -> targets = pure_noise*alphas - mse(imgs*sigmas, predictednoise*sigmas)
-            # return F.mse_loss(predicted_noise, pure_noise) - l2
+            # return F.mse_loss(predicted_noise, pure_noise)
+            # return F.l1_loss(predicted_noise,  targets).mul(weights).mean()
+            # return F.smooth_l1_loss_loss(predicted_noise,  targets).mul(weights).mean()
             return F.mse_loss(predicted_noise,  targets).mul(weights).mean()
 
 
@@ -3734,6 +3736,7 @@ transforms2 = torchvision.transforms.Compose([tfms.Resize(image_size),
                                               # rescale the input to the -1,1 range,
                                               # !its important to get good result
                                               tfms.Lambda(lambda x: x*2-1)
+                                            # transforms.Normalize([0.5], [0.5]),
                                               ])
 
 dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=transforms2)
@@ -3758,7 +3761,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 500# 250 500
+num_timesteps = 280# 250 500
 time_embd_size = 64
 class_embd_size=64
 # the learning rate is very important, 
@@ -3973,15 +3976,36 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # architecture!.
 # test with betas = torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
 # dir is /imgs_gen_20240428_23_31_22, the loss is much higher 0.2191, up until epoch 2500 we have
-# a loss=0.0475, the images are washedout, and barely visible.lets increase the lr and see if that
-# changes anything, then lets change the start-end values for betas!
+# a loss=0.0475, the images are washedout, and barely visible.
+# increasing the lr caused the images to become all black. so reverted back the lr changes.
+# then lets change the start-end values for betas! changing -4,-2 to -2,-1 for betas didnt do anything
+# april 29th 2024 3:56:25
 #
-# 2.9.5.3: next test with sigmoid version!
+# 2.9.5.3: next test with sigmoid version!: it also results in black images with timesteps=500
+# i tried values = -6,6,-4,4,-1,1,-10,10 all result in black images! when I removed the -1,1 scaler
+# from dataset, all images became white! when I added normalization ([0.5,0.5]) the images became black!
+# didnt work!
 #
 # 2.9.5.4: next test our linear betas intact, but change cumprod to cumsum, becasue as you can guess
 # when we increase the timesteps, there will be more floats to multiply and this will cause
 # the numbers to shrink badly! and this may be what hinders our work, and why everyone uses log
-# and cumsum instead of cumprod!
+# and cumsum instead of cumprod! didnt work! maybe im missing something, but at this point im exausted
+# my last route is to use the sigmoid method, and use the new_method to sample instead. that
+# requires me to create a new sampler, and also change the init and fusion part, the changes are
+# small though, but im exacusted atthis point. and honestly the results I got seems good enough
+# for introductory understanding! but somehow i want to know exactly whats lacking so I can 
+# build a firm understanding. it took a lot of time though and I need to do other stuff! work! job!
+# 
+# 2.9.5.5 : trying the 2.9.5 experiment with ts=300 and see how that goes, 
+# dir is / imgs_gen_20240429_12_36_57 . currently the images are very saturated, and blackish
+# more epochs into the training this hasnt changed at 500 we have a loss=0.0273 so loss wise
+# theres no issues, but sampling wise there is obviously.
+#
+# 2.9.5.5: trying the 2.9.5 experiment with ts=280: see how that does it! dir is /imgs_gen_20240429_14_04_10
+# the images are saturated but not as much as the previous experiment. 
+#
+# 2.9.5.6 :trying the 2.9.5 experiment with ts=100: im going to use ts=100 and see how that looks and affects the model, 
+# maybe I guess better intuition.
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
 # quickly and see if it gets the same clarity as 2.9 case before: dir is /imgs_gen_20240426_18_00_50
