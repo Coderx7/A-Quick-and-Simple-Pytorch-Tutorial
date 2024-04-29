@@ -4002,7 +4002,10 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # theres no issues, but sampling wise there is obviously.
 #
 # 2.9.5.5: trying the 2.9.5 experiment with ts=280: see how that does it! dir is /imgs_gen_20240429_14_04_10
-# the images are saturated but not as much as the previous experiment. 
+# the images are saturated but not as much as the previous experiment. images look fine despite
+# saturated colors, around 780 we have a loss=0.0235 which is as good as ts=250, images also look
+# the same, a bit saturated, and maybe a bit more well formed, need a bit more epochs to say for sure
+# how much this 30 steps is contributing to any improvements or lack there any of!
 #
 # 2.9.5.6 :trying the 2.9.5 experiment with ts=100: im going to use ts=100 and see how that looks and affects the model, 
 # maybe I guess better intuition.
