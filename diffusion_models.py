@@ -2579,7 +2579,7 @@ class ResBlock(nn.Module):
                  act=nn.SiLU(),
                  time_embd_size=16,
                  class_embd_size=4,
-                 fuse_embd_as_channels=True,
+                 fuse_embd_as_channels=False,
                  is_encoder=True,
                  dropout=None,
                  device='cpu',) -> None:
@@ -2799,7 +2799,7 @@ class UnetModel(nn.Module):
             # or nothing really comes out of it except apparent noise! (at least up until 80 epochs which I tested)
             # lets only feed the timesteps to the encoder as nearly all models I have seen do this and also with our
             # new loss this simply doesnt work! the loss makes it hard to cnverge
-            out = l(out+skip,timesteps,class_labels) #out+skip,timesteps
+            out = l(out+skip,None,None) #out+skip,timesteps,class_labels
             # print(f'decoder:{out.shape=}')
 
         out = self.final_conv(out)
@@ -3726,8 +3726,23 @@ def get_dataloader(dataset, batch_size=32, num_workers=8, drop_last=False):
 # todo next we need to change betas_start = 0.0001 and see how it affects the result as well(did it+drp+val)
 # ok ok. now booth images
 # sidenotes:
-# Number of Timesteps: The number of timesteps in a diffusion model corresponds to the number of steps in the Markov chain that transitions from the data distribution to the noise distribution. A larger number of timesteps can potentially result in a more accurate approximation of the data distribution, but it also increases the computational cost and complexity of the model. If you’re finding that your model is not learning effectively or is producing identical images, reducing the number of timesteps could be worth trying. However, this is a hyperparameter that you would typically tune based on the performance of your model on a validation set.
-# Starting Value of Betas: The starting value of betas determines the amount of noise added in the first step of the diffusion process. A larger starting value means more noise is added initially, which could make the learning task more difficult for the model. On the other hand, a smaller starting value means less noise is added, which could make the learning task easier but might also result in less diverse generated images. Again, the optimal value for this hyperparameter can depend on your specific task and dataset, and it’s something you would typically tune based on model performance.
+# Number of Timesteps: The number of timesteps in a diffusion model corresponds
+# to the number of steps in the Markov chain that transitions from the data 
+# distribution to the noise distribution. A larger number of timesteps can 
+# potentially result in a more accurate approximation of the data distribution,
+# but it also increases the computational cost and complexity of the model. 
+# If you’re finding that your model is not learning effectively or is producing 
+# identical images, reducing the number of timesteps could be worth trying. 
+# However, this is a hyperparameter that you would typically tune based on the
+# performance of your model on a validation set.
+# Starting Value of Betas: The starting value of betas determines the amount
+# of noise added in the first step of the diffusion process. A larger starting 
+# value means more noise is added initially, which could make the learning task 
+# more difficult for the model. On the other hand, a smaller starting value means 
+# less noise is added, which could make the learning task easier but might also 
+# result in less diverse generated images. Again, the optimal value for this 
+# hyperparameter can depend on your specific task and dataset, and it’s something 
+# you would typically tune based on model performance.
 
 
 #fp16 sometimes mess with the results, and causes high loss! 
@@ -3827,6 +3842,12 @@ model_ema = copy.deepcopy(model)
 # use 0.008 for betas_end , 0.02 with 250 timesteps
 model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # sideinfo about betas_end value
+# values like beta_start=0.001, beta_end=0.02 with large timesteps like 1000 work with normal mse
+# loss (predictednoise, purenoise) however, they fail with the new loss where we incorporate 
+# the alphas_cumprod and one_minus_alphas_cumprod(alphas and sigmas for short)
+# beta_start=0.0001,beta_end=0.02 is the same! 
+# to get this to work with our new loss (becasue its much faster than pure mse), I used beta_start=0.0001 
+# and played with betas_end. here is the result of different betas_end values I have tried:
 # 0.02 is too much when timemebedding is used(especialy with high timesteps suchas 500. 
 # with timesteps like 200 it seems to work fine with our new loss this implies betas values
 # and timesteps are tightly coupled! (see notes 2.8 below) )
@@ -4045,6 +4066,10 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # objects themselves are very visible. I want to see if ultimately given enough epochs, the yield
 # better/sharper images than other configurations! at 780 loss is 0.0384, and images are not getting
 # particularily good to be honest. i dont think they are improving or worth training!
+# 
+# 2.9.5.7: test be=0.02 and ts=250: only feed embeddings to encoder only: since we need to use
+# addition instead of channels, we set_fused_embds_as_channels=False and run the epxeriment, they
+# give about the same performance
 # 
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
