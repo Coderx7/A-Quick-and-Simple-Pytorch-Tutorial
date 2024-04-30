@@ -3941,7 +3941,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # 2.9 repeat this with a higher timesteps : beta_ends=0.02 and timesteps=400 : 
 # its too high and causes black and white blobs in images. with timesteps=300 it seems fine but high 
 # though dir is /imgs_gen_20240425_22_46_28, 
-# using beta_ends=0.02 and timesteps=250 seems a better choice and the result
+# 2.9.0.1: using beta_ends=0.02 and timesteps=250 seems a better choice and the result
 # dir is /imgs_gen_20240426_04_14_04, the result is by far better than anything else in terms of well formed
 # images, visible objects, etc. we have a loss=0.0209 at 2840 and all classes have good/well developed
 # images (could this be attributed to lr not being decayed too much or simply becasue of higher beta_end?
@@ -4069,7 +4069,20 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # 
 # 2.9.5.7: test be=0.02 and ts=250: only feed embeddings to encoder only: since we need to use
 # addition instead of channels, we set_fused_embds_as_channels=False and run the epxeriment, they
-# give about the same performance
+# give about the same performance dir is /imgs_gen_20240430_09_33_23. right off the bat, the loss
+# is lower, at 300 we have 0.0375 while in previous experiment(2.9.0.1 which is the same config as 
+# now except uses fuse_embs_as_channels=True and sends embdiings to decoders as well) 
+# at 300 has loss=0.0411! so our loss(0.0375) is better than previous experiment so far!
+# now the images seem sharper/clearer compared to previous experiment. it seems a hue
+# (yellowish,brownish,redish) in previous experiment doesnt exist here?! maybe thats a side effect of
+# using embeds as channels?! or injecting embeddings in the decoder?! lets continue and see how 
+# this turns out.at 2660 we have a loss=0.0090! and images look good! at 4000 epochs we reached
+# a loss=0.0076 and ultimately eneded the training at 4200 with a loss=0.0068. the images were
+# similar to the 2.9.0.1 version, sometimes they seemed better, while some other times this test
+# seemed better, although this test achieved a much lower loss per epoch!
+# 
+# 2.9.5.7: use wandb and track gradients when we use new loss with beta values, maybe we can get
+# a clue and fix this!
 # 
 # 
 # 2.10: test timestep=500 and beta_ends=0.008 with the new multistepLR which doesnt decay the lr too 
