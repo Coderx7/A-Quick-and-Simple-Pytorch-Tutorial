@@ -2579,7 +2579,7 @@ class ResBlock(nn.Module):
                  act=nn.SiLU(),
                  time_embd_size=16,
                  class_embd_size=4,
-                 fuse_embd_as_channels=False,
+                 fuse_embd_as_channels=True,
                  is_encoder=True,
                  dropout=None,
                  device='cpu',) -> None:
@@ -2799,7 +2799,9 @@ class UnetModel(nn.Module):
             # or nothing really comes out of it except apparent noise! (at least up until 80 epochs which I tested)
             # lets only feed the timesteps to the encoder as nearly all models I have seen do this and also with our
             # new loss this simply doesnt work! the loss makes it hard to cnverge
-            out = l(out+skip,None,None) #out+skip,timesteps,class_labels
+            # see experiments log at the end, setting timesteps and classembds as None here
+            # lowers the loss (fuse_embds_as_channels must be False)
+            out = l(out+skip,timesteps,class_labels) #out+skip,timesteps,class_labels
             # print(f'decoder:{out.shape=}')
 
         out = self.final_conv(out)
