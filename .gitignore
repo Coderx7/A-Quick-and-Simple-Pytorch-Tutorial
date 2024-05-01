@@ -4,3 +4,5 @@
 *.pt
 *.zip
 *.safetensors
+data/
+Codes/

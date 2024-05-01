@@ -4222,7 +4222,7 @@ if load_checkpoint and Path(f"{fldr}/{checkpoint_name}").exists():
 
 
 current_time = datetime.now().strftime('%Y%m%d_%H_%M_%S')
-dir_path = f"{fldr}/imgs_gen_{current_time}/"
+dir_path = f"{fldr}/imgs_generated_dirs/imgs_gen_{current_time}/"
 
 train_args = {
 'experiment date': current_time,
