@@ -2584,7 +2584,7 @@ class ResBlock(nn.Module):
                  is_encoder=True,
                  dropout=None,
                  use_new_algorithm=False,
-                 ignore_embeddings_in_decoder=True,
+                 ignore_embeddings_in_decoder=False,
                  device='cpu',) -> None:
         super().__init__()
 
@@ -2821,7 +2821,7 @@ class UnetModel(nn.Module):
             # new loss this simply doesnt work! the loss makes it hard to cnverge
             # see experiments log at the end, setting timesteps and classembds as None here
             # lowers the loss (fuse_embds_as_channels must be False)
-            out = l(out+skip,None,None) #out+skip,timesteps,class_labels
+            out = l(out+skip,timesteps,class_labels) #out+skip,timesteps,class_labels
             # print(f'decoder:{out.shape=}')
 
         out = self.final_conv(out)
@@ -4114,9 +4114,13 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # similar to the 2.9.0.1 version, sometimes they seemed better, while some other times this test
 # seemed better, although this test achieved a much lower loss per epoch!
 # 
-# 2.9.5.8: add new scheduler/algorithm
+# 2.9.5.8: add new scheduler/algorithm: testing with new algo with no emmbeddings for decoder first
+# dir is /imgs_gen_20240502_17_10_13 
+#
+# 2.9.5.9: add new scheduler/algorithm: testing with new algo with emmbeddings in decoders as well
+#  
 # 
-# 2.9.5.9: use wandb and track gradients when we use new loss with beta values, maybe we can get
+# 2.9.5.10: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
 # 
 # 
