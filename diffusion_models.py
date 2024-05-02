@@ -2561,7 +2561,8 @@ class FourierFeatures(nn.Module):
         self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
 
     def forward(self, input):
-        print(input.shape)
+        # print(input.shape)
+        input = input.view(-1,1)
         f = 2 * math.pi * input @ self.weight.T
         return torch.cat([f.cos(), f.sin()], dim=-1)
 
@@ -2582,6 +2583,8 @@ class ResBlock(nn.Module):
                  fuse_embd_as_channels=True,
                  is_encoder=True,
                  dropout=None,
+                 use_new_algorithm=False,
+                 ignore_embeddings_in_decoder=True,
                  device='cpu',) -> None:
         super().__init__()
 
@@ -2590,18 +2593,25 @@ class ResBlock(nn.Module):
         self.time_embd_size = time_embd_size
         self.device = device
         self.drpout = dropout
+        self.is_encoder = is_encoder
+        
+        self.ignore_embeddings_in_decoder=ignore_embeddings_in_decoder
+        # use new time embedding
+        self.use_new_algorithm = use_new_algorithm
         self.fuse_embd_as_channels = fuse_embd_as_channels
         # used for conditioning the image generation
         self.class_embd_size = class_embd_size
         
         # fuse timesteps as channels to first conv
-        input_channels = in_channels
-        tembd_output_channels = out_channels
-        cembd_output_channels = out_channels
+        self.input_channels = in_channels
+        self.tembd_output_channels = out_channels
+        self.cembd_output_channels = out_channels
         if fuse_embd_as_channels:
-            input_channels += self.time_embd_size + self.class_embd_size
-            tembd_output_channels = time_embd_size
-            cembd_output_channels = class_embd_size
+            # only work with encoder, for decoder only do this if its not ignored
+            if is_encoder or not self.ignore_embeddings_in_decoder:
+                self.input_channels += self.time_embd_size + self.class_embd_size
+            self.tembd_output_channels = time_embd_size
+            self.cembd_output_channels = class_embd_size
             
         if is_encoder:
             # if we are making encoder blocks, then we will be using conv2ds like normal and we shrink
@@ -2614,7 +2624,7 @@ class ResBlock(nn.Module):
             # sidenote 2: since we are also dealing with timesteps, we want to combine both inputs and
             # utilize it in our model. time information allows the model to learn to deal wil different
             # levels of noise properly.
-            self.conv = nn.Sequential(nn.Conv2d(input_channels , out_channels, kernel_size=3, stride=2, padding=1),
+            self.conv = nn.Sequential(nn.Conv2d(self.input_channels , out_channels, kernel_size=3, stride=2, padding=1),
                                       nn.BatchNorm2d(num_features=out_channels) if use_bn else nn.Identity(),
                                       act)
         else:
@@ -2625,7 +2635,7 @@ class ResBlock(nn.Module):
             #! use upsample layer insteda of contransposed, 
             self.conv = nn.Sequential(
                                       nn.Upsample(scale_factor=2),
-                                      nn.Conv2d(input_channels , out_channels, kernel_size=3, stride=1,padding=1,bias=False),
+                                      nn.Conv2d(self.input_channels , out_channels, kernel_size=3, stride=1,padding=1,bias=False),
                                       # nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,stride=2, padding=1),
                                       # we use a separate conv layer becasue contransposed is usually only used for upsampling
                                       # the learning part happens in the normal conv layer
@@ -2634,11 +2644,13 @@ class ResBlock(nn.Module):
                                       act
                                       )
 
-        # self.time_mlp = FourierFeatures(1,time_embd_size,std=0.5)
-        self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
+        if self.use_new_algorithm:
+            self.time_mlp = FourierFeatures(1, self.tembd_output_channels,std=0.5)
+        else:
+            self.time_mlp = nn.Sequential(SinusoidalPositionalEncoding(embd_size=self.time_embd_size, device=self.device),
                                       # instead of projection to (embd_size, out_channels)
                                       # we use embd_size only
-                                      nn.Linear(self.time_embd_size, tembd_output_channels),#self.time_embd_size
+                                      nn.Linear(self.time_embd_size, self.tembd_output_channels),#self.time_embd_size
                                       # disable bn and nonlinearity to see how it affects the result 
                                       # nn.BatchNorm1d(tembd_output_channels), #self.time_embd_size
                                       # nn.SiLU()
@@ -2647,7 +2659,7 @@ class ResBlock(nn.Module):
         # class embedding for class conditioning 
         self.class_embd = nn.Sequential(nn.Embedding(10, self.class_embd_size),
                                         nn.ReLU(inplace=True),
-                                        nn.Linear(self.class_embd_size, cembd_output_channels),
+                                        nn.Linear(self.class_embd_size, self.cembd_output_channels),
                                         nn.ReLU(inplace=True),
                                        )
         
@@ -2669,6 +2681,11 @@ class ResBlock(nn.Module):
         self.drpout = nn.Identity() if self.drpout is None else nn.Dropout2d(self.drpout)
 
     def forward (self, x, t, c):
+        # if not self.is_encoder:
+        #     print(f'{x.shape} {t=} {c=}')
+        #     print(f'{self.conv[1].in_channels=} {self.tembd_output_channels=}')
+        #     print(f'{self.time_embd_size=} {self.class_embd_size=}')
+            
         identity = x
         t_needed = t is not None
         c_needed = c is not None
@@ -2708,21 +2725,22 @@ x1 = torch.randn(size=(3,64, 2,2))
 # when using foriour, make this (3,1)
 t = torch.randint(0,200,size=(3,))
 c= torch.randint(0,10, size=(3,))
-fuse_as_channels=False
+fuse_as_channels=True
 
 enc0 = ResBlock(1,64,fuse_embd_as_channels=fuse_as_channels)
 print(f'{enc0(x0,t,c).shape=}')
 dec0 = ResBlock(64,1,is_encoder=False,fuse_embd_as_channels=fuse_as_channels)
-print(f'{dec0(x1,t,c).shape=}')
+print(f'{dec0(x1,None,None).shape=}')
 
 class UnetModel(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, device='cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, use_new_algorithm=False, device='cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.time_embd_size = time_embd_size
         self.class_emd_size = class_embd_size
         self.device = device
+        self.use_new_algorithm = use_new_algorithm
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size,3, padding=1,bias=False),
                                      nn.BatchNorm2d(base_fmap_size),
                                      nn.SiLU())
@@ -2740,7 +2758,8 @@ class UnetModel(nn.Module):
             self.encoder.append(ResBlock(fmap, fmap+self.growth_value, 
                                          time_embd_size=time_embd_size,
                                          class_embd_size=class_embd_size, 
-                                         is_encoder=True, 
+                                         is_encoder=True,
+                                         use_new_algorithm=use_new_algorithm,
                                          device=self.device, 
                                          dropout=drpout))
             fmap +=self.growth_value
@@ -2751,7 +2770,8 @@ class UnetModel(nn.Module):
             self.decoder.append(ResBlock(fmap, fmap-self.growth_value, 
                                          time_embd_size=time_embd_size,
                                          class_embd_size=class_embd_size,
-                                         is_encoder=False, 
+                                         is_encoder=False,
+                                         use_new_algorithm=use_new_algorithm,
                                          device=self.device, 
                                          dropout=drpout))
             fmap -=self.growth_value
@@ -2801,7 +2821,7 @@ class UnetModel(nn.Module):
             # new loss this simply doesnt work! the loss makes it hard to cnverge
             # see experiments log at the end, setting timesteps and classembds as None here
             # lowers the loss (fuse_embds_as_channels must be False)
-            out = l(out+skip,timesteps,class_labels) #out+skip,timesteps,class_labels
+            out = l(out+skip,None,None) #out+skip,timesteps,class_labels
             # print(f'decoder:{out.shape=}')
 
         out = self.final_conv(out)
@@ -2871,48 +2891,48 @@ def ema_update(model, averaged_model, decay):
 
 # Define the model (a residual U-Net)
 
-class ResidualBlock(nn.Module):
-    def __init__(self, main, skip=None):
-        super().__init__()
-        self.main = nn.Sequential(*main)
-        self.skip = skip if skip else nn.Identity()
+# class ResidualBlock(nn.Module):
+#     def __init__(self, main, skip=None):
+#         super().__init__()
+#         self.main = nn.Sequential(*main)
+#         self.skip = skip if skip else nn.Identity()
 
-    def forward(self, input):
-        return self.main(input) + self.skip(input)
+#     def forward(self, input):
+#         return self.main(input) + self.skip(input)
 
-class ResConvBlock(ResidualBlock):
-    def __init__(self, c_in, c_mid, c_out, dropout_last=True):
-        skip = None if c_in == c_out else nn.Conv2d(c_in, c_out, 1, bias=False)
-        super().__init__([
-            nn.Conv2d(c_in, c_mid, 3, padding=1),
-            nn.Dropout2d(0.1, inplace=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(c_mid, c_out, 3, padding=1),
-            nn.Dropout2d(0.1, inplace=True) if dropout_last else nn.Identity(),
-            nn.ReLU(inplace=True),
-        ], skip)
+# class ResConvBlock(ResidualBlock):
+#     def __init__(self, c_in, c_mid, c_out, dropout_last=True):
+#         skip = None if c_in == c_out else nn.Conv2d(c_in, c_out, 1, bias=False)
+#         super().__init__([
+#             nn.Conv2d(c_in, c_mid, 3, padding=1),
+#             nn.Dropout2d(0.1, inplace=True),
+#             nn.ReLU(inplace=True),
+#             nn.Conv2d(c_mid, c_out, 3, padding=1),
+#             nn.Dropout2d(0.1, inplace=True) if dropout_last else nn.Identity(),
+#             nn.ReLU(inplace=True),
+#         ], skip)
 
-class SkipBlock(nn.Module):
-    def __init__(self, main, skip=None):
-        super().__init__()
-        self.main = nn.Sequential(*main)
-        self.skip = skip if skip else nn.Identity()
+# class SkipBlock(nn.Module):
+#     def __init__(self, main, skip=None):
+#         super().__init__()
+#         self.main = nn.Sequential(*main)
+#         self.skip = skip if skip else nn.Identity()
 
-    def forward(self, input):
-        return torch.cat([self.main(input), self.skip(input)], dim=1)
+#     def forward(self, input):
+#         return torch.cat([self.main(input), self.skip(input)], dim=1)
 
-class FourierFeatures(nn.Module):
-    def __init__(self, in_features, out_features, std=1.):
-        super().__init__()
-        assert out_features % 2 == 0
-        self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
+# class FourierFeatures(nn.Module):
+#     def __init__(self, in_features, out_features, std=1.):
+#         super().__init__()
+#         assert out_features % 2 == 0
+#         self.weight = nn.Parameter(torch.randn([out_features // 2, in_features]) * std)
 
-    def forward(self, input):
-        f = 2 * math.pi * input @ self.weight.T
-        return torch.cat([f.cos(), f.sin()], dim=-1)
+#     def forward(self, input):
+#         f = 2 * math.pi * input @ self.weight.T
+#         return torch.cat([f.cos(), f.sin()], dim=-1)
 
-def expand_to_planes(input, shape):
-    return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
+# def expand_to_planes(input, shape):
+#     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
 
 class DiffusionNew(nn.Module):
     def __init__(self,in_channels=3, c=64, embd_size=16,device='cuda'):
@@ -3043,13 +3063,13 @@ class DiffusionMnist(nn.Module):
         self.device = device
         self.linear_scheduler = linear_scheduler
         # use new betas for schduler stuff!
-        self.use_new_scheduler = False
+        self.use_new_scheduler = True
         self.eta = eta
         # Use a low discrepancy quasi-random sequence to sample uniformly distributed
         # timesteps. This considerably reduces the between-batch variance of the loss.
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
         
-        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, device=device)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, use_new_algorithm=self.use_new_scheduler,device=device)
         # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
@@ -3109,8 +3129,8 @@ class DiffusionMnist(nn.Module):
             self.weights_loss = self.log_snrs_loss.exp() / self.log_snrs_loss.exp().add(1)
             # print(f'{input_images.shape=} {self.alphas_loss.shape=}')
             # Combine the ground truth images and the noise
-            # self.alphas_loss = self.alphas_loss[:,None,None,None]
-            # self.sigmas_loss = self.sigmas_loss[:,None,None,None]
+            self.alphas_loss = self.alphas_loss[:,None,None,None]
+            self.sigmas_loss = self.sigmas_loss[:,None,None,None]
             # noise = torch.randn_like(input_images)
             noisy_images = input_images * self.alphas_loss + actual_noises * self.sigmas_loss
             self.targets = actual_noises * self.alphas_loss - input_images * self.sigmas_loss
@@ -3133,30 +3153,32 @@ class DiffusionMnist(nn.Module):
             # configure out plot size and remove the axis for uncluttered output
             plt.figure(figsize=(fig_size))
             plt.axis("off")
-            # set a stepsize so we display only num_images intermediate images for our diffusion process
-            step_size = self.num_timesteps//num_images
-            range_ = range(0,self.num_timesteps) if self.use_new_scheduler else range(0, self.num_timesteps)[::-1]
-            # now reverse the timestep in denoising 
-            for i in range_:
-                # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
-                # its is used when we want to create a tensor of a certain size and fill it with a 
-                # specific value. This is useful when we need a tensor of a certain size, but don’t
-                # care about the exact values because they’re all going to be the same. we could also 
-                # simply use torch.tensor([i])
-                # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
-                timestep = torch.tensor([i], dtype=torch.long)
-                if self.use_new_scheduler:
-                    noise = self._sample_2(noise, timestep, classes)
-                else:
+            
+            if self.use_new_scheduler:
+                img = self._sample_2(noise, 0, classes,title='')
+                plt.imshow(img)
+                plt.title(title)
+            else:
+                # set a stepsize so we display only num_images intermediate images for our diffusion process
+                step_size = self.num_timesteps//num_images
+                # now reverse the timestep in denoising 
+                for i in range(0, self.num_timesteps)[::-1]:
+                    # sidenote: torch.full creates a tensor of the specified size filled with a fill value.
+                    # its is used when we want to create a tensor of a certain size and fill it with a 
+                    # specific value. This is useful when we need a tensor of a certain size, but don’t
+                    # care about the exact values because they’re all going to be the same. we could also 
+                    # simply use torch.tensor([i])
+                    # timestep = torch.full(size=(1,), fill_value=i, dtype=torch.long)
+                    timestep = torch.tensor([i], dtype=torch.long)
                     noise = self._sample(noise, timestep, classes)
-                # This is to maintain the natural range of the distribution
-                # its important, or otherwise we get a very blury almost all noise image
-                noise = torch.clamp(noise, -1.0, 1.0)
-                if i%step_size==0:
-                    plt.subplot(1, num_images, (i//step_size)+1)
-                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
-                    plt.imshow(img)
-                    plt.title(title)
+                    # This is to maintain the natural range of the distribution
+                    # its important, or otherwise we get a very blury almost all noise image
+                    noise = torch.clamp(noise, -1.0, 1.0)
+                    if i%step_size==0:
+                        plt.subplot(1, num_images, (i//step_size)+1)
+                        img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel))
+                        plt.imshow(img)
+                        plt.title(title)
             # show the image
             plt.show()
         # restore the model status
@@ -3164,16 +3186,18 @@ class DiffusionMnist(nn.Module):
             model.train()
 
     @torch.no_grad()
-    def gen_images(self, timestep, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, title='', add_labels=False, seed=0):
-        #ideally we would refactor dsplayimage and this method so that display image uses this
-        #this method would take a previous_noise and thus would be used inside the loop and yeild
-        #the result. but for now, im adding this like this
-        # note that the timestep should not be exactly the same as  the number of timesteps, that is
+    def gen_images(self, generation_step, class_label, input_channel=1, batch_size=1, image_height=32, image_width=32, title='', add_labels=False, seed=0):
+        # ideally we would refactor dsplayimage and this method so that display image uses this
+        # this method would take a previous_noise and thus would be used inside the loop and yeild
+        # the result. but for now, im adding this like this
+        
+        # note that the timestep should not be exactly the same as the number of timesteps, that is
         # since our arrays are 0 based, we can have 0 up to num_timsteps-1 only. if we try to get
-        # a value = num_timesteps, we will face weird error like "RuntimeError: GET was unable to find an engine to execute this computation"
-        # which is not really showing the real cause of error especially when dealing with autocast and fp16
-        # training
-        # assert timestep<self.num_timesteps, f'Given timestep is too large!. the given timestep({timestep}) must be less than the total number of timesteps({self.num_timesteps})'
+        # a value = num_timesteps, we will face weird error like:
+        # "RuntimeError: GET was unable to find an engine to execute this computation"
+        # which is not really showing the real cause of error especially when dealing with autocast 
+        # and fp16 training
+        assert generation_step < self.num_timesteps, f'Given timestep is too large!. the given timestep({generation_step}) must be less than the total number of timesteps({self.num_timesteps})'
         # set the model in eval mode first
         is_training=model.training
         if model.training:
@@ -3182,27 +3206,23 @@ class DiffusionMnist(nn.Module):
         with torch.device(self.device):
             torch.manual_seed(seed)
             noise = torch.randn(size=(batch_size, input_channel, image_height, image_width))
-            # set a stepsize so we display only num_images intermediate images for our diffusion process
-            # step_size = self.num_timesteps//10
-            # now reverse the timestep in denoising
-            range_ = range(0,self.num_timesteps) if self.use_new_scheduler else range(0, self.num_timesteps)[::-1]
-            for i in range_:
-                # create noise
-                t = torch.tensor([i], dtype=torch.long)#.repeat(batch_size)
-                # print(f't.shape={tuple(t.shape)}')
-                if self.use_new_scheduler:
-                    noise = self._sample_2(noise, t, class_label) 
-                else:
+            
+            if self.use_new_scheduler:
+                img = self._sample_2(noise, 0, class_label,title)
+            else:
+                # now reverse the timestep in denoising
+                for i in range(0, self.num_timesteps)[::-1]:
+                    # create noise
+                    t = torch.tensor([i], dtype=torch.long)#.repeat(batch_size)
+                    # print(f't.shape={tuple(t.shape)}')
                     noise = self._sample(noise, t, class_label)
-                # This is to maintain the natural range of the distribution
-                # its important, or otherwise we get a very blury almost all noise image
-                noise = torch.clamp(noise, -1.0, 1.0)
-                if i==timestep:
-                    img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel), title=title, add_labels=add_labels)
-                    # plt.imshow(img)
-                    # plt.show()
-                    break
-        # restore the model status
+                    # This is to maintain the natural range of the distribution
+                    # its important, or otherwise we get a very blury almost all noise image
+                    noise = torch.clamp(noise, -1.0, 1.0)
+                    if i==generation_step:
+                        img = self._create_image_from_batch(noise, img_shape=(image_height, image_width, input_channel), title=title, add_labels=add_labels)
+                        break
+        # restore previous model training state
         if is_training:
             model.train()
         return img
@@ -3246,47 +3266,57 @@ class DiffusionMnist(nn.Module):
             return model_mean + torch.sqrt(posterior_variance_t)*noise
 
     @torch.no_grad()
-    def _sample_2(self, img, t, c):
+    def _sample_2(self, img_noise, ts_notused, c, title):
         """Draws samples from a model given starting noise."""
         # The sampling loop
         # img = torch.randn(size=(batch_size, input_channel, image_height, image_width))
         # !note we dont reverse the timesteps here!
         # if things didnt go right, fix this, so this sampler uses the normal loop!
         # ! currently added two ranges in gen_images and display images need to test
-        # for i in range(self.num_timesteps):
-        # Get the model output (v, the predicted velocity)
-        with torch.cuda.amp.autocast():
-            # the same as repeating that timestep for batch-size times!
-            # ts = img.new_ones([img.shape[0]])
-            # ts * alphas_log_snrs[i]
-            # TODO: note we are using the raw alphas_log_snr (our betas infact here! and getting betas_t)
-            # TODO: instead of using the pure timestep t! maybe our model needs to change this, as we use
-            # TODO: an embedding which requires integer values as index, while the values of betas(alphas_log_snrs)
-            # Also note that the values used to feed the network (timeembedding wise) are very small around 0.0001
-            # and maybe this is why this works but ours doesnt as our magnitude may be through the roof! also 
-            # note that,
-            # are obviously floats
-            timestep_batch = self.alphas_log_snrs[t].repeat(img.size(0))
-            predicted_noise = self.unet_model(img, timestep_batch, c).float()
+        
+        # Create the noise schedule
+        # t = torch.linspace(1, 0, steps + 1)[:-1]
+        # log_snrs = get_ddpm_schedule(t)
+        # alphas, sigmas = get_alphas_sigmas(log_snrs)
+        for i in range(self.num_timesteps):
+            # Get the model output (v, the predicted velocity)
+            with torch.cuda.amp.autocast():
+                # the same as repeating that timestep for batch-size times!
+                # ts = img.new_ones([img.shape[0]])
+                # ts * alphas_log_snrs[i]
+                # TODO: note we are using the raw alphas_log_snr (our betas infact here! and getting betas_t)
+                # TODO: instead of using the pure timestep t! maybe our model needs to change this, as we use
+                # TODO: an embedding which requires integer values as index, while the values of betas(alphas_log_snrs)
+                # Also note that the values used to feed the network (timeembedding wise) are very small around 0.0001
+                # and maybe this is why this works but ours doesnt as our magnitude may be through the roof! also 
+                # note that,
+                # are obviously floats
+                timestep_batch = self.alphas_log_snrs[i].repeat(img_noise.size(0))
+                predicted_noise = self.unet_model(img_noise, timestep_batch, c).float()
 
-        # Predict the noise and the denoised image
-        pred = img * self.alphas[t] - predicted_noise * self.sigmas[t]
-        noisy_image = img * self.sigmas[t] + predicted_noise * self.alphas[t]
-        # If we are not on the last timestep, compute the noisy image for the
-        # next timestep.
-        if t < self.num_timesteps - 1:
-            # If eta > 0, adjust the scaling factor for the predicted noise
-            # downward according to the amount of additional noise to add
-            ddim_sigma = self.eta * (self.sigmas[t + 1]**2 / self.sigmas[t]**2).sqrt() * (1 - self.alphas[t]**2 / self.alphas[t + 1]**2).sqrt()
-            adjusted_sigma = (self.sigmas[t + 1]**2 - ddim_sigma**2).sqrt()
-            # Recombine the predicted noise and predicted denoised image in the
-            # correct proportions for the next step
-            img = pred * self.alphas[t + 1] + noisy_image * adjusted_sigma
-            # Add the correct amount of fresh noise
-            if self.eta:
-                img += torch.randn_like(img) * ddim_sigma
+            # Predict the noise and the denoised image
+            pred = img_noise * self.alphas[i] - predicted_noise * self.sigmas[i]
+            noisy_image = img_noise * self.sigmas[i] + predicted_noise * self.alphas[i]
+            # If we are not on the last timestep, compute the noisy image for the
+            # next timestep.
+            if i < self.num_timesteps - 1:
+                # If eta > 0, adjust the scaling factor for the predicted noise
+                # downward according to the amount of additional noise to add
+                ddim_sigma = self.eta * (self.sigmas[i + 1]**2 / self.sigmas[i]**2).sqrt() * (1 - self.alphas[i]**2 / self.alphas[i + 1]**2).sqrt()
+                adjusted_sigma = (self.sigmas[i + 1]**2 - ddim_sigma**2).sqrt()
+                # Recombine the predicted noise and predicted denoised image in the
+                # correct proportions for the next step
+                img_noise = pred * self.alphas[i + 1] + noisy_image * adjusted_sigma
+                # Add the correct amount of fresh noise
+                if self.eta:
+                    img_noise += torch.randn_like(img_noise) * ddim_sigma
+        
         # If we are on the last timestep, output the denoised image
-        return pred
+        pred_clamped = torch.clamp(pred, -1.0, 1.0)
+        # b,h,w,c
+        _, ic, h, w,  = img_noise.shape
+        img_batch = self._create_image_from_batch(pred_clamped, img_shape=(h, w, ic), title=title, add_labels=True)
+        return img_batch
 
     def _init_parameters(self, beta_start=0.0001, beta_end=0.01):
         # save beta_start and beta_end for logging purposes 
@@ -3350,13 +3380,14 @@ class DiffusionMnist(nn.Module):
         # in our diffusion model which has certain desirable properties, such as starting near zero, increasing more slowly over
         # time, and being normalized to the range (0, 1).
         # the values are between -10 and 9.21 when used with betas in range (1,0)
-        self.alphas_log_snrs = -torch.special.expm1(1e-4 + 10 * self.betas**2).log()
-        # the scaling factors for the clean image (alpha) and the
-        # noise (sigma), given the log SNR for a timestep.
-        # these are basically the equivalent of 
-        # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
-        self.alphas = self.alphas_log_snrs.sigmoid().sqrt()
-        self.sigmas = self.alphas_log_snrs.neg().sigmoid().sqrt()
+        if self.use_new_scheduler:
+            self.alphas_log_snrs = -torch.special.expm1(1e-4 + 10 * self.betas**2).log()
+            # the scaling factors for the clean image (alpha) and the
+            # noise (sigma), given the log SNR for a timestep.
+            # these are basically the equivalent of 
+            # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t in our base implementation
+            self.alphas = self.alphas_log_snrs.sigmoid().sqrt()
+            self.sigmas = self.alphas_log_snrs.neg().sigmoid().sqrt()
 
     #sidenote concerning init_parameters and sampling techniques: 
     # A Gaussian distribution and a posterior distribution are two different concepts in statistics and probability theory:
@@ -3804,7 +3835,7 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 250# 250 500
+num_timesteps = 500# 250 500
 time_embd_size = 64
 class_embd_size=64
 # the learning rate is very important, 
@@ -4083,7 +4114,9 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # similar to the 2.9.0.1 version, sometimes they seemed better, while some other times this test
 # seemed better, although this test achieved a much lower loss per epoch!
 # 
-# 2.9.5.7: use wandb and track gradients when we use new loss with beta values, maybe we can get
+# 2.9.5.8: add new scheduler/algorithm
+# 
+# 2.9.5.9: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
 # 
 # 
@@ -4801,17 +4834,14 @@ class Diffusion(nn.Module):
         return self.net(torch.cat([input,class_embed, timestep_embed], dim=1))
 
 # Define the noise schedule and sampling loop
-
 def get_alphas_sigmas(log_snrs):
     """Returns the scaling factors for the clean image (alpha) and for the
     noise (sigma), given the log SNR for a timestep."""
     return log_snrs.sigmoid().sqrt(), log_snrs.neg().sigmoid().sqrt()
 
-
 def get_ddpm_schedule(t):
     """Returns log SNRs for the noise schedule from the DDPM paper."""
     return -torch.special.expm1(1e-4 + 10 * t**2).log()
-
 
 @torch.no_grad()
 def sample(model, img, steps, eta, classes):
