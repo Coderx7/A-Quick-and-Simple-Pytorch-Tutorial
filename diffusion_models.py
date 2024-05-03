@@ -2733,12 +2733,15 @@ dec0 = ResBlock(64,1,is_encoder=False,fuse_embd_as_channels=fuse_as_channels)
 print(f'{dec0(x1,t,c).shape=}')
 
 class UnetModel(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, use_new_algorithm=False, device='cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, use_new_algorithm=False, device='cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.time_embd_size = time_embd_size
         self.class_emd_size = class_embd_size
+        # used to create the network, I have used two values, either 64 or 128 so far
+        # 
+        self.growth_value = growth_value
         self.device = device
         self.use_new_algorithm = use_new_algorithm
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size,3, padding=1,bias=False),
@@ -2750,7 +2753,7 @@ class UnetModel(nn.Module):
         self.decoder = nn.ModuleList()
         # instead of just multiplying by 2 each time, lets add by a constant value like 64/128
         # this will result in a much smaller model and the roughly the same performance
-        self.growth_value=  128#64
+        self.growth_value=  growth_value#64
         # encoder
         for i in range(5):
             # 0.05 is too small, 0.2 seems too high, 0.1 seems about right
@@ -3053,12 +3056,13 @@ class DiffusionNew(nn.Module):
 # TODO: add the loss functions to the model itself so they change based on the type of scheduler automatically!
 
 class DiffusionMnist(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, num_timesteps=200, linear_scheduler=True, eta=True, device = 'cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, num_timesteps=200, linear_scheduler=True, eta=True, device = 'cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.time_embd_size = time_embd_size
         self.class_embd_size = class_embd_size
+        self.growth_value = growth_value
         self.num_timesteps = num_timesteps
         self.device = device
         self.linear_scheduler = linear_scheduler
@@ -3069,7 +3073,7 @@ class DiffusionMnist(nn.Module):
         # timesteps. This considerably reduces the between-batch variance of the loss.
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
         
-        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, use_new_algorithm=self.use_new_scheduler,device=device)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, growth_value=self.growth_value, use_new_algorithm=self.use_new_scheduler,device=device)
         # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
@@ -3120,6 +3124,12 @@ class DiffusionMnist(nn.Module):
             # it opts to use a different way, grabs a few float numbers( as many as batchsize )
             # then create logsnr from this, does a feedforward and gets the predicted noise!
             t = self.rng.draw(input_images.size(0))[:, 0].to(self.device)
+            # this line doesnt work with new algorithm it results in pure noise
+            # note: to test with this, comment the previous line, and also comment the alphas_loss and 
+            # sigmas_loss reshaping section, you can also use the normal timeembedding layer instead of
+            # the foriourone, but the result is the same, it doesnt work with betas values like this they 
+            # need to be much larger? maybe havent tested it though. also tried 250 timesteps to no avail so 
+            # its a value range thing here!
             # t = self._get_value_for_timestep_t(self.betas, timestep_indexes=timesteps, use_batch=is_batch)
             # Calculate the noise schedule parameters for those timesteps
             # grabs 32 numbers!
@@ -3844,9 +3854,11 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 for pure mse loss or new alorithm
 # 250 for new loss (start=0.0001 and end=0.02)
 # 500
-num_timesteps = 800# 250 500
-time_embd_size = 16#64
-class_embd_size=4#64
+num_timesteps = 500#250 500
+time_embd_size = 64#64
+class_embd_size=16#64
+# used to create the unet, 64 results in 17m, 128 results in 54m unetmodel
+growth_value=64#64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3869,6 +3881,7 @@ model = DiffusionMnist(in_channels=in_channels,
                        base_fmap_size=base_fmap_size,
                        time_embd_size=time_embd_size,
                        class_embd_size=class_embd_size,
+                       growth_value=growth_value,
                        num_timesteps=num_timesteps,
                        linear_scheduler=True,
                        device=device)
@@ -4156,9 +4169,13 @@ else:
 # you'll notice more noise creeping into images and quality decreasing
 # 
 # 2.9.5.12: test with betas_start=1,betas_end=0, with ts=800:
-# dir is /imgs_gen_20240503_14_51_22
+# dir is /imgs_gen_20240503_15_04_26, the loss seems identical compared to previous runs, the only
+# difference I can notice up until epoch 1740 is that the images are a tiny bit more saturated! thats all
+# the formation does not seem to be affected and seem to be related to loss I guess.!0.0182@1760
 #
-# 2.9.5.13: use wandb and track gradients when we use new loss with beta values, maybe we can get
+# 2.9.5.13: use smaller model and see how it goes
+# 
+# 2.9.5.18: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
 # 
 # 
@@ -4324,6 +4341,7 @@ train_args = {
 'n_timestep'     : model.num_timesteps,
 'time embd_size' : model.time_embd_size,
 'class embd_size': model.class_embd_size,
+'growth_value'   : model.growth_value,
 'learning_rate'  : lr,
 'weight_decay'   : weight_decay,
 'step_size'      : str(step_size),
