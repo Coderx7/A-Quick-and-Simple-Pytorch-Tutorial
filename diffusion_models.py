@@ -3529,6 +3529,12 @@ class DiffusionMnist(nn.Module):
             # create a 1-D tensor t with steps number of elements that are evenly spaced between 1 and 0, not including 0.
             # note that we have steps+1 and a [:-1] at the end so that ultimately we take steps number of elements
             # we start at 1 and go toward 0 (0 not included)
+            # anything other than start=1,end=0 results in black images or pure noise!
+            # starts=0.01,0.001,0.0001 and end=0,0.001 results in pure noise!
+            # increasing end=0.001,results in black images. decreasing start to 0.001 while end=0.001
+            # results in pure noise signalying the range is not good enough!
+            # start=1, end=0.1,0.01,0.001 seem to work, but as the end gets bigger, like 0.1, 0.2
+            # you'll notice more noise creeping into images 
             return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
             # # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
             # an exponential schedule, where it increases slowly in the beginning and more rapidly towards the end.
@@ -4115,7 +4121,8 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # seemed better, although this test achieved a much lower loss per epoch!
 # 
 # 2.9.5.8: add new scheduler/algorithm: testing with new algo with no emmbeddings for decoder first
-# dir is /imgs_gen_20240502_17_10_13 
+# dir is /imgs_gen_20240502_17_10_13 , very vibrant images right off the bat, much more vibrant than
+# our first algorithm imho. but the overall images are not well formed,
 #
 # 2.9.5.9: add new scheduler/algorithm: testing with new algo with emmbeddings in decoders as well
 # dir is /imgs_gen_20240503_00_30_23 , the images are very vibrant and they dont change drastically
@@ -4124,9 +4131,26 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # now 58m! instead of the previous 54m!, but need more tests
 # 
 # 2.9.5.10: test with smaller embds(te=16, ce=4) to see if it becomes better with new alrgorith
-# dir is /imgs_gen_20240503_08_28_16
-# 2.9.5.11:test with lower betas values for new algorithm and see how it performs!
+# dir is /imgs_gen_20240503_08_28_16. the images are vibrant, really bibrant, but the images are not formed properly even at 1672, 
+# the loss is low, 0.0183 so the should be more coherent/formed imho. this could be becasue of 
+# high values of betas! compared to previous experiment with higher te/ce(=64 and 58m model) this
+# has a slightly lower loss (0.0183 vs 0.0187). we stopped it at epoch 2120 with loss=0.0131 which 
+# is not any different than the previous run.(either it requires much more epochs! to get to
+# our first alorgithms quality)
 # 
+# 2.9.5.11:test with lower betas values for new algorithm and see how it performs:
+# values of 0.0001, 0.02 for betas startand betas_end result in black images.
+# other than start=1,end=0 results in black images or pure noise!
+# starts=0.01,0.001,0.0001 and end=0,0.001 results in pure noise!
+# and with the same starts as before, increasing end=0.001,results in black images. 
+# decreasing start to 0.001 while end=0.001 results in pure noise signalying the range
+# is not good enough!
+# start=1, end=0.1, 0.01, 0.001 seem to work, but as the end gets bigger, like 0.1, 0.2
+# you'll notice more noise creeping into images and quality decreasing
+# 
+# 2.9.5.12: test with betas_start=1,betas_end=0, with ts=800:
+# 
+#
 # 2.9.5.13: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
 # 
