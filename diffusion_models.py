@@ -3534,8 +3534,8 @@ class DiffusionMnist(nn.Module):
             # increasing end=0.001,results in black images. decreasing start to 0.001 while end=0.001
             # results in pure noise signalying the range is not good enough!
             # start=1, end=0.1,0.01,0.001 seem to work, but as the end gets bigger, like 0.1, 0.2
-            # you'll notice more noise creeping into images 
-            return torch.linspace(start=1, end=0, steps=self.num_timesteps + 1, device=self.device)[:-1]
+            # you'll notice more noise creeping into images
+            return torch.linspace(start=start, end=end, steps=self.num_timesteps + 1, device=self.device)[:-1]
             # # linear method may be too aggressive with high timesteps, so we can choose to use other methods like
             # an exponential schedule, where it increases slowly in the beginning and more rapidly towards the end.
             # return torch.logspace(start=-4, end=-2, steps=self.num_timesteps, device=self.device)
@@ -3841,7 +3841,10 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 500 works fine for our default config/optimizer, for new config/optimizer(cosine,adamw)
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
-num_timesteps = 500# 250 500
+# 500 for pure mse loss or new alorithm
+# 250 for new loss (start=0.0001 and end=0.02)
+# 500
+num_timesteps = 800# 250 500
 time_embd_size = 16#64
 class_embd_size=4#64
 # the learning rate is very important, 
@@ -3879,7 +3882,11 @@ model_ema = copy.deepcopy(model)
 # defined a new term alpha(α) which is simply (1-β), we can think of it as, how much information
 # we get to keep about an image when transitioning to another/next image.
 # use 0.008 for betas_end , 0.02 with 250 timesteps
-model._init_parameters(beta_start=0.0001,beta_end=0.02)
+# model._init_parameters(beta_start=0.0001,beta_end=0.02)
+if model.use_new_scheduler:
+    model._init_parameters(beta_start=1,beta_end=0)
+else:
+    model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # sideinfo about betas_end value
 # values like beta_start=0.001, beta_end=0.02 with large timesteps like 1000 work with normal mse
 # loss (predictednoise, purenoise) however, they fail with the new loss where we incorporate 
@@ -4149,7 +4156,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # you'll notice more noise creeping into images and quality decreasing
 # 
 # 2.9.5.12: test with betas_start=1,betas_end=0, with ts=800:
-# 
+# dir is /imgs_gen_20240503_14_51_22
 #
 # 2.9.5.13: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
