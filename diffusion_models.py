@@ -2580,7 +2580,7 @@ class ResBlock(nn.Module):
                  act=nn.SiLU(),
                  time_embd_size=16,
                  class_embd_size=4,
-                 fuse_embd_as_channels=True,
+                 fuse_embd_as_channels=False,
                  is_encoder=True,
                  dropout=None,
                  use_new_algorithm=False,
@@ -2733,7 +2733,7 @@ dec0 = ResBlock(64,1,is_encoder=False,fuse_embd_as_channels=fuse_as_channels)
 print(f'{dec0(x1,t,c).shape=}')
 
 class UnetModel(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, use_new_algorithm=False, device='cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, use_new_algorithm=False, fuse_embd_as_channels=False, device='cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
@@ -2742,6 +2742,8 @@ class UnetModel(nn.Module):
         # used to create the network, I have used two values, either 64 or 128 so far
         # 
         self.growth_value = growth_value
+        # whether to fuse embeddings as separate channels or not
+        self.fuse_embd_as_channels = fuse_embd_as_channels
         self.device = device
         self.use_new_algorithm = use_new_algorithm
         self.conv_in = nn.Sequential(nn.Conv2d(in_channels, base_fmap_size,3, padding=1,bias=False),
@@ -2763,6 +2765,7 @@ class UnetModel(nn.Module):
                                          class_embd_size=class_embd_size, 
                                          is_encoder=True,
                                          use_new_algorithm=use_new_algorithm,
+                                         fuse_embd_as_channels=self.fuse_embd_as_channels,
                                          device=self.device, 
                                          dropout=drpout))
             fmap +=self.growth_value
@@ -2775,6 +2778,7 @@ class UnetModel(nn.Module):
                                          class_embd_size=class_embd_size,
                                          is_encoder=False,
                                          use_new_algorithm=use_new_algorithm,
+                                         fuse_embd_as_channels=self.fuse_embd_as_channels,
                                          device=self.device, 
                                          dropout=drpout))
             fmap -=self.growth_value
@@ -3056,13 +3060,14 @@ class DiffusionNew(nn.Module):
 # TODO: add the loss functions to the model itself so they change based on the type of scheduler automatically!
 
 class DiffusionMnist(nn.Module):
-    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, num_timesteps=200, linear_scheduler=True, eta=True, device = 'cpu') -> None:
+    def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, growth_value=128, fuse_embd_as_channels=False,num_timesteps=200, linear_scheduler=True, eta=True, device = 'cpu') -> None:
         super().__init__()
         self.in_channels = in_channels
         self.base_fmap_size = base_fmap_size
         self.time_embd_size = time_embd_size
         self.class_embd_size = class_embd_size
         self.growth_value = growth_value
+        self.fuse_embd_as_channels = fuse_embd_as_channels
         self.num_timesteps = num_timesteps
         self.device = device
         self.linear_scheduler = linear_scheduler
@@ -3073,7 +3078,7 @@ class DiffusionMnist(nn.Module):
         # timesteps. This considerably reduces the between-batch variance of the loss.
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
         
-        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, growth_value=self.growth_value, use_new_algorithm=self.use_new_scheduler,device=device)
+        self.unet_model = UnetModel(in_channels, base_fmap_size, time_embd_size=time_embd_size, class_embd_size=class_embd_size, growth_value=self.growth_value, fuse_embd_as_channels=self.fuse_embd_as_channels, use_new_algorithm=self.use_new_scheduler,device=device)
         # self.unet_model = DiffusionNew(in_channels, base_fmap_size, embd_size=embd_size)
         # self.unet_model = UNet(T=1000, ch=128, ch_mult=[1, 2, 2, 2], attn=[1],num_res_blocks=2, dropout=0.1)
         self.unet_model.to(device)
@@ -3859,6 +3864,8 @@ time_embd_size = 64#64
 class_embd_size=16#64
 # used to create the unet, 64 results in 17m, 128 results in 54m unetmodel
 growth_value=64#64
+# whther to use embeddings as separate channels or simply add them to inputs
+fuse_embd_as_channels=True
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -3882,6 +3889,7 @@ model = DiffusionMnist(in_channels=in_channels,
                        time_embd_size=time_embd_size,
                        class_embd_size=class_embd_size,
                        growth_value=growth_value,
+                       fuse_embd_as_channels=fuse_embd_as_channels,
                        num_timesteps=num_timesteps,
                        linear_scheduler=True,
                        device=device)
@@ -4173,7 +4181,7 @@ else:
 # difference I can notice up until epoch 1740 is that the images are a tiny bit more saturated! thats all
 # the formation does not seem to be affected and seem to be related to loss I guess.!0.0182@1760
 #
-# 2.9.5.13: use smaller model and see how it goes
+# 2.9.5.13: use smaller model and see how it goes: dir is /imgs_gen_20240503_20_31_01
 # 
 # 2.9.5.18: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
@@ -4342,6 +4350,7 @@ train_args = {
 'time embd_size' : model.time_embd_size,
 'class embd_size': model.class_embd_size,
 'growth_value'   : model.growth_value,
+'fuse_embd_as_channels':fuse_embd_as_channels,
 'learning_rate'  : lr,
 'weight_decay'   : weight_decay,
 'step_size'      : str(step_size),
