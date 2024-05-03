@@ -1,0 +1,39 @@
+experiment date: '20240503_08_28_16'
+running on: cuda/cuda
+python version: 3.11.4 (main, Jul  5 2023, 14:15:25) [GCC 11.2.0]
+pytorch version: 2.2.0+cu118
+model in use: UnetModel
+new algorithm: true
+linear_scheduler: true
+beta_start: 0.0001
+beta_end: 0.02
+dataset length: 10000
+image size: 32
+in_channels: 3
+base_fmap_size: 64
+checkpointname: diffusion_cifar_basearch_ts_cond_new_schedule.pth
+result path: /media/hossein/SSD1/code_dl//imgs_generated_dirs/imgs_gen_20240503_08_28_16/
+is resumed: false
+uses FP16: true
+batch_size: 32
+num_epochs: 6000
+epoch_start: 0
+interval: 20
+n_timestep: 500
+time embd_size: 16
+class embd_size: 4
+learning_rate: 0.0002
+weight_decay: 0
+step_size: '[2000, 4000]'
+ema_decay: 0.998
+model n_params: 55186952
+optimizer: "Adam (\nParameter Group 0\n    amsgrad: False\n    betas: (0.9, 0.999)\n\
+  \    capturable: False\n    differentiable: False\n    eps: 1e-08\n    foreach:\
+  \ None\n    fused: None\n    initial_lr: 0.0002\n    lr: 0.0002\n    maximize: False\n\
+  \    weight_decay: 0\n)"
+scheduler: "{'milestones': Counter({2000: 1, 4000: 1}), 'gamma': 0.1, 'optimizer':\
+  \ Adam (\nParameter Group 0\n    amsgrad: False\n    betas: (0.9, 0.999)\n    capturable:\
+  \ False\n    differentiable: False\n    eps: 1e-08\n    foreach: None\n    fused:\
+  \ None\n    initial_lr: 0.0002\n    lr: 0.0002\n    maximize: False\n    weight_decay:\
+  \ 0\n), 'base_lrs': [0.0002], 'last_epoch': 0, 'verbose': False, '_step_count':\
+  \ 1, '_get_lr_called_within_step': False, '_last_lr': [0.0002]}"
