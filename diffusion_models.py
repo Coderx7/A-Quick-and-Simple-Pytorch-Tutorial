@@ -2730,7 +2730,7 @@ fuse_as_channels=True
 enc0 = ResBlock(1,64,fuse_embd_as_channels=fuse_as_channels)
 print(f'{enc0(x0,t,c).shape=}')
 dec0 = ResBlock(64,1,is_encoder=False,fuse_embd_as_channels=fuse_as_channels)
-print(f'{dec0(x1,None,None).shape=}')
+print(f'{dec0(x1,t,c).shape=}')
 
 class UnetModel(nn.Module):
     def __init__(self, in_channels=1, base_fmap_size=64, time_embd_size=32, class_embd_size=4, use_new_algorithm=False, device='cpu') -> None:
@@ -3538,10 +3538,10 @@ class DiffusionMnist(nn.Module):
             # timesteps = torch.linspace(-6, 6, steps=self.num_timesteps, device=self.device)
             # return torch.sigmoid(timesteps)
             # we use the sigmoid solution
-            timesteps_log = self._get_log_snrs(self.timesteps)
+            # timesteps_log = self._get_log_snrs(self.timesteps)
             # now lets calculate alphas and sigmas which are equivalent to 
             # sqrt_alphas_cumprod_t and sqrt_one_minus_alphas_cumprod_t 
-            self.alphas, self.sigmas = self._get_alphas_sigmas(timesteps_log)
+            # self.alphas, self.sigmas = self._get_alphas_sigmas(timesteps_log)
             
             
         else: 
@@ -3836,8 +3836,8 @@ dataset = get_dataset(dataset_name, size=image_size, mode='val',transforms=trans
 # 1000 is too much and results in the same black/white blobs we used to get when betas_end
 # was too high for our new loss. so we reverted back to 500 which seems to be working fine now!
 num_timesteps = 500# 250 500
-time_embd_size = 64
-class_embd_size=64
+time_embd_size = 16#64
+class_embd_size=4#64
 # the learning rate is very important, 
 # and 1e-4 seems to work just fine, 
 # anything larger like 1e-3 e.g. wont 
@@ -4118,9 +4118,16 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # dir is /imgs_gen_20240502_17_10_13 
 #
 # 2.9.5.9: add new scheduler/algorithm: testing with new algo with emmbeddings in decoders as well
-#  
+# dir is /imgs_gen_20240503_00_30_23 , the images are very vibrant and they dont change drastically
+# like the previous example, though, the objects of interest do not seem to have proper form even
+# until 3000 epochs. this could very well be attributed to overfitting though as the model here is
+# now 58m! instead of the previous 54m!, but need more tests
 # 
-# 2.9.5.10: use wandb and track gradients when we use new loss with beta values, maybe we can get
+# 2.9.5.10: test with smaller embds(te=16, ce=4) to see if it becomes better with new alrgorith
+# 
+# 2.9.5.11:test with lower betas values for new algorithm and see how it performs!
+# 
+# 2.9.5.13: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
 # 
 # 
