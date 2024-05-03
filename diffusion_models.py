@@ -4124,7 +4124,7 @@ model._init_parameters(beta_start=0.0001,beta_end=0.02)
 # now 58m! instead of the previous 54m!, but need more tests
 # 
 # 2.9.5.10: test with smaller embds(te=16, ce=4) to see if it becomes better with new alrgorith
-# 
+# dir is /imgs_gen_20240503_08_28_16
 # 2.9.5.11:test with lower betas values for new algorithm and see how it performs!
 # 
 # 2.9.5.13: use wandb and track gradients when we use new loss with beta values, maybe we can get
