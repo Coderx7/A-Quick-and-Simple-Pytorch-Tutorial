@@ -4183,6 +4183,8 @@ else:
 #
 # 2.9.5.13: use smaller model and see how it goes: dir is /imgs_gen_20240503_20_56_48
 # the result is not good at all.needs more parameter tuning!
+# may 4 2024 12:34 this is the last change .2.10 and below are older than 2.5 (look at the dir date
+# you'll know 2.9.xx is the last changes I have done) 
 # 
 # 2.9.5.18: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
