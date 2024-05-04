@@ -4181,7 +4181,8 @@ else:
 # difference I can notice up until epoch 1740 is that the images are a tiny bit more saturated! thats all
 # the formation does not seem to be affected and seem to be related to loss I guess.!0.0182@1760
 #
-# 2.9.5.13: use smaller model and see how it goes: dir is /imgs_gen_20240503_20_31_01
+# 2.9.5.13: use smaller model and see how it goes: dir is /imgs_gen_20240503_20_56_48
+# the result is not good at all.needs more parameter tuning!
 # 
 # 2.9.5.18: use wandb and track gradients when we use new loss with beta values, maybe we can get
 # a clue and fix this!
