@@ -42,6 +42,14 @@
 # on standard detection datasets using a bipartite matching loss. 
 # One or multiple text queries per image can be used to perform zero-shot text-conditioned object detection.
 
+# The OWLv2 model (short for Open-World Localization) was proposed in Scaling Open-Vocabulary Object Detection paper in june 2023
+# by Matthias Minderer, Alexey Gritsenko, Neil Houlsby. OWLv2, like OWL-ViT, is a zero-shot text-conditioned 
+# object detection model that can be used to query an image with one or multiple text queries. 
+# The v2 model uses a CLIP backbone with a ViT-L/14 Transformer architecture as an image encoder 
+# and uses a masked self-attention Transformer as a text encoder. These encoders are trained to 
+# maximize the similarity of (image, text) pairs via a contrastive loss. T
+# he CLIP backbone is trained from scratch and fine-tuned together with the box and class prediction heads
+# with an object detection objective.
 
 # sidenote:
 # **Bipartite Matching Loss:**
@@ -104,12 +112,6 @@ def get_image(url):
     else:
         return Image.open(url).convert('RGB')
     
-img_url = 'https://images.thalia.media/-/BF2000-2000/c745c2eb05804daabf8d3886d1ce9791/jujutsu-kaisen-the-official-anime-guide-season-1-taschenbuch-gege-akutami-englisch.jpeg'
-img_url = 'https://upload.wikimedia.org/wikipedia/commons/8/88/Commander_Eileen_Collins_-_GPN-2000-001177.jpg'
-# img_url = '/media/hossein/CodingStuffs/CodingStuff/Projects/OpenCVProjects/img/dice2.jpg'
-# img_url = '/media/hossein/CodingStuffs/CodingStuff/Projects/OpenCVProjects/img/coffee.png'
-img_url = 'https://mymodernmet.com/wp/wp-content/uploads/2019/09/100k-ai-faces-1.jpg'
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'{device=}')
 # to instruct our model to look for a specific object, we need to sent it in text format. 
@@ -120,36 +122,75 @@ print(f'{device=}')
 # that we are after. we can access each using "image_processor", "tokenizer" attributes. 
 # since this processor interits both the image processor and tokenizer functionalities
 # this makes our life much easier!
-processor = transformers.OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
-# what we want to seach for in our image
-# note taht simply using 'face' will not give us anything! we have to specifically write human face!!
-# note that if we have several images, we can create text-queries for each image by creating separate 
-# nested list. like 
-# text_queries = [["human face", "rocket", "nasa badge", "star-spangled banner"], ["coffee mug", "spoon", "plate"]]
+# as for the weights, there are several variants with various patch sizes, and training schemes 
+# (self-trained only, self-trained + fine-tuned, and an ensemble). The ensemble checkpoints perform best.
+# the authors also released larger checkpoints, which have even better performance:
+# https://huggingface.co/google/owlvit-base-patch16
+# https://huggingface.co/google/owlvit-large-patch14
+# v2 variants
+# https://huggingface.co/google/owlv2-large-patch14
+# https://huggingface.co/google/owlv2-large-patch14-ensemble
+# https://huggingface.co/google/owlv2-large-patch14-finetuned
+# https://huggingface.co/google/owlv2-base-patch16
+# https://huggingface.co/google/owlv2-base-patch16-finetuned
+# https://huggingface.co/google/owlv2-base-patch16-ensemble
+
+#TODO: v2 needs adjustmet for bbox 
+# see https://github.com/NielsRogge/Transformers-Tutorials/blob/master/OWLv2/Zero_and_one_shot_object_detection_with_OWLv2.ipynb
+v1 = 0
+model_name = "google/owlvit-base-patch32" if v1 else "google/owlv2-base-patch16"
+# model_name = "google/owlvit-large-patch14" if v1 else "google/owlv2-large-patch14"
+
+# to get this to work, we need a processor to take care of our input 
+# and the actual model for detection (to do the forward pass)
+processor = transformers.OwlViTProcessor.from_pretrained(model_name) if v1 else transformers.Owlv2Processor.from_pretrained(model_name)
+# OwlViTForObjectDetection model outputs the prediction logits, boundary boxes and class embeddings,
+# along with the image and text embeddings outputted by the OwlViTModel, which is the CLIP backbone.
+model = transformers.OwlViTForObjectDetection.from_pretrained(model_name) if v1 else transformers.Owlv2ForObjectDetection.from_pretrained(model_name)
+model = model.to(device)
+# remember to model in evaluation mode
+model.eval()
+# lets grab an image
+img_url = 'https://images.thalia.media/-/BF2000-2000/c745c2eb05804daabf8d3886d1ce9791/jujutsu-kaisen-the-official-anime-guide-season-1-taschenbuch-gege-akutami-englisch.jpeg'
+img_url = 'https://upload.wikimedia.org/wikipedia/commons/8/88/Commander_Eileen_Collins_-_GPN-2000-001177.jpg'
+# img_url = '/media/hossein/CodingStuffs/CodingStuff/Projects/OpenCVProjects/img/dice2.jpg'
+# img_url = '/media/hossein/CodingStuffs/CodingStuff/Projects/OpenCVProjects/img/coffee.png'
+img_url = 'https://mymodernmet.com/wp/wp-content/uploads/2019/09/100k-ai-faces-1.jpg'
+
+# what we want to seach for in our image? we simply specify that as a text prompt.
+# we can have several text prompts per image. we feed them as a list. 
+# obviously if we have several images, we create text-queries for each image by creating separate 
+# nested list. like text_queries = [["human face", "rocket", "nasa badge", "star-spangled banner"], ["coffee mug", "spoon", "plate"]]
 # and we would have a list of images instead of a single image obviously!
+# note that simply using 'face' will not give us anything! we have to specifically write human face!
 text_queries = ["human face"]
 # the image of interest in which we will be searching!
 print(f'downloading image...')
 image = get_image(img_url)
-# image = Image.open('./nasa.png').convert('RGB')
-# lets grab the result which is a dictionary of input_ids, attention_mask and pixel_values (image batch)
-results = processor(text=text_queries, images=image, return_tensors='pt').to(device)
-# Print input names and shapes
-for key, val in results.items():
+# to resize image we can use huggingface transformers
+# ImageFeatureExtractionMixin to resize and preprocess the image:
+# 
+# from transformers.image_utils import ImageFeatureExtractionMixin
+# image_size = model.config.vision_config.image_size
+# mixin = ImageFeatureExtractionMixin()
+# image = mixin.resize(image, image_size)
+# 
+# or simply use opencv to resize the input image properly
+img_size = model.config.vision_config.image_size
+image = cv2.resize(np.asanyarray(image), dsize=(img_size,img_size))
+print(f'{img_size=}')
+# lets grab the prepared inputs which is a dictionary of input_ids, attention_mask and pixel_values (image batch)
+inputs = processor(text=text_queries, images=image, return_tensors='pt').to(device)
+# lets see what fields we have in our inputs here
+for key, val in inputs.items():
     print(f"{key}: {val.shape}")
 
-# Forward pass
-# Now we can pass the inputs to our OWL-ViT model to get object detection predictions.
-# OwlViTForObjectDetection model outputs the prediction logits, boundary boxes and class embeddings,
-# along with the image and text embeddings outputted by the OwlViTModel, which is the CLIP backbone.
-model = transformers.OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
-# model = transformers.Owlv2ForObjectDetection()
-model = model.to(device)
-# remember to model in evaluation mode
-model.eval()
+# good now lets do an actual forward pass and grab our predictions 
+# note that the found objects here correspond to the our text prompts/queries
 with torch.no_grad():
-    outputs = model(**results)
+    outputs = model(**inputs)
 
+# lets see what our output contains: 
 for k, val in outputs.items():
     if k not in {"text_model_output", "vision_model_output"}:
         print(f"{k}: shape of {val.shape}")
@@ -162,44 +203,56 @@ print("\nVision model outputs")
 for k, val in outputs.vision_model_output.items():
     print(f"{k}: shape of {val.shape}") 
 
-# logits: shape of torch.Size([1, 576, 4])
-# pred_boxes: shape of torch.Size([1, 576, 4])
-# text_embeds: shape of torch.Size([1, 4, 512])
-# image_embeds: shape of torch.Size([1, 24, 24, 768])
-# class_embeds: shape of torch.Size([1, 576, 512])
-
-# Text model outputs
-# last_hidden_state: shape of torch.Size([4, 16, 512])
-# pooler_output: shape of torch.Size([4, 512])
-
-# Vision model outputs
-# last_hidden_state: shape of torch.Size([1, 577, 768])
-# pooler_output: shape of torch.Size([1, 768])
-
-# Draw predictions on image
-# Let's draw the predictions / found objects on the input image. 
-# Remember the found objects correspond to the input text queries.
-#resize image we can use huggingface transformers ImageFeatureExtractionMixin
+# we resize our image so the bbox properly fits it
+# to resize image we can use huggingface transformers ImageFeatureExtractionMixin
 # to resize and preprocess the image 
 # from transformers.image_utils import ImageFeatureExtractionMixin
 # mixin = ImageFeatureExtractionMixin()
 # image_size = model.config.vision_config.image_size
 # image = mixin.resize(image, image_size)
-# input_image = np.asarray(image).astype(np.float32) / 255.0
 # or simply use opencv to resize the input image properly
-img_size = model.config.vision_config.image_size
-print(f'{img_size=}')
-image = cv2.resize(np.asanyarray(image), dsize=(img_size,img_size))
-# normalize image to 0-1 range
-input_image = image/255
+# the catch however is, for owlv2, the authors used the preprocessed
+# image, that is the image thats padded and resized, rather than the original one 
+# to visualize the bounding boxes. 
+# Therefore we need to take the preprocess image created by the processor and "unnormalize" it
+# This gives us the preprocessed image, minus the normalization.(i.e. padded&resized image)
+def denormalize_owlv2(inputs, return_as_PIL=False):
+    from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD
+
+    # we can access the preprocess image by either:
+    # inputs["pixel_values"] or directly accessing 
+    # it as an attribute like: inputs.pixel_values
+    pixel_values = inputs.pixel_values.squeeze().cpu().numpy()
+    image = (pixel_values * np.array(OPENAI_CLIP_STD)[:, None, None]) + np.array(OPENAI_CLIP_MEAN)[:, None, None]
+    image = (image * 255).astype(np.uint8)
+    print(f'{image.shape=}')
+    # move the channels from first dim to the last dim, note the copy() thats needed here
+    # otherwise due to the transpose operation here, the array is not congiguous, we need a contigueous array
+    # for cv2 to properly work. copy fixes that for us!
+    image = np.moveaxis(image, 0, -1).copy()
+    print(f'{image.shape=}')
+    if return_as_PIL:
+        image = Image.fromarray(image)
+    return image
+
+if v1:
+    img_size = model.config.vision_config.image_size
+    image = cv2.resize(np.asanyarray(image), dsize=(img_size,img_size))
+    # image = np.asanyarray(image).copy()
+
+else:
+    image = denormalize_owlv2(inputs)
 
 # Threshold to eliminate low probability predictions
 # the accuracy of detection may not be high, in fact, in many cases, its pretty low
 # and its not sufficient for some tasks. it works better for some usecases than others
 # and its directly corollated with how good the underlying model is trained on similar concepts
-probability_threshold = 0.1
+# (this includes both parts of the model, the language and vision part need to be sufficiently trained
+# otherwise, a term may not exist, or registered for a concept, so cant get the result you want or the vision
+# model has not seen sth and therefore the outcome is undefiened)
+probability_threshold = 0.05
 
-# # Get prediction logits
+# Get prediction logits
 logits = torch.max(outputs["logits"][0], dim=-1)
 probs = torch.sigmoid(logits.values).cpu().detach().numpy()
 
@@ -215,15 +268,15 @@ for prob,bbox,label in zip(probs,bboxes,labels):
     # so in order to get the actual coordinates, we need to multiply them by the image
     # width and height
     cx,cy,w,h = bbox
-    cx,cy = int(cx*input_image.shape[0]),int(cy*input_image.shape[1])
-    w,h = int(w*input_image.shape[0]),int(h*input_image.shape[1])
+    cx,cy = int(cx*image.shape[0]),int(cy*image.shape[1])
+    w,h = int(w*image.shape[0]),int(h*image.shape[1])
     x,y = cx-w//2,cy-h//2
     text = text_queries[label]
-    print(f'{prob=} {bbox=} {label=} {text=}')
-    cv2.rectangle(input_image, (x,y), (x+w,y+h),color=(0,0,255),thickness=2)
-    cv2.putText(input_image,text,org=(x,y),fontFace=cv2.FONT_HERSHEY_PLAIN,fontScale=1,color=(0,255,0),thickness=2)
+    print(f'{text=:<12} {prob=:.4f} {label=:^3} bbox={tuple(bbox)}')
+    cv2.rectangle(image, (x,y), (x+w,y+h),color=(0,0,255),thickness=2)
+    cv2.putText(image,text,org=(x,y+10),fontFace=cv2.FONT_HERSHEY_PLAIN,fontScale=1,color=(0,255,0),thickness=2)
 
-cv2.imshow('input_image-bbox',input_image[...,::-1])
+cv2.imshow('image-bbox',image[...,::-1])
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 
@@ -269,110 +322,32 @@ cv2.destroyAllWindows()
 # plot_predictions(input_image, text_queries, probs, bboxes, labels)
 # plt.show()
 
-# Post-processing model predictions
+# post-processing model predictions
 # As we have just seen, the OWL-ViT outputs are normalized box coordinates in [cx, cy, w, h] format 
 # which is based on the assumption that all input image sizes are fixed. 
-# aside from what we did to convert them back to normal coordinates, We can use the OwlViTProcessor's 
+# aside from what we did to convert them back to normal coordinates, we can use the OwlViTProcessor's 
 # convenient post_process() method as well to convert the model outputs to a COCO API format 
-# and retrieve rescaled coordinates (with respect to the original image sizes) in [x0, y0, x1, y1] format.
+# and retrieve rescaled coordinates (with respect to the original image sizes) in [x0, y0, x1, y1] format
+# like this:
 # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
-# target_sizes = torch.Tensor([img.size[::-1] for img in image]).to(device)
+# note we have several images here:
+# target_sizes = torch.Tensor([img.size[::-1] for img in images]).to(device)
 # Convert outputs (bounding boxes and class logits) to COCO API
 # results = processor.post_process(outputs=outputs, target_sizes=target_sizes)
 
-# Batch processing
-# We can also pass in multiple sets of images and text queries to search for different 
-# (or same) objects in different images. Let's download an image of a coffee mug to process alongside the astronaut image.
+# Note: Notice the size of the input_ids and attention_mask is [batch_size * num_max_text_queries, max_length]. 
+# Max_length is set to 16 for all OWL-ViT models.
 
-# For batch processing, we need to input text queries as a nested list to OwlViTProcessor 
-# and images as lists of (PIL images or PyTorch tensors or NumPy arrays).
-
-# # Download the coffee mug image
-# image = skimage.data.coffee()
-# image = Image.fromarray(np.uint8(image)).convert("RGB")
-# image
-
-# # Preprocessing
-# images = [skimage.data.astronaut(), skimage.data.coffee()]
-# images = [Image.fromarray(np.uint8(img)).convert("RGB") for img in images]
-
-# # Nexted list of text queries to search each image for
-# text_queries = [["human face", "rocket", "nasa badge", "star-spangled banner"], ["coffee mug", "spoon", "plate"]]
-
-# # Process image and text inputs
-# inputs = processor(text=text_queries, images=images, return_tensors="pt").to(device)
-
-# # Print input names and shapes
-# for key, val in inputs.items():
-#     print(f"{key}: {val.shape}")
-
-# input_ids: torch.Size([8, 16])
-# attention_mask: torch.Size([8, 16])
-# pixel_values: torch.Size([2, 3, 768, 768])
-
-# Note: Notice the size of the input_ids and attention_mask is [batch_size * num_max_text_queries,
-# max_length]. Max_length is set to 16 for all OWL-ViT models.
-
-# # Get predictions
-# with torch.no_grad():
-#   outputs = model(**inputs)
-
-# for k, val in outputs.items():
-#     if k not in {"text_model_output", "vision_model_output"}:
-#         print(f"{k}: shape of {val.shape}")
-        
-# print("\nText model outputs")
-# for k, val in outputs.text_model_output.items():
-#     print(f"{k}: shape of {val.shape}")
-
-# print("\nVision model outputs")
-# for k, val in outputs.vision_model_output.items():
-#     print(f"{k}: shape of {val.shape}") 
-
-# logits: shape of torch.Size([2, 576, 4])
-# pred_boxes: shape of torch.Size([2, 576, 4])
-# text_embeds: shape of torch.Size([2, 4, 512])
-# image_embeds: shape of torch.Size([2, 24, 24, 768])
-# class_embeds: shape of torch.Size([2, 576, 512])
-
-# Text model outputs
-# last_hidden_state: shape of torch.Size([8, 16, 512])
-# pooler_output: shape of torch.Size([8, 512])
-
-# Vision model outputs
-# last_hidden_state: shape of torch.Size([2, 577, 768])
-# pooler_output: shape of torch.Size([2, 768])
-
-# # Let's plot the predictions for the second image
-# image_idx = 1
-# image_size = model.config.vision_config.image_size
-# image = mixin.resize(images[image_idx], image_size)
-# input_image = np.asarray(image).astype(np.float32) / 255.0
-
-# # Threshold to eliminate low probability predictions
-# score_threshold = 0.1
-
-# # Get prediction logits
-# logits = torch.max(outputs["logits"][image_idx], dim=-1)
-# scores = torch.sigmoid(logits.values).cpu().detach().numpy()
-
-# # Get prediction labels and boundary boxes
-# labels = logits.indices.cpu().detach().numpy()
-# boxes = outputs["pred_boxes"][image_idx].cpu().detach().numpy()
-
-# plot_predictions(input_image, text_queries[image_idx], scores, boxes, labels)
-
-# Bonus: one-shot / image-guided object detection
-
+# one-shot/image-guided object detection
 # what we have been doing so far is called zero shot detection with text inputs(also may be called text-guided detection), 
 # which means without training the underlying model for a specific task, we simply use it for said task!
 # here using text prompts. 
 # We can also use the OwlViTForObjectDetection for 1 shot detection. 
 # using its image_guided_detection() method, we can query an input image with a query/example image 
 # and detect similar objects.
-# Everything is the nearly same, this time instead of a text prompt, we simply pass in a query images 
+# Everything is nearly same, this time around instead of a text prompt, we simply pass in a query image
 # to the processor to get the query_pixel_values which is basically the preprocessed image ready to be 
-# fed to the model. 
+# fed to the model.
 # 
 # Note though, unlike text input, OwlViTProcessor expects one query image per target(input) image 
 # we'd like to query for similar objects. 
@@ -386,8 +361,7 @@ cv2.destroyAllWindows()
 # Input image
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 image = get_image(url)
-target_sizes = torch.Tensor([image.size[::-1]])
-print(f'{target_sizes=}')
+
 # Query image - the image we use to search for its lookalike in the input image
 query_url = "http://images.cocodataset.org/val2017/000000058111.jpg"
 query_image = get_image(query_url)
@@ -395,7 +369,9 @@ query_image = get_image(query_url)
 image = np.asanyarray(image)
 query_image = np.asanyarray(query_image)
 
+# processor, applies the required preprocessings like resizing/etc as well
 inputs = processor(images=image, query_images=query_image, return_tensors='pt').to(device)
+
 print(f'inputs:')
 for key,value in inputs.items():
     print(f'{key=} {value.shape=}')
@@ -414,53 +390,74 @@ print("\nVision model outputs")
 for k, val in outputs.vision_model_output.items():
     print(f"{k}: shape of {val.shape}")
 
-# logits: shape of torch.Size([1, 576, 1])
-# image_embeds: shape of torch.Size([1, 24, 24, 768])
-# query_image_embeds: shape of torch.Size([1, 24, 24, 768])
-# target_pred_boxes: shape of torch.Size([1, 576, 4])
-# query_pred_boxes: shape of torch.Size([1, 576, 4])
-# class_embeds: shape of torch.Size([1, 576, 512])
-
-# Vision model outputs
-# last_hidden_state: shape of torch.Size([1, 577, 768])
-# pooler_output: shape of torch.Size([1, 768])
-
-img2 = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2RGB)
 outputs.logits = outputs.logits.cpu()
 outputs.target_pred_boxes = outputs.target_pred_boxes.cpu()
-# note we are passing target_sizes, so the bbox coordinates are adjusted accordingly
-results = processor.post_process_image_guided_detection(outputs=outputs, threshold=0.6, nms_threshold=0.3, target_sizes=target_sizes)
-boxes = results[0]["boxes"] 
-scores = results[0]["scores"]
 
-# Draw predicted bounding boxes
+# before going for drawing predicted bounding boxes, lets use the proper image
+image = image if v1 else denormalize_owlv2(inputs)
+target_sizes = torch.Tensor([image.size[::-1]]) if v1 else torch.Tensor([(denormalize_owlv2(inputs).shape[:2])])
+# target_sizes = torch.Tensor([image.size[::-1]]) if v1 else torch.Tensor([(image.shape[:2])])
+print(f'{target_sizes=}')
+
+# note we are passing target_sizes, so the bbox coordinates are adjusted accordingly
+# sidenote2: 
+# nms_threshold here needs a bit of explanation.(basically we usually dont expose it like this
+# here nms threshold specifies how much overlapped boxes are allowed, i.e. if two or more boxes
+# have this much overlap, nms wont be applied!otherwise it will be applied and will suppress non maximally boxes, retaining only the most probable one)
+# heres the full explanation : 
+# the nms_threshold parameter controls the IoU (Intersection over Union) threshold for
+# non-maximum suppression of overlapping boxes during object detection. 
+# When multiple bounding boxes overlap significantly, non-maximum suppression helps 
+# retain only the most confident and relevant predictions. 
+# 
+# The nms_threshold determines how much overlap is acceptable before suppressing redundant boxes. 
+# A lower value results in more aggressive suppression, while a higher value allows more overlapping
+# boxes to be retained. 
+# so in our example here, it’s set to 0.1, meaning that boxes with an IoU greater than 0.1 will be suppressed.
+# Additionally, the target_sizes parameter as we have covered before, allows us to rescale predicted bounding boxes
+# to our input image which was fed to the model.
+inputs_list = processor.post_process_image_guided_detection(outputs=outputs, threshold=0.7, nms_threshold=0.1, target_sizes=target_sizes)
+boxes = inputs_list[0]["boxes"] 
+scores = inputs_list[0]["scores"]
+
 for box, score in zip(boxes, scores):
     box = [int(i) for i in box.tolist()]
+    image = cv2.rectangle(image, box[:2], box[2:], (255,0,0), 5)
 
-    img2 = cv2.rectangle(img2, box[:2], box[2:], (255,0,0), 5)
-    if box[3] + 25 > 768:
-        y = box[3] - 10
-    else:
-        y = box[3] + 25 
-
-plt.imshow(img2[:,:,::-1])
+plt.imshow(image)
 plt.show()
 
 # we can also select a part of an image to look for other similar things like this
+# sidenote: for somereason it seems our version here doesnt work at all
+# it could be becasue the roi_img is too small and the network cant identify any meaningful object
+# by looking at that small image and thus it results in nonsensical detection. 
+# if we used a larger image of something wed like, we may probably get better result-nope I didnt get any improvments
+# seems the model is off! or has issues!
+# TODO: fix this
+# 
 # img_url='https://static.vecteezy.com/system/resources/previews/037/998/433/large_2x/ai-generated-two-great-tit-birds-parus-major-drinking-water-from-a-fountain-photo.jpg'
 img_url='./board_src.jpg'
-
-img = get_image(img_url)
-img = np.asanyarray(img)
+# resitor image
+# target_url = 'https://res.cloudinary.com/rsc/image/upload/bo_1.5px_solid_white,b_auto,c_pad,dpr_2,f_auto,h_399,q_auto,w_710/c_pad,h_399,w_710/R0131772-01?pgw=1'
+# target_url = 'https://media.rs-online.com/image/upload/w_620,h_413,c_crop,c_pad,b_white,f_auto,q_auto/dpr_auto/v1529599145/Y1742636-01.jpg'
+# target_url = 'https://media.rs-online.com/image/upload/w_620,h_413,c_crop,c_pad,b_white,f_auto,q_auto/dpr_auto/v1482295262/F2141951-01.jpg'
+# ic
+# target_url = 'https://www.semiconductorforu.com/wp-content/uploads/2017/06/IC.jpg'
+image = get_image(img_url)
 # select a roi 
-y,x,h,w = cv2.selectROI('select an object to be searched', img[...,::-1], False, False)
+y,x,h,w = cv2.selectROI('select an object to be searched', np.asanyarray(image)[...,::-1], False, False)
 print(f'{x=}{y=}{w=}{h=}')
-roi_img = img[x:x+w,y:y+h]
+roi_img = np.asanyarray(image)[x:x+w,y:y+h]
+roi_img = Image.fromarray(roi_img, mode="RGB")
+# roi_img.save("roi.jpg")
+# roi_img = get_image(target_url)
+
+
 # cv2.imshow('roi',roi_img)
 # cv2.waitKey(0)
 # cv2.destroyAllWindows()
 # now lets create the processor 
-inputs = processor(images=img, query_images=roi_img,return_tensors='pt').to(device)
+inputs = processor(images=image, query_images=roi_img,return_tensors='pt').to(device)
 
 with torch.no_grad():
     outputs = model.image_guided_detection(**inputs)
@@ -470,19 +467,273 @@ for k,v in outputs.items():
 
 outputs.logits = outputs.logits.cpu().detach()
 outputs.target_pred_boxes = outputs.target_pred_boxes.cpu().detach()
+# 
+image = image if v1 else denormalize_owlv2(inputs)
 # now lets call posprocess!
 # since we have a batch of 1, we send our shape this way to match input
-target_sizes = torch.Tensor([[*img.shape[:2]]])
+target_sizes = torch.Tensor([[*image.shape[:2]]])
 print(f'{target_sizes=}')
-results = processor.post_process_image_guided_detection(outputs, threshold=0.1, nms_threshold=0.6, target_sizes=target_sizes)
-probs = results[0]["scores"]
-bbox = results[0]["boxes"]
+result_list = processor.post_process_image_guided_detection(outputs, threshold=0.9, nms_threshold=0.01, target_sizes=target_sizes)
+probs = result_list[0]["scores"]
+bbox = result_list[0]["boxes"]
 
+# image = np.asarray(image).copy()
 for prob,bbox in zip(probs, bbox):
     bbox = [int(i) for i in bbox.tolist()]
     print(f'{bbox=}')
-    img = cv2.rectangle(img=img.copy(), pt1=bbox[:2],pt2=bbox[2:],color=(0,255,0),thickness=2)
+    image = cv2.rectangle(img=image, pt1=bbox[:2],pt2=bbox[2:],color=(0,255,0),thickness=2)
     
-cv2.imshow('image-bbox',img[...,::-1])
+cv2.imshow('image-bbox',image[...,::-1])
 cv2.waitKey(0)
 cv2.destroyAllWindows()
+
+
+# there are other works like this lik : 
+# https://huggingface.co/IDEA-Research/grounding-dino-base
+# https://huggingface.co/IDEA-Research/grounding-dino-tiny
+
+
+# now lets see how the image guided detection works under the hood(we use the v2 model): 
+# Identify an object in the source image to use as query, and get its embedding
+# The first thing we will do is zero-shot detection on the source image, 
+# as we will need the embedding of the cat. 
+# We do this by getting the objectness logits, and simply get the box with the highest objectness value
+# (i.e. the box that has the highest probability of containing an object).
+# Below, we show the top 3 predictions on the source image so that 
+# the user can select one to use as a query (we select the cat here).
+# Note that we cannot directly embed a whole image (as we need an embedding of one particular patch token).
+# 
+# Process source image
+# source_pixel_values = processor(images=source_image, return_tensors="pt").pixel_values
+# For visualization, we need the preprocessed source image (i.e. padded and resized, but not yet normalized)
+# unnormalized_source_image = get_preprocessed_image(source_pixel_values)
+# Get image features
+# with torch.no_grad():
+#   feature_map = model.image_embedder(source_pixel_values)[0]
+# print(feature_map.shape)
+
+# torch.Size([1, 60, 60, 768])
+
+# # Rearrange feature map
+# batch_size, height, width, hidden_size = feature_map.shape
+# image_features = feature_map.reshape(batch_size, height * width, hidden_size)
+
+# # Get objectness logits
+# objectnesses = model.objectness_predictor(image_features)
+# print(objectnesses)
+     
+
+# tensor([[ -6.7349,  -7.1227,  -8.5564,  ..., -14.1605, -13.2534, -11.2242]],
+#        grad_fn=<SelectBackward0>)
+
+# The objectness logits is a tensor containining a scalar value for each image patch token, indicating the probability that there's an object associated with the corresponding patch. As this particular model's vision encoder uses an image size of 960x960 pixels, and a patch resolution of 16x16, it means that we have (960/16)**2 = 3600 patch tokens.
+
+# num_patches = (model.config.vision_config.image_size // model.config.vision_config.patch_size)**2
+# print(num_patches)
+     
+
+# 3600
+
+# For each patch, we have a corresponding bounding box (4 coordinates), as well as a class embedding (a vector which can be mapped to class logits).
+
+# source_boxes = model.box_predictor(image_features, feature_map=feature_map)
+# source_class_embeddings = model.class_predictor(image_features)[1]
+     
+
+# # Remove batch dimension
+# objectnesses = np.array(objectnesses[0].detach())
+# source_boxes = np.array(source_boxes[0].detach())
+# source_class_embeddings = np.array(source_class_embeddings[0].detach())
+
+# # Let's show the top 3 patches
+# top_k = 3
+# objectnesses = sigmoid(objectnesses)
+# objectness_threshold = np.partition(objectnesses, -top_k)[-top_k]
+
+# fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+# ax.imshow(unnormalized_source_image, extent=(0, 1, 1, 0))
+# ax.set_axis_off()
+
+# for i, (box, objectness) in enumerate(zip(source_boxes, objectnesses)):
+#   if objectness < objectness_threshold:
+#     continue
+
+#   cx, cy, w, h = box
+#   ax.plot(
+#       [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+#       [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+#       color='lime',
+#   )
+
+#   print("Index:", i)
+#   print("Objectness:", objectness)
+
+#   ax.text(
+#       cx - w / 2 + 0.015,
+#       cy + h / 2 - 0.015,
+#       f'Index {i}: {objectness:1.2f}',
+#       ha='left',
+#       va='bottom',
+#       color='black',
+#       bbox={
+#           'facecolor': 'white',
+#           'edgecolor': 'lime',
+#           'boxstyle': 'square,pad=.3',
+#       },
+#   )
+
+# ax.set_xlim(0, 1)
+# ax.set_ylim(1, 0)
+# ax.set_title(f'Top {top_k} objects by objectness')
+     
+
+# Index: 384
+# Objectness: 0.27002114
+# Index: 1700
+# Objectness: 0.503168
+# Index: 1871
+# Objectness: 0.33484274
+
+# Text(0.5, 1.0, 'Top 3 objects by objectness')
+
+# In this case, the patches with indices 384, 1700 and 1871 have the highest objectness value. We can now take the index of the patch that corresponds to the cat, and get its embedding:
+
+# # Get the query embedding with the index of the selected object.
+# # We're using the cat:
+# query_object_index = 1700  # Index of the cat box above.
+# query_embedding = source_class_embeddings[query_object_index]
+     
+
+# Sidenote: you could easily crop out this object as follows:
+
+# from transformers.image_transforms import center_to_corners_format
+
+# img_w, img_h = unnormalized_source_image.size
+
+# # crop out cat from source image
+# box = source_boxes[query_object_index]
+# # convert from center_x, center_y, width, height to x1, x2, y1, y2
+# box = center_to_corners_format(box)
+# # rescale boxes to size of the source image
+# scale_fct = torch.tensor([img_w, img_h, img_w, img_h])
+# boxes = torch.tensor(box) * scale_fct
+# x1, y1, x2, y2 = tuple(boxes.tolist())
+# cropped_image = unnormalized_source_image.crop((x1, y1, x2, y2))
+# cropped_image
+     
+# Get predictions for target image with the query embedding
+
+# Now that we have a query embedding, we can condition the detection on this embedding. For that, we run our target image through OWLv2's vision encoder, and then condition the class embeddings on our query vector.
+
+# We can then take an argmax over the class logits to get the highest match.
+
+# # Process target image
+# target_pixel_values = processor(images=target_image, return_tensors="pt").pixel_values
+# unnormalized_target_image = get_preprocessed_image(target_pixel_values)
+
+# with torch.no_grad():
+#   feature_map = model.image_embedder(target_pixel_values)[0]
+
+# # Get boxes and class embeddings (the latter conditioned on query embedding)
+# b, h, w, d = feature_map.shape
+# target_boxes = model.box_predictor(
+#     feature_map.reshape(b, h * w, d), feature_map=feature_map
+# )
+
+# target_class_predictions = model.class_predictor(
+#     feature_map.reshape(b, h * w, d),
+#     torch.tensor(query_embedding[None, None, ...]),  # [batch, queries, d]
+# )[0]
+
+
+# # Remove batch dimension and convert to numpy:
+# target_boxes = np.array(target_boxes[0].detach())
+# target_logits = np.array(target_class_predictions[0].detach())
+
+# # Take the highest scoring logit
+# top_ind = np.argmax(target_logits[:, 0], axis=0)
+# score = sigmoid(target_logits[top_ind, 0])
+
+
+# fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+# ax.imshow(unnormalized_target_image, extent=(0, 1, 1, 0))
+# ax.set_axis_off()
+
+# # Get the corresponding bounding box
+# cx, cy, w, h = target_boxes[top_ind]
+# ax.plot(
+#     [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+#     [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+#     color='lime',
+# )
+
+# ax.text(
+#     cx - w / 2 + 0.015,
+#     cy + h / 2 - 0.015,
+#     f'Score: {score:1.2f}',
+#     ha='left',
+#     va='bottom',
+#     color='black',
+#     bbox={
+#         'facecolor': 'white',
+#         'edgecolor': 'lime',
+#         'boxstyle': 'square,pad=.3',
+#     },
+# )
+
+# ax.set_xlim(0, 1)
+# ax.set_ylim(1, 0)
+# ax.set_title(f'Closest match')
+     
+
+# Text(0.5, 1.0, 'Closest match')
+
+# We could also visualize the second highest match (which ideally should correspond to the other cat). This is abstracted away in the post_process_image_guided_detection method of Owlv2Processor, which we'll demonstrate below.
+# Use image_guided methods in Transformers
+
+# The Transformers library offers 2 methods to do what we've done above in fewer lines of code.
+
+# # Process target and source image for the model
+# inputs = processor(images=target_image, query_images=source_image, return_tensors="pt")
+
+# # Print input names and shapes
+# for key, val in inputs.items():
+#     print(f"{key}: {val.shape}")
+     
+
+# query_pixel_values: torch.Size([1, 3, 960, 960])
+# pixel_values: torch.Size([1, 3, 960, 960])
+
+# First off, we can use the image_guided_detection method to get the class logits conditioned on an embedding of the query. Note that this method leverages a heuristic which the authors developed for v1 to get the patch in the source image which most likely contains an object (it does not leverage the objectness logits).
+
+# # Get predictions
+# with torch.no_grad():
+#   outputs = model.image_guided_detection(**inputs)
+     
+
+# Next, we can pass the outputs to the post_process_image_guided_detection method, which takes in a score threshold (i.e., only get bounding boxes for the target image which have a score >= this value) as well as an NMS threshold (NMS is short for non-maximum suppression, a very popular method in object detection to remove duplicate bounding boxes). However here we specify NMS = 1.0 which means we don't need to do any NMS.
+
+# img = cv2.cvtColor(np.array(unnormalized_target_image), cv2.COLOR_BGR2RGB)
+# outputs.logits = outputs.logits.cpu()
+# outputs.target_pred_boxes = outputs.target_pred_boxes.cpu()
+
+# target_sizes = torch.Tensor([unnormalized_image.size[::-1]])
+# # good values are 0.98, 0.95
+# results = processor.post_process_image_guided_detection(outputs=outputs, threshold=0.98, nms_threshold=1.0, target_sizes=target_sizes)
+# boxes, scores = results[0]["boxes"], results[0]["scores"]
+
+# # Draw predicted bounding boxes
+# for box, score in zip(boxes, scores):
+#     box = [int(i) for i in box.tolist()]
+
+#     img = cv2.rectangle(img, box[:2], box[2:], (255,0,0), 5)
+#     if box[3] + 25 > 768:
+#         y = box[3] - 10
+#     else:
+#         y = box[3] + 25
+
+# plt.imshow(img[:,:,::-1])
+     
+
+# <matplotlib.image.AxesImage at 0x797515ae1b70>
+
