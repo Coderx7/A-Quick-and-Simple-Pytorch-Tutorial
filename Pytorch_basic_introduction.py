@@ -1,8 +1,12 @@
 #%% [markdown] 
 # in the name of God the most compassionate the most merciful
 # Pytorch basics : introduction on tensors
+import sys
+import os
+
 import torch 
-import numpy as np 
+import numpy as np
+import torch.version 
 
 # Here we are going to see what torch is and how similar it is to numpy!
 # torch is a deep learning framework written in C/C++ that is used for 
@@ -790,5 +794,205 @@ output = sigmoid(torch.mm(output, W_output) + b_output)
 print(f'{output=}')
 
 #%%
+# before we end our discussion here, Id like to talk a bit about logging some extra information
+# about pytorch, and basically our stack. 
+# its always a good idea to log some amount of information about the current stack 
+# that is being used to produce something. 
+# things like what version of pytorch, python, cuda and other things we might be interested in
+# and have an effect on our result. 
+# its always good to log such information so we know what configuration was used in
+# getting a result. 
+# one of the first things we would want to log is the version of pytorch we are using
+# we can follow the python convention and use `torch.__version__` to get torch version 
+print(f'{torch.__version__}') # 2.2.0+cu118
+# or use the `version` module to access versions for other modules involved in the package
+# such as the version of cude currently being shipped with, the hip version if any is installed
+# the git commit number for this release and finally whether this is a debug build!
+print(f'{torch.version.cuda=}')
+print(f'{torch.version.hip=}')
+print(f'{torch.version.debug=}')
+print(f'{torch.version.git_version=}')
+# we can use torch.cuda to access a slew of information related to the cuda stack
+# ranging from simple versions, gpu count in the system, each gpu's name/capabilities
+# and their temperature/utilization. 
+# lets display all of the GPUs on the system. 
+print(f'{torch.cuda.device_count()=}')
+
+# dummy tensor for taking up some vram so we can test with the memory stats below!
+dummy_tensor = torch.randn(size=(1000,512,512),dtype=torch.float64,device='cuda')
+
+for i in range(torch.cuda.device_count()):
+    name = torch.cuda.get_device_name(i)
+    compute_capability = torch.cuda.get_device_capability(i)
+    properties = torch.cuda.get_device_properties(i)
+    print(f'{i}){name}')
+    print(f"  - Compute capability: {'.'.join([str(l) for l in compute_capability])}")
+    print(f'  - Total memory:       {properties.total_memory/(2**30):.0f}GB')
+    print(f'  - SM count:           {properties.multi_processor_count}')
+    current_temp = torch.cuda.temperature()
+    current_util = torch.cuda.utilization()
+    print(f'  - current temp:       {current_temp}C')
+    print(f'  - current util:       {current_util}%')
+
+    # of course the temperature and utilization doesnt make sense for the start of our log
+    # but they definitely come in handy for monitoring our system/gpu status, for example 
+    # low uitilization could imply our batchsize need to change, or we need more worker threads
+    # or a faster media to read form, or maybe some parts of our model is not efficiently executing
+    # and we are io bound! we can also check them for health checks so that we dont burn our gpu!!
+
+    # we can also see how much memory is currently taken!
+    # torch.cuda.mem_get_info() gives us free memory out of the whole vram
+    memory_usage = torch.cuda.mem_get_info(i)
+    memory_usage = tuple(m//2**20 for m in memory_usage)
+    print(f'  - available memory:   {memory_usage[0]:,}/{memory_usage[1]:,}MB')
+    
+    memory_reserved = torch.cuda.memory_reserved(0)//2**20
+    max_memory_reserved = torch.cuda.max_memory_reserved(0)//2**20
+    print(f'  - reserved memory:    {memory_reserved:,}MB')
+    print(f'  - max reserved memory:{max_memory_reserved:,}MB')
+    
+    # list_gpu_processes() gives us a string showing all python processes 
+    # that are currently using a specific GPU vram. its a string and 
+    # we can print it rightaway or parse it and extract relavent information
+    processes = torch.cuda.memory.list_gpu_processes(i)
+    print(f'  - processes taking vram:')
+    print(f'  - \t{processes=}')
+    
+    # memory stats offer more information in the form of a dictionary. 
+    # we can use any key such as 'active.all.allocated' to only grab the 
+    # information we want.
+    memory_stat = torch.cuda.memory.memory_stats(i)
+    print(f'{memory_stat=}')
+    
+    # or we could use memory_summary and get a nice table displaying all relavent information
+    # summary = torch.cuda.memory.memory_summary(i)
+    # print(f'  - vram summary:       {summary}')
+    
+# I guess thats enough for now. before we call it a day, lets see how we can 
+# free gpu memory, this is especially handy in jupyeter notebooks where memory
+# can quickly get consumed after several cells execution. 
+# to free up memory we can use empty_cache().
+torch.cuda.empty_cache()
+print(f'- available memory:   {torch.cuda.mem_get_info(0)[0]//2**20}MiB')
+# it didnt free anything it seems!
+# The reason is empty_cache() as the name suggests, frees all "unused cached memory"
+# The occupied GPU memory by tensors can not be freed this way. 
+# therefore, we cant use this to increase the amount of GPU memory available for PyTorch.
+#
+# In order to make this work for us, we need to delete the variables that take up
+# vram or somehow make them refer to sth else so that the memory chunk they are referring to
+# can be reclaimed. 
+#
+# Note that sometimes this doesnt work either, when this happens, this is most probably 
+# a case of memory leakage, mutiple variables pointing to the same memory chunk, etc.
+# so we need to watch out for these cases as well.(one of such cases that we will get to 
+# later happens during training, like appending,adding loss, 
+# total_loss += loss, where it should have been total_loss += loss.item() otherwise, 
+# the whole computation graph is being added each time instead of the loss value!
+# which leaks memory (and takes up more vram as trainibg continues)
+# 
+# Now back to what we were doing, by deleting the tensor or setting it to something
+# like None, we mark that chunk of memory ready for being garbage collected! 
+# (if its referenced only once) if not, and if we have two variables refering to the same 
+# object, both of them needs to be deleted or made to point to sth else (so the ref count becomes 0 and it can be freed))
+# lets make a second variable to also refer to dummy_tensor to see this in action
+dummy_tensor2 = dummy_tensor
+# del dummy_tensor
+dummy_tensor = None
+# see if we only delete dummy_tensor, the mmeory wont be freeed
+dummy_tensor2 = None
+# and following a empty_cache() call we may reclaim that memory!
+torch.cuda.empty_cache()
+print(f'- available memory:   {torch.cuda.mem_get_info(0)[0]//2**20}MB')
+
+# also note that, sometimes this process gets a bit more involved,
+# but the underlying issue stays the same, multiple references to the same memory chuncks,
+# or memory leak. one of the cases where this may happen, (we will cover in later chapeters)
+# could be trying to free memories taken by optimizers, or our model.
+# in such cases, we may need to need to explictly move all the tensors to cpu first,
+# then delete the variable/instance followed by a gc.collect() to finally do a empty_cache().
+# this may happen when we want to e.g. delete our optimizer and free-up the memory it takes!
+# however, it wouldnt work for somereason!
+# the reason is the model's parameters, is also referenced by optimizers, so simply 
+# deleting the model or setting it to None, wont do it. We need to also handle the optimizer
+# we can delete them both, and this should free the memory. 
+# if somehow we want to keep the model, and want to remove the optimizer, this is what
+# we would try first (move all the params to cpu, delete optimizer, gc.collect it and then
+# try to empty_cache)
+# again we'll see this later on. this was just a heads up!
+# see : https://discuss.pytorch.org/t/how-can-we-release-gpu-memory-cache/14530/27
 
 
+# sidenote: how empty_cache() works: 
+# note when an object/variable is no longer referenced, its memory is set to be freed.
+# this means its memory can be used to create new objects/tensors.
+# the same way, deleting an object in python runtime, doesnt guarantee its given back to the OS,
+# the same thing applies in cuda runtime as well. the memory is not released to the OS
+# immediately and therefore when you query nvidia-smi it wont show any freed up memory!
+# This is a typical behavior we often see when dealing with cuda/deeplearning training process
+# this is caused by the pytorch allocator behavior, which keeps such these memory chuncks (as reserved)
+# so it can do memory allocations much faster. 
+# empty_cache() when called, forces the allocator, to release these memories 
+# that it's kept to allocate new tensors, back to the OS. 
+# when this happens, the freed amount is reported in nvidia-smi.
+# its noteworthy to mention that, these reserved memories, were already available to 
+# allocator to create new tensors, so its not crucial to call empty_cache() to be able to
+# use such memories. (it makes a difference if we want to use them in a separate process though)
+# its just that it makes memory bookkeeping/logging on our side more clear!
+# ref: https://discuss.pytorch.org/t/how-can-we-release-gpu-memory-cache/14530/4
+
+#sidenote: concerning discrepency between nvidia-smi report vs pytorch's:
+# PyTorch uses a caching memory allocator to speed up memory allocations. 
+# This allows fast memory deallocation without device synchronizations. 
+# However, the unused memory managed by the allocator will still show 
+# as if used in nvidia-smi. 
+#
+# memory_allocated() and max_memory_allocated() can be used to monitor 
+# memory occupied by tensors.
+
+# memory_reserved() and max_memory_reserved() can be used to monitor the
+# total amount of memory managed by the caching allocator. 
+# 
+#  
+# torch.cuda.max_memory_allocated reported number can differ from the one 
+# reported by nvidia-smi and may report a much smaller amount.   
+# This discrepency is due to CUDA memory allocator. 
+# The current CUDA memory allocator is a caching allocator, 
+# and it shows more memory than is currently being occupied by tensors 
+# (the amount reported by torch.cuda.max_memory_allocated()).
+# a portion of this number in nvidia-smi belong to "reserved" memory which is used 
+# to speed up future allocations/reclaim unused memory from garbage collected tensors.
+# The reserved memory amount (using torch.cuda.max_memory_reserved()) will be closer to 
+# what is being reported by nvidia-smi.
+# note that there will always be some additional overhead depending on 
+# what operations/libraries are being used e.g. like cuDNN, cuBLAS, etc).
+# this can become a substantial amount, as much a few hundreds of MB in many cases.
+# so its prefectly normal to see higher values being reported in nvidia-smi
+# ref: https://discuss.pytorch.org/t/pytorchs-torch-cuda-max-memory-allocated-showing-different-results-from-nvidia-smi/165706
+
+# good to read docs: 
+# https://pytorch.org/docs/stable/notes/cuda.html#cuda-memory-management
+# https://pytorch.org/docs/stable/torch_cuda_memory.html#torch-cuda-memory 
+
+
+# side sidenote:d
+# note that we are using MiB instead of MB. but why?
+# Originally, a kilobyte was defined as 1024 bytes (2^10). 
+# However, in the SI metric system, "kilo" represents 1000 (10^3). 
+# To avoid confusion, the International Electrotechnical Commission (IEC)
+# introduced the term "KiB" (Kibibyte) to represent 1024 bytes. 
+# So:
+# 1 KB = 1000 bytes (SI convention)
+# 1 KiB = 1024 bytes (binary convention)
+# similarly, a megabyte was originally 1024 kilobytes (2^20), but the 
+# SI metric system defines it as 1000 kilobytes. To maintain consistency:
+# 1 MB = 1000 KB = 1,000,000 bytes (SI convention)
+# 1 MiB(mebi byte) = 1024 KiB = 1,048,576 bytes (binary convention)
+# Following the same pattern:
+# 1 GB = 1000 MB = 1,000,000 KB = 1,000,000,000 bytes (SI convention)
+# 1 GiB(gibi-byte) = 1024 MiB = 1,073,741,824 bytes (binary convention)
+# IEC added these terms back in 1998! the hard drive manufacturers quickly used it!
+# but nearly everyone else sticked to the good old definition!(including windows)
+# until a few years ago when this slowly started to catch up and you probably see it
+# here and there more often including in nvidia-smi reports.
+# %%
