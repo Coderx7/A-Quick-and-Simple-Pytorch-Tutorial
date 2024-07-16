@@ -1,15 +1,28 @@
 #%% 
 # In the name of God the most compassinate the most merciful
 # introduction to RNNs in Pytorch
-import numpy as np 
+import os,sys
+import numpy as np
 import string
+
+# to download files from internet! we can have several options
+# we can use urllib.request
+# its retrieve method will download the file and save it under a filename!
+import urllib.request as request
+# or use the requests module, to get remote files!(imagine this as wget!
+# you have to save the file you downloaded!)
+import requests
+import matplotlib.pyplot as plt
+import torch.version
+%matplotlib inline 
+
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
-import matplotlib.pyplot as plt
 import torch.optim as optim  
-%matplotlib inline 
 
+print(f'{sys.version=}')
+print(f'{torch.__version__=}')
 
 #%% RNN 
 # In this section we are going to learn about RNNs in Pytorch, we will start with 
@@ -41,7 +54,7 @@ sample = torch.linspace(start = 0, end=np.pi, steps=sequence_length)
 sample_sin = sample.sin()
 # now lets plot our data points and see how the look: 
 plt.plot(sample,color='r')
-plt.plot(sample_sin,color='w')
+plt.plot(sample_sin,color='g')
 # we could do 
 # dt = torch.randn(size=(30,))
 # dt.mul_(5).add_(1.5)
@@ -65,39 +78,56 @@ def plot_sample(x, y, fmt='g.', fmt2='y+', label1='x', label2='y'):
     # cla is used for clearing the current 'a'xes while clf
     # is used for clearing the whole 'f'igure
     plt.clf()
+    # 
+    # sidenote: 
     # plot([x], y, [fmt], *, data=None, **kwargs)
     # plot([x], y, [fmt], [x2], y2, [fmt2], ..., **kwargs)
     # The optional parameter fmt is a convenient way for 
     # defining basic formatting like color, marker and linestyle. 
     # It's a shortcut string notation described in the Notes section below.
     # plot(y, 'r+')     # ditto, but with red plusses
-    # The following two lines are the same, the firts one uses [fmt]
+    # The following two lines are the same, the firts one uses [fmt] while
+    # the second line uses proper arguments to create the same pattern!
     # >>> plot(x, y, 'go--', linewidth=2, markersize=12)  
     # >>> plot(x, y, color='green', marker='o', linestyle='dashed',
     #          linewidth=2, markersize=12
     plt.plot(x, fmt, label=label1)
     plt.plot(y, fmt2, label=label2)
+    plt.legend()
 
-# Any way, what we just created and plotted is a single sample. a sample of 30 timesteps 
-# we need more of these samples to train our model. so we eaither need to create a datset
-# beforehand and then during training, read from it, or we can just simulate that, by creating
-# a generator which generates a sample each time it is called! 
-# in a dataset we need both a sample and its label!
-def dataset_sample(i, seq_len=10, device=torch.device('cuda')):
-    sample_raw = torch.linspace(i*np.pi, (i+1)*np.pi, seq_len+1)
-    sample_data = sample_raw.sin().to(device)
-    data = sample_data[:-1].view(1,seq_len,1)
-    label = sample_data[1:].view(1,seq_len,1)
-    yield sample_raw.numpy(), data, label
+# Anyway, what we just created and plotted was a single sample. a sample of 30 timesteps 
+# we need more of these samples to train our model. 
+# so we either need to create a dataset beforehand to use it during training, 
+# or we can get away with it by just simulating that, how? by creating a generator!
+# a generator that generates a sample each time it is called! 
+# for our training, we need both a sample and its label! so we need to provide both.
+def dataset_sample(i, seq_len=10, device='cuda'):
+    # since we are creating new tensors, we can simply use a
+    # device context manager, this way we dont have to use .to()
+    with torch.device(device):
+        # to create proper spacing/create new datapoint for each call
+        # we incorporated i (index) into start and end points
+        sample_raw = torch.linspace(i*np.pi, (i+1)*np.pi, seq_len+1)
+        sample_data = sample_raw.sin()
+        # since we plan on training, we add a batch-dimension for our toy example
+        # we will be using batch of 1 here to keep everything simple, but later on
+        # we see how we can create batches of larger sizes.
+        data = sample_data[:-1].view(1,seq_len,1)
+        label = sample_data[1:].view(1,seq_len,1)
+        yield data, label
 
-#lets test this 
-raw, data, label = next(iter(dataset_sample(0)))
+# lets test this
+data, label = next(iter(dataset_sample(0)))
+# flatten them to plot them
 data = data.view(-1)
 label =label.view(-1)
-plot_sample(data.cpu(), label.cpu())
+plot_sample(data.cpu(), label.cpu(), label1='data',label2='label')
 # plt.clf()
-plt.plot(data.cpu(),'r+-', label='input, x')
-# now lets create our RNN. 
+# plt.plot(data.cpu(),'b+-', label='input, x')
+#%%
+# now lets create our actual RNN model.
+# since some arguments are self explanetory, I'll only explain about the ones 
+# that are new to us, and we havent covered so far like RNN module itself.
 class RNN_Net(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers=1,
                  drpout=0.5, bidirect=False):
@@ -106,23 +136,20 @@ class RNN_Net(nn.Module):
         self.input_size = input_dim
         self.hidden_size = hidden_dim
         self.output_size = output_dim
-        # some arguments are self explanetory, so I explain about others
-        # the first thing to pay attention when working with rnns in pytorch is
-        # unlike normal vanilla rnn implementation, pytorchs rnns(grus and lstms)
-        # are like this as well, will only return a tuple which includes, outputs
-        # and hiddenstates for each timestep. obviously the output is not the actual
-        # output that we want, for that we need to add another layer after the rnn
-        # for example an fc layer with sigmoid to achive the actual output. (dont worry 
-        # if its vague tt you, we will get to this in a moment)
-        # the second thing is num_layers, basically this allows you to create a stacked rnn
+        # The first thing to pay attention to, when working with rnns in pytorch is
+        # unlike normal vanilla rnn implementation, pytorchs rnns(grus and lstms),
+        # will only return a tuple which includes, outputs and hiddenstates for each timestep. 
+        # obviously the output is not the actual output that we want, for that we need
+        # to add another layer after the rnn like an fc(linear) layer with sigmoid to 
+        # achieve the actual output. (dont worry if its vague to you, we will get to this in a moment)
+        # The second thing is num_layers, basically this allows you to create a stacked rnn
         # usually you may choose between 1-3 layers. 
-        # As it is said in the documentation, num_layers: Number of recurrent layers. E.g.,
-        # setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN,
-        # with the second RNN taking in 'outputs' of the first RNN and computing the final 
-        # results. Default is 1
-        # batch_first, means, if you have your data in batches(batch is the first dim),
-        # set this to true
-        # bidirectional, means whether you want your rnn to be bidirectional! 
+        # citing from the documentation, 
+        # 1.num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean 
+        # stacking two RNNs together to form a stacked RNN, with the second RNN taking in
+        # 'outputs' of the first RNN and computing the final results. Default is 1
+        # 2.batch_first, means, if you have your data in batches(batch is the first dim), set this to true
+        # 3.bidirectional, means whether you want your rnn to be bidirectional! 
         # by the way, the input_dim actually refers to the input size, e.g if you 
         # one_hot encoded your input, you feed the one_hot encoded dim.(we will see this
         # in a moment!)
@@ -154,42 +181,56 @@ iteration = 80
 interval = 15 
 sequence_length = 20
 hidden_dim = 50
-# its initially zero, we could use None as well, but I wanted you to see how 
-# a hidden state dims looks like
-# we can have a stacked rnn, if we want one, simply increase this number 
+# we can have a stacked rnn, if we want one simply increase this number 
 num_layers = 1
 # uni or bidirection. ( 1 or 2)
 direction = 1
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# its initially zero, we could use None as well, and we usually do that
+# but for now, I want you to see how a hidden state dimensions looks like
+# under the hood so if during training something went wrong you know whats what!
 # hidden_state = None
 hidden_state = torch.zeros(size=(num_layers*direction, batch_size, hidden_dim)).to(device)
+# input dim =1 means 1 character/ output dim 1 
+# means 1 character (basically we are trying to 
+# repilicate input (predict the next value))
 model = RNN_Net(input_dim=1,
                 hidden_dim=hidden_dim,
-                output_dim=1
+                output_dim=1,
                 num_layers=num_layers).to(device)
 
 # training 
+# For the loss we simply use the mse 
 criterion = nn.MSELoss()
-# experiment with a large lr sucha s 0.1 and also a small lr like 0.0001 and see the changes
+# experiment with a large lr sucha s 0.1 and
+# also a small lr like 0.0001 and see the changes
 optimizer = optim.Adam(model.parameters(), lr=0.01)
 
+# for debugging especially gradient related ones 
+# we can use this. we'll talk aboutit more later
 # torch.autograd.set_detect_anomaly(True)
 print(model)
 
+# note we dont have epochs here, just repeating the optimization process 
+# several times. also note we are using a single sample each time which 
+# is ok here, but not in real life as its very inefficient! 
 for i in range(iteration):
-    for (raw, data, label) in dataset_sample(i,
-                                              seq_len=sequence_length,
-                                              device=device):
+    for (data, label) in dataset_sample(i, seq_len=sequence_length, device=device):
                                 
         (output, hidden_state) = model(data, hidden_state)
-
         ## Representing Memory ##
         # make a new variable for hidden and detach the hidden state from its history
         # this way, we don't backpropagate through the entire history
         hidden_state = hidden_state.data
-        # make sure the dims for output and label is the same
+        # make sure the dims for output and label are the same
         # otherwise, you may not get an error, but a sckewed result
         # that may bogle your mind for quite sometime!
+        # so we do this otherwise the assert will prevent us
+        # for our specific case it doesnt cause an issue as this operation 
+        # involving our output with the shape( 20,1) and our label with the
+        # shape (1,20,1) will be broadcasted to (1,20,1) and everything will be fine!
+        # but keep an eye nothetheless when you choose a different configuration!
+        # assert output.shape == label.shape, f'output shape({output.shape}) and label shape({label.shape}) must match! or they will result in ({(output ==label).shape=})'
         loss = criterion(output, label)
         print(f'iter: {i} loss: {loss.item():.6f} ')
 
@@ -198,132 +239,239 @@ for i in range(iteration):
         optimizer.step()
 
     if i%interval==0:
-        x = data.view(-1).data.cpu().numpy()
-        y = label.reshape(-1).data.cpu().numpy()
+        # sidenote 
+        # since v1.9.0 flatten is available as a tensor operation so we can use it!
+        # Unlike NumPy’s flatten, which always copies input’s data, 
+        # this function may return the original object, a view, or copy. 
+        # If no dimensions are flattened, then the original object input is returned. 
+        # Otherwise, if input can be viewed as the flattened shape, then that view is returned.
+        # Finally, only if the input cannot be viewed as the flattened shape is input’s data copied
+        x = data.flatten().data.cpu().numpy()
+        y = label.flatten().data.cpu().numpy()
+        # or we could use the good old view(-1) for flattening!
         output = output.view(-1)
         
-        plt.plot(x, 'r.', label='x-data')
-        plt.plot(y,'w.', label='label')
-        plt.plot(output.data.cpu().numpy(), 'y+',label='output')
+        plt.plot(x, 'g.', label='x-data')
+        plt.plot(y,'b.', label='label')
+        plt.plot(output.data.cpu().numpy(), 'r+',label='output')
         
         plt.legend()
         plt.show()
+# Ok we see the network could easily learn the pattern and predict it. 
+# now that we have seen and learned how to use a RNN module, lets scale 
+# this up and use a more practical example.
 #%% 
-# Now using GRU and LSTM is the same, but we are goingto use them 
+# Now using GRU and LSTM is the same, but we are going to use them 
 # in a new architecture. lets delve into the realm of nlp and write
-# a simple text generator! 
+# a simple text generator! which is a bit more involved than our previous
+# toy example. we will cover more concepts and hopefully get a better understanding
+# concerning all of this.
+# 
+# sidenote: 
+# the original version of this was written in 2018/2019 at which time
+# rnns were still widely used and transformers werent as widespread yet.
+# note that we dont use rnns to do these stuff anymore,
+# we instead use newer architectures such as transformers which are amazingly good at these
+# kinds of tasks and we will revisit all of these concepts(text generation, captioning, etc)
+# with them in future sections as well.
 
-# for our dataset, we use gutenberg opensource library which contains over 60K free ebooks,
-# you can access  this library using this link : http://www.gutenberg.org
+# For our dataset, we use gutenberg opensource library which contains over 60K free ebooks,
+# you can access this library using this link : http://www.gutenberg.org
 # we use http://www.gutenberg.org/files/1399/1399-0.txt but feel free to use anything you
 # you like !
 # lets roll everybody!:)
 
 # lets download the book and create a dataset out of it
 # ref : https://stackoverflow.com/questions/7243750/download-file-from-web-in-python-3 
-def download_ebook(url='http://www.gutenberg.org/files/1399/1399-0.txt',
-                   file_name='corpus.txt'):
-    import urllib.request as request
-    import os, sys
-
-    dir_name = 'data'
+def download_ebook(url, file_name='corpus.txt', dir_name = 'data'):
     file_name_path = os.path.join(dir_name, file_name)
-
+    
     if os.path.exists(file_name_path):
         return file_name_path
+    
     if not os.path.exists(dir_name):
-        os.mkdir(dir_name)
+        os.makedirs(dir_name, exist_ok=True)
+        
+    request.urlretrieve(url, file_name_path)
+    return file_name_path
 
-    try:
-        request.urlretrieve(url, file_name_path)
-        return file_name_path
-    except :
-        print(f'exception occurec!: {sys.exc_info()[0]} ')
-        return None
-
-with open(download_ebook(),'r') as file: 
+url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
+# lets download and read it all!
+with open(download_ebook(url),'r') as file: 
     corpus_raw = file.read()
 
-# we use repr to see the special characters
-# without it, the print statement will render them     
-# but before that lets have a minimal preprocessing step
-# lets lower case all characters! this will help with 
-# the end result, there are more preprocessings, but
+# our text, contains more than pure alphabet characters.
+# its filled with special characters as well. characters
+# that are not visible, such as line breaks, escape characters, etc
+# we use repr to see these special characters
+# without it, the print statement will render them all and we wont see anything!
+print(f'{repr(corpus_raw[:10])=}')
+# now lets have a minimal preprocessing step in which 
+# we remove all punctuation marks plus any characters 
+# that are not printable, i.e. special characters.
+# also lets make alll the characters lowercase! 
+# this will help with the end result, there are more preprocessings, but
 # for now its enough, we will see more in the next sections
-# such as sentiment analysis and word embedding section
+# such as sentiment analysis and word embedding sections
+# string module provides us a translate method which we can use to replace
+# specific characters with some other characters. we can use it to replace 
+# the ones we dont want. e.g the punctuation characters. 
+# we are creating a translation dictionary, and replacing all punctuations with ''
+# basically removing them with this line
 corpus_raw = corpus_raw.translate(str.maketrans('','',string.punctuation))
-corpus_raw = ''.join(filter(lambda x: x in set(string.printable), corpus_raw))
-corpus_raw = ''.join([h.lower() for h in corpus_raw])
-
+# we can now filter out the other escape characters!
+# by only selecting the printable ones!
+corpus_raw = ''.join(x for x in corpus_raw if x in set(string.printable))
+# and finally making all characters lower case
+corpus_raw = ''.join([c.lower() for c in corpus_raw])
+# now we get 'the projec' this time around!
 print(repr(corpus_raw[:10]))
 
-# our first step would be to tekenize our corpus 
+# We need to convert our input from textual format into a numerical one
+# that can be used to train our model with.
+# this is where tokenization comes into play. 
+# simply put, tokenization refers to us selecting the basic building block
+# of our input, which here is a character, and assign a numeric code to it.
+# (we could use words instead of characters, instead, but thats more computationally
+# demanding, but we get to it later on nonetheless). 
+# note that tokenization is extremely important and the way its done has a critical impact
+# on the end result. we will learn more about them in future sections but for now, we keep it simple)
+# so our first step would be to tekenize our whole corpus 
 # basically, we will tokenize our corpus of text
 # and then digitize each letter/symbol, and then 
 # use the encoded representation of these digitized
-# words. in order to encode them, we first need to 
+# words. 
+# In order to encode them, we first need to 
 # create a dictionary of each letter 
 # first we find all unique symbols.
 # using set, we can avoid duplicates
 unique_chars = set(corpus_raw)
+# lets sort it for better visualization
+unique_chars = sorted(unique_chars)
 # now lets create a char2int and int2char dictionaries!
 int2char = dict(enumerate(unique_chars))
 char2int = {c:d for d,c in int2char.items()}
-# print(chars)
-# print(int2char)
-# print(char2int)
+print(f'{unique_chars=}')
+print(f'{int2char=}')
+print(f'{char2int=}')
 print(f'unique characters: {len(unique_chars)} : \n {unique_chars}')
 # lets convert our corpus to int
-corpus_digitized = np.array([char2int[char] for char in corpus_raw])
-print(f'corpus digitized shape: {corpus_digitized.shape}')
+corpus_digitized = torch.tensor([char2int[char] for char in corpus_raw])
+print(f'{corpus_digitized.shape=}')
 print(corpus_digitized[:10])
 print('after conversion: ')
-print(repr(''.join([int2char[ii] for ii in corpus_digitized[:10]])))
+print(repr(''.join([int2char[idx.item()] for idx in corpus_digitized[:10]])))
 
 # ok so far so good. we now need to create a one-hot representation of our input
 # our inputs are digits, each digit as you saw, represents a single letter/symbol
 # so in order to train our net, we must one_hot encode them,
-def one_hot(input_array, length=10):
+def one_hot(array, length=10):
     # our list conains several digits, we will create a one hot vector
-    # for each digit 
-    one_hot_array = np.zeros(shape=(input_array.size, length), dtype=np.float32)
-    one_hot_array[np.arange(input_array.size), input_array.flatten()] = 1
-    return one_hot_array.reshape(*input_array.shape,length)
+    # for each digit. 
+    # you might think to yourself, why using float32 while we can use unsigned-int8,
+    # as we only deal with 0-1?! we can use uint8 and it helps alot in saving memory!
+    # as it only takes 1 byte for each number where as sth like a float32/int32 takes 4 bytes.
+    # but during training we have to cast this to float32 or otherwise the training will fail
+    # so we may as well set it as float32 when we are making it in first place. 
+    # to conserve memory and train with lower precision, there are other way we can use
+    # such as halfprecision training which we will see in future chapters.
+    one_hot_array = torch.zeros(size=(array.numel(), length), dtype=torch.float32)
+    # instead of using a simple for loop, we use the vectorized version
+    # sidenote:
+    # the torch.arange() simply creates a list of indexes and uses it to 
+    # pick values from the input-array which we flatten here, that value will
+    # be used as index for one_hot_array ultimately. it simulates a loop in a
+    # vectorized manner which is much faster!
+    # note the indeces in pytorch must be long/int or byte. since our array maybe
+    # int8 itself, we make sure the indexes are long().
+    one_hot_array[torch.arange(array.numel()), array.flatten().long()] = 1
+    # reshape the onehotvector to the original shape of input
+    # this is to basically get sth like (b,t,c) 
+    return one_hot_array.view(*array.shape, length)
 
 # lets test this 
-print(one_hot(np.array([0,1,9]),10))
+x = torch.tensor([0,1,9], dtype=torch.int32)
+print(f'onehot encoded:\n{one_hot(x,10)}')
+# sidenote: 
+# In pytorch, the size of a data type is determined by the underlying numpy data type. 
+# PyTorch uses the same data type sizes as NumPy.
+# so torch.float32 and torch.int32, both have 4 bytes (they are 32bits after all)
+# we can verify the size of these data types using the `torch.tensor.element_size` 
+# attribute, which returns the size of each element of the tensor in bytes.
+# 
+# Check the element size
+print('dtype sizes:')
+print(f"Size of {x.dtype}: {x.element_size()} bytes")
+print(f"Size of {x.float().dtype}: {x.float().element_size()} bytes")
+
+# we can also use the `torch.finfo`(for floats) and `torch.iinfo`(for ints) functions to 
+# get information about the data types, including their sizes.
+print(f'using torch.finfo/torch.iinfo')
+print(f"Size of {x.dtype}: {torch.finfo(torch.float32).bits // 8} bytes")
+print(f"Size of {x.float().dtype}: {torch.iinfo(torch.int32).bits // 8} bytes")
+# 
+# which prints 4 bytes on my sysem. 
+# Note that the sizes of data types can vary across different hardware platforms
+# and Python installations. However, for `torch.float32` and `torch.int32`, the 
+# sizes are typically 4 bytes on most modern systems.
+
+
+#%%
 # now we need to have batches! 
 def get_next_batch(corpus_digitized, batch_size=1, seq_len=10):
     # lets create batches from our corpus, first lets see
     # how many batches we can get from our corpus
-    char_count = corpus_digitized.shape[0]
+    char_count = corpus_digitized.size(0)
+    # calculate how many characters can fit in a batch given the sequence-length
     each_batch_size = batch_size*seq_len
+    # we can have this many batches
     batch_count = char_count // each_batch_size
     # now we should reshape our corpus data for easier access
-    corpus_p = corpus_digitized[:batch_count * each_batch_size]
-    # 
-    corpus_p = corpus_p.reshape(batch_size, -1)
-    # read one batch for data and label 
-    x = np.zeros(shape=(batch_size, seq_len),dtype=np.int)
-    y = np.zeros_like(x)
+    corpus = corpus_digitized[:batch_count * each_batch_size]
+    # reshape it into having a batch-dim
+    corpus = corpus.reshape(batch_size, -1)
+    # read one batch for data and label, 
+    # note our dtype is int becasue we are dealing with 0 and 1
+    # we didnt choose int8, to conserve memory.
+    # important note: 
+    # note that since our whole character set is less than 256(its 38!), we can 
+    # do this, otherwise we would face issues becasue x can not contain
+    # values larger than 256! it will silently fail and you may spend a lot of time
+    # to find the real culprit!
+    # to be on the safe side, you can use torch.int32! but for our special case,
+    # lets use uint8 (unsigned-int8) here!
+    x = torch.zeros(size=(batch_size, seq_len), dtype=torch.uint8)
+    y = torch.zeros_like(x)
 
-    for i in range(0, corpus_p.shape[1], seq_len):
-        x[:,:] = corpus_p[:, i:i+seq_len]
-        try : 
-
+    # preparing new input by reading seq_len from corpus each time
+    # note the try block is there to fill the labels for the last batch
+    for i in range(0, corpus.size(1), seq_len):
+        # sidenote: 
+        # x[...] is the same as x[:,:] which fills the x
+        # if we used x instead, it would be a new variable of whatever type corpus
+        # happened to be(i.e. int64). since we wanted to use uint8 to conserver 
+        # memory, we use x[...], otherwise it really wouldnt have mattered to us
+        # if we used int32/int64 as dtype for x reall.
+        x[...] = corpus[:, i:i+seq_len]
+        try :
             y[:, :-1] = x[:, 1:]
-            y[:,-1] = corpus_p[:,i+seq_len]
+            y[:, -1] = corpus[:, i+seq_len]
         except:
-            y[:,:-1] = x[:,1:]
-            y[:,-1] = corpus_p[:,0]
+            y[:, :-1] = x[:, 1:]
+            y[:, -1] = corpus[:, 0]
         yield x,y
 
 x,y = next(iter(get_next_batch(corpus_digitized,batch_size=3,seq_len=8)))
-print(x.shape)
-print(y.shape)
-print(x)
-print(y)
-print(one_hot(x,length=len(unique_chars)).shape)
+print(f'{x.dtype=}')
+print(f'{y.dtype=}')
+one_hot_x = one_hot(x, length=len(unique_chars))
+one_hot_y = one_hot(y, length=len(unique_chars))
+print(f'{x.shape=}')
+print(f'{y.shape=}')
+print(f'{x=}')
+print(f'{y=}')
+# print(f'{one_hot_x=}')
+print(f'{one_hot_x.shape=}')
 #%%
 
 # Ok everything seems ok now. lets create our network 
@@ -383,14 +531,16 @@ class lstm_char(nn.Module):
 
 # lets test our newtork 
 seq_len = 30
-data, labels = next(iter(get_next_batch(corpus_digitized,batch_size=2,seq_len=seq_len)))
+data, labels = next(iter(get_next_batch(corpus_digitized, batch_size=2, seq_len=seq_len)))
 print('initial data shape before one_hot encoding: ',data.shape)
 
+print(f'{data.dtype=}')
+print(f'{labels.dtype=}')
 data = one_hot(data, length=len(unique_chars))
 labels = one_hot(labels, length=len(unique_chars))
 
-data = torch.from_numpy(data)
-labels = torch.from_numpy(labels)
+# data = torch.from_numpy(data)
+# labels = torch.from_numpy(labels)
 
 direction = True
 num_layers = 1
@@ -399,7 +549,7 @@ model = lstm_char(rnn_type='lstm',
                   hidden_size=30,
                   num_layers=num_layers,
                   bidirection=direction )
-                  
+
 print(f'rnn type : {model.rnn_type}')
 print(f'our input(data).shape: {data.shape}')
 outputs, hiddenstates = model(data,None)
@@ -417,12 +567,12 @@ hidden_size = 512
 layers_cnt = 2
 bidirection = False
 rnn_type = 'lstm'
-device = torch.device('cuda' if torch.cuda.is_available()  else 'cpu')
+device = 'cuda' if torch.cuda.is_available()  else 'cpu'
 model = lstm_char(rnn_type=rnn_type,
                   unique_chars=unique_chars, 
                   hidden_size=hidden_size,
                   num_layers=layers_cnt, 
-                  bidirection=bidirection,dropout=0.3)
+                  bidirection=bidirection,dropout=0.5)
 model = model.to(device)
 optimizer = optim.Adam(model.parameters(), lr = 0.01)
 criterion = nn.CrossEntropyLoss()
@@ -432,124 +582,204 @@ epochs =60
 # in order to not face the exploding gradient in lstm
 # we clip the gradients
 clip = 5.
-interval = 1000 
+interval = 100 
 batch_size = 128
 label_length = len(unique_chars)
 hidden_states = None 
 
 val_ratio = 0.2
-val_idx = int(corpus_digitized.size * (1-val_ratio))
+val_idx = int(corpus_digitized.numel() * (1-val_ratio))
 train = corpus_digitized[:val_idx]
 val = corpus_digitized[val_idx:]
 
+print(f'running on device: {device}')
 print(f'rnn_type: {model.rnn_type}')
-print(f'corpus size: {corpus_digitized.size}')
-print(f'val size: {val.size}')
-print(f'train size: {train.size}')
-print(f'val + train: {val.size + train.size}')
-assert train.size + val.size == corpus_digitized.size ,'they must be equale!'
+print(f'corpus size: {corpus_digitized.numel():,}')
+print(f'val size: {val.numel():,}')
+print(f'train size: {train.numel():,}')
+print(f'val + train: {val.numel() + train.numel():,}')
+assert train.numel() + val.numel() == corpus_digitized.numel() ,'they must be equale!'
 
 for e in range(epochs):
-    for i, (data, label) in enumerate(get_next_batch(train, batch_size,seq_len=seq_len)):
-
-        #one hot encode 
-        model.train()
-        data = torch.from_numpy(one_hot(data,length=label_length)).to(device)
-        label = torch.from_numpy(label).to(device)
+    model.train()
+    total_loss = 0
+    for i, (data, label) in enumerate(get_next_batch(train, batch_size, seq_len=seq_len), start=1):
+        
+        # one hot encode the data and then feed it to the model
+        data = one_hot(data,length=label_length).to(device)
+        # label is not one-hot-encoded, crossentropy can do this on its own
+        label = label.to(device)
 
         output , hidden_states = model(data, hidden_states)
+     
         if model.rnn_type == 'lstm':
             hidden_states = tuple(h.data for h in hidden_states)
         else:#RNN, GRU
             hidden_states = hidden_states.data 
         
-        
-        # we dont one_hot_encode our labels, the crossEntropy() layer will do this internally!
+        # We dont one hot encode our labels, the crossEntropy() layer will do this internally!
         # since for output, we reshaped it so that the batch_size and sequence length are fused
         # we do the same thing for labels, so it can be used in cossentropy!()
         # the crossentropy loss, will internally convert each digit to its corosponding one_hot
-        # encoded vector. so basically we are just making sure,  the shape between, output and 
+        # encoded vector. so basically we are just making sure, the shape between, output and 
         # label is the same 
         label = label.view(batch_size*seq_len).long()
         loss = criterion(output, label)
+        total_loss += loss.item()
+        
         optimizer.zero_grad()
         loss.backward()
         # note the _, which indicates the inplace operation!
         torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
         optimizer.step()
+
         if i%interval==0:
-            print(f'epoch: {e}/{epochs} loss: {loss.item():.4f} lr: {scheduler.get_lr()[-1]:.6f}')
+            print(f'Epoch-Iter:: {e}/{epochs}-{i} | Loss: {total_loss/i:.4f} | LR: {scheduler.get_lr()[-1]:.6f}')
+    
+    # decay the lr per epochs
     scheduler.step()
-# test 
-print('test')
-hidden_states = None
-for i, (data,label) in enumerate(get_next_batch(val,batch_size,seq_len)):
-    with torch.no_grad():
-        model.eval()
 
-        data = torch.from_numpy(one_hot(data,label_length)).to(device)
-        label = torch.from_numpy(label).to(device)
+    # test 
+    hidden_states = None
+    total_loss_val = 0
+    for i, (data,label) in enumerate(get_next_batch(val, batch_size, seq_len),start=1):
+        with torch.no_grad():
+            model.eval()
 
-        output, hidden_states = model(data,hidden_states)
-        if model.rnn_type == 'lstm':
-            hidden_states = tuple(h.data for h in hidden_states)
-        else:#RNN, GRU
-            hidden_states = hidden_states.data 
-        loss = criterion(output,label.view(batch_size*seq_len).long())
-        if i % interval ==0:
-            print(f'loss: {loss.item():.4f}')
+            data = one_hot(data,label_length).to(device)
+            label = label.to(device)
+
+            output, hidden_states = model(data, hidden_states)
+            
+            if model.rnn_type == 'lstm':
+                hidden_states = tuple(h.data for h in hidden_states)
+            else:#RNN, GRU
+                hidden_states = hidden_states.data 
+            
+            total_loss_val += criterion(output,label.view(batch_size*seq_len).long()).item()
+            
+            if i % interval ==0:
+                print(f'  Loss-val: {total_loss_val/i:.4f}')
+    print(f'  Loss-val-total: {total_loss_val/i:.4f}')
+#...
+#   Loss-val-total: 1.1561
+# Epoch-Iter:: 58/60-100 | Loss: 1.0288 | LR: 0.000100
+# Epoch-Iter:: 58/60-200 | Loss: 1.0290 | LR: 0.000100
+# Epoch-Iter:: 58/60-300 | Loss: 1.0288 | LR: 0.000100
+#   Loss-val-total: 1.1563
+# Epoch-Iter:: 59/60-100 | Loss: 1.0305 | LR: 0.000100
+# Epoch-Iter:: 59/60-200 | Loss: 1.0294 | LR: 0.000100
+# Epoch-Iter:: 59/60-300 | Loss: 1.0288 | LR: 0.000100
+#   Loss-val-total: 1.1565
+# 
+# After around 60 epochs we get to ~1.02 in training and 1.15 in val
+# 
 #%%
-# now its time for sampling and generating new text. 
+# sidenote: 
+# there are many ways to generate good looking text, many such techniques
+# were devised for LLMs in the past few years.
+# we will see a few of them in transformer/llm sections
+
+# now its time for sampling and generating new text.
 # basically this boils down to feeding a random character and then 
 # feed the next generated character to the next timestep as the next input
 # and this goes on till we generate the whole text. 
-# since our network produces distributions , we use softmax to get the probablity
+# since our network produces distributions, we use softmax to get the probablity
 # , for each timestep, we can choose the highest probable outcome, or just randomly
-# choose one, you'll see how this is done if this is vagueto you. 
+# choose one, you'll see how this is done in a moment. 
 # first we need to create a fucntion that does one thing only! 
 # feed one character and retreieve one character from our neytwork. 
-# we then use this function to create more characters in a loop. thats basically it!
-def predict(model, input, unique_chars, hidden_states=None, topk=None):
+# we then use this function to create more characters in a loop.
+# thats basically it!
+def predict(model, input, hidden_states=None, topk=5):
     model.eval()
     int2char = model.int2char
-    char2int = model.char2int 
+    char2int = model.char2int
+    unique_chars = len(int2char)
     # print(char2int)
-    # convert input string into corrosponding ids
-    input =  np.array([char2int[input]]).reshape(1,-1)
-    one_hot_vec = torch.from_numpy(one_hot(input, len(unique_chars))).to(device)
+    # convert input string into corrosponding ids and add a batch dim
+    input =  torch.tensor([char2int[input]]).reshape(1,-1)
+    one_hot_vec = one_hot(input, unique_chars).to(device)
     output, hidden_states = model(one_hot_vec, hidden_states)
 
-    output = torch.nn.functional.softmax(output,dim=1)
+    output = output.softmax(dim=1)
     # now our output has probabilities for each sequence/timestep
     # we will choose the highest one here 
-    if topk==None:
-        indexes = output.topk(np.arrange(len(unique_chars)))
+    probs, indexes = output.topk(k=topk, dim=1)
+    indexes = indexes.cpu().data.squeeze()
+    probs = probs.cpu().data.squeeze()
+    
+    # if we were to use numpy, we would have to write it like this, 
+    # use indexes, and also provide the probablities for these 
+    # char = np.random.choice(indexes.numpy(),p=probs.numpy()/probs.numpy().sum())
+    # note we have to renormalize the probs so that each of these new probablities
+    # also note that, we sample from the indexes, each index represents a character
+    # so sampling from them means choosing between different characters based on their
+    # probablities here.
+    if probs.numel()==1: # if topk=1
+        char = indexes.item()
     else:
-        probs, indexes = output.topk(k=topk, dim=1)
-        indexes = indexes.cpu().data.numpy().squeeze()
-        probs = probs.cpu().data.numpy().squeeze()
-
-    char = np.random.choice(indexes,p=probs/probs.sum())
+        char = indexes[torch.multinomial(probs/probs.sum(dim=-1), num_samples=1, replacement=True)].item()
     return int2char[char], hidden_states
 
-def sample(model, size=10, prime='hello there'):
+def sample(model, size=10, prompt='hello there',topk=5):
     
-    chars = [ch.lower() for ch in prime]
+    # chars = [ch.lower() for ch in starter_message]
     h = None
-    prime = prime.lower()
+    prompt = prompt.lower()
+    # add the prompt/start message
+    chars = list(prompt)
     # print(unique_chars)
-    for ch in prime:
-        o,h = predict(model, ch, unique_chars,h,topk=5)
+    # now append the new generated text 
+    # by first feeding the whole prompt/starter message to 
+    # condition the model, and then the append the last output
+    # (which is what we want) to the chars list
+    for ch in prompt:
+        o,h = predict(model, ch, h, topk=topk)
     chars.append(ch)
 
-    for c in range(size):
-        o, h = predict(model,chars[-1],unique_chars,h,topk=5)
+    # now start from the last newly generated character
+    # we just got from previous loop, use it to generate
+    # new characters, as many as the size dictates.
+    # chars[-1] grabs the last freshly generated character
+    # from previous attempt and feeds it to the network to
+    # generate new one. the new one is then appended to the
+    # chars list and this continues until we have generated
+    # the right amount of characters specified by size 
+    for _ in range(size):
+        o, h = predict(model, chars[-1], h, topk=topk)
         chars.append(o) 
-
+        
+    # finally we convert all into a big string
     return ''.join(chars)
 
 print(unique_chars)
-print(sample(model, size=200,prime='The '))
+print(repr(sample(model, size=200, prompt='\n',topk=5)))
+# output: 
+# \n\nand will be the creation was announced\n
+# the storm why do you know when i would your\n
+# form and she said smiling she went out that all over and he smiled him at the man to
+# decide it in all its an answer t
+ 
+# Heres a second output-with loss:1.056:
+# anna and the carriage was sinking of another that he was almost successfully a sense of tears that he was a look
+# \nwell thats a little thing i am there and i could not ask the sight of the powers of th
+# 
+# with loss ~= 1.0288 we get much better outputs like this: 
+# yes i can go away and i have not seen it\n\n
+# well then she thought\n\n
+# yes to do with anna that you will come to me and then said levin and he was\n
+# not all at once with him and so said he would have said all'
+# 
+# Now try with topk=1 which means to grab the most probable character all the time
+# and compare it to the topk=5. try different prompts and see how it affects the output.
+# 
+# you see the network have learned words, and their positions in the sentence,
+# and also a bit of grammar albeit not prefectly, it doesnt produce a lot of 
+# meaningful pieces yet, but as loss gets lower, we can see results get better.
+# with better training regime, better architecture, etc we can improve upon it.
+# we dont spend too much time here, as we will return to this when we cover llms 
+# and transformers in future sections. 
 #%%
 # NOte : 
 # how to use bidirectional LSTM/RNN 
@@ -561,10 +791,21 @@ print(sample(model, size=200,prime='The '))
 # but using Pytorch we dont have to deal with this hassle 
 # for using bidirectional version of the mentioned rnn networks, just look at the implementation
 # that I provided in our example. 
+# 
+# todo: summarize/rephrase: 
+# to create a bidirectional RNN from scratch, 
+# we would need to create two separate RNN models (e.g., LSTM, GRU, or vanilla RNN).
+# One model would process the input sequence in the normal order, 
+# while the other model would process the input sequence in reverse order.
+# after processing the input sequences with both models, we would typically concatenate
+# (or sum) the final hidden states or outputs from both models. 
+# Concatenation is more common, as it preserves the information from both directions.
+#  
+# 
 # note that in our simple case of text generation, the bilstm wouldnt magically make everything better
 # infact you may see the loss decreases much more, but the text generation is aweful! guess what
-# is causing this? 
-
+# is causing this? the bidirection defeats the purpose of serial nature of the text, the network
+# cant learn/model the statistics of what comes next given certain characters.
 
 #%%
 #%% Attention Mechanism 
@@ -596,33 +837,37 @@ print(sample(model, size=200,prime='The '))
 # resources is https://www.manythings.org/anki/ that we can download text corpus and use it
 # for translations. OK now lets continue with attention mechanism 
 # as you can see, I have posted a lot of resources that you can use, I myself read some of them
-# and will quote from them. so what is an attention mechanism and why do we even care? 
+# and will quote from them. 
+# so what is an attention mechanism and why do we even care? 
 # Attention mechanism, as its name implies, is a mechanism which helps the network to pay more
 # attention on specific parts of the input in order to produce more plausible outcome. 
 # it was initially proposed for NMT or neural machine translation, where for example, you want
-# to translate a sentence from one language to another. in a traditional case which we saw earlier
+# to translate a sentence from one language to another.
+# in a traditional case which we saw earlier
 # in such cases, a seq2seq model is used, that is, a network comprising of two networks, an encoder
 # and a decoder, where the input sequence is fed to the encoder, a decoder ultimately recieves a 
 # compressed representation , representing the input sequence, from the encoder part and then, 
-# tries  to produce a sequence as the answer. the problem with this procedure was/is that for a long
+# tries  to produce a sequence as the answer. 
+# the problem with this procedure was/is that for a long
 # sequence, we cant transfer the information from earlier time steps, its just simply not possible 
-# (yes I know how we said about the lstm and gru gates, retaining earlier time step features, they 
+# (yes I know how we said about the lstm and gru gates, retaining earlier time step features, the 
 # idea here, is even if lstm gates simply and ease the transfer of a specific feature from earlier
 # time steps to the later timesteps, lots of such information will be lost becasue the last output
 # is simply a finite fixed-size vector which can only accomated so much features, and mostly they 
 # will be features from recent timesteps as apposed to earlier ones. please note that, there 
 # are lots of relationships between each word, and also underlying concept in a given sequence, 
 # suppose, in an optimal case, your sequence, had 40 underlying features, that needed to be identified 
-# and used so a perefect output be created, however, since there is no mechanism to retain 'all' of 
+# and used so a perefect output is created, however, since there is no mechanism to retain 'all' of 
 # these features, and we face a fixed final vector, plus our training procedure is not perefect and 
 # also have noise!, only a handful of such features get the chance to be transfered, features do get
 # identified, but they cant be utilized as we dont have a mechanism to use them effectively so in the
-# current procedure, they just get lost. so what should we do then? we can use all of t he states 
+# current procedure, they just get lost. 
+# so what should we do then? we can use all of the states 
 # from all previous timesteps instead of using only the last one. this way, we can provide much more
 # information and this wealth of information at each timestep can help the network produce better result
 # but how do we do that? surely not all hidden states, are equally important when it comes to producing 
 # a translation, a new word e.g. here we can rank them based on how much they affect the outcome. 
-# this way the network will gradually understand the relation ship and focuses on the correct states
+# this way the network will gradually understand the relationship and focuses on the correct states
 # when needed. this is the gist of attention. we simply use all hidden states from all timesteps in 
 # the encoder and feed them to the decoder as input. 
 # how do we pay attention more or less to a specific hidden state at a timestep ?
@@ -638,6 +883,7 @@ print(sample(model, size=200,prime='The '))
 # two important methods exist among others. They are known as Bahdanau, and luoung , 
 # which indicate the main authors of two papers that proposed these methods for attentions. 
 
+#ref https://blog.floydhub.com/attention-mechanism/
 # The first type of Attention, commonly referred to as Additive Attention, came from a paper by 
 # Dzmitry Bahdanau, which explains the less-descriptive original name. The paper aimed to improve the
 # sequence-to-sequence model in machine translation by aligning the decoder with the relevant input
@@ -874,7 +1120,7 @@ print(f'decoder output: {yz}')
 # we know our label contains words, positive and neagative, so we convert them into numbers, 1, 0
 # our reviews must be dgitized so we can feed them into our network  , but before that we need
 # to do some preprocessings. the preprocessings include 
-# 1. make everything lower case 
+# 1. make everything lower case -not needed really
 # 2. remove punctuations 
 # 3. remove special characters such as \n 
 # 4. split only words! we dont want to create text, so creating dictionaries of characters 
@@ -901,9 +1147,9 @@ import torch.optim as optim
 %matplotlib inline 
 
 # first lets read our files 
-with open(r'data\reviews.txt','r') as file: 
+with open('/media/hossein/SSD1/code_dl/reviews.txt','r') as file: 
     reviews_raw = file.read().lower()
-with open(r'data\labels.txt', 'r') as file: 
+with open('/media/hossein/SSD1/code_dl/labels.txt', 'r') as file: 
     labels_raw = file.read().lower()
 # lets see what we have here 
 print(repr(reviews_raw[:2000]))
@@ -978,14 +1224,14 @@ print(new_labels[:10])
 # anyway lets create a function that gets the digitized review and returns a 
 # padded numpy array . we define a maximum length , and fill it from the end
 def pad_input(new_reviews, max_length =200):
-    padded_array = np.zeros(shape=(len(new_reviews), max_length),dtype=np.int)
+    padded_array = np.zeros(shape=(len(new_reviews), max_length),dtype=np.int32)
     for i,review in enumerate(new_reviews) : 
         padded_array[i,-len(review):] = review[:max_length]
     return padded_array 
 
 reviews_digitized = pad_input(new_reviews, 150)
 print(reviews_digitized[:1])
-
+#%%
 training_frac = 0.80
 tr_idx = int(reviews_digitized.shape[0] * training_frac)
 training_set, remaining_set = reviews_digitized[:tr_idx,:], reviews_digitized[tr_idx:,:]
