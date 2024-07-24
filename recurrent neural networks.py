@@ -833,19 +833,20 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # https://medium.com/@bgg/seq2seq-pay-attention-to-self-attention-part-1-d332e85e9aad
 
 # Now lets learn about Attention mechanism! 
+# sidenote - old
 # before we continue, for sequence to sequence models and translations, one of the good 
 # resources is https://www.manythings.org/anki/ that we can download text corpus and use it
 # for translations. OK now lets continue with attention mechanism 
 # as you can see, I have posted a lot of resources that you can use, I myself read some of them
 # and will quote from them. 
-# so what is an attention mechanism and why do we even care? 
+
+# So what is an attention mechanism and why do we even care? 
 # Attention mechanism, as its name implies, is a mechanism which helps the network to pay more
-# attention on specific parts of the input in order to produce more plausible outcome. 
-# it was initially proposed for NMT or neural machine translation, where for example, you want
+# attention to specific parts of the input in order to produce more plausible outcome. 
+# it was initially proposed for NMT or neural machine translation, where for example, you'd want
 # to translate a sentence from one language to another.
-# in a traditional case which we saw earlier
-# in such cases, a seq2seq model is used, that is, a network comprising of two networks, an encoder
-# and a decoder, where the input sequence is fed to the encoder, a decoder ultimately recieves a 
+# in a traditional case which we saw earlier in such cases, a seq2seq model is used, 
+# that is, a model comprising of two networks, an encoder and a decoder, where the input sequence is fed to the encoder, a decoder ultimately recieves a 
 # compressed representation , representing the input sequence, from the encoder part and then, 
 # tries  to produce a sequence as the answer. 
 # the problem with this procedure was/is that for a long
@@ -884,40 +885,71 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # which indicate the main authors of two papers that proposed these methods for attentions. 
 
 #ref https://blog.floydhub.com/attention-mechanism/
-# The first type of Attention, commonly referred to as Additive Attention, came from a paper by 
-# Dzmitry Bahdanau, which explains the less-descriptive original name. The paper aimed to improve the
-# sequence-to-sequence model in machine translation by aligning the decoder with the relevant input
-# sentences and implementing Attention. The entire step-by-step process of applying Attention in
-# Bahdanau’s paper is as follows:
-# 1.Producing the Encoder Hidden States - Encoder produces hidden states of each element in the input
-# sequence
-# 2.Calculating Alignment Scores between the previous decoder hidden state and each of the encoder’s
-# hidden states are calculated (Note: The last encoder hidden state can be used as the first hidden
-# state in the decoder)
-# 3.Softmaxing the Alignment Scores - the alignment scores for each encoder hidden state are combined 
-# and represented in a single vector and subsequently softmaxed
-# 4.Calculating the Context Vector - the encoder hidden states and their respective alignment scores 
-# are multiplied to form the context vector
-# 5.Decoding the Output - the context vector is concatenated with the previous decoder output and fed
-# into the Decoder RNN for that time step along with the previous decoder hidden state to produce a 
-# new output
-# The process (steps 2-5) repeats itself for each time step of the decoder until an token is produced
-# or output is past the specified maximum length
+# Bahdanau paper: https://arxiv.org/abs/1409.0473 
+# 
+# As we briefly mentioned a little before, one of the main issues of the traditional RNNs, when 
+# it came to do sequence-to-sequence modeling (e.g. machine translation), were that they used a
+# fixed length vector/representation. this works for small lengths, but when the sequence length
+# becomes larger, it becomes extremeley inefficient. we simply cant retain a state from long time ago
+# and therefore cant form new relationships, reveal underlying concepts, etc properly and adequatly.
+# Bahdanau et al, therefore proposed a method to fix this issue. So in his work, he proposed to utilize
+# all intermediate hiddenstates from encoder, as aposed to its final state, when we are generating new 
+# tokens in the decoder. remember the idea was the encoder digests the input, creates a middle compressed
+# representation, which then the decoder uses to generate a translation for. but in its simple form the encoder
+# cant encode all the necessary information, therefore the so called compressed form is extremely lossy and
+# cant be used to represent the input sequence adequatly and properly. this in turn leads to decoder not being
+# able to do its job properly as it doesnt get the required information it needs. this mechansim however, 
+# tries to fix this issue, by streaming more information from different timesteps in the encoder to the 
+# decoder so it can access to more information and consequently does a better job.(and indeed it does)
+# this is what later became known as, Bahdanau attention, or also Additive Attention.
+# 
+# The basic idea as we just saw, is to simply somehow connect the decoder's hidden states with the
+# relevant input sentences which is nothing but the encoder's outputs(hidden states) for each timestep. 
+# this connection is shown as a simple addition (hence the name addative attention) between the two. 
+# Attention = v_scale * tanh(W_decoder * decoder_hiddens + W_encoder * encoder_hiddens)
+# This is the gist of it, there are concepts such as context and other implmentation details which we 
+# are going to get to in a moment. 
+#
+# sidenote: a lot of people implemented this mechanism differently! and many incorrectly, below is the
+# correct way, in the sense that it is what the paper instructs to follow is presented. 
+# the very basic idea is to use the attention weight (after going through softmax)and apply it on the
+# encoder's hidden-states and get a context vector. it is then fed to the decoder to get new hiddenstates/outputs
+# and this repeates until the decoder creates an output for all timesteps. 
+# in the second version, the context vector is applied on the input(the same input which encoder digested)
+# and then that is then fed to the decoder and its repeated until all timesteps are done.
+#
+# The actual overal steps according to the paper however, is as follows: 
+# 1.Encoder produces hidden states of each element in the input sequence
+# 2.Decoder recieves these hidden states and calculating an alignment score 
+#   between its previous hidden state and each of the encoder’s hidden-states. 
+#   (Note: The last encoder hidden-state can be used as the first hidden-state in the decoder)
+# 3.The scores for each encoder hidden state are combined and represented in a single vector and subsequently softmaxed
+# 4.The encoder hidden-states and their respective alignment scores are multiplied to form the context vector
+# 5.The context vector is concatenated with the previous decoder output and fed into the Decoder RNN 
+#   for that time step along with the previous decoder hidden-state to produce a new output
+# 
+# The process (steps 2-5) is repeated for each time-step of the decoder until a token is produced
+# or output is past the specified maximum length.
 
-# For our first step, we’ll be using an RNN or any of its variants (e.g. LSTM, GRU) 
-# to encode the input sequence. After passing the input sequence through the encoder RNN,
-# a hidden state/output will be produced for each input passed in. Instead of using only the hidden
-# state at the final time step, we’ll be carrying forward all the hidden states produced by the 
-# encoder to the next step
+# sidenote:
+# remember in PyTorch, a RNN returns two outputs, the first one is the hidden-states for each timestep
+# and the second one is the final hidden-state (for the last timestep). PyTorch refers to the first returned
+# field, as outputs, and the the second one as hidden_states. just be aware of that.
+# 
+# (this is important and the outputs may not be the best name, as unlike the traditional sense, 
+# its not gone through a linear layer with activation function (e.g. tanh in the case of simple RNN),
+# as one might think of the output layer of a rnn like what we did in our RNN tutorial/implementation) 
+# therefore, instead of using only the last hidden state for the final timestep, we’ll be carrying forward 
+# all hidden-states (i.e. for all timesteps) produced by the encoder to the next step.
 
-# After obtaining all of our encoder outputs, we can start using the decoder to produce outputs. 
+# After this step, we can start using the decoder to producethe outputs. 
 # At each time step of the decoder, we have to calculate the alignment score of each encoder output
-# with respect to the decoder input and hidden state at that time step. The alignment score is the 
-# essence of the Attention mechanism, as it quantifies the amount of “Attention” the decoder will 
-# place on each of the encoder outputs when producing the next output.
+# with respect to the decoder input and hidden-state at that time step. 
+# The alignment score is the essence of the Attention mechanism, as it quantifies the amount of 
+# "Attention" the decoder will place on each of the encoder outputs when producing the next output.
 
-# The alignment scores for Bahdanau Attention are calculated using the hidden state produced by the decoder in the previous time step and the encoder outputs with the following equation:
-
+# The alignment scores for Bahdanau Attention are calculated using the hidden state produced by
+# the decoder in the previous timestep and the encoder outputs with the following equation:
 # score_alignment = W_combined * tanh(W_decoder * H_decoder + W_encoder * H_encoder)
 
 # as you can see, its basically the decoders hidden state plus the encoders hidden state which are
@@ -925,7 +957,11 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # importantce each hidden state has. 
 
 # The decoder hidden state and encoder outputs will be passed through their individual 
-# Linear layer(that is we use nn.Linear without a bias since it simply does a W*input! and makes life easier for us, without it, we should define a new parameter W and multiply it by the decoder hidden state, its the same thing! but uglier! so  thats why we simply use a linear layer as a learnable parameter for (W_decoder*H_decoder)) and have their own individual trainable weights.
+# Linear layer(that is we use nn.Linear without a bias since it simply does a W*input!
+# and makes life easier for us, without it, we should define a new parameter W and multiply it
+# by the decoder hidden state, its the same thing! but uglier! so thats why we simply use 
+# a linear layer as a learnable parameter for (W_decoder*H_decoder)) and have their own 
+# individual trainable weights.
 
 # Lastly, the resultant vector from the previous few steps will undergo matrix multiplication with 
 # a trainable vector, obtaining a final alignment score vector which holds a score for each encoder
@@ -961,6 +997,370 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # this is an excellent blog post. highly recommened it 
 # https://srome.github.io/Understanding-Attention-in-Neural-Networks-Mathematically/
 
+# Now lets build our model.
+# Heres how we are going to implement it
+# we are going to define a separate module for encoder
+# and an attention_decoder module
+# finally we will use them in our RNN module with these two!
+# of course we can build all of them in a single model but the first way is neater
+# for encoder and decoder, we are going to use embedding layers.
+#%%
+import torch
+import torch.nn as nn
+
+class Encoder(nn.Module):
+    def __init__(self, vocab_size, embedding_dim, hidden_size, num_layers=1, bidirectional=False, dropout=0.3):
+        super().__init__()
+        # our vocabulary size is used as embedding_size
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.dropout = dropout
+        
+        # instead of one-hot encoding our input sequence, we use an embedding layer
+        # to give us representations that are way more informative than a one-hot
+        # encoded representation!
+        # In some implementations you may see, the encoder
+        # accepts hidden-size as input-size, and subsequently
+        # the embedding dim also have to become hidden-size.
+        # but here, we simply use an embedding_dim to decouple it from
+        # input-size/sequence-length or the hidden-size.
+        self.embedding = nn.Embedding(self.vocab_size, embedding_dim)
+        
+        # we need a rnn to process the input sequence
+        # we use an lstm for its superior performance, 
+        # the paper uses GRU!
+        self.lstm = nn.LSTM(input_size=embedding_dim, 
+                            hidden_size=self.hidden_size, 
+                            num_layers=self.num_layers,
+                            batch_first=True, 
+                            dropout=self.dropout, 
+                            bidirectional=self.bidirectional)
+
+    def forward(self, x, h):
+        x = self.embedding(x)
+        return self.lstm(x,h)
+# lets test 
+# enc = Encoder(input_sequence_size=30, embedding_dim=75,vocab_size=50, hidden_size=100)
+# xt = torch.randint(0,50, size=(5,30))
+# outputs,hidden_state = enc(xt,None)
+# print(f'{outputs.shape=}\n{hidden_state[0].shape=}\n{hidden_state[1].shape=}')
+# good now lets implement our decoder with the attention mechanism
+
+class BahdanauAttentionDecoder(nn.Module):
+    def __init__(self, input_sequence_length, output_sequence_length, vocab_size, embedding_dim, hidden_size, num_layers, bidirectional=False, dropout=0.5) -> None:
+        super().__init__()
+        # input size or sequence length!
+        self.input_seq_len = input_sequence_length
+        # since this is a seq2seq model, the
+        # output size can be different
+        self.output_seq_len = output_sequence_length
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.dropout = nn.Dropout(dropout)
+        
+        # we need an embedding layer to prepare our input instead of one-hotencoding it
+        # we need an rnn for decoding. we can use a lstmcell or a lstm layer, we use the
+        # latter as it can be more powerful (add more layers, etc)
+        # but we should have no issue replacing it with a lstm cell (test this when all is done)
+        #
+        # we need 3 weights. 
+        #   one for decoders state, 
+        #   one for encoders state and
+        #   one for the weight scale(w_v)
+        # we can use input_sequence_size, or hiddensize, but I want to use embedding-dim!
+        # to decouple it from inputsize and hiddensize.
+        self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
+        
+        # our decoder's input will be the concatenated input_t and context_vector
+        # both of which will have the shape (batchsize, timesteps) or (batchsize, seq_length)
+        # we are using a LSTM instead of a LSTMCell, becasue it makes our life easier. 
+        # if we use LSTMCell, we have to use a few extra reshapes which is unncessary really. 
+        # using an lstm layer lke this, makes it a oneliner! easy peasy!
+        self.decoder = nn.LSTM(self.input_seq_len+self.embedding_dim,
+                               hidden_size=self.hidden_size,
+                               num_layers=self.num_layers,
+                               batch_first=True,
+                               dropout=dropout, 
+                               bidirectional=self.bidirectional,
+                               )
+        
+        # we also implement the lstmcell version as well, when we implemented everything
+        # we enable this and add the lstmcell related changes (its only the decoder part
+        # see the explanation in codes)
+        # self.decoder = nn.LSTMCell(self.input_seq_len+self.embedding_dim,
+        #                            hidden_size=self.hidden_size)
+        
+        # weights for decoders hidden_states
+        # we use a linear layer without bias 
+        # which does exactly what we want!
+        self.W_decoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        # weights for encoders hidden_states 
+        self.W_encoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        # weights for the scaling which is (1,hidden_size) 
+        # becasue its multiplied by the result of the previous
+        # weights, for this we use nn.Parameter to create a 
+        # learnable wight/parameter, some implementation only 
+        # use a single neuron/scaler for W_v
+        # the 1, in the shape is just to remind us we do the right thing so the correct broadcasting happens
+        # see the later notes
+        self.W_v =  nn.Parameter(torch.ones(1,hidden_size))
+        # final classification layer to give us the final results
+        self.classifier = nn.Linear(hidden_size, output_sequence_length)
+    
+    
+    def forward(self, input_sequence, encoder_states, hidden_state):
+        # since we want to feed our input to decoder as well
+        # we run embedding on the input_sequence as well
+        # for all input timesteps, we repeat this process
+        print(f'input_sequence.shape:{tuple(input_sequence.shape)}')
+        input_sequence = self.embedding(input_sequence)
+        print(f'after embedding: {tuple(input_sequence.shape)}')
+        for t in range(input_sequence.size(1)):
+            # grab one timestep from input
+            print(f'------------------------')
+            print(f'timestep: {t}/{input_sequence.size(1)}')
+            input_t = input_sequence[:,t]
+            # note that pytorch requires our input to be in the form
+            # of (batch, timestep, input_dim) to treat it as a batched input
+            # so we need to have a dim dedicated to the timestep, since this is
+            # a single timestep, we simply make the dim and that suffices.
+            # likewise the hiddenstate shape will have the form 
+            # (num_layers*bidirection, Batchsize, hiddensize) which in our case
+            # will be (1, batchsize, hiddensize) as we have a single layer and no
+            # bidirection.
+            input_t = input_t[:,None,:]
+            print(f'{input_t.shape=}')
+            # print(f'{input_t=}')
+            outputs, hidden_state = self.forward_attention(input_t, encoder_states, hidden_state)
+            hidden_state = tuple(h.detach()for h in hidden_state)
+            
+        # classify output
+        # get logits and ready for classification
+        outputs = self.classifier(outputs.reshape(outputs.size(0),-1))
+        return outputs
+
+    def forward_attention(self, input_sequence_t, encoder_states, hidden_state):
+        # calculate attention raw score (attn = w_v + tanh(W_D+W_E))
+        # do a softmax, make the rawscores into conditional probablities
+        # multiply the new weight/scores by the attention-states, get the context vector
+        # feed the context vector to the decoder wither alone or concatenated with input
+        # at timestep t, calculate new outputs, hiddenstates and return the outputs 
+        # and hidden_state for this timestep
+        # grab the long-term memory(h)
+        (h,c) = hidden_state
+        print(f'{h.shape=}')              # (1, batch, hidden-size)
+        print(f'{encoder_states.shape=}') # (batch, timesteps, hidden-size)
+        # our hidden state has the shape (num-layers, batch, hidden-size), since our num_layers=1
+        # its (1, batchsize, hiddensize) here.
+        # while our encoder's outputs has (batch, timesteps, hidden-size)
+        # we need to reshape our hiddenstate to have (batchsize, 1, hiddensize)
+        # the easiest way is to simply transpose/permute it:
+        h = h.permute(1,0,2)
+        
+        print(f'{h.shape=}')
+        # after this we can simply add the W_d and W_e together, the W_d will be broadcasted
+        # (will be repeated along dim=1, and these two will be added properly)
+        W_d = self.W_decoder(h)
+        W_e = self.W_encoder(encoder_states)
+        # atten = W_v * tanh(W_d + W_e)
+        print(f'{W_d.shape=}') # will be (batch, 1, hidden-size)
+        print(f'{W_e.shape=}') # will be (batch, ts, hidden-size)
+        weights_added = torch.tanh(W_d + W_e)
+        print(f'{weights_added.shape=}') # (batch, ts, hidden-size)
+        print(f'{self.W_v.shape=}') #(1,hidden-size)
+        # likewise our W_v shape is (1,hidden-size), in order to multiply it by
+        # our weights_added, we need to make it compatible. 
+        # making it (1,1,hidden-size) should do the trick, and it will be broadcasted 
+        # accordingly to match (batch, ts, hidden-size).
+        # the good thing is, we dont need to do sth like W_v.data.unsqueez_(0)! for this
+        # (1,hidden-size) will be automatically broadcasted.
+        # TODO method 1 :
+        attention_score = self.W_v * weights_added # (batch, ts, hidden-size)
+        
+        # note that we have two ways to get to the same shape, but only one of them is correct.
+        # if we do that the result will also be (batch,ts,hidden-size)
+        # we could also achieve this shape by doing a matmul
+        # TODO use method 2:
+        # attention_score = torch.matmul(weights_added ,self.W_v.data.t())
+        
+        # print(f'{attention_score.shape=}') # (batch,ts,1)
+        # and we get (batchsize, ts, 1). 
+        # this means the context vector at the end will endup (batchsize,ts,hiddensize)
+        # so which way is correct? 
+        # lets think about our choices here
+        #
+        #
+        # torch.set_printoptions(profile='default')
+        # softmax to ensure both nonnegativity and normalization. 
+        attention_weights = attention_score.softmax(dim=-1)
+        print(f'{attention_weights.shape=}')
+        # print(f'{weights=}')
+        
+        # Like before, we also have two ways of calculating context vector
+        # we can have an elementwise multiplication and then sum over the 
+        # hidden dim or simply do a batch matrix multiply, where we multiply these two
+        # and the result is (batchsize, ts,ts) (and then sum so the last dim is reduced)
+        # TODO test with this (enable this and disable the matmul version)
+        # context_vector = attention_weights*encoder_states
+        # context_vector = context_vector.sum(dim=-1)
+        # print(f'{context_vector.shape=}')
+        # note that context is a weighted sum of the encoder hidden-states
+        # that is why we need to sum along the hiddenstate dimension to ultimately
+        # get (batchsize, ts)
+        
+        # print(f'-{context_vector.shape=}')
+        # TODO:‌ use bmm or batched matrix multiply (basically matmul()) it should
+        # give us (batchsize, ts,ts) which if summed gives us (batchsize, ts)!
+        # this maybe the right operation, as it carries a dot product between the two
+        # matrixes (batch multiplication happens between the two)
+        # while for the first approach, its an elemntwise multiplication and summation
+        # basically scaling and summing the last dim. 
+        context_vector = torch.matmul(attention_weights, encoder_states.permute(0,2,1)).sum(dim=-1)
+        print(f'{context_vector.shape=}')
+        # and at this point we have a context vector that shows the attention
+        # of each input sequence, we can feed this directly to decoder
+        # or concatenate it with the input at timestep_t and then feed this new
+        # input to decoder.
+        
+        # I have seen some people where they multiply context by the encoder-states 
+        # and then use that to concatenate with the input. 
+        # this is called multiplicative attention. by the way its different than 
+        # loung attention! which we will see in a moment
+        # 
+        # states = context*encoder_states
+        # print(f'{states.shape=}')
+        
+        print(f'{input_sequence_t.shape=}')
+        
+        # we can now use this to feed out decoder , 
+        # but usually we concatentate our input_sequence with this
+        # context and then feed it to our decoder 
+        # since our input needs to be in the form (batchsize, timestep, features), we 
+        # make context_vector to have a timestep dim as well. 
+        decoder_input = torch.cat([input_sequence_t, context_vector[:,None,:]],dim=-1)
+        print(f'{decoder_input.shape=}')
+        # make the hiddenstate the (layer, batch, hiddenstate) instead of (batch,layer,hiddensatet)
+        # h = h.permute(1,0,2)
+        # print(f'{h.shape=}')
+        # lstm decoder expects the hiddensize to be a tuple so we can either use (h,h)
+        # or use the previous hiddenstate altogether, (h is our longterm memory and c 
+        # is the short term memory!and we have been using the long term one)
+        # sidenote: to test the lstmcell version, comment this part and uncomment the lstmcell section!
+        # outputs, hidden_state = self.decoder(decoder_input, (h,h))
+        outputs, hidden_state = self.decoder(decoder_input, hidden_state)
+        
+        ############################## changes for using lstmcell ###################
+        # # when we are using lstmcell, the documenations says our input needs to be 2D,
+        # # that is (batch, features). this is becasue a lstmcell process batches of data
+        # # for each timestep consecutively/serially. but since we are already dealing with
+        # # single timestep inputs, our input shape is (batch, 1, features). so by simply 
+        # # removing the second dim (timestep dimemsion), we get our (batch, features) shape
+        # # and we can go on and feed it to our lstmcell.
+        # decoder_input = decoder_input.squeeze(1)
+        # print(f'{decoder_input.shape=}')
+        # # the hiddenstate also needs to be 2D
+        # hidden_state = tuple(h.squeeze(0) for h in hidden_state)
+        # # print(f'{hidden_state[0].shape=}')
+        # print('hidden_state shapes: ',*[tuple(h.shape) for h in hidden_state])
+        
+        # # # now if we wanted, we could use a for loop to process the inputs and it would
+        # # # look like this:
+        # # outputs = []
+        # # # remember if we are using a loop for processing batches for each timestep, 
+        # # # we must make the input-sequence to have the shape (time_steps, batch, input_size)
+        # # # sidenote, make sure to commentout the decoder_input.squeeze(1) part before continuing!
+        # # # so the shapes match! 
+        # # # also remember to comment out the next line where we use self.decoder() in a single call!
+        # # decoder_input = decoder_input.permute(1,0,2)
+        # # print(f'{decoder_input.shape=}')
+        # # for i in range(decoder_input.size(0)):
+        # #     print(decoder_input[i].shape)
+        # #     hidden_state = self.decoder(decoder_input[i], hidden_state)
+        # #     outputs.append(hidden_state[0])
+        # # outputs = torch.stack(outputs,dim=0)
+        # # # change outputs to have the shape (batch, tx, features)
+        # # outputs = outputs.permute(1,0,2)
+        
+        # # but since, we are already using a single timestep input, we can simply do
+        # # sidenote: remember to comment this out to test the loop-version!
+        # hidden_state = self.decoder(decoder_input, hidden_state)
+         
+        # # outputs is the first hiddenstate, but we need to make it as (bs, tx, features)
+        # # so we add a new dimension for the timestep at dim=1
+        # outputs = hidden_state[0].unsqueeze(1)
+        # print(f'{outputs.shape=}')
+        # # we also change hiddenstate shape to match the hiddenstate of encoder
+        # # so everything works out and we dont need to change anything else anywhere
+        # hidden_state = tuple(h.unsqueeze_(0) for h in hidden_state)
+        # ####################end of lstmcell required change#######################
+        
+        print(f'{outputs.shape=}')
+        print(f'{hidden_state[0].shape=}')
+        return outputs, hidden_state
+
+seq_length = 5
+embedding_dim = seq_length
+hidden_size = 7
+batch_size=2
+vocab_size = 50
+enc = Encoder(vocab_size=vocab_size, embedding_dim=embedding_dim, hidden_size=hidden_size)
+xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
+h = None
+outputs,hidden_state = enc(xt,h)
+decoder = BahdanauAttentionDecoder(input_sequence_length=seq_length, 
+                                   output_sequence_length=seq_length, 
+                                   vocab_size=vocab_size,
+                                   embedding_dim=embedding_dim,
+                                   hidden_size=hidden_size,
+                                   num_layers=1)
+
+outputs = decoder(xt,outputs,hidden_state)
+print(f'{outputs.shape=}')
+#%%
+# Now lets create the whole model 
+# we'll keep it simple (we can use different values for encoder/decoder but here we use only
+# one set for both)
+class LSTMBahdanau(nn.Module):
+    def __init__(self, input_size, output_size, vocab_size,
+                 embedding_dim, hidden_size, enc_num_layers=1,
+                 enc_dropout=0.3, dec_num_layers=1, dec_dropout=0.5):
+        super().__init__()
+        
+        self.inputsize = input_size
+        self.output_size = output_size
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.enc_dropout = enc_dropout
+        self.dec_dropout = dec_dropout
+        self.enc_num_layers = enc_num_layers
+        self.dec_num_layers = dec_num_layers
+        
+        self.encoder = Encoder(input_size=input_size,
+                               hidden_size=hidden_size,
+                               drp=enc_dropout,
+                               num_layers=enc_num_layers)
+        
+        self.decoder = BahdanauAttentionDecoder(input_sequence_length=input_size,
+                                                output_sequence_length=output_size,
+                                                vocab_size=vocab_size,
+                                                hidden_size=hidden_size,                 
+                                                num_layers=dec_num_layers,dropout=dec_dropout
+                                                )
+        
+    def forward(self, x, h):
+        enc_outputs, hidden_state = self.encoder(x,h)
+        output = self.decoder(x, enc_outputs, hidden_state)
+        return output
+    
+
+#%%
+
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size=30, num_layers=1, bidirectional=False,drp=0.3):
         super().__init__()
@@ -985,7 +1385,9 @@ class BahdanauAttention(nn.Module):
         self.num_layers = num_layers
         self.bidirectional = bidirectional 
         self.drp = drp 
-
+        # n_h=30
+        # hidden_state for lstm and gru is (2,30) it has two hiddenstates
+        # 30x30, 2x30
         # we need to calculate (score = W_v . tanh( W_d*H_d + W_e*H_e))
         # W_v shape is nx1, W_d is n×n and W_e n×2n these shapes can be found 
         # in the bahdanaus paper page 14.  
@@ -1003,7 +1405,22 @@ class BahdanauAttention(nn.Module):
         # input_size is hidden_size * 2, since unlike before, now 
         # in addition to the hidden_state we used to get from encoder, we now 
         # have the attention vector that gets concatenated together and fed to the decoder.
-        #  
+        # 
+        # todo: 
+        # i believe the lstm is decoder here, but I beleive it should have been lstm cell, which processes
+        # decoders input for each timestep and goes on untill all tokens are generated.
+        # with lstm, we feed the decoders input, get the whole output(all next hiddenstates) based on 
+        # this single input which I guess can be also correct in a way, but not entirly due to paper.
+        # also if we use lstm cell, we should not do softmax on the output, as thats only for the final
+        # layer to calculate the actual outputs for the last timestep (that is when the last timestep is
+        # reached, we get all previous hidden-states and do a softmax to get class probablities for each
+        # timestep.)
+        # but with current implementation, we use decoder-inputs, calculate outputs for all timesteps
+        # but only save the current timestep, then go for a second round, use the final hiddenstate of our
+        # decoder(lstm second output), and feed it to attention cell as the decoders previous hidden-state
+        # which is then used in the attention mechanisim with the encoders hiddenstate and the input values
+        # so its not wrong I guess becasue its doing it for each step!
+        # , but we should be able to do this using lstm cell as well. lets see
         self.lstm = nn.LSTM(input_size=hidden_size * 2, hidden_size=hidden_size,num_layers=num_layers,
                             bidirectional=bidirectional, batch_first=True,dropout=drp)
         
@@ -1124,7 +1541,7 @@ print(f'decoder output: {yz}')
 # 2. remove punctuations 
 # 3. remove special characters such as \n 
 # 4. split only words! we dont want to create text, so creating dictionaries of characters 
-# as apposed to creating dictionary of words is not going to suite us, becasue we intend on 
+# as apposed to creating dictionary of words is not going to suit us, becasue we intend on 
 # using word embedding, and relationship between words need to be found out! this is not possible
 # with characters! 
 # 5. thats nearly basically it(there are still some left), 
