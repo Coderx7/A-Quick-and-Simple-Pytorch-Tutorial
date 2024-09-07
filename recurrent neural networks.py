@@ -1009,6 +1009,7 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # this is an excellent blog post. highly recommened it 
 # https://srome.github.io/Understanding-Attention-in-Neural-Networks-Mathematically/
 
+# good attention intro (for rnns): https://www.youtube.com/watch?v=B3uws4cLcFw&list=PLgtf4d9zHHO8p_zDKstvqvtkv80jhHxoE
 # Now lets build our model.
 # Heres how we are going to implement it
 # we are going to define a separate module for encoder
@@ -1109,6 +1110,14 @@ class BahdanauAttentionDecoder(nn.Module):
                                bidirectional=self.bidirectional,
                                )
         
+        # #TODO disable after test 
+        # self.decoder = nn.LSTM(self.embedding_dim,
+        #                        hidden_size=self.hidden_size,
+        #                        num_layers=self.num_layers,
+        #                        batch_first=True,
+        #                        dropout=dropout, 
+        #                        bidirectional=self.bidirectional,
+        #                        )
         # we also implement the lstmcell version as well, when we implemented everything
         # we enable this and add the lstmcell related changes (its only the decoder part
         # see the explanation in codes)
@@ -1143,6 +1152,12 @@ class BahdanauAttentionDecoder(nn.Module):
         input_sequence = self.embedding(input_sequence)
         # print(f'after embedding: {tuple(input_sequence.shape)}')
         
+        # #TODO plain decoder test, disable after test
+        # self.direction = 2 if self.bidirectional else 1
+        # outputs, hidden_state = self.decoder(input_sequence, hidden_state)
+        # outputs = self.classifier(outputs.reshape(-1, self.hidden_size*self.direction))
+        # return outputs, hidden_state
+    
         # remember we also need to grab outputs for each timestep
         # so for a given input_sequence, we return an output_sequence 
         # (here of the same size, but it could be different in general)
@@ -1164,7 +1179,10 @@ class BahdanauAttentionDecoder(nn.Module):
             input_t = input_t[:,None,:]
             # print(f'{input_t.shape=}')
             # print(f'{input_t=}')
+            # TODO enable after test
             output_t, hidden_state = self.forward_attention(input_t, encoder_states, hidden_state)
+            # TODO disable after test -(plain decoder test)
+            # output_t, hidden_state = self.decoder(input_t, hidden_state)
             hidden_state = tuple(h.detach()for h in hidden_state)
             # output_t is (2,1,7), so we need the classifier to get
             # the output of size (bs,output_size).
@@ -1452,10 +1470,15 @@ class LSTMBahdanau(nn.Module):
                                                 hidden_size=hidden_size,                 
                                                 num_layers=dec_num_layers,dropout=dec_dropout
                                                 )
+        self.drp = nn.Dropout2d(0.1)
         
     def forward(self, x, h):
         enc_outputs, hidden_state = self.encoder(x,h)
+        # TODO: decoder needs to work with encoders output, the initial input for decoder
+        # should be the starting token, the start token + hidden_state from encoder should
+        # do thetrick and start the chain 
         output,hidden_state = self.decoder(x, enc_outputs, hidden_state)
+        # output = self.drp(output)
         return output,hidden_state
 
 vocab_size=50
@@ -1472,6 +1495,721 @@ out,hidden_state = model(xt,h)
 print(f'{out.shape=}')
 print(f'{hidden_state[0].shape=}')
 #! Remember to test different methods for decoder multiplication
+#%############### correct way of implementing the bahdanu attention 
+#%%
+import os,sys
+import numpy as np
+import string
+import urllib.request as request
+import requests
+import matplotlib.pyplot as plt
+import torch.version
+%matplotlib inline 
+
+import torch
+import torch.nn as nn 
+import torch.nn.functional as F 
+import torch.optim as optim  
+
+print(f'{sys.version=}')#3.11.9
+print(f'{torch.__version__=}')#2.4.0+cu121
+
+class Encoder(nn.Module):
+    def __init__(self, vocab_size, embedding_dim, hidden_size, num_layers=1, bidirectional=False, dropout=0.3):
+        super().__init__()
+        # our vocabulary size is used as embedding_size
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.dropout = dropout
+        
+        # instead of one-hot encoding our input sequence, we use an embedding layer
+        # to give us representations that are way more informative than a one-hot
+        # encoded representation!
+        # In some implementations you may see, the encoder
+        # accepts hidden-size as input-size, and subsequently
+        # the embedding dim also have to become hidden-size.
+        # but here, we simply use an embedding_dim to decouple it from
+        # input-size/sequence-length or the hidden-size.
+        self.embedding = nn.Embedding(self.vocab_size, embedding_dim)
+        
+        # we need a rnn to process the input sequence
+        # we use an lstm for its superior performance, 
+        # the paper uses GRU!
+        self.lstm = nn.LSTM(input_size=embedding_dim, 
+                            hidden_size=self.hidden_size, 
+                            num_layers=self.num_layers,
+                            batch_first=True, 
+                            dropout=self.dropout, 
+                            bidirectional=self.bidirectional)
+
+    def forward(self, x, h):
+        x = self.embedding(x)
+        return self.lstm(x,h)
+# lets test 
+# enc = Encoder(input_sequence_size=30, embedding_dim=75,vocab_size=50, hidden_size=100)
+# xt = torch.randint(0,50, size=(5,30))
+# outputs,hidden_state = enc(xt,None)
+# print(f'{outputs.shape=}\n{hidden_state[0].shape=}\n{hidden_state[1].shape=}')
+# good now lets implement our decoder with the attention mechanism
+
+class BahdanauAttentionDecoder(nn.Module):
+    def __init__(self, input_sequence_length, output_sequence_length, vocab_size, 
+                 embedding_dim, hidden_size, int2word, word2int,
+                 num_layers, bidirectional=False, dropout=0.5) -> None:
+        super().__init__()
+        # input size or sequence length!
+        self.input_seq_len = input_sequence_length
+        # since this is a seq2seq model, the
+        # output size can be different
+        self.output_seq_len = output_sequence_length
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.dropout = nn.Dropout(dropout)
+        self.int2word = int2word
+        self.word2int = word2int
+        # we need an embedding layer to prepare our input instead of one-hotencoding it
+        # we need an rnn for decoding. we can use a lstmcell or a lstm layer, we use the
+        # latter as it can be more powerful (add more layers, etc)
+        # but we should have no issue replacing it with a lstm cell (test this when all is done)
+        #
+        # we need 3 weights. 
+        #   one for decoders state, 
+        #   one for encoders state and
+        #   one for the weight scale(w_v)
+        # we can use input_sequence_size, or hiddensize, but I want to use embedding-dim!
+        # to decouple it from inputsize and hiddensize.
+        self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
+        
+        # our decoder's input will be the concatenated input_t and context_vector
+        # both of which will have the shape (batchsize, timesteps) or (batchsize, seq_length)
+        # we are using a LSTM instead of a LSTMCell, becasue it makes our life easier. 
+        # if we use LSTMCell, we have to use a few extra reshapes which is unncessary really. 
+        # using an lstm layer lke this, makes it a oneliner! easy peasy!
+        # 
+        # Note: theres a problem here, during our inference, when we want to feed our decoder
+        # we have to always feed input_seq_length words, otherwise it would fail! note that this
+        # was primarily used for machine translation and it makes sense, but for word generation
+        # this causes an issue where we cant simply feed it a single word and get a single word
+        # as output, so we may either prepad our inputs with spaces and place our initial word
+        # at the end of the sequence and then feed it to the network and carry on during evaluation
+        # time.
+        
+        # FIXME
+        # our decoder input is the contanted input_t + context_vector
+        # input_t is embd_dim becasue we use the output of embedding layer
+        # context_vector is as large as the hidden_state for our encoder
+        self.decoder = nn.LSTM(self.hidden_size + self.embedding_dim,#self.input_seq_len+self.embedding_dim,
+                               hidden_size=self.hidden_size,
+                               num_layers=self.num_layers,
+                               batch_first=True,
+                               dropout=dropout, 
+                               bidirectional=self.bidirectional,
+                               )
+        
+        # we also implement the lstmcell version as well, when we implemented everything
+        # we enable this and add the lstmcell related changes (its only the decoder part
+        # see the explanation in codes)
+        # self.decoder = nn.LSTMCell(self.input_seq_len+self.embedding_dim,
+        #                            hidden_size=self.hidden_size)
+        
+        # weights for decoders hidden_states
+        # we use a linear layer without bias 
+        # which does exactly what we want!
+        self.W_decoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        # weights for encoders hidden_states 
+        self.W_encoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        # weights for the scaling which is (1,hidden_size) 
+        # becasue its multiplied by the result of the previous
+        # weights, for this we use nn.Parameter to create a 
+        # learnable wight/parameter, some implementation only 
+        # use a single neuron/scaler for W_v
+        # the 1, in the shape is just to remind us we do the right thing so the correct broadcasting happens
+        # see the later notes
+        self.W_v =  nn.Parameter(torch.ones(1,hidden_size))
+        # or we could simply use a linear layer! and we would use it like attention_scores = self.W_v(weights_added)
+        # self.W_v = nn.Linear(hidden_size, 1)
+        
+        # final classification layer to give us the final results
+        self.classifier = nn.Linear(hidden_size, output_sequence_length)
+        
+        # self.start token
+        self.start_token = torch.tensor([self.word2int['<sos>']],dtype=torch.long).view(1,1)
+    
+    
+    def forward(self, input_sequence, encoder_states, hidden_state):
+        # since we want to feed our input to decoder as well
+        # we run embedding on the input_sequence as well
+        # for all input timesteps, we repeat this process
+        # print(f'input_sequence.shape:{tuple(input_sequence.shape)}')
+        # print(f'hidden-size:{self.hidden_size}')
+        # print(f'embedding dim:{self.embedding_dim}')
+        #
+        # note we dont need input embedding in decoder, its managed by encoder
+        # input_sequence = self.embedding(input_sequence)
+        # print(f'after embedding: {tuple(input_sequence.shape)}')
+        # but instead we need a single timestep input, the start token 
+        # grab its embedding to use it for initial input 
+        # 
+        # self.start token
+        self.start_token = torch.tensor([self.word2int['<sos>'] for _ in range(input_sequence.size(0))], dtype=torch.long).view(-1,1)
+        input_t = self.embedding(self.start_token.to(input_sequence.device))
+        
+        # print(f'{input_t.shape=}')
+        # print(f'after embedding: {tuple(input_sequence.shape)}')
+        
+        # #TODO plain decoder test, disable after test
+        # self.direction = 2 if self.bidirectional else 1
+        # outputs, hidden_state = self.decoder(input_sequence, hidden_state)
+        # outputs = self.classifier(outputs.reshape(-1, self.hidden_size*self.direction))
+        # return outputs, hidden_state
+    
+        # remember we also need to grab outputs for each timestep
+        # so for a given input_sequence, we return an output_sequence 
+        # (here of the same size, but it could be different in general)
+        # we do the classificantion in the loop
+        outputs = []
+        timesteps = input_sequence.size(1)
+        for t in range(timesteps):
+            # grab one timestep from input
+            # print(f'------------------------')
+            # print(f'timestep: {t}/{input_sequence.size(1)}')
+            # we dont use input_sequence! it doesnt make sense, what would you do in eval mode then?
+            # input_t = input_sequence[:,t]
+            # so instead for the first time we use a start token, for the next timesteps we use the
+            # output of the decoder from previous timestep.
+            # note that pytorch requires our input to be in the form
+            # of (batch, timestep, input_dim) to treat it as a batched input
+            # so we need to have a dim dedicated to the timestep, since this is
+            # a single timestep, we simply make the dim and that suffices.
+            # likewise the hiddenstate shape will have the form 
+            # (num_layers*bidirection, Batchsize, hiddensize) which in our case
+            # will be (1, batchsize, hiddensize) as we have a single layer and no
+            # bidirection.
+            # input_t = input_t[:,None,:]
+            # print(f'{input_t.shape=}')
+            # print(f'{input_t=}')
+            output_t, hidden_state = self.forward_attention(input_t, encoder_states, hidden_state)
+           
+            hidden_state = tuple(h.detach()for h in hidden_state)
+            # output_t is (2,1,7), so we need the classifier to get
+            # the output of size (bs,output_size).
+            # the reshape makes it (2,7) which is compatible with our classifier
+            output_t = self.classifier(output_t.view(output_t.size(0),-1))
+            # update the input_t for the next round
+            # get the highest probablity one
+            output_t_top_probs = output_t.softmax(dim=-1)
+            # print(f'{output_t_top_probs=}')
+            output_t_final = output_t_top_probs.max(dim=-1)[1]
+            # print(f'{output_t_final=}')
+            # get its embedding and use it as the new input_t 
+            # and remember to make its shape right (i.e. (b,ts,features))
+            input_t = self.embedding(output_t_final)[:,None,:]
+
+            # print(f'--{output_t.shape=}')
+            #
+            # To grab the actual outputs we have two ways. one way is to stack
+            # the outputs along timesteps and return the final output as (batch, ts, outputsize)
+            # and then use crossentropy to calculate loss. 
+            # the second way is to use logsoftmax, use max and grab the top indexes for each timestep
+            # and return the final output which would be (batch, ts) and use nllloss to calculate the loss!
+            # method 1:
+            # simply append the outputs and at the end
+            # stackthem in timestep dim and return it
+            outputs.append(output_t)
+            
+            # method 2: 
+            # # calculate softmax
+            # output_t = torch.log_softmax(output_t, dim=-1)
+            # # print(f'---{output_t=}')
+            # # now grab the maximum value (most likely word/class)
+            # _, output_t_idx = output_t.max(dim=-1)
+            # # print(f'---{output_t_idx=}')
+            # # store them so we can stack them later as one full output sequence
+            # outputs.append(output_t_idx.detach())
+            
+        # stack the outputs along timestep dim to get (bs, output-seq-len/timesteps)
+        # they can now be used to compare with labels 
+        # we used log_softmax so we need to use nlloss instead 
+        # (not sure if I can still use crossentropy)
+        outputs = torch.stack(outputs, dim=1)
+        # print(f'++++{outputs.shape=}')
+        return outputs, hidden_state
+
+    def forward_attention(self, input_sequence_t, encoder_states, hidden_state):
+        # calculate attention raw score (attn = w_v * tanh(W_D+W_E))
+        # do a softmax, make the rawscores into conditional probablities
+        # multiply the new weight/scores by the attention-states, get the context vector
+        # feed the context vector to the decoder wither alone or concatenated with input
+        # at timestep t, calculate new outputs, hiddenstates and return the outputs 
+        # and hidden_state for this timestep
+        # grab the long-term memory(h)
+        (h,c) = hidden_state
+        # print(f'{h.shape=}')              # (1, batch, hidden-size)
+        # print(f'{encoder_states.shape=}') # (batch, timesteps, hidden-size)
+        # our hidden state has the shape (num-layers, batch, hidden-size), since our num_layers=1
+        # its (1, batchsize, hiddensize) here.
+        # while our encoder's outputs has (batch, timesteps, hidden-size)
+        # we need to reshape our hiddenstate to have (batchsize, 1, hiddensize)
+        # the easiest way is to simply transpose/permute it:
+        h = h.permute(1,0,2)
+        
+        # print(f'{h.shape=}')
+        # after this we can simply add the W_d and W_e together, the W_d will be broadcasted
+        # (will be repeated along dim=1, and these two will be added properly)
+        W_d = self.W_decoder(h)
+        W_e = self.W_encoder(encoder_states)
+        # atten = W_v * tanh(W_d + W_e)
+        # print(f'{W_d.shape=}') # will be (batch, 1, hidden-size)
+        # print(f'{W_e.shape=}') # will be (batch, ts, hidden-size)
+        weights_added = torch.tanh(W_d + W_e)
+        # print(f'{weights_added.shape=}') # (batch, ts, hidden-size)
+        # print(f'{self.W_v.shape=}') #(1,hidden-size)
+        # likewise our W_v shape is (1,hidden-size), in order to multiply it by
+        # our weights_added, we need to make it compatible. 
+        # making it (1,1,hidden-size) should do the trick, and it will be broadcasted 
+        # accordingly to match (batch, ts, hidden-size).
+        # the good thing is, we dont need to do sth like W_v.data.unsqueez_(0)! for this
+        # (1,hidden-size) will be automatically broadcasted.
+        # !FIXME TODO: the calculation for attention score seems wrong,
+        # !FIXME TODO: the shape of the context-vector must match the hidden_state
+        # !FIXME TODO: therefore check this and fix it
+        # TODO method 1 :
+        # This is wrong, becasue it gives us the wrong attention_score (alignment score (alpha score!))
+        # attention_score = self.W_v * weights_added # (batch, ts, hidden-size)
+        
+        # note that we have two ways to get to the same shape, but only one of them is correct.
+        # if we do that the result will also be (batch,ts,hidden-size)
+        # we could also achieve this shape by doing a matmul
+        # TODO use method 2:
+        # instead this is the way to do it it seems
+        attention_score = torch.matmul(weights_added ,self.W_v.data.t())
+        # attention_score = self.W_v(weights_added)
+        print(f'{attention_score.shape=}') # (batch,ts,1) which means each timestep has a 
+        # single weight
+        # and we get (batchsize, ts, 1). 
+        # this means the context vector at the end will endup (batchsize,ts,hiddensize)
+        # so which way is correct? 
+        # lets think about our choices here
+        # TODO: test both of these methods and rewrite this after test: 
+        # The implications of using `torch.matmul(weights_added, W_v.t())` instead of 
+        # the element-wise multiplication would be different in terms of the mathematical
+        # operation and the resulting tensor shape.
+        # In the case of element-wise multiplication (the previous way), the operation is 
+        # applied element-wise between the broadcasted tensors, and the resulting tensor 
+        # has the same shape as the larger tensor (`wights_added` in this case).
+        # On the other hand, when using `torch.matmul(weights_added, W_v.t())`, it performs
+        # a batched matrix multiplication between `weights_added` and the transposed weight
+        # matrix `W_v.t()`. This operation has different implications:
+        # 1. **Linear Transformation**: The matrix multiplication applies a 
+        #      linear transformation to each batch in `wights_added` using the weight matrix
+        #      `w_v`. 
+        #      This is a common operation in neural networks, 
+        #      where the weight matrix is used to transform the input data (`wights_added`) 
+        #      into a different representation (e.g., applying a fully connected layer).
+        # 2. **Dimensionality Reduction**: The resulting tensor has a reduced dimensionality 
+        #      compared to the input tensor `wights_added`. Specifically, the last dimension 
+        #      is reduced to 1, which means that each batch in the output tensor is a vector.
+        #    - If `wights_added` has shape `(2, 5, 7)` and `w_v` has shape `(1, 7)`, the output
+        #      tensor will have shape `(2, 5, 1)`.
+        #    - This dimensionality reduction is often desired in neural networks, where the 
+        #      output of one layer (e.g., a fully connected layer) is used as input to the 
+        #      next layer.
+        # 3. **Weight Sharing**: By using the same weight matrix `w_v` for all batches in 
+        #      `wights_added`, the linear transformation is shared across all batches. 
+        #       This is a common technique in neural networks, where the same set of weights
+        #       is applied to different inputs (batches) during training and inference.
+        # 4. **Potential for Non-linearity**: In neural networks, the output of a linear 
+        #       transformation (like matrix multiplication) is often passed through a 
+        #       non-linear activation function (e.g., ReLU, sigmoid) to introduce 
+        #       non-linearity, which is essential for learning complex patterns.
+        # So, if `w_v` is a weight matrix, using `torch.matmul(wights_added, w_v.t())` 
+        # instead of element-wise multiplication suggests that we are performing a 
+        # linear transformation on the input tensor `wights_added` using the weight matrix `w_v`.
+        # This is a common operation in neural networks, where weight matrices are learned during
+        # training to transform the input data into a desired representation.
+        # However, it's important to note that the specific implications depend on the context 
+        # and the architecture of our neural network model. 
+        # The choice between element-wise multiplication and matrix multiplication should
+        # align with the intended mathematical operation and the desired transformation of
+        # the input data.
+        #
+        # torch.set_printoptions(profile='default')
+        # softmax to ensure both nonnegativity and normalization. 
+        attention_weights = attention_score.softmax(dim=-1)
+        print(f'{attention_weights.shape=}')
+        # print(f'{weights=}')
+        
+        # Like before, we also have two ways of calculating context vector
+        # we can have an elementwise multiplication and then sum over the 
+        # hidden dim or simply do a batch matrix multiply, where we multiply these two
+        # and the result is (batchsize, ts,ts) (and then sum so the last dim is reduced)
+        # TODO test with this (enable this and disable the matmul version)
+        # context_vector = attention_weights*encoder_states
+        # context_vector = context_vector.sum(dim=-1)
+        # print(f'{context_vector.shape=}')
+        # note that context is a weighted sum of the encoder hidden-states
+        # that is why we need to sum along the hiddenstate dimension to ultimately
+        # get (batchsize, ts)
+        
+        # print(f'-{context_vector.shape=}')
+        # TODO:‌ use bmm or batched matrix multiply (basically matmul()) it should
+        # give us (batchsize, ts,ts) which if summed gives us (batchsize, ts)!
+        # this maybe the right operation, as it carries a dot product between the two
+        # matrixes (batch multiplication happens between the two)
+        # while for the first approach, its an elemntwise multiplication and summation
+        # basically scaling and summing the last dim. 
+        # print(f'{encoder_states.shape=}')
+        # ok note that doing element multiplication and then summing over and axis is wrong!
+        # 
+        # context_vector = torch.matmul(attention_weights, encoder_states.permute(0,2,1)).sum(dim=-1)
+        # this is also wrong! where we multiply elementwise and then sum over dim=1!
+        # context_vector = attention_weights * encoder_states
+        # note we are summing over timesteps(dim=1) and not the last dim which is hiddenstate dims,
+        # so ultimately we have a single hidden-state vector
+        # that incorporates all previous hiddenstates, this becomes our context_vector
+        # context_vector_weighted_sum = context_vector.sum(dim=1)
+        # print(f'{context_vector_weighted_sum.shape=}') # should be (batch, 1, hidden_size)
+        # and at this point we have a context vector that shows the attention
+        # of each input sequence, we can feed this directly to decoder
+        # or concatenate it with the input at timestep_t and then feed this new
+        # input to decoder.
+        
+        # instead we should use batch-matrix multiplication which 
+        attention_weights = attention_weights.permute(0,2,1)
+        context_vector = torch.bmm(attention_weights,encoder_states)
+        print(f'{context_vector.shape=}')
+        
+        
+        # Further explanation: 
+        #         Sure! Let's break down how batch matrix multiplication (`torch.bmm`) computes the weighted sum of the encoder states step by step.
+
+        # ### Step-by-Step Explanation:
+
+        # 1. **Inputs:**
+        #    - `attention_weights`: A tensor of shape `(batch_size, seq_len, 1)` representing the attention weights for each time step in the sequence.
+        #    - `encoder_states`: A tensor of shape `(batch_size, seq_len, hidden_size)` representing the hidden states of the encoder for each time step.
+
+        # 2. **Permute Attention Weights:**
+        #    - Before performing batch matrix multiplication, we need to permute the `attention_weights` to match the dimensions required for multiplication.
+        #    ```python
+        #    attention_weights = attention_weights.permute(0, 2, 1)
+        #    ```
+        #    - After permutation, `attention_weights` will have the shape `(batch_size, 1, seq_len)`.
+
+        # 3. **Batch Matrix Multiplication:**
+        #    - Perform batch matrix multiplication between the permuted `attention_weights` and `encoder_states`.
+        #    ```python
+        #    context_vector = torch.bmm(attention_weights, encoder_states)
+        #    ```
+        #    - Here, `torch.bmm` computes the matrix product for each batch. The resulting `context_vector` will have the shape `(batch_size, 1, hidden_size)`.
+
+        # 4. **Weighted Sum:**
+        #    - The batch matrix multiplication effectively computes the weighted sum of the encoder states. Each element in the `context_vector` is the sum of the encoder states weighted by the corresponding attention weights.
+        #    - Mathematically, for each batch \(i\), the context vector \(c_i\) is computed as:
+        #      \[
+        #      c_i = \sum_{j=1}^{\text{seq_len}} \text{attention_weights}_{ij} \cdot \text{encoder_states}_{ij}
+        #      \]
+        #    - This operation is performed for each batch in parallel.
+
+        # ### Example:
+        # Let's consider a simple example with a batch size of 1, sequence length of 3, and hidden size of 2.
+
+        # - `attention_weights` (after permutation):
+        #   \[
+        #   \begin{bmatrix}
+        #   [0.2, 0.3, 0.5]
+        #   \end{bmatrix}
+        #   \]
+        # - `encoder_states`:
+        #   \[
+        #   \begin{bmatrix}
+        #   [h_{11}, h_{12}], [h_{21}, h_{22}], [h_{31}, h_{32}]
+        #   \end{bmatrix}
+        #   \]
+
+        # - Batch matrix multiplication:
+        #   \[
+        #   \text{context_vector} = \begin{bmatrix}
+        #   [0.2, 0.3, 0.5]
+        #   \end{bmatrix} \times \begin{bmatrix}
+        #   [h_{11}, h_{12}], [h_{21}, h_{22}], [h_{31}, h_{32}]
+        #   \end{bmatrix}
+        #   \]
+
+        # - Resulting `context_vector`:
+        #   \[
+        #   \begin{bmatrix}
+        #   [0.2 \cdot h_{11} + 0.3 \cdot h_{21} + 0.5 \cdot h_{31}, 0.2 \cdot h_{12} + 0.3 \cdot h_{22} + 0.5 \cdot h_{32}]
+        #   \end{bmatrix}
+        #   \]
+
+        # This `context_vector` is the weighted sum of the encoder states, where the weights are given by the attention weights.
+
+        # I hope this helps! If you have any more questions or need further clarification, feel free to ask!
+        
+        # I have seen some people where they multiply context by the encoder-states 
+        # and then use that to concatenate with the input. 
+        # this is called multiplicative attention. by the way its different than 
+        # loung attention! which we will see in a moment
+        # 
+        # states = context*encoder_states
+        # print(f'{states.shape=}')
+        
+        # print(f'{input_sequence_t.shape=}')
+        
+        # we can now use this to feed out decoder , 
+        # but usually we concatentate our input_sequence with this
+        # context and then feed it to our decoder 
+        # since our input needs to be in the form (batchsize, timestep, features), we 
+        # make context_vector to have a timestep dim as well. 
+        # decoder_input = torch.cat([input_sequence_t, context_vector[:,None,:]],dim=-1)
+        # FIXME: OK heres the issue, we dont feed the whole input_sequence to our decoder
+        # since this process is happening in a loop, we feed a single input timestep
+        # each time, the initial input of the decoder is usually a start token, (usually for translation)
+        # for the next inputs, we use the output of our decoder from previous step.
+        # 
+        # print(f'{context_vector_weighted_sum[:,None,:].shape=}')
+        decoder_input = torch.cat([input_sequence_t, context_vector_weighted_sum[:,None,:]],dim=-1)
+        # print(f'{decoder_input.shape=}')
+        # print(f'{hidden_state[0].shape=}')
+        # make the hiddenstate the (layer, batch, hiddenstate) instead of (batch,layer,hiddensatet)
+        # h = h.permute(1,0,2)
+        # print(f'{h.shape=}')
+        # lstm decoder expects the hiddensize to be a tuple so we can either use (h,h)
+        # or use the previous hiddenstate altogether, (h is our longterm memory and c 
+        # is the short term memory!and we have been using the long term one)
+        # sidenote: to test the lstmcell version, comment this part and uncomment the lstmcell section!
+        # outputs, hidden_state = self.decoder(decoder_input, (h,h))
+        outputs, hidden_state = self.decoder(decoder_input, hidden_state)
+        # print(f'{outputs.shape=}')
+        # print(f'-----------------------------------')
+        ############################## changes for using lstmcell ###################
+        # # when we are using lstmcell, the documenations says our input needs to be 2D,
+        # # that is (batch, features). this is becasue a lstmcell process batches of data
+        # # for each timestep consecutively/serially. but since we are already dealing with
+        # # single timestep inputs, our input shape is (batch, 1, features). so by simply 
+        # # removing the second dim (timestep dimemsion), we get our (batch, features) shape
+        # # and we can go on and feed it to our lstmcell.
+        # decoder_input = decoder_input.squeeze(1)
+        # print(f'{decoder_input.shape=}')
+        # # the hiddenstate also needs to be 2D
+        # hidden_state = tuple(h.squeeze(0) for h in hidden_state)
+        # # print(f'{hidden_state[0].shape=}')
+        # print('hidden_state shapes: ',*[tuple(h.shape) for h in hidden_state])
+        
+        # # # now if we wanted, we could use a for loop to process the inputs and it would
+        # # # look like this:
+        # # outputs = []
+        # # # remember if we are using a loop for processing batches for each timestep, 
+        # # # we must make the input-sequence to have the shape (time_steps, batch, input_size)
+        # # # sidenote, make sure to commentout the decoder_input.squeeze(1) part before continuing!
+        # # # so the shapes match! 
+        # # # also remember to comment out the next line where we use self.decoder() in a single call!
+        # # decoder_input = decoder_input.permute(1,0,2)
+        # # print(f'{decoder_input.shape=}')
+        # # for i in range(decoder_input.size(0)):
+        # #     print(decoder_input[i].shape)
+        # #     hidden_state = self.decoder(decoder_input[i], hidden_state)
+        # #     outputs.append(hidden_state[0])
+        # # outputs = torch.stack(outputs,dim=0)
+        # # # change outputs to have the shape (batch, tx, features)
+        # # outputs = outputs.permute(1,0,2)
+        
+        # # but since, we are already using a single timestep input, we can simply do
+        # # sidenote: remember to comment this out to test the loop-version!
+        # hidden_state = self.decoder(decoder_input, hidden_state)
+         
+        # # outputs is the first hiddenstate, but we need to make it as (bs, tx, features)
+        # # so we add a new dimension for the timestep at dim=1
+        # outputs = hidden_state[0].unsqueeze(1)
+        # print(f'{outputs.shape=}')
+        # # we also change hiddenstate shape to match the hiddenstate of encoder
+        # # so everything works out and we dont need to change anything else anywhere
+        # hidden_state = tuple(h.unsqueeze_(0) for h in hidden_state)
+        # ####################end of lstmcell required change#######################
+        
+        # print(f'{outputs.shape=}')
+        # print(f'{hidden_state[0].shape=}')
+        return outputs, hidden_state
+
+seq_length = 5
+embedding_dim = 6
+hidden_size = 7
+batch_size=2
+vocab_size = 50
+enc = Encoder(vocab_size=vocab_size, embedding_dim=embedding_dim, hidden_size=hidden_size)
+xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
+h = None
+outputs,hidden_state = enc(xt,h)
+decoder = BahdanauAttentionDecoder(input_sequence_length=seq_length, 
+                                   output_sequence_length=vocab_size, 
+                                   vocab_size=vocab_size,
+                                   embedding_dim=embedding_dim,
+                                   hidden_size=hidden_size,
+                                   num_layers=1,
+                                   int2word=int2word,
+                                   word2int=word2int)
+
+outputs,hidden_state = decoder(xt,outputs,hidden_state)
+print(f'{outputs.shape=}')
+print(f'{hidden_state[0].shape=}')
+#%%
+class BahdanauAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super(BahdanauAttention, self).__init__()
+        self.Wa = nn.Linear(hidden_size, hidden_size)
+        self.Ua = nn.Linear(hidden_size, hidden_size)
+        self.Va = nn.Linear(hidden_size, 1)
+
+    def forward(self, query, keys):
+        print(f'hiddenstate: {query.shape=}')
+        print(f'(encoder-outputs: {keys.shape=}')
+        # this does the summation at the end as well!! and gives us (b,1,ts)
+        # instead of (ba,h, ts) (we had to sum over timesteps which seems wrong!!)
+        # becasue later when we multiply by the weights (scores*outputs) we get the correct shape!(2,7)
+        scores = self.Va(torch.tanh(self.Wa(query) + self.Ua(keys)))
+        print(f'{scores.shape=}')
+        scores = scores.squeeze(2).unsqueeze(1)
+        print(f'{scores.shape=}')
+        
+        weights = F.softmax(scores, dim=-1)
+        print(f'{weights.shape=}')
+        context = torch.bmm(weights, keys)
+        print(f'{context.shape=}')
+        return context, weights
+    
+SOS_token=0
+MAX_LENGTH=5
+class AttnDecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size, dropout_p=0.1,device='cpu'):
+        super(AttnDecoderRNN, self).__init__()
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.attention = BahdanauAttention(hidden_size)
+        self.gru = nn.GRU(2 * hidden_size, hidden_size, batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
+        self.dropout = nn.Dropout(dropout_p)
+        self.device=device
+
+    def forward(self, encoder_outputs, encoder_hidden, target_tensor=None):
+        batch_size = encoder_outputs.size(0)
+        decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=self.device).fill_(SOS_token)
+        decoder_hidden = encoder_hidden
+        decoder_outputs = []
+        attentions = []
+
+        for i in range(MAX_LENGTH):
+            decoder_output, decoder_hidden, attn_weights = self.forward_step(
+                decoder_input, decoder_hidden, encoder_outputs
+            )
+            decoder_outputs.append(decoder_output)
+            attentions.append(attn_weights)
+
+            if target_tensor is not None:
+                # Teacher forcing: Feed the target as the next input
+                decoder_input = target_tensor[:, i].unsqueeze(1) # Teacher forcing
+            else:
+                # Without teacher forcing: use its own predictions as the next input
+                _, topi = decoder_output.topk(1)
+                decoder_input = topi.squeeze(-1).detach()  # detach from history as input
+
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
+        attentions = torch.cat(attentions, dim=1)
+
+        return decoder_outputs, decoder_hidden, attentions
+
+
+    def forward_step(self, input, hidden, encoder_outputs):
+        embedded =  self.dropout(self.embedding(input))
+
+        query = hidden.permute(1, 0, 2)
+        context, attn_weights = self.attention(query, encoder_outputs)
+        input_gru = torch.cat((embedded, context), dim=2)
+
+        output, hidden = self.gru(input_gru, hidden)
+        output = self.out(output)
+
+        return output, hidden, attn_weights
+
+seq_length = 5
+embedding_dim = 6
+hidden_size = 7
+batch_size=2
+vocab_size = 50
+enc = Encoder(vocab_size=vocab_size, embedding_dim=embedding_dim, hidden_size=hidden_size)
+xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
+h = None
+outputs,hidden_state = enc(xt,h)
+
+decoder = AttnDecoderRNN( hidden_size=hidden_size,output_size=vocab_size)
+decoder2 = BahdanauAttentionDecoder(input_sequence_length=seq_length, 
+                                   output_sequence_length=vocab_size, 
+                                   vocab_size=vocab_size,
+                                   embedding_dim=embedding_dim,
+                                   hidden_size=hidden_size,
+                                   num_layers=1,
+                                   int2word=int2word,
+                                   word2int=word2int)
+
+outputs1,hidden_state1,_ = decoder(outputs,hidden_state[0])
+outputs2,hidden_state2 = decoder2(xt,outputs,hidden_state)
+print(f'{outputs1.shape=}')
+print(f'{hidden_state1[0].shape=}')
+print(f'{outputs2.shape=}')
+print(f'{hidden_state2[0].shape=}')
+
+#%%
+# Now lets create the whole model 
+# we'll keep it simple (we can use different values for encoder/decoder but here we use only
+# one set for both)
+class LSTMBahdanau(nn.Module):
+    def __init__(self, input_size, output_size, vocab_size, int2word, word2int,
+                 embedding_dim, hidden_size, enc_num_layers=1,
+                 enc_dropout=0.3, dec_num_layers=1, dec_dropout=0.5):
+        super().__init__()
+        
+        self.input_size = input_size
+        self.output_size = output_size
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.enc_dropout = enc_dropout
+        self.dec_dropout = dec_dropout
+        self.enc_num_layers = enc_num_layers
+        self.dec_num_layers = dec_num_layers
+        self.int2word = int2word
+        self.word2int = word2int
+        
+        self.encoder = Encoder(vocab_size=vocab_size,
+                               embedding_dim=embedding_dim,
+                               hidden_size=hidden_size,
+                               dropout=enc_dropout,
+                               num_layers=enc_num_layers)
+        
+        self.decoder = BahdanauAttentionDecoder(input_sequence_length=input_size,
+                                                output_sequence_length=output_size,
+                                                vocab_size=vocab_size,
+                                                embedding_dim=embedding_dim,
+                                                hidden_size=hidden_size,                 
+                                                num_layers=dec_num_layers,dropout=dec_dropout,
+                                                int2word=self.int2word,
+                                                word2int=self.word2int)
+        self.drp = nn.Dropout2d(0.1)
+        
+    def forward(self, x, h):
+        enc_outputs, hidden_state = self.encoder(x,h)
+        # TODO: decoder needs to work with encoders output, the initial input for decoder
+        # should be the starting token, the start token + hidden_state from encoder should
+        # do thetrick and start the chain 
+        output,hidden_state = self.decoder(x, enc_outputs, hidden_state)
+        # output = self.drp(output)
+        return output,hidden_state
+
 #%%
 # now lets grab a text and try to test our architecture. 
 # we wanto keep it simple, and generate text, the same thing we did before
@@ -1541,9 +2279,13 @@ print(f'{repr(corpus_words_lower[:10])=}')
 # now lets create our word2int and int2word dictionaries
 # note that we can use set to grab the unique words, here!
 # this will give us a 10x reduction! i.e. 28,151 words!
-# since we plan on using padding using 0s, we start from 1
-int2word = dict(enumerate(set(corpus_words_lower),start=0))
+# we start from 1 because we want to reserve 0 for special token <sos>
+int2word = dict(enumerate(set(corpus_words_lower),start=1))
 word2int = {w:c for c,w in int2word.items()}
+
+# lets add the special tokens as well like sos
+int2word[0] = '<sos>'
+word2int['<sos>'] = 0
 
 print(f'{len(int2word)=:,}')
 print(f'{len(word2int)=:,}')
@@ -1560,6 +2302,46 @@ def convert_to_words(seq_int_list):
     return ' '.join([int2word[idx] for idx in seq_int_list])
 
 print(convert_to_words(words_digitized[:10].tolist()))
+
+#%%
+url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
+# lets download and read it all!
+with open(download_ebook(url),'r') as file: 
+    corpus_raw = file.read()
+
+print(f'{repr(corpus_raw[:10])=}')
+corpus_raw = corpus_raw.translate(str.maketrans('','',string.punctuation))
+# we can now filter out the other escape characters!
+# by only selecting the printable ones!
+corpus_raw = ''.join(x for x in corpus_raw if x in set(string.printable))
+# and finally making all characters lower case
+corpus_words_lower = ''.join([c.lower() for c in corpus_raw])
+# now we get 'the projec' this time around!
+print(repr(corpus_words_lower[:10]))
+
+unique_chars = set(corpus_words_lower)
+# lets sort it for better visualization
+unique_chars = sorted(unique_chars)
+# now lets create a char2int and int2char dictionaries!
+# start from 1, becasue we reserve 0 for special token (sos)
+int2word = dict(enumerate(unique_chars, start=1))
+word2int = {c:d for d,c in int2word.items()}
+
+# lets add the special tokens as well like sos
+int2word[0] = '<sos>'
+word2int['<sos>'] = 0
+
+print(f'{unique_chars=}')
+print(f'{int2word=}')
+print(f'{word2int=}')
+print(f'unique characters: {len(unique_chars)} : \n {unique_chars}')
+# lets convert our corpus to int
+words_digitized = torch.tensor([word2int[char] for char in corpus_words_lower])
+print(f'{words_digitized.shape=}')
+print(words_digitized[:10])
+print('after conversion: ')
+print(repr(''.join([int2word[idx.item()] for idx in words_digitized[:10]])))
+
 
 #%%
 # dataset needs work! we only have 14 words for our dataset? this cant be right!
@@ -1603,10 +2385,12 @@ print(f'{labels.shape=}')
 
 num_layers = 1
 model = LSTMBahdanau(input_size=seq_len,
-                     output_size=vocab_size,
+                     output_size=len(word2int),
                      vocab_size=len(word2int),
                      embedding_dim=100,
-                     hidden_size=100)
+                     hidden_size=100,
+                     int2word=int2word,
+                     word2int=word2int)
 
 print(f'our input(data).shape: {data.shape}')
 outputs,hidden_state = model(data,None)
@@ -1640,18 +2424,20 @@ model = LSTMBahdanau(input_size=input_size,
                      output_size=output_size,
                      vocab_size=vocab_size,
                      embedding_dim=embedding_dim,
-                     hidden_size=hidden_size)
+                     hidden_size=hidden_size,
+                     int2word=int2word,
+                     word2int=word2int)
 
 model = model.to(device)
-optimizer = optim.Adam(model.parameters(), lr = 0.01)
+optimizer = optim.Adam(model.parameters(), lr = 0.001)
 criterion = nn.CrossEntropyLoss()#ignore_index=-100
-scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20)
+scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=30)
 
-epochs =60
+epochs =30
 # in order to not face the exploding gradient in lstm
 # we clip the gradients
 clip = 5.
-interval = 100 
+interval = 1000
 batch_size = 32
 # label_length = len(word2int)
 hidden_states = None
@@ -1668,6 +2454,7 @@ print(f'hidden_size:    {hidden_size}')
 print(f'embedding_dim:  {embedding_dim}')
 print(f'vocab_size:     {vocab_size:,}')
 print(f'word count:     {words_digitized.numel():,}')
+print(f'val idx:        {val_idx:,}')
 print(f'val size:       {val.numel():,}')
 print(f'train size:     {train.numel():,}')
 print(f'val + train:    {val.numel() + train.numel():,}')
@@ -1698,10 +2485,10 @@ for e in range(epochs):
         optimizer.zero_grad()
         loss.backward()
         # note the _, which indicates the inplace operation!
-        # unlike before, enabling this prevents the model from converging and loss hardly changes!
-        # which means the gradient magnitude here is crucial for learning! however the validation
+        # like before this doesnt seem to matter much really! 
+        # training loss decreases however the validation
         # lossincreases after some epochs! get this to work!
-        # torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
+        torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
         optimizer.step()
 
         if i%interval==0:
@@ -1730,16 +2517,124 @@ for e in range(epochs):
                 print(f'  Loss-val: {total_loss_val/i:.4f}')
     print(f'  Loss-val-total: {total_loss_val/i:.4f}')
 #...
-# Epoch-Iter:: 57/60-100 | Loss: 2.4632 | LR: 0.000100
-# Epoch-Iter:: 57/60-200 | Loss: 2.4137 | LR: 0.000100
-#   Loss-val-total: 8.9244
-# Epoch-Iter:: 58/60-100 | Loss: 2.4594 | LR: 0.000100
-# Epoch-Iter:: 58/60-200 | Loss: 2.4104 | LR: 0.000100
-#   Loss-val-total: 8.9296
-# Epoch-Iter:: 59/60-100 | Loss: 2.4557 | LR: 0.000100
-# Epoch-Iter:: 59/60-200 | Loss: 2.4070 | LR: 0.000100
-#   Loss-val-total: 8.9347
+# Epoch-Iter:: 56/60-100 | Loss: 0.8325 | LR: 0.000100
+# Epoch-Iter:: 56/60-200 | Loss: 0.7869 | LR: 0.000100
+#   Loss-val-total: 11.0800
+# Epoch-Iter:: 57/60-100 | Loss: 0.8294 | LR: 0.000100
+# Epoch-Iter:: 57/60-200 | Loss: 0.7825 | LR: 0.000100
+#   Loss-val-total: 11.0806
+# Epoch-Iter:: 58/60-100 | Loss: 0.8234 | LR: 0.000100
+# Epoch-Iter:: 58/60-200 | Loss: 0.7790 | LR: 0.000100
+#   Loss-val-total: 11.0897
+# Epoch-Iter:: 59/60-100 | Loss: 0.8194 | LR: 0.000100
+# Epoch-Iter:: 59/60-200 | Loss: 0.7761 | LR: 0.000100
+#   Loss-val-total: 11.0936
 # 
+
+# TODO:
+# validation goes up! training goes down!
+# next attempt should be to disable attention and only 
+# use an ordinary lstm and see how it performs!
+# using characters only instead of words ran smoothly, both losses decreased without any issues!
+# making me believe we face massive overfitting in our model when using words (as the number
+# of classes/words are in thousands while when using chars its only 38!)
+# 
+# Epoch-Iter:: 57/60-1000 | Loss: 0.5964 | LR: 0.000100
+#   Loss-val-total: 0.7419
+# Epoch-Iter:: 58/60-1000 | Loss: 0.5949 | LR: 0.000100
+#   Loss-val-total: 0.7413
+# Epoch-Iter:: 59/60-1000 | Loss: 0.5944 | LR: 0.000100
+#   Loss-val-total: 0.7415
+
+# the text generation is awful, not sure its becasue of the generation procedure or the model
+# TODO fix the generation / test with plain lstm and see how it goes
+# plain lstm (encoder-plain decoder)
+# Epoch-Iter:: 56/60-1000 | Loss: 1.1627 | LR: 0.000100
+#   Loss-val-total: 1.3113
+# Epoch-Iter:: 57/60-1000 | Loss: 1.1625 | LR: 0.000100
+#   Loss-val-total: 1.3111
+# Epoch-Iter:: 58/60-1000 | Loss: 1.1623 | LR: 0.000100
+#   Loss-val-total: 1.3115
+# Epoch-Iter:: 59/60-1000 | Loss: 1.1621 | LR: 0.000100
+#   Loss-val-total: 1.3118
+# the loss is much higher than the attention version, it didnt decrease as rapidly as the attention
+# version, and the text generation is aweful nonetheless
+# TODO use single classification instead of looping for plain lstm
+# Epoch-Iter:: 57/60-1000 | Loss: 0.9309 | LR: 0.000100
+#   Loss-val-total: 1.0851
+# Epoch-Iter:: 58/60-1000 | Loss: 0.9295 | LR: 0.000100
+#   Loss-val-total: 1.0852
+# Epoch-Iter:: 59/60-1000 | Loss: 0.9281 | LR: 0.000100
+#   Loss-val-total: 1.0849
+#loss decreased when I used classification in a single call but the generation is still nonsensical and gibrish
+# TODO I guess it could be the way we are generating the text, next change the way we generate the text
+# first start by trainig sequence of 1 and testing eval like before, then use a nn.linear 
+# to create an intermediate representation before feeding it to the decoder, but we need to
+# somehow make it work with different channel numbers! thats the issue! here when sampling
+#
+# sequence 1 result: 
+# Epoch-Iter:: 57/60-45000 | Loss: 1.8432 | LR: 0.000100
+#   Loss-val-total: 1.9065
+# Epoch-Iter:: 58/60-45000 | Loss: 1.8459 | LR: 0.000100
+#   Loss-val-total: 1.9096
+# Epoch-Iter:: 59/60-45000 | Loss: 1.8457 | LR: 0.000100
+#   Loss-val-total: 1.9089
+# text generation doesnt seem complete giberish anymore, they have a bit of structure, but
+# not alot, could be due to insufficient training/higher loss, notet hat we used the old sampler
+# that uses single character each time. 
+# TODO: train a bit more and see if it helps with the output, if so, then switch to attention
+# and training with seq=1 and see how it performs, then decide on the next move
+# Epoch-Iter:: 86/90-45000 | Loss: 1.8145 | LR: 0.000100
+#   Loss-val-total: 1.8954
+# Epoch-Iter:: 87/90-45000 | Loss: 1.8144 | LR: 0.000100
+#   Loss-val-total: 1.8954
+# Epoch-Iter:: 88/90-45000 | Loss: 1.8144 | LR: 0.000100
+#   Loss-val-total: 1.8954
+# Epoch-Iter:: 89/90-45000 | Loss: 1.8143 | LR: 0.000100
+#   Loss-val-total: 1.8954
+# more training didnt change the loss that much, but the text generation seems a tiny bit better
+# you can see words better formed, verbs better formed but the grammar, structure is still missing
+# TODO next lets try with attention with seq of 1 
+# ok its obismally bad! 
+#TODO fix the attention mechanism. we shouldnt be feeding the input to the decoder like this
+# changed the code to fix the attention mechanism part 1: 
+# Epoch-Iter:: 86/90-1000 | Loss: 2.7969 | LR: 0.000100
+#   Loss-val-total: 2.8033
+# Epoch-Iter:: 87/90-1000 | Loss: 2.7969 | LR: 0.000100
+#   Loss-val-total: 2.8029
+# Epoch-Iter:: 88/90-1000 | Loss: 2.7966 | LR: 0.000100
+#   Loss-val-total: 2.8028
+# Epoch-Iter:: 89/90-1000 | Loss: 2.7971 | LR: 0.000100
+#   Loss-val-total: 2.8033
+# the loss decreased, but the convergence is slow, it need more training
+# TODO next disable the gradient clipping part/try to train more with higher lr
+# the gradient clipping removal didnt do anything, but lowering the lr to 0.001 resulted in
+# much faster convergence and much lower loss both during training and validation:
+# this was trained for 90 epochs which got worse and model diverged after epoch 30
+# Epoch-Iter:: 28/90-1000 | Loss: 0.3809 | LR: 0.001000
+#   Loss-val-total: 0.5979
+# Epoch-Iter:: 29/90-1000 | Loss: 0.3810 | LR: 0.001000
+#   Loss-val-total: 0.5953
+# Epoch-Iter:: 30/90-1000 | Loss: 0.2737 | LR: 0.000010
+#   Loss-val-total: 0.5775
+# Epoch-Iter:: 31/90-1000 | Loss: 0.1969 | LR: 0.000100
+#   Loss-val-total: 0.5857
+# Epoch-Iter:: 32/90-1000 | Loss: 0.1596 | LR: 0.000100
+#   Loss-val-total: 0.6120
+# Epoch-Iter:: 33/90-1000 | Loss: 0.1384 | LR: 0.000100
+#   Loss-val-total: 0.6330
+# so I traind for the second time this time for 30 epochs only 
+# Epoch-Iter:: 26/30-1000 | Loss: 0.4237 | LR: 0.001000
+#   Loss-val-total: 0.6812
+# Epoch-Iter:: 27/30-1000 | Loss: 0.4257 | LR: 0.001000
+#   Loss-val-total: 0.6520
+# Epoch-Iter:: 28/30-1000 | Loss: 0.4038 | LR: 0.001000
+#   Loss-val-total: 0.6898
+# Epoch-Iter:: 29/30-1000 | Loss: 0.3875 | LR: 0.001000
+#   Loss-val-total: 0.6460
+# the loss is very low, but the text generation is nonsense, all the classes are 1!
+# which shouldnt happen, and therefore it keeps generating <sos> for all timesteps/characters
+# TODO find and fix the issue 
 #%%
 
 def predict_nextword(model, inputs, hidden_states=None, topk=5,device='cuda'):
@@ -1748,7 +2643,7 @@ def predict_nextword(model, inputs, hidden_states=None, topk=5,device='cuda'):
     unique_chars = len(int2word)
     # print(char2int)
     # convert input string into corrosponding ids and add a batch dim
-    # print(f'{inputs=}')
+    print(f'{inputs=}')
     input_tensor =  torch.tensor([word2int[w] for w in inputs]).reshape(1,-1).to(device).long()
     # print(f'{input_tensor.shape=}')
     
@@ -1784,8 +2679,9 @@ def sample(model, size=10, prompt='hello there',topk=5, seq_len=30):
     prompt = prompt.lower()
     # add the prompt/start message
     # preprend spaces so it becomes seq_len big
-    prompt_prepended = '* '*(seq_len - len(prompt.split(' ')))+prompt
-    words = prompt_prepended.split()
+    prompt_prepended = ' '*(seq_len - len(prompt.split(' ')))+prompt
+    # words = prompt_prepended.split()
+    words = prompt_prepended
     print(f'after prepending spaces: {len(words)}, {words}')
     
     # now append the new generated text 
@@ -1808,21 +2704,84 @@ def sample(model, size=10, prompt='hello there',topk=5, seq_len=30):
     print(words[-len(words):30])
     for i in range(size):
         text = words[-seq_len:]
-        print(f'-- text fed: {-len(words)=} {text=}')
+        # print(f'-- text fed: {-len(words)=} {text=}')
         o, h = predict_nextword(model, text, h, topk=topk)
-        print(f'--output: {o=}')
-        words.append(o)
-        if i <seq_len-1:
-            print(i)
-            print(words.pop(0))
+        words+= o
+        if words[0]==' ':
+            words=words[0:]
 
     # finally we convert all into a big string
     return ' '.join(words)#words[seq_len-1:]
 # unique_chars = len(int2word)
 # print(unique_chars)
-outputz = sample(model, size=35, prompt='man',topk=5)
+outputz = sample(model, size=30, prompt='\n',topk=5)
 print(repr(outputz))
+#%%
+def predict(model, input, hidden_states=None, topk=5):
+    model.eval()
+    # int2word = int2word
+    # word2int = word2int
+    unique_chars = len(int2word)
+    # print(char2int)
+    # convert input string into corrosponding ids and add a batch dim
+    input =  torch.tensor([word2int[input]]).reshape(-1,1).to('cuda')
+    # input =  torch.tensor([word2int['<sos>']]).reshape(-1,1).to('cuda')
+    output, hidden_states = model(input, hidden_states)
 
+    output = output.softmax(dim=1)
+    # print(f'{output=}')
+    # now our output has probabilities for each sequence/timestep
+    # we will choose the highest one here 
+    probs, indexes = output.topk(k=topk, dim=1)
+    indexes = indexes.cpu().data.squeeze()
+    probs = probs.cpu().data.squeeze()
+    # print(f'{probs.shape=}')
+    # print(f'{indexes.shape=}')
+    # if we were to use numpy, we would have to write it like this, 
+    # use indexes, and also provide the probablities for these 
+    # char = np.random.choice(indexes.numpy(),p=probs.numpy()/probs.numpy().sum())
+    # note we have to renormalize the probs so that each of these new probablities
+    # also note that, we sample from the indexes, each index represents a character
+    # so sampling from them means choosing between different characters based on their
+    # probablities here.
+    if probs.numel()==1: # if topk=1
+        char = indexes.item()
+    else:
+        char = indexes[torch.multinomial(probs/probs.sum(dim=-1), num_samples=1, replacement=True)].item()
+    return int2word[char], hidden_states
+
+def sample(model, size=10, prompt='hello there',topk=5):
+    
+    # chars = [ch.lower() for ch in starter_message]
+    h = None
+    prompt = prompt.lower()
+    # add the prompt/start message
+    chars = list(prompt)
+    # print(unique_chars)
+    # now append the new generated text 
+    # by first feeding the whole prompt/starter message to 
+    # condition the model, and then the append the last output
+    # (which is what we want) to the chars list
+    for ch in prompt:
+        o,h = predict(model, ch, h, topk=topk)
+    chars.append(ch)
+
+    # now start from the last newly generated character
+    # we just got from previous loop, use it to generate
+    # new characters, as many as the size dictates.
+    # chars[-1] grabs the last freshly generated character
+    # from previous attempt and feeds it to the network to
+    # generate new one. the new one is then appended to the
+    # chars list and this continues until we have generated
+    # the right amount of characters specified by size 
+    for _ in range(size):
+        o, h = predict(model, chars[-1], h, topk=topk)
+        chars.append(o) 
+        
+    # finally we convert all into a big string
+    return ''.join(chars)
+outputz = sample(model, size=30, prompt='the projec',topk=1)
+print(repr(outputz))
 
 #%%
 # #this is basically a decoder part -old should be deleted
