@@ -1017,485 +1017,6 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # finally we will use them in our RNN module with these two!
 # of course we can build all of them in a single model but the first way is neater
 # for encoder and decoder, we are going to use embedding layers.
-#%%
-import torch
-import torch.nn as nn
-
-class Encoder(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, hidden_size, num_layers=1, bidirectional=False, dropout=0.3):
-        super().__init__()
-        # our vocabulary size is used as embedding_size
-        self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.bidirectional = bidirectional
-        self.dropout = dropout
-        
-        # instead of one-hot encoding our input sequence, we use an embedding layer
-        # to give us representations that are way more informative than a one-hot
-        # encoded representation!
-        # In some implementations you may see, the encoder
-        # accepts hidden-size as input-size, and subsequently
-        # the embedding dim also have to become hidden-size.
-        # but here, we simply use an embedding_dim to decouple it from
-        # input-size/sequence-length or the hidden-size.
-        self.embedding = nn.Embedding(self.vocab_size, embedding_dim)
-        
-        # we need a rnn to process the input sequence
-        # we use an lstm for its superior performance, 
-        # the paper uses GRU!
-        self.lstm = nn.LSTM(input_size=embedding_dim, 
-                            hidden_size=self.hidden_size, 
-                            num_layers=self.num_layers,
-                            batch_first=True, 
-                            dropout=self.dropout, 
-                            bidirectional=self.bidirectional)
-
-    def forward(self, x, h):
-        x = self.embedding(x)
-        return self.lstm(x,h)
-# lets test 
-# enc = Encoder(input_sequence_size=30, embedding_dim=75,vocab_size=50, hidden_size=100)
-# xt = torch.randint(0,50, size=(5,30))
-# outputs,hidden_state = enc(xt,None)
-# print(f'{outputs.shape=}\n{hidden_state[0].shape=}\n{hidden_state[1].shape=}')
-# good now lets implement our decoder with the attention mechanism
-
-class BahdanauAttentionDecoder(nn.Module):
-    def __init__(self, input_sequence_length, output_sequence_length, vocab_size, embedding_dim, hidden_size, num_layers, bidirectional=False, dropout=0.5) -> None:
-        super().__init__()
-        # input size or sequence length!
-        self.input_seq_len = input_sequence_length
-        # since this is a seq2seq model, the
-        # output size can be different
-        self.output_seq_len = output_sequence_length
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.bidirectional = bidirectional
-        self.dropout = nn.Dropout(dropout)
-        
-        # we need an embedding layer to prepare our input instead of one-hotencoding it
-        # we need an rnn for decoding. we can use a lstmcell or a lstm layer, we use the
-        # latter as it can be more powerful (add more layers, etc)
-        # but we should have no issue replacing it with a lstm cell (test this when all is done)
-        #
-        # we need 3 weights. 
-        #   one for decoders state, 
-        #   one for encoders state and
-        #   one for the weight scale(w_v)
-        # we can use input_sequence_size, or hiddensize, but I want to use embedding-dim!
-        # to decouple it from inputsize and hiddensize.
-        self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
-        
-        # our decoder's input will be the concatenated input_t and context_vector
-        # both of which will have the shape (batchsize, timesteps) or (batchsize, seq_length)
-        # we are using a LSTM instead of a LSTMCell, becasue it makes our life easier. 
-        # if we use LSTMCell, we have to use a few extra reshapes which is unncessary really. 
-        # using an lstm layer lke this, makes it a oneliner! easy peasy!
-        # 
-        # Note: theres a problem here, during our inference, when we want to feed our decoder
-        # we have to always feed input_seq_length words, otherwise it would fail! note that this
-        # was primarily used for machine translation and it makes sense, but for word generation
-        # this causes an issue where we cant simply feed it a single word and get a single word
-        # as output, so we may either prepad our inputs with spaces and place our initial word
-        # at the end of the sequence and then feed it to the network and carry on during evaluation
-        # time.
-        self.decoder = nn.LSTM(self.input_seq_len+self.embedding_dim,
-                               hidden_size=self.hidden_size,
-                               num_layers=self.num_layers,
-                               batch_first=True,
-                               dropout=dropout, 
-                               bidirectional=self.bidirectional,
-                               )
-        
-        # #TODO disable after test 
-        # self.decoder = nn.LSTM(self.embedding_dim,
-        #                        hidden_size=self.hidden_size,
-        #                        num_layers=self.num_layers,
-        #                        batch_first=True,
-        #                        dropout=dropout, 
-        #                        bidirectional=self.bidirectional,
-        #                        )
-        # we also implement the lstmcell version as well, when we implemented everything
-        # we enable this and add the lstmcell related changes (its only the decoder part
-        # see the explanation in codes)
-        # self.decoder = nn.LSTMCell(self.input_seq_len+self.embedding_dim,
-        #                            hidden_size=self.hidden_size)
-        
-        # weights for decoders hidden_states
-        # we use a linear layer without bias 
-        # which does exactly what we want!
-        self.W_decoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        # weights for encoders hidden_states 
-        self.W_encoder = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        # weights for the scaling which is (1,hidden_size) 
-        # becasue its multiplied by the result of the previous
-        # weights, for this we use nn.Parameter to create a 
-        # learnable wight/parameter, some implementation only 
-        # use a single neuron/scaler for W_v
-        # the 1, in the shape is just to remind us we do the right thing so the correct broadcasting happens
-        # see the later notes
-        self.W_v =  nn.Parameter(torch.ones(1,hidden_size))
-        # final classification layer to give us the final results
-        self.classifier = nn.Linear(hidden_size, output_sequence_length)
-    
-    
-    def forward(self, input_sequence, encoder_states, hidden_state):
-        # since we want to feed our input to decoder as well
-        # we run embedding on the input_sequence as well
-        # for all input timesteps, we repeat this process
-        # print(f'input_sequence.shape:{tuple(input_sequence.shape)}')
-        # print(f'hidden-size:{self.hidden_size}')
-        # print(f'embedding dim:{self.embedding_dim}')
-        input_sequence = self.embedding(input_sequence)
-        # print(f'after embedding: {tuple(input_sequence.shape)}')
-        
-        # #TODO plain decoder test, disable after test
-        # self.direction = 2 if self.bidirectional else 1
-        # outputs, hidden_state = self.decoder(input_sequence, hidden_state)
-        # outputs = self.classifier(outputs.reshape(-1, self.hidden_size*self.direction))
-        # return outputs, hidden_state
-    
-        # remember we also need to grab outputs for each timestep
-        # so for a given input_sequence, we return an output_sequence 
-        # (here of the same size, but it could be different in general)
-        # we do the classificantion in the loop
-        outputs = []
-        for t in range(input_sequence.size(1)):
-            # grab one timestep from input
-            # print(f'------------------------')
-            # print(f'timestep: {t}/{input_sequence.size(1)}')
-            input_t = input_sequence[:,t]
-            # note that pytorch requires our input to be in the form
-            # of (batch, timestep, input_dim) to treat it as a batched input
-            # so we need to have a dim dedicated to the timestep, since this is
-            # a single timestep, we simply make the dim and that suffices.
-            # likewise the hiddenstate shape will have the form 
-            # (num_layers*bidirection, Batchsize, hiddensize) which in our case
-            # will be (1, batchsize, hiddensize) as we have a single layer and no
-            # bidirection.
-            input_t = input_t[:,None,:]
-            # print(f'{input_t.shape=}')
-            # print(f'{input_t=}')
-            # TODO enable after test
-            output_t, hidden_state = self.forward_attention(input_t, encoder_states, hidden_state)
-            # TODO disable after test -(plain decoder test)
-            # output_t, hidden_state = self.decoder(input_t, hidden_state)
-            hidden_state = tuple(h.detach()for h in hidden_state)
-            # output_t is (2,1,7), so we need the classifier to get
-            # the output of size (bs,output_size).
-            # the reshape makes it (2,7) which is compatible with our classifier
-            output_t = self.classifier(output_t.view(output_t.size(0),-1))
-            # print(f'--{output_t.shape=}')
-            #
-            # To grab the actual outputs we have two ways. one way is to stack
-            # the outputs along timesteps and return the final output as (batch, ts, outputsize)
-            # and then use crossentropy to calculate loss. 
-            # the second way is to use logsoftmax, use max and grab the top indexes for each timestep
-            # and return the final output which would be (batch, ts) and use nllloss to calculate the loss!
-            # method 1:
-            # simply append the outputs and at the end
-            # stackthem in timestep dim and return it
-            outputs.append(output_t)
-            
-            # method 2: 
-            # # calculate softmax
-            # output_t = torch.log_softmax(output_t, dim=-1)
-            # # print(f'---{output_t=}')
-            # # now grab the maximum value (most likely word/class)
-            # _, output_t_idx = output_t.max(dim=-1)
-            # # print(f'---{output_t_idx=}')
-            # # store them so we can stack them later as one full output sequence
-            # outputs.append(output_t_idx.detach())
-            
-        # stack the outputs along timestep dim to get (bs, output-seq-len/timesteps)
-        # they can now be used to compare with labels 
-        # we used log_softmax so we need to use nlloss instead 
-        # (not sure if I can still use crossentropy)
-        outputs = torch.stack(outputs, dim=1)
-        # print(f'++++{outputs.shape=}')
-        return outputs, hidden_state
-
-    def forward_attention(self, input_sequence_t, encoder_states, hidden_state):
-        # calculate attention raw score (attn = w_v + tanh(W_D+W_E))
-        # do a softmax, make the rawscores into conditional probablities
-        # multiply the new weight/scores by the attention-states, get the context vector
-        # feed the context vector to the decoder wither alone or concatenated with input
-        # at timestep t, calculate new outputs, hiddenstates and return the outputs 
-        # and hidden_state for this timestep
-        # grab the long-term memory(h)
-        (h,c) = hidden_state
-        # print(f'{h.shape=}')              # (1, batch, hidden-size)
-        # print(f'{encoder_states.shape=}') # (batch, timesteps, hidden-size)
-        # our hidden state has the shape (num-layers, batch, hidden-size), since our num_layers=1
-        # its (1, batchsize, hiddensize) here.
-        # while our encoder's outputs has (batch, timesteps, hidden-size)
-        # we need to reshape our hiddenstate to have (batchsize, 1, hiddensize)
-        # the easiest way is to simply transpose/permute it:
-        h = h.permute(1,0,2)
-        
-        # print(f'{h.shape=}')
-        # after this we can simply add the W_d and W_e together, the W_d will be broadcasted
-        # (will be repeated along dim=1, and these two will be added properly)
-        W_d = self.W_decoder(h)
-        W_e = self.W_encoder(encoder_states)
-        # atten = W_v * tanh(W_d + W_e)
-        # print(f'{W_d.shape=}') # will be (batch, 1, hidden-size)
-        # print(f'{W_e.shape=}') # will be (batch, ts, hidden-size)
-        weights_added = torch.tanh(W_d + W_e)
-        # print(f'{weights_added.shape=}') # (batch, ts, hidden-size)
-        # print(f'{self.W_v.shape=}') #(1,hidden-size)
-        # likewise our W_v shape is (1,hidden-size), in order to multiply it by
-        # our weights_added, we need to make it compatible. 
-        # making it (1,1,hidden-size) should do the trick, and it will be broadcasted 
-        # accordingly to match (batch, ts, hidden-size).
-        # the good thing is, we dont need to do sth like W_v.data.unsqueez_(0)! for this
-        # (1,hidden-size) will be automatically broadcasted.
-        # TODO method 1 :
-        attention_score = self.W_v * weights_added # (batch, ts, hidden-size)
-        
-        # note that we have two ways to get to the same shape, but only one of them is correct.
-        # if we do that the result will also be (batch,ts,hidden-size)
-        # we could also achieve this shape by doing a matmul
-        # TODO use method 2:
-        # attention_score = torch.matmul(weights_added ,self.W_v.data.t())
-        
-        # print(f'{attention_score.shape=}') # (batch,ts,1)
-        # and we get (batchsize, ts, 1). 
-        # this means the context vector at the end will endup (batchsize,ts,hiddensize)
-        # so which way is correct? 
-        # lets think about our choices here
-        # TODO: test both of these methods and rewrite this after test: 
-        # The implications of using `torch.matmul(weights_added, W_v.t())` instead of 
-        # the element-wise multiplication would be different in terms of the mathematical
-        # operation and the resulting tensor shape.
-        # In the case of element-wise multiplication (the previous way), the operation is 
-        # applied element-wise between the broadcasted tensors, and the resulting tensor 
-        # has the same shape as the larger tensor (`wights_added` in this case).
-        # On the other hand, when using `torch.matmul(weights_added, W_v.t())`, it performs
-        # a batched matrix multiplication between `weights_added` and the transposed weight
-        # matrix `W_v.t()`. This operation has different implications:
-        # 1. **Linear Transformation**: The matrix multiplication applies a 
-        #      linear transformation to each batch in `wights_added` using the weight matrix
-        #      `w_v`. 
-        #      This is a common operation in neural networks, 
-        #      where the weight matrix is used to transform the input data (`wights_added`) 
-        #      into a different representation (e.g., applying a fully connected layer).
-        # 2. **Dimensionality Reduction**: The resulting tensor has a reduced dimensionality 
-        #      compared to the input tensor `wights_added`. Specifically, the last dimension 
-        #      is reduced to 1, which means that each batch in the output tensor is a vector.
-        #    - If `wights_added` has shape `(2, 5, 7)` and `w_v` has shape `(1, 7)`, the output
-        #      tensor will have shape `(2, 5, 1)`.
-        #    - This dimensionality reduction is often desired in neural networks, where the 
-        #      output of one layer (e.g., a fully connected layer) is used as input to the 
-        #      next layer.
-        # 3. **Weight Sharing**: By using the same weight matrix `w_v` for all batches in 
-        #      `wights_added`, the linear transformation is shared across all batches. 
-        #       This is a common technique in neural networks, where the same set of weights
-        #       is applied to different inputs (batches) during training and inference.
-        # 4. **Potential for Non-linearity**: In neural networks, the output of a linear 
-        #       transformation (like matrix multiplication) is often passed through a 
-        #       non-linear activation function (e.g., ReLU, sigmoid) to introduce 
-        #       non-linearity, which is essential for learning complex patterns.
-        # So, if `w_v` is a weight matrix, using `torch.matmul(wights_added, w_v.t())` 
-        # instead of element-wise multiplication suggests that we are performing a 
-        # linear transformation on the input tensor `wights_added` using the weight matrix `w_v`.
-        # This is a common operation in neural networks, where weight matrices are learned during
-        # training to transform the input data into a desired representation.
-        # However, it's important to note that the specific implications depend on the context 
-        # and the architecture of our neural network model. 
-        # The choice between element-wise multiplication and matrix multiplication should
-        # align with the intended mathematical operation and the desired transformation of
-        # the input data.
-        #
-        # torch.set_printoptions(profile='default')
-        # softmax to ensure both nonnegativity and normalization. 
-        attention_weights = attention_score.softmax(dim=-1)
-        # print(f'{attention_weights.shape=}')
-        # print(f'{weights=}')
-        
-        # Like before, we also have two ways of calculating context vector
-        # we can have an elementwise multiplication and then sum over the 
-        # hidden dim or simply do a batch matrix multiply, where we multiply these two
-        # and the result is (batchsize, ts,ts) (and then sum so the last dim is reduced)
-        # TODO test with this (enable this and disable the matmul version)
-        # context_vector = attention_weights*encoder_states
-        # context_vector = context_vector.sum(dim=-1)
-        # print(f'{context_vector.shape=}')
-        # note that context is a weighted sum of the encoder hidden-states
-        # that is why we need to sum along the hiddenstate dimension to ultimately
-        # get (batchsize, ts)
-        
-        # print(f'-{context_vector.shape=}')
-        # TODO:‌ use bmm or batched matrix multiply (basically matmul()) it should
-        # give us (batchsize, ts,ts) which if summed gives us (batchsize, ts)!
-        # this maybe the right operation, as it carries a dot product between the two
-        # matrixes (batch multiplication happens between the two)
-        # while for the first approach, its an elemntwise multiplication and summation
-        # basically scaling and summing the last dim. 
-        context_vector = torch.matmul(attention_weights, encoder_states.permute(0,2,1)).sum(dim=-1)
-        # print(f'{context_vector.shape=}')
-        # and at this point we have a context vector that shows the attention
-        # of each input sequence, we can feed this directly to decoder
-        # or concatenate it with the input at timestep_t and then feed this new
-        # input to decoder.
-        
-        # I have seen some people where they multiply context by the encoder-states 
-        # and then use that to concatenate with the input. 
-        # this is called multiplicative attention. by the way its different than 
-        # loung attention! which we will see in a moment
-        # 
-        # states = context*encoder_states
-        # print(f'{states.shape=}')
-        
-        # print(f'{input_sequence_t.shape=}')
-        
-        # we can now use this to feed out decoder , 
-        # but usually we concatentate our input_sequence with this
-        # context and then feed it to our decoder 
-        # since our input needs to be in the form (batchsize, timestep, features), we 
-        # make context_vector to have a timestep dim as well. 
-        decoder_input = torch.cat([input_sequence_t, context_vector[:,None,:]],dim=-1)
-        # print(f'{decoder_input.shape=}')
-        # make the hiddenstate the (layer, batch, hiddenstate) instead of (batch,layer,hiddensatet)
-        # h = h.permute(1,0,2)
-        # print(f'{h.shape=}')
-        # lstm decoder expects the hiddensize to be a tuple so we can either use (h,h)
-        # or use the previous hiddenstate altogether, (h is our longterm memory and c 
-        # is the short term memory!and we have been using the long term one)
-        # sidenote: to test the lstmcell version, comment this part and uncomment the lstmcell section!
-        # outputs, hidden_state = self.decoder(decoder_input, (h,h))
-        outputs, hidden_state = self.decoder(decoder_input, hidden_state)
-        
-        ############################## changes for using lstmcell ###################
-        # # when we are using lstmcell, the documenations says our input needs to be 2D,
-        # # that is (batch, features). this is becasue a lstmcell process batches of data
-        # # for each timestep consecutively/serially. but since we are already dealing with
-        # # single timestep inputs, our input shape is (batch, 1, features). so by simply 
-        # # removing the second dim (timestep dimemsion), we get our (batch, features) shape
-        # # and we can go on and feed it to our lstmcell.
-        # decoder_input = decoder_input.squeeze(1)
-        # print(f'{decoder_input.shape=}')
-        # # the hiddenstate also needs to be 2D
-        # hidden_state = tuple(h.squeeze(0) for h in hidden_state)
-        # # print(f'{hidden_state[0].shape=}')
-        # print('hidden_state shapes: ',*[tuple(h.shape) for h in hidden_state])
-        
-        # # # now if we wanted, we could use a for loop to process the inputs and it would
-        # # # look like this:
-        # # outputs = []
-        # # # remember if we are using a loop for processing batches for each timestep, 
-        # # # we must make the input-sequence to have the shape (time_steps, batch, input_size)
-        # # # sidenote, make sure to commentout the decoder_input.squeeze(1) part before continuing!
-        # # # so the shapes match! 
-        # # # also remember to comment out the next line where we use self.decoder() in a single call!
-        # # decoder_input = decoder_input.permute(1,0,2)
-        # # print(f'{decoder_input.shape=}')
-        # # for i in range(decoder_input.size(0)):
-        # #     print(decoder_input[i].shape)
-        # #     hidden_state = self.decoder(decoder_input[i], hidden_state)
-        # #     outputs.append(hidden_state[0])
-        # # outputs = torch.stack(outputs,dim=0)
-        # # # change outputs to have the shape (batch, tx, features)
-        # # outputs = outputs.permute(1,0,2)
-        
-        # # but since, we are already using a single timestep input, we can simply do
-        # # sidenote: remember to comment this out to test the loop-version!
-        # hidden_state = self.decoder(decoder_input, hidden_state)
-         
-        # # outputs is the first hiddenstate, but we need to make it as (bs, tx, features)
-        # # so we add a new dimension for the timestep at dim=1
-        # outputs = hidden_state[0].unsqueeze(1)
-        # print(f'{outputs.shape=}')
-        # # we also change hiddenstate shape to match the hiddenstate of encoder
-        # # so everything works out and we dont need to change anything else anywhere
-        # hidden_state = tuple(h.unsqueeze_(0) for h in hidden_state)
-        # ####################end of lstmcell required change#######################
-        
-        # print(f'{outputs.shape=}')
-        # print(f'{hidden_state[0].shape=}')
-        return outputs, hidden_state
-
-seq_length = 5
-embedding_dim = seq_length
-hidden_size = 7
-batch_size=2
-vocab_size = 50
-enc = Encoder(vocab_size=vocab_size, embedding_dim=embedding_dim, hidden_size=hidden_size)
-xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
-h = None
-outputs,hidden_state = enc(xt,h)
-decoder = BahdanauAttentionDecoder(input_sequence_length=seq_length, 
-                                   output_sequence_length=vocab_size, 
-                                   vocab_size=vocab_size,
-                                   embedding_dim=embedding_dim,
-                                   hidden_size=hidden_size,
-                                   num_layers=1)
-
-outputs,hidden_state = decoder(xt,outputs,hidden_state)
-print(f'{outputs.shape=}')
-print(f'{hidden_state[0].shape=}')
-#%%
-# Now lets create the whole model 
-# we'll keep it simple (we can use different values for encoder/decoder but here we use only
-# one set for both)
-class LSTMBahdanau(nn.Module):
-    def __init__(self, input_size, output_size, vocab_size,
-                 embedding_dim, hidden_size, enc_num_layers=1,
-                 enc_dropout=0.3, dec_num_layers=1, dec_dropout=0.5):
-        super().__init__()
-        
-        self.input_size = input_size
-        self.output_size = output_size
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
-        self.hidden_size = hidden_size
-        self.enc_dropout = enc_dropout
-        self.dec_dropout = dec_dropout
-        self.enc_num_layers = enc_num_layers
-        self.dec_num_layers = dec_num_layers
-        
-        self.encoder = Encoder(vocab_size=vocab_size,
-                               embedding_dim=embedding_dim,
-                               hidden_size=hidden_size,
-                               dropout=enc_dropout,
-                               num_layers=enc_num_layers)
-        
-        self.decoder = BahdanauAttentionDecoder(input_sequence_length=input_size,
-                                                output_sequence_length=output_size,
-                                                vocab_size=vocab_size,
-                                                embedding_dim=embedding_dim,
-                                                hidden_size=hidden_size,                 
-                                                num_layers=dec_num_layers,dropout=dec_dropout
-                                                )
-        self.drp = nn.Dropout2d(0.1)
-        
-    def forward(self, x, h):
-        enc_outputs, hidden_state = self.encoder(x,h)
-        # TODO: decoder needs to work with encoders output, the initial input for decoder
-        # should be the starting token, the start token + hidden_state from encoder should
-        # do thetrick and start the chain 
-        output,hidden_state = self.decoder(x, enc_outputs, hidden_state)
-        # output = self.drp(output)
-        return output,hidden_state
-
-vocab_size=50
-batch_size=4
-seq_length = 5
-embedding_dim=30
-hidden_dim=100
-
-xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
-h = None
-
-model = LSTMBahdanau(seq_length, vocab_size, vocab_size, embedding_dim, hidden_dim)
-out,hidden_state = model(xt,h)
-print(f'{out.shape=}')
-print(f'{hidden_state[0].shape=}')
-#! Remember to test different methods for decoder multiplication
-#%############### correct way of implementing the bahdanu attention 
 #%% fixed version
 import os,sys
 import numpy as np
@@ -1791,8 +1312,8 @@ class BahdanauAttentionDecoder(nn.Module):
         # attention_score = self.W_v(weights_added)
         # print(f'{attention_score.shape=}') # (batch,ts,1) which means each timestep has a 
         # single weight
+        
         # lets think about our choices here
-        # TODO: test both of these methods and rewrite this after test: 
         # The implications of using `torch.matmul(weights_added, W_v.t())` instead of 
         # the element-wise multiplication are different in terms of the mathematical
         # operation and the resulting tensor shape.
@@ -2067,83 +1588,6 @@ print(f'{outputs.shape=}')
 print(f'{hidden_state[0].shape=}')
 print(f'{attentions.shape=}')
 #%%
-class BahdanauAttention(nn.Module):
-    def __init__(self, hidden_size):
-        super(BahdanauAttention, self).__init__()
-        self.Wa = nn.Linear(hidden_size, hidden_size)
-        self.Ua = nn.Linear(hidden_size, hidden_size)
-        self.Va = nn.Linear(hidden_size, 1)
-
-    def forward(self, query, keys):
-        # print(f'hiddenstate: {query.shape=}')
-        # print(f'(encoder-outputs: {keys.shape=}')
-        # this does the summation at the end as well!! and gives us (b,1,ts)
-        # instead of (ba,h, ts) (we had to sum over timesteps which seems wrong!!)
-        # becasue later when we multiply by the weights (scores*outputs) we get the correct shape!(2,7)
-        scores = self.Va(torch.tanh(self.Wa(query) + self.Ua(keys)))
-        # print(f'{scores.shape=}')
-        scores = scores.squeeze(2).unsqueeze(1)
-        # print(f'{scores.shape=}')
-        
-        weights = F.softmax(scores, dim=-1)
-        # print(f'{weights.shape=}')
-        context = torch.bmm(weights, keys)
-        # print(f'{context.shape=}')
-        return context, weights
-    
-SOS_token=0
-MAX_LENGTH=5
-class AttnDecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, dropout_p=0.1,device='cpu'):
-        super(AttnDecoderRNN, self).__init__()
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.attention = BahdanauAttention(hidden_size)
-        self.gru = nn.GRU(2 * hidden_size, hidden_size, batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
-        self.dropout = nn.Dropout(dropout_p)
-        self.device=device
-
-    def forward(self, encoder_outputs, encoder_hidden, target_tensor=None):
-        batch_size = encoder_outputs.size(0)
-        decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=self.device).fill_(SOS_token)
-        decoder_hidden = encoder_hidden
-        decoder_outputs = []
-        attentions = []
-
-        for i in range(MAX_LENGTH):
-            decoder_output, decoder_hidden, attn_weights = self.forward_step(
-                decoder_input, decoder_hidden, encoder_outputs
-            )
-            decoder_outputs.append(decoder_output)
-            attentions.append(attn_weights)
-
-            if target_tensor is not None:
-                # Teacher forcing: Feed the target as the next input
-                decoder_input = target_tensor[:, i].unsqueeze(1) # Teacher forcing
-            else:
-                # Without teacher forcing: use its own predictions as the next input
-                _, topi = decoder_output.topk(1)
-                decoder_input = topi.squeeze(-1).detach()  # detach from history as input
-
-        decoder_outputs = torch.cat(decoder_outputs, dim=1)
-        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
-        attentions = torch.cat(attentions, dim=1)
-
-        return decoder_outputs, decoder_hidden, attentions
-
-
-    def forward_step(self, input, hidden, encoder_outputs):
-        embedded =  self.dropout(self.embedding(input))
-
-        query = hidden.permute(1, 0, 2)
-        context, attn_weights = self.attention(query, encoder_outputs)
-        input_gru = torch.cat((embedded, context), dim=2)
-
-        output, hidden = self.gru(input_gru, hidden)
-        output = self.out(output)
-
-        return output, hidden, attn_weights
-
 torch.manual_seed(12)
 seq_length = 5
 embedding_dim = 6
@@ -2155,32 +1599,18 @@ xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
 h = None
 outputs,hidden_state = enc(xt,h)
 
-decoder = AttnDecoderRNN( hidden_size=hidden_size,output_size=vocab_size)
-decoder2 = BahdanauAttentionDecoder(vocab_size=vocab_size,
+decoder = BahdanauAttentionDecoder(vocab_size=vocab_size,
                                     embedding_dim=embedding_dim,
                                     hidden_size=hidden_size,
                                     num_layers=1,
                                     )
 
-# outputs1,hidden_state1,attention1 = decoder(outputs,hidden_state[0])
-outputs2,hidden_state2,attention2 = decoder2(outputs,hidden_state)
-# print(f'{outputs1.shape=}')
-# print(f'{hidden_state1[0].shape=}')
-# print(f'{attention1.shape=}\n')
+outputs,hidden_state,attention = decoder(outputs,hidden_state)
+print(f'{outputs.shape=}')
+print(f'{hidden_state[0].shape=}')
+print(f'{attention.shape=}\n')
+print(f'{outputs[0][0]=}')
 
-print(f'{outputs2.shape=}')
-print(f'{hidden_state2[0].shape=}')
-print(f'{attention2.shape=}\n')
-print(f'{outputs2[0][0]=}')
-
-# outputs2[0][0]=
-# tensor([-0.0341,  0.0444,  0.4205,  0.0494, -0.1347,  0.1588, -0.0243,  0.1178,
-#          0.5814, -0.1021, -0.3586,  0.2233,  0.1918, -0.0498,  0.1452,  0.3573,
-#          0.4390, -0.1997,  0.6577,  0.1891,  0.2073, -0.3144, -0.0877, -0.0297,
-#          0.2787, -0.3102, -0.0923, -0.3549,  0.5936, -0.2673, -0.1145, -0.1400,
-#         -0.3625,  0.2535, -0.1305, -0.1677, -0.1468, -0.2840, -0.1781,  0.5341,
-#          0.4365, -0.1938, -0.4974,  0.3784, -0.1728,  0.0954,  0.0229,  0.0900,
-#         -0.2367, -0.4143], grad_fn=<SelectBackward0>)
 #%%
 # Now lets create the whole model 
 # we'll keep it simple (we can use different values for encoder/decoder but here we use only
@@ -2244,62 +1674,205 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SOS_token = 0
 EOS_token = 1
 
-class Lang:
-    def __init__(self, name):
-        self.name = name
-        self.word2index = {}
-        self.word2count = {}
-        self.index2word = {0: "<sos>", 1: "<eos>"}
-        self.n_words = 2  # Count SOS and EOS
+# class Lang:
+#     def __init__(self, name):
+#         self.name = name
+#         self.word2index = {}
+#         self.word2count = {}
+#         self.index2word = {0: "<sos>", 1: "<eos>"}
+#         self.n_words = 2  # Count SOS and EOS
 
-    def addSentence(self, sentence):
-        for word in sentence.split(' '):
-            self.addWord(word)
+#     def addSentence(self, sentence):
+#         for word in sentence.split(' '):
+#             self.addWord(word)
 
-    def addWord(self, word):
-        if word not in self.word2index:
-            self.word2index[word] = self.n_words
-            self.word2count[word] = 1
-            self.index2word[self.n_words] = word
-            self.n_words += 1
-        else:
-            self.word2count[word] += 1
+#     def addWord(self, word):
+#         if word not in self.word2index:
+#             self.word2index[word] = self.n_words
+#             self.word2count[word] = 1
+#             self.index2word[self.n_words] = word
+#             self.n_words += 1
+#         else:
+#             self.word2count[word] += 1
 
+# # Turn a Unicode string to plain ASCII, thanks to
+# # https://stackoverflow.com/a/518232/2809427
+# def unicodeToAscii(s):
+#     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
 
-# Turn a Unicode string to plain ASCII, thanks to
-# https://stackoverflow.com/a/518232/2809427
-def unicodeToAscii(s):
-    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-
-# Lowercase, trim, and remove non-letter characters
-def normalizeString(s):
-    s = unicodeToAscii(s.lower().strip())
-    s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z!?]+", r" ", s)
-    return s.strip()            
+# # Lowercase, trim, and remove non-letter characters
+# def normalizeString(s):
+#     s = unicodeToAscii(s.lower().strip())
+#     s = re.sub(r"([.!?])", r" \1", s)
+#     s = re.sub(r"[^a-zA-Z!?]+", r" ", s)
+#     return s.strip()            
             
-def readLangs(dataset_path, lang1, lang2, reverse=False):
-    print("Reading lines...")
+# def readLangs(dataset_path, lang1, lang2, reverse=False):
+#     print("Reading lines...")
 
-    # Read the file and split into lines
-    lines = open(f'{dataset_path}/{lang1}-{lang2}.txt', encoding='utf-8').read().strip().split('\n')
+#     # Read the file and split into lines
+#     lines = open(f'{dataset_path}/{lang1}-{lang2}.txt', encoding='utf-8').read().strip().split('\n')
 
-    # Split every line into pairs and normalize
-    pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
+#     # Split every line into pairs and normalize
+#     pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
 
-    # Reverse pairs, make Lang instances
-    if reverse:
-        pairs = [list(reversed(p)) for p in pairs]
-        input_lang = Lang(lang2)
-        output_lang = Lang(lang1)
-    else:
-        input_lang = Lang(lang1)
-        output_lang = Lang(lang2)
+#     # Reverse pairs, make Lang instances
+#     if reverse:
+#         pairs = [list(reversed(p)) for p in pairs]
+#         input_lang = Lang(lang2)
+#         output_lang = Lang(lang1)
+#     else:
+#         input_lang = Lang(lang1)
+#         output_lang = Lang(lang2)
 
-    return input_lang, output_lang, pairs
+#     return input_lang, output_lang, pairs
 
 
-MAX_LENGTH = 10
+# MAX_LENGTH = 10
+
+# eng_prefixes = (
+#     "i am ", "i m ",
+#     "he is", "he s ",
+#     "she is", "she s ",
+#     "you are", "you re ",
+#     "we are", "we re ",
+#     "they are", "they re "
+# )
+
+# def filterPair(p):
+#     return len(p[0].split(' ')) < MAX_LENGTH and len(p[1].split(' ')) < MAX_LENGTH and p[1].startswith(eng_prefixes)
+
+
+# def filterPairs(pairs):
+#     return [pair for pair in pairs if filterPair(pair)]
+
+# def prepareData(dataset_path, lang1, lang2, reverse=False):
+#     input_lang, output_lang, pairs = readLangs(dataset_path, lang1, lang2, reverse)
+#     print(f"Read {len(pairs)} sentence pairs")
+#     pairs = filterPairs(pairs)
+#     print(f"Trimmed to {len(pairs)} sentence pairs" )
+#     print("Counting words...")
+#     for pair in pairs:
+#         input_lang.addSentence(pair[0])
+#         output_lang.addSentence(pair[1])
+#     print("Counted words:")
+#     print(input_lang.name, input_lang.n_words)
+#     print(output_lang.name, output_lang.n_words)
+#     print(f'english vocab_size: {output_lang.n_words=}')
+#     return input_lang, output_lang, pairs
+
+# dataset_path = '/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data'
+# input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
+# n = len(pairs)
+# batch_size=32
+# print(f'{n=} {n//batch_size=}')
+# print()
+# print(random.choice(pairs))
+
+# def indexesFromSentence(lang, sentence):
+#     return [lang.word2index[word] for word in sentence.split(' ')]
+
+# def tensorFromSentence(lang, sentence):
+#     indexes = indexesFromSentence(lang, sentence)
+#     indexes.append(EOS_token)
+#     return torch.tensor(indexes, dtype=torch.long, device=device).view(1, -1)
+
+# def tensorsFromPair(pair):
+#     input_tensor = tensorFromSentence(input_lang, pair[0])
+#     target_tensor = tensorFromSentence(output_lang, pair[1])
+#     return (input_tensor, target_tensor)
+
+# def get_dataloader(batch_size):
+#     input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
+
+#     n = len(pairs)
+#     print(f'{n=} {batch_size=} {n//batch_size=}')
+#     # make it so we all full batches
+#     n = (n//batch_size) * batch_size
+#     print(f'{n=}')
+#     input_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
+#     target_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
+
+#     for idx, (inp, tgt) in enumerate(pairs):
+#         if idx>=n:
+#             continue
+#         inp_ids = indexesFromSentence(input_lang, inp)
+#         tgt_ids = indexesFromSentence(output_lang, tgt)
+#         inp_ids.append(EOS_token)
+#         tgt_ids.append(EOS_token)
+#         input_ids[idx, :len(inp_ids)] = inp_ids
+#         target_ids[idx, :len(tgt_ids)] = tgt_ids
+
+#     train_data = TensorDataset(torch.LongTensor(input_ids).to(device),
+#                                torch.LongTensor(target_ids).to(device))
+
+#     train_sampler = RandomSampler(train_data)
+#     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
+#     return input_lang, output_lang, train_dataloader
+
+# in_lang, out_lang, dl = get_dataloader(32)
+# print(f'{len(dl)=}')
+#%%
+import re
+import unicodedata
+from unidecode import unidecode
+
+# note
+# since our dataset is utf-8/unicode, there are non ascii characters
+# which we are better off removing this simplifies the 
+# text and keeps our vocab small.
+# there are several ways you might think of to do this, 
+# like using str.encode('ascii', 'ignore') to ignore 
+# nonascii characters this is not good as it ruins 
+# the words (for example "Héllo, Wörld!" would become Hllo, Wrld!)
+# str.encode('ascii', 'replace').decode('ascii') is not better as
+# it would replace all non-ascii characters! e.g. "Héllo, Wörld!"
+# would become "H?llo, W?rld!". 
+# but using unidecode.unidecode(), we can achieve what we are after
+unicode_string = "Héllo, Wörld!"
+# convert unicode to ascii, by ignoring non-ascii characters
+print(f"ignoring non-ascii characters:  {unicode_string.encode('ascii', 'ignore').decode('ascii')}")
+# convert unicode to ascii, by replacing non-ascii characters with a placeholder
+print(f"replacing non-ascii characters: {unicode_string.encode('ascii', 'replace').decode('ascii')}")
+# using ascii_string = unidecode(unicode_string)
+print(f'converting using unidecode(): {unidecode(unicode_string)}')
+# theres also this function from official pytorch docs that uses 
+convert_to_ascii = lambda s: ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+# in which uses unicodedata.normalize('NFD', s) to decompose characters 
+# into their base form and combining marks. For example, “é” becomes “e” + “´”.
+# and later on, it removes those characters in another try. 
+print(f'converting using unicodedata.normalize(): {convert_to_ascii(unicode_string)}')
+
+dataset_filename ='/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data/eng-fra.txt'
+
+with open(dataset_filename, encoding='utf-8') as f:
+    lines = f.read().lower().strip().splitlines()
+
+def normalize(unicode_str):
+    # convert unicode to ascii characters
+    ascii_str = unidecode(unicode_str)
+    # lets also put a space before any punctuations (.!?)
+    # this is to make words such as 'go.' and 'go' be treated the same
+    # and prevent duplication of words in vocab becasue of 
+    # the adjacent punctuation marks such as .!? (go and go. and go! all would be different words!)
+    # str_normalized = re.sub(r"([.!?])", r" \1", ascii_str)
+    # but a better choice is to check if theres already a space,
+    # and only if theres none before punctuation marks, only then add a space before them!
+    # (?<!\s) is a negative lookbehind assertion that makes sure
+    # there is no space before any of our 3 punctuation marks(i.e. ([.!?]))
+    str_normalized = re.sub(r"(?<!\s)([.!?])", r" \1",  ascii_str)
+    # english, french sentences are separated by a \t (tab)
+    # so lets split them!
+    return str_normalized.strip().split('\t')
+
+pairs_list = [normalize(line) for line in lines]
+print(f'{len(pairs_list)=}')
+print(f'{pairs_list[:5]}')
+
+# now before we continue with the rest of code
+# recall that, we need to use a max length for sequences
+# so we can filter sequences based on their length and content
+# this way we reduce even more words/vocabs.
 
 eng_prefixes = (
     "i am ", "i m ",
@@ -2310,67 +1883,123 @@ eng_prefixes = (
     "they are", "they re "
 )
 
-def filterPair(p):
-    return len(p[0].split(' ')) < MAX_LENGTH and len(p[1].split(' ')) < MAX_LENGTH and p[1].startswith(eng_prefixes)
+def filter_pair(pair, max_words_in_sentence):
+    return len(pair[1].split(' ')) < max_words_in_sentence \
+        and len(pair[0].split(' ')) < max_words_in_sentence and pair[0].startswith(eng_prefixes)
 
+def filter_pairs(pairs,max_words_in_sentence):
+    return [pair for pair in pairs if filter_pair(pair, max_words_in_sentence)]
 
-def filterPairs(pairs):
-    return [pair for pair in pairs if filterPair(pair)]
+# as you can see the number has decreased drastically!
+# this is ok as we are just experimenting, we wouldnt want
+# such drastic reduction in our dataset (the majority of reduction
+# is becasue of the last check which only includes a specific type of sample
+# with of which, we would have vocabs of 11K and 23K for english and french
+# we later on test without this check
+max_words_in_sentence = 10
+pairs_list = filter_pairs(pairs_list, max_words_in_sentence)
+print(f'{len(pairs_list)=}')
+print(f'{pairs_list[:5]}')
 
-def prepareData(dataset_path, lang1, lang2, reverse=False):
-    input_lang, output_lang, pairs = readLangs(dataset_path, lang1, lang2, reverse)
-    print(f"Read {len(pairs)} sentence pairs")
-    pairs = filterPairs(pairs)
-    print(f"Trimmed to {len(pairs)} sentence pairs" )
-    print("Counting words...")
-    for pair in pairs:
-        input_lang.addSentence(pair[0])
-        output_lang.addSentence(pair[1])
-    print("Counted words:")
-    print(input_lang.name, input_lang.n_words)
-    print(output_lang.name, output_lang.n_words)
-    print(f'english vocab_size: {output_lang.n_words=}')
-    return input_lang, output_lang, pairs
+# now lets create vocabs for each language separately
+# dont forget to include the special symbols first!
+en_word2int = {'<sos>':0, '<eos>':1}
+fr_word2int = {'<sos>':0, '<eos>':1}
 
-dataset_path = '/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data'
-input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
-n = len(pairs)
-batch_size=32
-print(f'{n=} {n//batch_size=}')
-print()
-print(random.choice(pairs))
+# to get unique words, we concat all samples for each language
+# and then grab the unique words and then use that to fill the
+# word2int dictionaries
+en_samples = ' '.join(p[0] for p in pairs_list)
+fr_samples = ' '.join(p[1] for p in pairs_list)
 
-def indexesFromSentence(lang, sentence):
-    return [lang.word2index[word] for word in sentence.split(' ')]
+print(f'{len(en_samples)=}')
+print(f'{en_samples[:10]}')
 
-def tensorFromSentence(lang, sentence):
-    indexes = indexesFromSentence(lang, sentence)
-    indexes.append(EOS_token)
-    return torch.tensor(indexes, dtype=torch.long, device=device).view(1, -1)
+print(f'{len(fr_samples)=}')
+print(f'{fr_samples[:10]}')
 
-def tensorsFromPair(pair):
-    input_tensor = tensorFromSentence(input_lang, pair[0])
-    target_tensor = tensorFromSentence(output_lang, pair[1])
-    return (input_tensor, target_tensor)
+unique_words_en = list(set(en_samples.split()))
+unique_words_fr = list(set(fr_samples.split()))
 
-def get_dataloader(batch_size):
-    input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
+print(f'{len(unique_words_en)=:,}')
+print(f'{unique_words_en[:10]=}')
 
-    n = len(pairs)
-    print(f'{n=} {batch_size=} {n//batch_size=}')
+print(f'{len(unique_words_fr)=:,}')
+print(f'{unique_words_fr[:10]=}')
+
+en_word2int.update({w:i for (i,w) in enumerate(unique_words_en, start=2)})
+fr_word2int.update({w:i for (i,w) in enumerate(unique_words_fr, start=2)})
+# now lets create the int2word dictionaries as well
+en_int2word = {i:w for (w,i) in en_word2int.items()}
+fr_int2word = {i:w for (w,i) in fr_word2int.items()}
+
+print(f'{len(en_word2int)=:,}')
+print(f'{en_word2int=}')
+print(f'{en_int2word=}')
+
+print(f'{len(fr_word2int)=:,}')
+print(f'{fr_word2int=}')
+print(f'{fr_int2word=}')
+
+# now lets convert a sentence to int and vice versa!
+def convert_to_int(sentence, lang, max_words, to_tensor=False):
+    dic = en_word2int if lang == 'en' else fr_word2int
+    int_sequence = [dic[s] for s in sentence.split()]
+    # when done, add the <eos> symbol at the end signifying its end
+    if len(int_sequence) < max_words:
+        int_sequence.append(dic['<eos>'])
+    else:
+        int_sequence[-1] = dic['<eos>']
+    return torch.tensor(int_sequence, dtype=torch.long).view(1, -1) if to_tensor else int_sequence
+
+def convert_to_word(id_sequence, lang):
+    dic = en_int2word if lang == 'en' else fr_int2word
+    is_tensor = isinstance(id_sequence, torch.Tensor)
+    return [dic[s.item() if is_tensor else s] for s in id_sequence]
+
+sentence = pairs_list[0][0]
+print(sentence)
+print(convert_to_int(sentence,'en', max_words=max_words_in_sentence, to_tensor=True))
+print(convert_to_word(convert_to_int(sentence,'en',max_words=max_words_in_sentence),'en'))
+
+# now lets create our dataloader!
+def get_dataloader(batch_size, input_lang, output_lang, seq_length, 
+                   pairs_list, en_word2int, fr_word2int, reverse=False):
+
+    if reverse:
+        pairs_list = [(l2,l1) for l1,l2 in pairs_list]
+        input_lang, output_lang = output_lang, input_lang
+    
+    # input word2int
+    input_word2int = en_word2int if input_lang == 'en' else fr_word2int
+    output_word2int = fr_word2int if output_lang == 'fr' else en_word2int
+    
+    print(f'{input_lang=}')
+    print(f'{output_lang=}')
+    print(f'{pairs_list[0]=}')
+    # print(f"{input_word2int['i']=}")
+    
     # make it so we all full batches
-    n = (n//batch_size) * batch_size
-    print(f'{n=}')
-    input_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
-    target_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
+    sample_num = len(pairs_list)
+    sample_num = (sample_num//batch_size) * batch_size
+    print(f'{sample_num=:,}')
 
-    for idx, (inp, tgt) in enumerate(pairs):
-        if idx>=n:
+    input_ids = np.zeros((sample_num, seq_length), dtype=np.int32)
+    target_ids = np.zeros((sample_num, seq_length), dtype=np.int32)
+
+    for idx, (inp, tgt) in enumerate(pairs_list):
+        # to ensure we get full batches all the time
+        if idx>=sample_num:
             continue
-        inp_ids = indexesFromSentence(input_lang, inp)
-        tgt_ids = indexesFromSentence(output_lang, tgt)
-        inp_ids.append(EOS_token)
-        tgt_ids.append(EOS_token)
+        # inp_ids = indexesFromSentence(input_lang, inp)
+        # tgt_ids = indexesFromSentence(output_lang, tgt)
+        # print(f'{inp=}')
+        inp_ids = convert_to_int(inp, input_lang, max_words=seq_length)
+        tgt_ids = convert_to_int(tgt, output_lang, max_words=seq_length)
+        
+        # inp_ids.append(input_word2int['<eos>'])
+        # tgt_ids.append(output_word2int['<eos>'])
+        
         input_ids[idx, :len(inp_ids)] = inp_ids
         target_ids[idx, :len(tgt_ids)] = tgt_ids
 
@@ -2379,10 +2008,11 @@ def get_dataloader(batch_size):
 
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
-    return input_lang, output_lang, train_dataloader
+    return input_lang, output_lang, input_word2int, output_word2int, train_dataloader
 
-in_lang, out_lang, dl = get_dataloader(32)
+input_lang, output_lang, input_w2i, output_w2i, dl = get_dataloader(32, 'en','fr', 10, pairs_list, en_word2int, fr_word2int,reverse=True)
 print(f'{len(dl)=}')
+print(f'{next(iter(dl))[0][:5]=}')
 
 #%%
 import time
@@ -2465,12 +2095,46 @@ def train(train_dataloader, model, n_epochs, learning_rate=0.001, print_every=10
 
     showPlot(plot_losses)
 
-def evaluate(model, sentence, input_lang, output_lang):
+embedding_dim = 256
+hidden_size = 128
+batch_size = 32
+
+# input_lang, output_lang, train_dataloader = get_dataloader(batch_size)
+# encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
+# decoder = AttnDecoderRNN(hidden_size, output_lang.n_words).to(device)
+# model = LSTMBahdanau(input_vocab_size=input_lang.n_words,
+#                           output_vocab_size=output_lang.n_words,
+#                           embedding_dim=embedding_dim,
+#                           hidden_size=hidden_size)
+
+input_lang, output_lang, input_w2i, output_w2i, train_dataloader = get_dataloader(32, 
+                                                                                              'en',
+                                                                                              'fr',
+                                                                                              10, 
+                                                                                              pairs_list,
+                                                                                    en_word2int, 
+                                                                                    fr_word2int, 
+                                                                                    reverse=True)
+model = LSTMBahdanau(input_vocab_size=len(input_w2i),
+                    output_vocab_size=len(output_w2i),
+                    embedding_dim=embedding_dim,
+                    hidden_size=hidden_size)
+model.to(device)
+train(train_dataloader, model, 80, print_every=5, plot_every=5)
+
+#%%
+%matplotlib inline
+
+def evaluate(model, sentence, input_lang, max_words_in_sentence, en_int2word, fr_int2word):
     hidden_states=None
     model.eval()
+    
+    input_lang_i2w = en_int2word if input_lang == 'en' else fr_int2word
+    output_lang_i2w = fr_int2word if input_lang == 'en' else en_int2word
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
-
+        # input_tensor = tensorFromSentence(input_lang, sentence)
+        input_tensor = convert_to_int(sentence, input_lang, max_words=max_words_in_sentence,to_tensor=True).to(device)
+        
         outputs, hidden_states, attentions = model(input_tensor, hidden_states)
 
         _, topi = outputs.topk(1)
@@ -2481,47 +2145,39 @@ def evaluate(model, sentence, input_lang, output_lang):
             if idx.item() == EOS_token:
                 decoded_words.append('<eos>')
                 break
-            decoded_words.append(output_lang.index2word[idx.item()])
+            decoded_words.append(output_lang_i2w[idx.item()])
     return decoded_words, attentions
 
-def evaluateRandomly(model, n=10):
+def evaluateRandomly(model, pairs_list, n, input_lang, max_seq_length):
+    
+    if input_lang == 'fr':
+        pairs = [(p[1],p[0]) for p in pairs_list]
+        
     for i in range(n):
         pair = random.choice(pairs)
         print('>', pair[0])
         print('=', pair[1])
-        output_words, _ = evaluate(model, pair[0], input_lang, output_lang)
+        output_words, _ = evaluate(model, pair[0], input_lang, max_seq_length, en_int2word, fr_int2word)
         output_sentence = ' '.join(output_words)
         print('<', output_sentence)
         print('')
 
-embedding_dim = 256
-hidden_size = 128
-batch_size = 32
-
-input_lang, output_lang, train_dataloader = get_dataloader(batch_size)
-# encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
-# decoder = AttnDecoderRNN(hidden_size, output_lang.n_words).to(device)
-model = LSTMBahdanau(input_vocab_size=input_lang.n_words,
-                          output_vocab_size=output_lang.n_words,
-                          embedding_dim=embedding_dim,
-                          hidden_size=hidden_size)
-model.to(device)
-train(train_dataloader, model, 80, print_every=5, plot_every=5)
-
-#%%
-
 model.eval()
-evaluateRandomly(model)
+evaluateRandomly(model, pairs_list, n=10, input_lang=input_lang, max_seq_length=max_words_in_sentence)
 
 def showAttention(input_sentence, output_words, attentions):
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    cax = ax.matshow(attentions.cpu().numpy(), cmap='bone')
+    cax = ax.matshow(attentions.cpu().numpy(), cmap='Blues')
     fig.colorbar(cax)
 
     # Set up axes
-    ax.set_xticklabels([''] + input_sentence.split(' ') +
-                       ['<eos>'], rotation=90)
+    # set xticks before tick labels to ensure the number of labels
+    # matches the number of ticks.
+    ax.set_xticks(range(len(input_sentence.split(' ')) + 2))
+    ax.set_xticklabels([''] + input_sentence.split(' ') + ['<eos>'], rotation=90)
+    # same as before, setting the yticks
+    ax.set_yticks(range(len(output_words) + 1))
     ax.set_yticklabels([''] + output_words)
 
     # Show label at every tick
@@ -2532,19 +2188,28 @@ def showAttention(input_sentence, output_words, attentions):
 
 
 def evaluateAndShowAttention(input_sentence):
-    output_words, attentions = evaluate(model, input_sentence, input_lang, output_lang)
+    output_words, attentions = evaluate(model, input_sentence, 'fr', max_words_in_sentence, en_int2word, fr_int2word)
+    attentions.squeeze_(3)
     print('input =', input_sentence)
     print('output =', ' '.join(output_words))
     showAttention(input_sentence, output_words, attentions[0, :len(output_words), :])
 
 
-evaluateAndShowAttention('il n est pas aussi grand que son pere')
+# evaluateAndShowAttention('il n est pas aussi grand que son pere')
 
 evaluateAndShowAttention('je suis trop fatigue pour conduire')
 
 evaluateAndShowAttention('je suis desole si c est une question idiote')
 
 evaluateAndShowAttention('je suis reellement fiere de vous')
+
+# as you can see when the amount of data is small, we can quickly get a very good result
+# I know the vocab and training part needs refactoring and we will hopefully do that in the
+# next round. (official pytorch code example can be used as well. the training dataset
+# and loop was infact used that docs a lot. I only changed bits of it to make it compatible
+# with our code. with this we end the bahdanau attention section and go to the next section 
+# which is sentiment analysis!)
+
 
 #%%
 # french vocab
