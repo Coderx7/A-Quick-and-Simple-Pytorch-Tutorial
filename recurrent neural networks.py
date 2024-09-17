@@ -1358,8 +1358,10 @@ class BahdanauAttentionDecoder(nn.Module):
         # to show where the attention is focused in different tutorials you see
         # so if you want to visualize it, you can return the attention weights as well
         # and then concat them later along dim=1 and then go for visualizing it
-        attention_weights = attention_score.softmax(dim=-1)
-        # print(f'{attention_weights.shape=}')
+        # note we calculate softmax along dim=1! otherwise we wouldnt be getting
+        # a probablity along that dim obviously!
+        attention_weights = attention_score.softmax(dim=1)
+        # print(f'{attention_weights.shape=}') #(2,5,1)
         
         # note there are several ways to multiply attention_weights with encoder_states 
         # and get the same result, but not all are correct. Here are 3 ways to get the same result: 
@@ -1380,6 +1382,7 @@ class BahdanauAttentionDecoder(nn.Module):
         # use batch-matrix multiplication which 
         # first permute the weights dim so they become compatible with encoder_states
         # and then carry on the multiplication
+        # print(f'{encoder_states.shape=}')#(2,5,7)
         context_vector = torch.bmm(attention_weights.permute(0,2,1), encoder_states)
         # print(f'{context_vector.shape=}')
         
@@ -1413,19 +1416,27 @@ class BahdanauAttentionDecoder(nn.Module):
         #
         # so to make the intend clear, we use torch.bmm otherwise if we use matmul, we may make a mistake 
         # and go haywire as I previously did!
+        # sidenote: 
+        # (if its not clear yet, bmm simply means, we are dealing with several samples instead of 1
+        # set aside the batch dimension for a moment and you'll noticed we endup with 5 numbers 
+        # that act as weights for each timestep (recall our attention_weights shape was (2,5,1) 
+        # and our encoder-states was (2,5,7), if you set aside the batch we get (5)(ignore the 1) 
+        # and (5,7) respectively which again lets you know there are 5 numbers for 5 hiddenstates. 
+        # now to multiply them we use simple matrix multiplication. 
+        # when there are several samples, like in our case, we have a batch, so we do this
+        # in a for loop, and do the multiplication for each sample individually and 
+        # then stack the results hence how we actually do a batch-matrix-multiply behind the scene!
+        # of course the actual behind the scene implementation of bmm uses specialized routine to
+        # speed things up based on the hardware its executed but the idea stays the same regardless))
         
         # at this point we have a context vector that shows the attention
         # of each input sequence, we can feed this directly to decoder
         # or concatenate it with the input at timestep_t and then feed this new
         # input to decoder (the second method is what we do)
         
-        
         # Further explanation: 
-        # Sure! Let's break down how batch matrix multiplication (`torch.bmm`) 
+        # Let's break down how batch matrix multiplication (`torch.bmm`) 
         # computes the weighted sum of the encoder states step by step.
-
-        # ### Step-by-Step Explanation:
-
         # 1. **Inputs:**
         #    - `attention_weights`: A tensor of shape `(batch_size, seq_len, 1)` representing 
         #       the attention weights for each time step in the sequence.
@@ -1454,7 +1465,6 @@ class BahdanauAttentionDecoder(nn.Module):
 
         # ### Example:
         # Let's consider a simple example with a batch size of 1, sequence length of 3, and hidden size of 2.
-
         # - `attention_weights` (after permutation):
         #   \[
         #   \begin{bmatrix}
@@ -1610,7 +1620,7 @@ print(f'{outputs.shape=}')
 print(f'{hidden_state[0].shape=}')
 print(f'{attention.shape=}\n')
 print(f'{outputs[0][0]=}')
-
+print(f'{attention[0,:,:,0]=}\n')
 #%%
 # Now lets create the whole model 
 # we'll keep it simple (we can use different values for encoder/decoder but here we use only
@@ -1650,168 +1660,24 @@ class LSTMBahdanau(nn.Module):
         # output = self.drp(output)
         return output, hidden_state, attentions
 
+torch.manual_seed(12)
+seq_length = 5
+embedding_dim = 6
+hidden_size = 7
+batch_size=2
+vocab_size = 50
+xt = torch.randint(0, vocab_size, size=(batch_size, seq_length))
+h = None
+model = LSTMBahdanau(vocab_size,
+                     vocab_size,
+                     embedding_dim,
+                     hidden_size=hidden_size)
+o,h,a = model(xt,h)
+print(f'{o.shape=}')
+print(f'{h[0].shape=}')
+print(f'{a.shape=}')
+print(f'{a[0,:,:,0]=}')
 
-# %% code for train example for translation usecase 
-#
-#
-from __future__ import unicode_literals, print_function, division
-from io import open
-import unicodedata
-import re
-import random
-
-import torch
-import torch.nn as nn
-from torch import optim
-import torch.nn.functional as F
-
-import numpy as np
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-SOS_token = 0
-EOS_token = 1
-
-# class Lang:
-#     def __init__(self, name):
-#         self.name = name
-#         self.word2index = {}
-#         self.word2count = {}
-#         self.index2word = {0: "<sos>", 1: "<eos>"}
-#         self.n_words = 2  # Count SOS and EOS
-
-#     def addSentence(self, sentence):
-#         for word in sentence.split(' '):
-#             self.addWord(word)
-
-#     def addWord(self, word):
-#         if word not in self.word2index:
-#             self.word2index[word] = self.n_words
-#             self.word2count[word] = 1
-#             self.index2word[self.n_words] = word
-#             self.n_words += 1
-#         else:
-#             self.word2count[word] += 1
-
-# # Turn a Unicode string to plain ASCII, thanks to
-# # https://stackoverflow.com/a/518232/2809427
-# def unicodeToAscii(s):
-#     return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-
-# # Lowercase, trim, and remove non-letter characters
-# def normalizeString(s):
-#     s = unicodeToAscii(s.lower().strip())
-#     s = re.sub(r"([.!?])", r" \1", s)
-#     s = re.sub(r"[^a-zA-Z!?]+", r" ", s)
-#     return s.strip()            
-            
-# def readLangs(dataset_path, lang1, lang2, reverse=False):
-#     print("Reading lines...")
-
-#     # Read the file and split into lines
-#     lines = open(f'{dataset_path}/{lang1}-{lang2}.txt', encoding='utf-8').read().strip().split('\n')
-
-#     # Split every line into pairs and normalize
-#     pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
-
-#     # Reverse pairs, make Lang instances
-#     if reverse:
-#         pairs = [list(reversed(p)) for p in pairs]
-#         input_lang = Lang(lang2)
-#         output_lang = Lang(lang1)
-#     else:
-#         input_lang = Lang(lang1)
-#         output_lang = Lang(lang2)
-
-#     return input_lang, output_lang, pairs
-
-
-# MAX_LENGTH = 10
-
-# eng_prefixes = (
-#     "i am ", "i m ",
-#     "he is", "he s ",
-#     "she is", "she s ",
-#     "you are", "you re ",
-#     "we are", "we re ",
-#     "they are", "they re "
-# )
-
-# def filterPair(p):
-#     return len(p[0].split(' ')) < MAX_LENGTH and len(p[1].split(' ')) < MAX_LENGTH and p[1].startswith(eng_prefixes)
-
-
-# def filterPairs(pairs):
-#     return [pair for pair in pairs if filterPair(pair)]
-
-# def prepareData(dataset_path, lang1, lang2, reverse=False):
-#     input_lang, output_lang, pairs = readLangs(dataset_path, lang1, lang2, reverse)
-#     print(f"Read {len(pairs)} sentence pairs")
-#     pairs = filterPairs(pairs)
-#     print(f"Trimmed to {len(pairs)} sentence pairs" )
-#     print("Counting words...")
-#     for pair in pairs:
-#         input_lang.addSentence(pair[0])
-#         output_lang.addSentence(pair[1])
-#     print("Counted words:")
-#     print(input_lang.name, input_lang.n_words)
-#     print(output_lang.name, output_lang.n_words)
-#     print(f'english vocab_size: {output_lang.n_words=}')
-#     return input_lang, output_lang, pairs
-
-# dataset_path = '/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data'
-# input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
-# n = len(pairs)
-# batch_size=32
-# print(f'{n=} {n//batch_size=}')
-# print()
-# print(random.choice(pairs))
-
-# def indexesFromSentence(lang, sentence):
-#     return [lang.word2index[word] for word in sentence.split(' ')]
-
-# def tensorFromSentence(lang, sentence):
-#     indexes = indexesFromSentence(lang, sentence)
-#     indexes.append(EOS_token)
-#     return torch.tensor(indexes, dtype=torch.long, device=device).view(1, -1)
-
-# def tensorsFromPair(pair):
-#     input_tensor = tensorFromSentence(input_lang, pair[0])
-#     target_tensor = tensorFromSentence(output_lang, pair[1])
-#     return (input_tensor, target_tensor)
-
-# def get_dataloader(batch_size):
-#     input_lang, output_lang, pairs = prepareData(dataset_path, 'eng', 'fra', True)
-
-#     n = len(pairs)
-#     print(f'{n=} {batch_size=} {n//batch_size=}')
-#     # make it so we all full batches
-#     n = (n//batch_size) * batch_size
-#     print(f'{n=}')
-#     input_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
-#     target_ids = np.zeros((n, MAX_LENGTH), dtype=np.int32)
-
-#     for idx, (inp, tgt) in enumerate(pairs):
-#         if idx>=n:
-#             continue
-#         inp_ids = indexesFromSentence(input_lang, inp)
-#         tgt_ids = indexesFromSentence(output_lang, tgt)
-#         inp_ids.append(EOS_token)
-#         tgt_ids.append(EOS_token)
-#         input_ids[idx, :len(inp_ids)] = inp_ids
-#         target_ids[idx, :len(tgt_ids)] = tgt_ids
-
-#     train_data = TensorDataset(torch.LongTensor(input_ids).to(device),
-#                                torch.LongTensor(target_ids).to(device))
-
-#     train_sampler = RandomSampler(train_data)
-#     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
-#     return input_lang, output_lang, train_dataloader
-
-# in_lang, out_lang, dl = get_dataloader(32)
-# print(f'{len(dl)=}')
 #%%
 import re
 import unicodedata
@@ -2013,31 +1879,215 @@ def get_dataloader(batch_size, input_lang, output_lang, seq_length,
 input_lang, output_lang, input_w2i, output_w2i, dl = get_dataloader(32, 'en','fr', 10, pairs_list, en_word2int, fr_word2int,reverse=True)
 print(f'{len(dl)=}')
 print(f'{next(iter(dl))[0][:5]=}')
+#%%
+import numpy as np
+from tqdm import tqdm
+import re
+import unicodedata
+from unidecode import unidecode
+from collections import namedtuple
+
+import matplotlib.pyplot as plt
+%matplotlib inline
+import seaborn as sns
+
+import torch
+import torch.nn as nn
+from torch import optim
+import torch.nn.functional as F
+
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler
+
+# so far so good, but thats very messy, lets tidy things up a bit so 
+# we can actually make heads or tails of it!
+# for this, in order not to send several variables each time to every functions!
+# and write logic each time, lets encapsulate each language into a structure
+# and access all related information all in once place through said structure.
+# we can use a class for vocab, but I think a named tuple should suffice, as we plan
+# on encapsulating everything in a single class to avoid repetition
+# between language/vocab class and dataset class. (reading files/using pairs_list
+# so instead we do it once here!)
+# 
+Vocab = namedtuple('Vocab', ['name', 'size', 'word2int', 'int2word'])
+
+class Dataset():
+    def __init__(self, dataset_filename, max_sequence_words=10, swap_languages=False, filter_long_sequences=False):
+        # read the dataset, use the filename 
+        # to identify the languages, and then
+        # create a named tuple for each langauge
+        # filename looks like: eng-fra.txt
+        self.dataset_filename = dataset_filename
+        self.max_sequence_words = max_sequence_words
+        self.should_swap_languages = swap_languages
+        self.should_filter_long_sequence = filter_long_sequences
+        
+        filename = os.path.basename(dataset_filename).split('.')[0]
+        self.in_lang, self.out_lang = filename.split('-')
+   
+        with open(dataset_filename, encoding='utf-8') as f:
+            self.lines = f.read().lower().strip().splitlines()
+        
+        self.pairs_list = [self._preprocess(line) for line in self.lines]
+        
+        if self.should_swap_languages:
+            self.pairs_list = [(l2,l1) for l1,l2 in self.pairs_list]
+            self.in_lang, self.out_lang = self.out_lang, self.in_lang
+
+        if self.should_filter_long_sequence:
+            self.pairs_list = self._filter_long_sequences()
+        
+        self.in_vocab, self.out_vocab = self._create_vocabs()
+
+    def _preprocess(self, unicode_str):
+        # convert unicode to ascii characters
+        ascii_str = unidecode(unicode_str)
+        # lets also put a space before any punctuations (.!?)
+        # this is to make words such as 'go.' and 'go' be treated the same
+        # and prevent duplication of words in vocab becasue of 
+        # the adjacent punctuation marks such as .!? (go and go. and go! all would be different words!)
+        # str_normalized = re.sub(r"([.!?])", r" \1", ascii_str)
+        # but a better choice is to check if theres already a space,
+        # and only if theres none before punctuation marks, only then add a space before them!
+        # (?<!\s) is a negative lookbehind assertion that makes sure
+        # there is no space before any of our 3 punctuation marks(i.e. ([.!?]))
+        str_normalized = re.sub(r"(?<!\s)([.!?])", r" \1",  ascii_str)
+        # english, french sentences are separated by a \t (tab)
+        # so lets split them!
+        return str_normalized.strip().split('\t')
+
+    def _filter_long_sequences(self):
+        # we are basically selecting a small subset of all the sentences 
+        # by this filtering routine!
+        eng_prefixes = ("i am ", "i m ",
+                        "he is", "he s ",
+                        "she is", "she s ",
+                        "you are", "you re ",
+                        "we are", "we re ",
+                        "they are", "they re ")
+        # french doesnt seem to be having many widly
+        # used abbreviated forms unlike english!
+        french_prefixes = ("je suis", "j'suis",
+                     #     "il est",  "il est",
+                     #     "elle est","elle est",
+                           "tu es", "t'es",
+                     #     "nous sommes", "nous sommes",
+                     #     "vous etes", "vous etes",
+                     #     "ils sont", "ils sont",
+)
+        prefixes = eng_prefixes if self.in_lang == 'eng' else french_prefixes
+        
+        pair_is_small = lambda pair: (len(pair[1].split(' ')) < self.max_sequence_words and
+                                      len(pair[0].split(' ')) < self.max_sequence_words and
+                                      pair[0].startswith(prefixes))
+        return [pair for pair in self.pairs_list if pair_is_small(pair)] 
+
+    def _create_vocabs(self):
+        
+        # now lets create vocabs for each language separately
+        # dont forget to include the special symbols first!
+        in_word2int = {'<sos>':0, '<eos>':1}
+        out_word2int = {'<sos>':0, '<eos>':1}
+
+        # to get unique words, we concat all samples for each language
+        # and then grab the unique words and then use that to fill the
+        # word2int dictionaries
+        # a single loop is faster!
+        in_samples, out_samples = [], []
+        for p1,p2 in self.pairs_list:
+            in_samples.append(p1)
+            out_samples.append(p2)
+        in_samples = ' '.join(in_samples)
+        out_samples = ' '.join(out_samples)
+        
+        # set allows us to only grab the unique words!
+        unique_words_in = list(set(in_samples.split()))
+        unique_words_out = list(set(out_samples.split()))
+
+        in_word2int.update({w:i for (i,w) in enumerate(unique_words_in, start=2)})
+        out_word2int.update({w:i for (i,w) in enumerate(unique_words_out, start=2)})
+        
+        # now lets create the int2word dictionaries as well
+        in_int2word = {i:w for (w,i) in in_word2int.items()}
+        out_int2word = {i:w for (w,i) in out_word2int.items()}
+        
+        vocab_in = Vocab(name=self.in_lang, 
+                         size=len(in_word2int), 
+                         word2int=in_word2int, 
+                         int2word=in_int2word)
+        
+        vocab_out = Vocab(name=self.out_lang, 
+                          size=len(out_word2int), 
+                          word2int=out_word2int, 
+                          int2word=out_int2word)
+        
+        return vocab_in, vocab_out
+    
+    # now lets convert a sentence to int and vice versa!
+    def convert_to_int(self, sentence, vocab, to_tensor=False):
+        # only grab up to max seq words!
+        int_sequence = [vocab.word2int[s] for s in sentence.split()][:self.max_sequence_words]
+        # when done, add the <eos> symbol at the end signifying its end
+        if len(int_sequence) < self.max_sequence_words:
+            int_sequence.append(vocab.word2int['<eos>'])
+        else:
+            int_sequence[-1] = vocab.word2int['<eos>']
+        return torch.tensor(int_sequence, dtype=torch.long).view(1, -1) if to_tensor else int_sequence
+
+    def convert_to_word(self, int_sequence, vocab):
+        is_tensor = isinstance(int_sequence, torch.Tensor)
+        return [vocab.int2word[s.item() if is_tensor else s] for s in int_sequence]
+
+    # now lets create our dataloader!
+    def get_dataloader(self, batch_size, pin_memory=True, num_workers=8):
+        # make it so we all full batches
+        sample_num = len(self.pairs_list)
+        sample_num = (sample_num//batch_size) * batch_size
+        
+        input_seq_ids = np.zeros((sample_num, self.max_sequence_words), dtype=np.int32)
+        target_seq_ids = np.zeros((sample_num, self.max_sequence_words), dtype=np.int32)
+
+        for i, (input_seq, target_seq) in enumerate(self.pairs_list):
+            # to ensure we get full batches all the time
+            if i>=sample_num:
+                continue
+
+            input_seq = self.convert_to_int(input_seq, self.in_vocab)
+            target_seq = self.convert_to_int(target_seq, self.out_vocab)
+
+            input_seq_ids[i, :len(input_seq)] = input_seq
+            target_seq_ids[i, :len(target_seq)] = target_seq
+
+        train_data = TensorDataset(torch.LongTensor(input_seq_ids), 
+                                   torch.LongTensor(target_seq_ids))
+
+        train_sampler = RandomSampler(train_data)
+
+        train_dataloader = DataLoader(train_data, 
+                                      sampler=train_sampler, 
+                                      batch_size=batch_size,
+                                      pin_memory=pin_memory, 
+                                      num_workers=num_workers)
+        
+        return train_dataloader, self.in_vocab, self.out_vocab 
+
+dt = Dataset('/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data/eng-fra.txt',
+             max_sequence_words=10,swap_languages=0,filter_long_sequences=0)
+
+print(dt.in_vocab.size)
+print(dt.out_vocab.size)
+
+dl,in_vocab,out_vocab = dt.get_dataloader(32)
+print(f'{len(dl)=}')
+print(f'{next(iter(dl))[0][:5]=}')
 
 #%%
-import time
-import math
-from tqdm import tqdm
-
-def asMinutes(s):
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
-
-def timeSince(since, percent):
-    now = time.time()
-    s = now - since
-    es = s / (percent)
-    rs = es - s
-    return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
 def train_epoch(dataloader, model, optimizer, criterion):
+    model.train()
     total_loss = 0
     hidden_states = None
-    model.train()
-    for data in tqdm(dataloader):
-        input_tensor, target_tensor = data
-        
+    for input_tensor, target_tensor in tqdm(dataloader):
+
         input_tensor = input_tensor.to(device)
         target_tensor = target_tensor.to(device)
         
@@ -2045,7 +2095,8 @@ def train_epoch(dataloader, model, optimizer, criterion):
         hidden_states = tuple(h.data for h in hidden_states)
         
         loss = criterion(outputs.view(-1, outputs.size(-1)), target_tensor.view(-1))
-        # loss2 = criterion(outputs.view(-1, output_lang.n_words), target_tensor.view(-1))
+        # or if we had access to vocab_size,
+        # loss = criterion(outputs.view(-1, out_vocab.size), target_tensor.view(-1))
         
         optimizer.zero_grad()
         loss.backward()
@@ -2055,153 +2106,120 @@ def train_epoch(dataloader, model, optimizer, criterion):
 
     return total_loss / len(dataloader)
 
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-import matplotlib.ticker as ticker
-import numpy as np
-
-def showPlot(points):
-    plt.figure()
-    fig, ax = plt.subplots()
-    # this locator puts ticks at regular intervals
-    loc = ticker.MultipleLocator(base=0.2)
-    ax.yaxis.set_major_locator(loc)
-    plt.plot(points)
-
-def train(train_dataloader, model, n_epochs, learning_rate=0.001, print_every=100, plot_every=100):
-    start = time.time()
-    plot_losses = []
-    print_loss_total = 0  # Reset every print_every
-    plot_loss_total = 0  # Reset every plot_every
-
+def train(train_dataloader, model, epochs, learning_rate=0.001, interval=100):
+    
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(1, n_epochs + 1):
+    losses = []
+    total_loss = 0
+    for epoch in range(epochs):
         loss = train_epoch(train_dataloader, model, optimizer, criterion)
-        print_loss_total += loss
-        plot_loss_total += loss
+        total_loss += loss
 
-        if epoch % print_every == 0:
-            print_loss_avg = print_loss_total / print_every
-            print_loss_total = 0
-            print('%s (%d %d%%) %.4f' % (timeSince(start, epoch / n_epochs),
-                                        epoch, epoch / n_epochs * 100, print_loss_avg))
-
-        if epoch % plot_every == 0:
-            plot_loss_avg = plot_loss_total / plot_every
-            plot_losses.append(plot_loss_avg)
-            plot_loss_total = 0
-
-    showPlot(plot_losses)
+        if epoch%interval == 0:
+            loss_avg = total_loss / interval
+            losses.append(loss_avg)
+            total_loss = 0
+            print(f'{epoch}/{epochs} | Loss: {loss_avg:.4f}')
+            
+    plt.plot(losses)
 
 embedding_dim = 256
-hidden_size = 128
+hidden_size = 256
 batch_size = 32
 
-# input_lang, output_lang, train_dataloader = get_dataloader(batch_size)
-# encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
-# decoder = AttnDecoderRNN(hidden_size, output_lang.n_words).to(device)
-# model = LSTMBahdanau(input_vocab_size=input_lang.n_words,
-#                           output_vocab_size=output_lang.n_words,
-#                           embedding_dim=embedding_dim,
-#                           hidden_size=hidden_size)
+dataset_filename = '/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/data/eng-fra.txt'
+dt = Dataset(dataset_filename, 
+             max_sequence_words=10,
+             swap_languages=0,
+             filter_long_sequences=0)
 
-input_lang, output_lang, input_w2i, output_w2i, train_dataloader = get_dataloader(32, 
-                                                                                              'en',
-                                                                                              'fr',
-                                                                                              10, 
-                                                                                              pairs_list,
-                                                                                    en_word2int, 
-                                                                                    fr_word2int, 
-                                                                                    reverse=True)
-model = LSTMBahdanau(input_vocab_size=len(input_w2i),
-                    output_vocab_size=len(output_w2i),
+train_dataloader,in_vocab, out_vocab = dt.get_dataloader(batch_size)
+
+model = LSTMBahdanau(input_vocab_size=in_vocab.size,
+                    output_vocab_size=out_vocab.size,
                     embedding_dim=embedding_dim,
                     hidden_size=hidden_size)
+
 model.to(device)
-train(train_dataloader, model, 80, print_every=5, plot_every=5)
-
+# note we didnt use any schedulers, we are using the bare minimum here
+# in an actual usecase, we will create a much better network, with better 
+# regularization, and optimization regime, but for now its suffices 
+# we just want to see how it performs and whether our attention mechanism actually works!
+# (it does :))
+train(train_dataloader, model, epochs=80, interval=5)
 #%%
-%matplotlib inline
-
-def evaluate(model, sentence, input_lang, max_words_in_sentence, en_int2word, fr_int2word):
-    hidden_states=None
+def evaluate(model, sentence, dt):
     model.eval()
+    hidden_states=None
     
-    input_lang_i2w = en_int2word if input_lang == 'en' else fr_int2word
-    output_lang_i2w = fr_int2word if input_lang == 'en' else en_int2word
     with torch.no_grad():
-        # input_tensor = tensorFromSentence(input_lang, sentence)
-        input_tensor = convert_to_int(sentence, input_lang, max_words=max_words_in_sentence,to_tensor=True).to(device)
-        
+        input_tensor = dt.convert_to_int(sentence, dt.in_vocab, to_tensor=True).to(device)
         outputs, hidden_states, attentions = model(input_tensor, hidden_states)
 
-        _, topi = outputs.topk(1)
-        decoded_ids = topi.squeeze()
+        _, output_idxs = outputs.topk(1)
+        output_idxs.squeeze_()
 
-        decoded_words = []
-        for idx in decoded_ids:
-            if idx.item() == EOS_token:
-                decoded_words.append('<eos>')
+        output_words = []
+        for idx in output_idxs:
+            if idx.item() == dt.out_vocab.word2int['<eos>']:
+                output_words.append('<eos>')
                 break
-            decoded_words.append(output_lang_i2w[idx.item()])
-    return decoded_words, attentions
+            output_words.append(dt.out_vocab.int2word[idx.item()])
+    return output_words, attentions
 
-def evaluateRandomly(model, pairs_list, n, input_lang, max_seq_length):
+def evaluate_model(model, dt, sample_count=5):
+    for _ in range(sample_count):
+        pair = random.choice(dt.pairs_list)
+        print(f'input  : {pair[0]}')
+        print(f'target : {pair[1]}')
+        output_words, _ = evaluate(model, pair[0], dt)
+        print(f"output : {' '.join(output_words)}")
+
+evaluate_model(model, dt, sample_count=10)
+#%%
+# now lets visualize the attention weights as well and see how they look 
+def visualize_attention(input_sentence, output_words, attention_weights):
+    _, ax = plt.subplots(figsize=(8, 6))
+    # use seaborn heatmap
+    sns.heatmap(attention_weights.cpu().numpy(), cmap='viridis', 
+                ax=ax,
+                cbar=True,
+                xticklabels= input_sentence.split() , 
+                yticklabels= output_words)
     
-    if input_lang == 'fr':
-        pairs = [(p[1],p[0]) for p in pairs_list]
-        
-    for i in range(n):
-        pair = random.choice(pairs)
-        print('>', pair[0])
-        print('=', pair[1])
-        output_words, _ = evaluate(model, pair[0], input_lang, max_seq_length, en_int2word, fr_int2word)
-        output_sentence = ' '.join(output_words)
-        print('<', output_sentence)
-        print('')
-
-model.eval()
-evaluateRandomly(model, pairs_list, n=10, input_lang=input_lang, max_seq_length=max_words_in_sentence)
-
-def showAttention(input_sentence, output_words, attentions):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    cax = ax.matshow(attentions.cpu().numpy(), cmap='Blues')
-    fig.colorbar(cax)
-
-    # Set up axes
-    # set xticks before tick labels to ensure the number of labels
-    # matches the number of ticks.
-    ax.set_xticks(range(len(input_sentence.split(' ')) + 2))
-    ax.set_xticklabels([''] + input_sentence.split(' ') + ['<eos>'], rotation=90)
-    # same as before, setting the yticks
-    ax.set_yticks(range(len(output_words) + 1))
-    ax.set_yticklabels([''] + output_words)
-
-    # Show label at every tick
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-
+    # rotate y-axis labels for better readability
+    plt.yticks(rotation=0)
+    
+    # move the x-axis labels to the top instead of the bottom
+    ax.xaxis.set_ticks_position('top')
+    ax.xaxis.set_label_position('top')
     plt.show()
 
+def evaluate_and_visualize_attention():
+    # note if you get some keyerror, its because you limited the dataset so much
+    # it couldnt create a big enough vocab for the language. limitting the sequence length
+    # too much can result in this error.
+    test_sentences = [("he is not as tall as his father", "il n'est pas aussi grand que son pere"),
+                      ("i am too tired to drive", "je suis trop fatigue pour conduire"),
+                      ("i am sorry if this is a silly question", "je suis desole si c'est une question idiote"),
+                      ("i am really proud of you", "je suis reellement fiere de vous")]
 
-def evaluateAndShowAttention(input_sentence):
-    output_words, attentions = evaluate(model, input_sentence, 'fr', max_words_in_sentence, en_int2word, fr_int2word)
-    attentions.squeeze_(3)
-    print('input =', input_sentence)
-    print('output =', ' '.join(output_words))
-    showAttention(input_sentence, output_words, attentions[0, :len(output_words), :])
+    for en,fr in test_sentences:
+        input_sentence = en if dt.in_lang == 'eng' else fr
+        expected_sentence = fr if dt.in_lang == 'eng' else en
+        
+        output_words, attentions = evaluate(model, input_sentence, dt)
+        attentions.squeeze_(3).squeeze_()
+        print(f"input    = {input_sentence}")
+        print(f"expected = {expected_sentence}")
+        print(f"got      = {' '.join(output_words)}")
+        visualize_attention(input_sentence, output_words, attentions[:len(output_words), :])
 
+evaluate_and_visualize_attention()
 
-# evaluateAndShowAttention('il n est pas aussi grand que son pere')
-
-evaluateAndShowAttention('je suis trop fatigue pour conduire')
-
-evaluateAndShowAttention('je suis desole si c est une question idiote')
-
-evaluateAndShowAttention('je suis reellement fiere de vous')
+#%%
 
 # as you can see when the amount of data is small, we can quickly get a very good result
 # I know the vocab and training part needs refactoring and we will hopefully do that in the
@@ -2211,604 +2229,604 @@ evaluateAndShowAttention('je suis reellement fiere de vous')
 # which is sentiment analysis!)
 
 
-#%%
-# french vocab
-input_vocab_size = 4601
-# english vocab
-output_vocab_size = 2991
-embedding_dim = 100
-hidden_size = 512
-# layers_cnt = 1
-# bidirection = False
-device = 'cuda' if torch.cuda.is_available()  else 'cpu'
-# device='cpu'
-model = LSTMBahdanau(input_vocab_size=input_vocab_size,
-                     output_vocab_size=output_vocab_size,
-                     embedding_dim=embedding_dim,
-                     hidden_size=hidden_size,)
+#%% my old implementation- remove later
+# # french vocab
+# input_vocab_size = 4601
+# # english vocab
+# output_vocab_size = 2991
+# embedding_dim = 100
+# hidden_size = 512
+# # layers_cnt = 1
+# # bidirection = False
+# device = 'cuda' if torch.cuda.is_available()  else 'cpu'
+# # device='cpu'
+# model = LSTMBahdanau(input_vocab_size=input_vocab_size,
+#                      output_vocab_size=output_vocab_size,
+#                      embedding_dim=embedding_dim,
+#                      hidden_size=hidden_size,)
 
-model = model.to(device)
-optimizer = optim.Adam(model.parameters(), lr = 0.001)
-criterion = nn.CrossEntropyLoss()#ignore_index=-100
-scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=30)
+# model = model.to(device)
+# optimizer = optim.Adam(model.parameters(), lr = 0.001)
+# criterion = nn.CrossEntropyLoss()#ignore_index=-100
+# scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=30)
 
-epochs =30
-# in order to not face the exploding gradient in lstm
-# we clip the gradients
-clip = 5.
-interval = 1000
-batch_size = 32
-# label_length = len(word2int)
-hidden_states = None
+# epochs =30
+# # in order to not face the exploding gradient in lstm
+# # we clip the gradients
+# clip = 5.
+# interval = 1000
+# batch_size = 32
+# # label_length = len(word2int)
+# hidden_states = None
 
-val_ratio = 0.2
-val_idx = int(words_digitized.numel() * (1-val_ratio))
-train = words_digitized[:val_idx]
-val = words_digitized[val_idx:]
+# val_ratio = 0.2
+# val_idx = int(words_digitized.numel() * (1-val_ratio))
+# train = words_digitized[:val_idx]
+# val = words_digitized[val_idx:]
 
-print(f'running on device: {device}')
-print(f'input_size:     {input_size}')
-print(f'output_size:    {output_size:,}')
-print(f'hidden_size:    {hidden_size}')
-print(f'embedding_dim:  {embedding_dim}')
-print(f'vocab_size:     {vocab_size:,}')
-print(f'word count:     {words_digitized.numel():,}')
-print(f'val idx:        {val_idx:,}')
-print(f'val size:       {val.numel():,}')
-print(f'train size:     {train.numel():,}')
-print(f'val + train:    {val.numel() + train.numel():,}')
-assert train.numel() + val.numel() == words_digitized.numel() ,'they must be equale!'
+# print(f'running on device: {device}')
+# print(f'input_size:     {input_size}')
+# print(f'output_size:    {output_size:,}')
+# print(f'hidden_size:    {hidden_size}')
+# print(f'embedding_dim:  {embedding_dim}')
+# print(f'vocab_size:     {vocab_size:,}')
+# print(f'word count:     {words_digitized.numel():,}')
+# print(f'val idx:        {val_idx:,}')
+# print(f'val size:       {val.numel():,}')
+# print(f'train size:     {train.numel():,}')
+# print(f'val + train:    {val.numel() + train.numel():,}')
+# assert train.numel() + val.numel() == words_digitized.numel() ,'they must be equale!'
 
-for e in range(epochs):
-    model.train()
-    total_loss = 0
-    for i, (data, label) in enumerate(get_next_batch(train, batch_size, seq_len=seq_len), start=1):
+# for e in range(epochs):
+#     model.train()
+#     total_loss = 0
+#     for i, (data, label) in enumerate(get_next_batch(train, batch_size, seq_len=seq_len), start=1):
         
-        # label is not one-hot-encoded, crossentropy can do this on its own
-        data = data.to(device)
-        label = label.to(device).long()
-        # print(f'{data.shape=} {label.shape=}')
-        output , hidden_states, attentions = model(data, hidden_states)
+#         # label is not one-hot-encoded, crossentropy can do this on its own
+#         data = data.to(device)
+#         label = label.to(device).long()
+#         # print(f'{data.shape=} {label.shape=}')
+#         output , hidden_states, attentions = model(data, hidden_states)
           
-        hidden_states = tuple(h.data for h in hidden_states)
+#         hidden_states = tuple(h.data for h in hidden_states)
      
-        # print(f'{label.shape=}')  # label.shape=torch.Size([32, 30])
-        # print(f'{output.shape=}') # output.shape=torch.Size([32, 30, 28151])
-        # label = label.view(batch_size*seq_len).long()
-        # print(f'{label=}')
-        loss = criterion(output.view(-1,vocab_size), label.view(-1))
+#         # print(f'{label.shape=}')  # label.shape=torch.Size([32, 30])
+#         # print(f'{output.shape=}') # output.shape=torch.Size([32, 30, 28151])
+#         # label = label.view(batch_size*seq_len).long()
+#         # print(f'{label=}')
+#         loss = criterion(output.view(-1,vocab_size), label.view(-1))
             
-        total_loss += loss.item()
-        # print(f'{total_loss=}')
+#         total_loss += loss.item()
+#         # print(f'{total_loss=}')
         
-        optimizer.zero_grad()
-        loss.backward()
-        # note the _, which indicates the inplace operation!
-        # like before this doesnt seem to matter much really! 
-        # training loss decreases however the validation
-        # lossincreases after some epochs! get this to work!
-        torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
-        optimizer.step()
+#         optimizer.zero_grad()
+#         loss.backward()
+#         # note the _, which indicates the inplace operation!
+#         # like before this doesnt seem to matter much really! 
+#         # training loss decreases however the validation
+#         # lossincreases after some epochs! get this to work!
+#         torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
+#         optimizer.step()
 
-        if i%interval==0:
-            print(f'Epoch-Iter:: {e}/{epochs}-{i} | Loss: {total_loss/i:.4f} | LR: {scheduler.get_lr()[-1]:.6f}')
+#         if i%interval==0:
+#             print(f'Epoch-Iter:: {e}/{epochs}-{i} | Loss: {total_loss/i:.4f} | LR: {scheduler.get_lr()[-1]:.6f}')
     
-    # decay the lr per epochs
-    scheduler.step()
+#     # decay the lr per epochs
+#     scheduler.step()
 
-    # test 
-    hidden_states = None
-    total_loss_val = 0
-    for i, (data,label) in enumerate(get_next_batch(val, batch_size, seq_len),start=1):
-        with torch.no_grad():
-            model.eval()
+#     # test 
+#     hidden_states = None
+#     total_loss_val = 0
+#     for i, (data,label) in enumerate(get_next_batch(val, batch_size, seq_len),start=1):
+#         with torch.no_grad():
+#             model.eval()
 
-            data = data.to(device)
-            label = label.to(device).long()
+#             data = data.to(device)
+#             label = label.to(device).long()
 
-            output, hidden_states, attentions = model(data, hidden_states)
+#             output, hidden_states, attentions = model(data, hidden_states)
             
-            hidden_states = tuple(h.data for h in hidden_states)
+#             hidden_states = tuple(h.data for h in hidden_states)
             
-            total_loss_val += criterion(output.view(-1,vocab_size), label.view(-1)).item()
+#             total_loss_val += criterion(output.view(-1,vocab_size), label.view(-1)).item()
             
-            if i % interval ==0:
-                print(f'  Loss-val: {total_loss_val/i:.4f}')
-    print(f'  Loss-val-total: {total_loss_val/i:.4f}')
+#             if i % interval ==0:
+#                 print(f'  Loss-val: {total_loss_val/i:.4f}')
+#     print(f'  Loss-val-total: {total_loss_val/i:.4f}')
 
 
 
 #%%
-# now lets grab a text and try to test our architecture. 
-# we wanto keep it simple, and generate text, the same thing we did before
-# but this time we are going to use words instead of characters. 
-# previously we chose characters, becasue that would result in a small onehot encoded vector
-# if we used words for example, and we wanted to onehot encode them, that would be a several thousands
-# elements vectors, that would take a huge amount of vram and computation! but now we plan on using
-# an embedding layer (we will see later on how a typical emebedding vector works)
-# which takes way less memory and computation and is much much more efficient in terms of capturing 
-# underlying relationships between words, etc. unlike one-hot-encoding, we can specify any dimension size
-# for our embedding vector (if it was one-hot-encoding, we had to use vocab_length for each vector
-# and the majority of that vector is just zero which is extremely inefficient). we'll see all of this
-# in a moment
-# note that since we are using words, we face new challanges based 
-def download_ebook(url, file_name='corpus.txt', dir_name = 'data'):
-    file_name_path = os.path.join(dir_name, file_name)
+# # now lets grab a text and try to test our architecture. 
+# # we wanto keep it simple, and generate text, the same thing we did before
+# # but this time we are going to use words instead of characters. 
+# # previously we chose characters, becasue that would result in a small onehot encoded vector
+# # if we used words for example, and we wanted to onehot encode them, that would be a several thousands
+# # elements vectors, that would take a huge amount of vram and computation! but now we plan on using
+# # an embedding layer (we will see later on how a typical emebedding vector works)
+# # which takes way less memory and computation and is much much more efficient in terms of capturing 
+# # underlying relationships between words, etc. unlike one-hot-encoding, we can specify any dimension size
+# # for our embedding vector (if it was one-hot-encoding, we had to use vocab_length for each vector
+# # and the majority of that vector is just zero which is extremely inefficient). we'll see all of this
+# # in a moment
+# # note that since we are using words, we face new challanges based 
+# def download_ebook(url, file_name='corpus.txt', dir_name = 'data'):
+#     file_name_path = os.path.join(dir_name, file_name)
     
-    if os.path.exists(file_name_path):
-        return file_name_path
+#     if os.path.exists(file_name_path):
+#         return file_name_path
     
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name, exist_ok=True)
+#     if not os.path.exists(dir_name):
+#         os.makedirs(dir_name, exist_ok=True)
         
-    request.urlretrieve(url, file_name_path)
-    return file_name_path
+#     request.urlretrieve(url, file_name_path)
+#     return file_name_path
 
-url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
-# lets download and read it all!
-# this time around lets grab all the words. we use split() to split the words
-# based on white characters ('\n,\r,\t,\f)
-with open(download_ebook(url),'r') as file: 
-    corpus_words = file.read().split()
+# url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
+# # lets download and read it all!
+# # this time around lets grab all the words. we use split() to split the words
+# # based on white characters ('\n,\r,\t,\f)
+# with open(download_ebook(url),'r') as file: 
+#     corpus_words = file.read().split()
 
-print(f'{len(corpus_words)=:,}') # 352,804 words!
-print(f'{repr(corpus_words[:10])=}')
-# as you can see, there are 352,804 words, most of which are duplicates.
-# lets get rid of them and grab the unique ones.
-# lets also make them all lowercase, this way we remove all variantions 
-# of a word and only keep the simple lowercase form
-corpus_words_lower = [word.lower() for word in corpus_words]
-print(f'{len(corpus_words_lower)=:,}') # 352,804 words!
-print(f'{repr(corpus_words_lower[:10])=}')
-# now lets grab the unique ones if we use set(), we will get a 10x reduction
-# i.e. we would get 28,151 words, but it will also destroy our input text structure!
-# we want to retain the word order, so we can't simply use set() like when we used characters!
-# corpus_words_unique = [word for word in set(corpus_words_lower)]
-# print(f'{len(corpus_words_unique)=:,}') # 28,151 words!
-# print(f'{repr(corpus_words_unique[:10])=}')
-# we do this part when we want to create the int2word and word2int dictionaries.
-# 
-# recall that we are trying to create a dictionary for converting words to integer codes and vice versa
-# so our preprocessing shouldnt alter the text structure, in doing so we lose some degree of cleanness
-# like the words that are attached to puntuation marks, (like "child,", "hoped.", etc would not be removed
-# which is not desigrable, but it suffices for now we try to just keep it simple despite having these issues
-# we'll see how to get aroundthis issue later on).
-# 
-# note that if we were to do the same preprocessings we did on characters, on words here, 
-# we would face a lot of issues, like for example our simple tokenization wouldnt handle a lot of 
-# cases such as different tenses.
-# verbs in different tenses or expressions would be destroyed by our simplistic preprocessing.
-# like if we removed the unwanted-characters! we would have butched many words and expressions! 
-# this has a direct impact on the final result. 
-# in the future when we start working with transformers, we see how to get around this 
-# (we will be familiarized with tokenization and how its done in the process. 
-# for now lets accept this as a good enough result and carry on!)
-#%%
-# now lets create our word2int and int2word dictionaries
-# note that we can use set to grab the unique words, here!
-# this will give us a 10x reduction! i.e. 28,151 words!
-# we start from 1 because we want to reserve 0 for special token <sos>
-int2word = dict(enumerate(set(corpus_words_lower),start=1))
-word2int = {w:c for c,w in int2word.items()}
+# print(f'{len(corpus_words)=:,}') # 352,804 words!
+# print(f'{repr(corpus_words[:10])=}')
+# # as you can see, there are 352,804 words, most of which are duplicates.
+# # lets get rid of them and grab the unique ones.
+# # lets also make them all lowercase, this way we remove all variantions 
+# # of a word and only keep the simple lowercase form
+# corpus_words_lower = [word.lower() for word in corpus_words]
+# print(f'{len(corpus_words_lower)=:,}') # 352,804 words!
+# print(f'{repr(corpus_words_lower[:10])=}')
+# # now lets grab the unique ones if we use set(), we will get a 10x reduction
+# # i.e. we would get 28,151 words, but it will also destroy our input text structure!
+# # we want to retain the word order, so we can't simply use set() like when we used characters!
+# # corpus_words_unique = [word for word in set(corpus_words_lower)]
+# # print(f'{len(corpus_words_unique)=:,}') # 28,151 words!
+# # print(f'{repr(corpus_words_unique[:10])=}')
+# # we do this part when we want to create the int2word and word2int dictionaries.
+# # 
+# # recall that we are trying to create a dictionary for converting words to integer codes and vice versa
+# # so our preprocessing shouldnt alter the text structure, in doing so we lose some degree of cleanness
+# # like the words that are attached to puntuation marks, (like "child,", "hoped.", etc would not be removed
+# # which is not desigrable, but it suffices for now we try to just keep it simple despite having these issues
+# # we'll see how to get aroundthis issue later on).
+# # 
+# # note that if we were to do the same preprocessings we did on characters, on words here, 
+# # we would face a lot of issues, like for example our simple tokenization wouldnt handle a lot of 
+# # cases such as different tenses.
+# # verbs in different tenses or expressions would be destroyed by our simplistic preprocessing.
+# # like if we removed the unwanted-characters! we would have butched many words and expressions! 
+# # this has a direct impact on the final result. 
+# # in the future when we start working with transformers, we see how to get around this 
+# # (we will be familiarized with tokenization and how its done in the process. 
+# # for now lets accept this as a good enough result and carry on!)
+# #%%
+# # now lets create our word2int and int2word dictionaries
+# # note that we can use set to grab the unique words, here!
+# # this will give us a 10x reduction! i.e. 28,151 words!
+# # we start from 1 because we want to reserve 0 for special token <sos>
+# int2word = dict(enumerate(set(corpus_words_lower),start=1))
+# word2int = {w:c for c,w in int2word.items()}
 
-# lets add the special tokens as well like sos
-int2word[0] = '<sos>'
-word2int['<sos>'] = 0
+# # lets add the special tokens as well like sos
+# int2word[0] = '<sos>'
+# word2int['<sos>'] = 0
 
-print(f'{len(int2word)=:,}')
-print(f'{len(word2int)=:,}')
-print(f'{int2word=}')
-print(f'{word2int=}')
-# lets convert our corpus to int
-words_digitized = torch.tensor([word2int[word] for word in corpus_words_lower])
-print(f'{words_digitized.shape=}')
-print(words_digitized[:10])
-print('after conversion: ')
-# print(repr(' '.join([int2word[idx.item()] for idx in words_digitized[:10]])))
-# lets make that into a function!
-def convert_to_words(seq_int_list):
-    return ' '.join([int2word[idx] for idx in seq_int_list])
+# print(f'{len(int2word)=:,}')
+# print(f'{len(word2int)=:,}')
+# print(f'{int2word=}')
+# print(f'{word2int=}')
+# # lets convert our corpus to int
+# words_digitized = torch.tensor([word2int[word] for word in corpus_words_lower])
+# print(f'{words_digitized.shape=}')
+# print(words_digitized[:10])
+# print('after conversion: ')
+# # print(repr(' '.join([int2word[idx.item()] for idx in words_digitized[:10]])))
+# # lets make that into a function!
+# def convert_to_words(seq_int_list):
+#     return ' '.join([int2word[idx] for idx in seq_int_list])
 
-print(convert_to_words(words_digitized[:10].tolist()))
+# print(convert_to_words(words_digitized[:10].tolist()))
 
-#%%
-url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
-# lets download and read it all!
-with open(download_ebook(url),'r') as file: 
-    corpus_raw = file.read()
+# #%%
+# url = 'http://www.gutenberg.org/files/1399/1399-0.txt'
+# # lets download and read it all!
+# with open(download_ebook(url),'r') as file: 
+#     corpus_raw = file.read()
 
-print(f'{repr(corpus_raw[:10])=}')
-corpus_raw = corpus_raw.translate(str.maketrans('','',string.punctuation))
-# we can now filter out the other escape characters!
-# by only selecting the printable ones!
-corpus_raw = ''.join(x for x in corpus_raw if x in set(string.printable))
-# and finally making all characters lower case
-corpus_words_lower = ''.join([c.lower() for c in corpus_raw])
-# now we get 'the projec' this time around!
-print(repr(corpus_words_lower[:10]))
+# print(f'{repr(corpus_raw[:10])=}')
+# corpus_raw = corpus_raw.translate(str.maketrans('','',string.punctuation))
+# # we can now filter out the other escape characters!
+# # by only selecting the printable ones!
+# corpus_raw = ''.join(x for x in corpus_raw if x in set(string.printable))
+# # and finally making all characters lower case
+# corpus_words_lower = ''.join([c.lower() for c in corpus_raw])
+# # now we get 'the projec' this time around!
+# print(repr(corpus_words_lower[:10]))
 
-unique_chars = set(corpus_words_lower)
-# lets sort it for better visualization
-unique_chars = sorted(unique_chars)
-# now lets create a char2int and int2char dictionaries!
-# start from 1, becasue we reserve 0 for special token (sos)
-int2word = dict(enumerate(unique_chars, start=1))
-word2int = {c:d for d,c in int2word.items()}
+# unique_chars = set(corpus_words_lower)
+# # lets sort it for better visualization
+# unique_chars = sorted(unique_chars)
+# # now lets create a char2int and int2char dictionaries!
+# # start from 1, becasue we reserve 0 for special token (sos)
+# int2word = dict(enumerate(unique_chars, start=1))
+# word2int = {c:d for d,c in int2word.items()}
 
-# lets add the special tokens as well like sos
-int2word[0] = '<sos>'
-word2int['<sos>'] = 0
+# # lets add the special tokens as well like sos
+# int2word[0] = '<sos>'
+# word2int['<sos>'] = 0
 
-print(f'{unique_chars=}')
-print(f'{int2word=}')
-print(f'{word2int=}')
-print(f'unique characters: {len(unique_chars)} : \n {unique_chars}')
-# lets convert our corpus to int
-words_digitized = torch.tensor([word2int[char] for char in corpus_words_lower])
-print(f'{words_digitized.shape=}')
-print(words_digitized[:10])
-print('after conversion: ')
-print(repr(''.join([int2word[idx.item()] for idx in words_digitized[:10]])))
+# print(f'{unique_chars=}')
+# print(f'{int2word=}')
+# print(f'{word2int=}')
+# print(f'unique characters: {len(unique_chars)} : \n {unique_chars}')
+# # lets convert our corpus to int
+# words_digitized = torch.tensor([word2int[char] for char in corpus_words_lower])
+# print(f'{words_digitized.shape=}')
+# print(words_digitized[:10])
+# print('after conversion: ')
+# print(repr(''.join([int2word[idx.item()] for idx in words_digitized[:10]])))
 
 
-#%%
-# dataset needs work! we only have 14 words for our dataset? this cant be right!
-# what to do now?
-# now we need to have batches! 
-def get_next_batch(words_digitized, batch_size=1, seq_len=10):
-    char_count = words_digitized.size(0)
-    each_batch_size = batch_size*seq_len
-    batch_count = char_count // each_batch_size
-    corpus = words_digitized[:batch_count * each_batch_size]
-    corpus = corpus.reshape(batch_size, -1)
-    # print(f'{corpus.shape=}')
-    # note the dtype and our warning previously. now we have a much larger vocabsize
-    # so our tensor must accomadate way more numbers than 256 of uint8! if you are not
-    # careful and use the wrong/insufficient dtype here, you'll face a lot of headache later on
-    # because of overflow:)). change this to uint8 and run this to see the difference 
-    x = torch.zeros(size=(batch_size, seq_len), dtype=torch.long)
-    y = torch.zeros_like(x)
-    for i in range(0, corpus.size(1), seq_len):
-        x[...] = corpus[:, i:i+seq_len]
-        try :
-            y[:, :-1] = x[:, 1:]
-            y[:, -1] = corpus[:, i+seq_len]
-        except:
-            y[:, :-1] = x[:, 1:]
-            y[:, -1] = corpus[:, 0]
-        yield x,y
+# #%%
+# # dataset needs work! we only have 14 words for our dataset? this cant be right!
+# # what to do now?
+# # now we need to have batches! 
+# def get_next_batch(words_digitized, batch_size=1, seq_len=10):
+#     char_count = words_digitized.size(0)
+#     each_batch_size = batch_size*seq_len
+#     batch_count = char_count // each_batch_size
+#     corpus = words_digitized[:batch_count * each_batch_size]
+#     corpus = corpus.reshape(batch_size, -1)
+#     # print(f'{corpus.shape=}')
+#     # note the dtype and our warning previously. now we have a much larger vocabsize
+#     # so our tensor must accomadate way more numbers than 256 of uint8! if you are not
+#     # careful and use the wrong/insufficient dtype here, you'll face a lot of headache later on
+#     # because of overflow:)). change this to uint8 and run this to see the difference 
+#     x = torch.zeros(size=(batch_size, seq_len), dtype=torch.long)
+#     y = torch.zeros_like(x)
+#     for i in range(0, corpus.size(1), seq_len):
+#         x[...] = corpus[:, i:i+seq_len]
+#         try :
+#             y[:, :-1] = x[:, 1:]
+#             y[:, -1] = corpus[:, i+seq_len]
+#         except:
+#             y[:, :-1] = x[:, 1:]
+#             y[:, -1] = corpus[:, 0]
+#         yield x,y
 
-x,y = next(iter(get_next_batch(words_digitized, batch_size=3, seq_len=8)))
-print(f'{x.shape=}')
-print(f'{y.shape=}')
-print(f'{x=}')
-print(f'{y=}')
-#training
-#%%
-# lets test our newtork 
-seq_len = 5
-data, labels = next(iter(get_next_batch(words_digitized, batch_size=2, seq_len=seq_len)))
-print(f'{data.shape=}')
-print(f'{labels.shape=}')
+# x,y = next(iter(get_next_batch(words_digitized, batch_size=3, seq_len=8)))
+# print(f'{x.shape=}')
+# print(f'{y.shape=}')
+# print(f'{x=}')
+# print(f'{y=}')
+# #training
+# #%%
+# # lets test our newtork 
+# seq_len = 5
+# data, labels = next(iter(get_next_batch(words_digitized, batch_size=2, seq_len=seq_len)))
+# print(f'{data.shape=}')
+# print(f'{labels.shape=}')
 
-num_layers = 1
-model = LSTMBahdanau(input_size=seq_len,
-                     output_size=len(word2int),
-                     vocab_size=len(word2int),
-                     embedding_dim=100,
-                     hidden_size=100,
-                     int2word=int2word,
-                     word2int=word2int)
+# num_layers = 1
+# model = LSTMBahdanau(input_size=seq_len,
+#                      output_size=len(word2int),
+#                      vocab_size=len(word2int),
+#                      embedding_dim=100,
+#                      hidden_size=100,
+#                      int2word=int2word,
+#                      word2int=word2int)
 
-print(f'our input(data).shape: {data.shape}')
-outputs,hidden_state = model(data,None)
-print(f'model input size: {model.input_size}')
-print(f'model output size: {model.output_size}')
-# now our output may look weird sth like, remember that
-# in order to get meaningful output we need to reshape it 
-print(f'rnn output shape: {outputs.shape}')
-print(f'{outputs[:,:,:3]=}')
-# therefore the actual shape is 
-# print(f'output actual shape :{outputs.view(-1, seq_len, model.output_size).shape}')
-print(*[convert_to_words(output_lst.tolist()) for output_lst in outputs.max(dim=-1)[1] ], sep='\n')
+# print(f'our input(data).shape: {data.shape}')
+# outputs,hidden_state = model(data,None)
+# print(f'model input size: {model.input_size}')
+# print(f'model output size: {model.output_size}')
+# # now our output may look weird sth like, remember that
+# # in order to get meaningful output we need to reshape it 
+# print(f'rnn output shape: {outputs.shape}')
+# print(f'{outputs[:,:,:3]=}')
+# # therefore the actual shape is 
+# # print(f'output actual shape :{outputs.view(-1, seq_len, model.output_size).shape}')
+# print(*[convert_to_words(output_lst.tolist()) for output_lst in outputs.max(dim=-1)[1] ], sep='\n')
 
-#%%
-# now lets train our model
-seq_len = 30
-input_size = seq_len
-# remember our output size is the same as
-# the vocab_size, that is, any word in the vocab
-# can be a likely valid output, see it as the number
-# of classes we have in output (each word represents a single class)
-output_size = len(word2int)
-vocab_size = len(word2int)
-embedding_dim = 100
-hidden_size = 512
-# layers_cnt = 1
-# bidirection = False
-device = 'cuda' if torch.cuda.is_available()  else 'cpu'
-# device='cpu'
-model = LSTMBahdanau(input_size=input_size,
-                     output_size=output_size,
-                     vocab_size=vocab_size,
-                     embedding_dim=embedding_dim,
-                     hidden_size=hidden_size,
-                     int2word=int2word,
-                     word2int=word2int)
+# #%%
+# # now lets train our model
+# seq_len = 30
+# input_size = seq_len
+# # remember our output size is the same as
+# # the vocab_size, that is, any word in the vocab
+# # can be a likely valid output, see it as the number
+# # of classes we have in output (each word represents a single class)
+# output_size = len(word2int)
+# vocab_size = len(word2int)
+# embedding_dim = 100
+# hidden_size = 512
+# # layers_cnt = 1
+# # bidirection = False
+# device = 'cuda' if torch.cuda.is_available()  else 'cpu'
+# # device='cpu'
+# model = LSTMBahdanau(input_size=input_size,
+#                      output_size=output_size,
+#                      vocab_size=vocab_size,
+#                      embedding_dim=embedding_dim,
+#                      hidden_size=hidden_size,
+#                      int2word=int2word,
+#                      word2int=word2int)
 
-model = model.to(device)
-optimizer = optim.Adam(model.parameters(), lr = 0.001)
-criterion = nn.CrossEntropyLoss()#ignore_index=-100
-scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=30)
+# model = model.to(device)
+# optimizer = optim.Adam(model.parameters(), lr = 0.001)
+# criterion = nn.CrossEntropyLoss()#ignore_index=-100
+# scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=30)
 
-epochs =30
-# in order to not face the exploding gradient in lstm
-# we clip the gradients
-clip = 5.
-interval = 1000
-batch_size = 32
-# label_length = len(word2int)
-hidden_states = None
+# epochs =30
+# # in order to not face the exploding gradient in lstm
+# # we clip the gradients
+# clip = 5.
+# interval = 1000
+# batch_size = 32
+# # label_length = len(word2int)
+# hidden_states = None
 
-val_ratio = 0.2
-val_idx = int(words_digitized.numel() * (1-val_ratio))
-train = words_digitized[:val_idx]
-val = words_digitized[val_idx:]
+# val_ratio = 0.2
+# val_idx = int(words_digitized.numel() * (1-val_ratio))
+# train = words_digitized[:val_idx]
+# val = words_digitized[val_idx:]
 
-print(f'running on device: {device}')
-print(f'input_size:     {input_size}')
-print(f'output_size:    {output_size:,}')
-print(f'hidden_size:    {hidden_size}')
-print(f'embedding_dim:  {embedding_dim}')
-print(f'vocab_size:     {vocab_size:,}')
-print(f'word count:     {words_digitized.numel():,}')
-print(f'val idx:        {val_idx:,}')
-print(f'val size:       {val.numel():,}')
-print(f'train size:     {train.numel():,}')
-print(f'val + train:    {val.numel() + train.numel():,}')
-assert train.numel() + val.numel() == words_digitized.numel() ,'they must be equale!'
+# print(f'running on device: {device}')
+# print(f'input_size:     {input_size}')
+# print(f'output_size:    {output_size:,}')
+# print(f'hidden_size:    {hidden_size}')
+# print(f'embedding_dim:  {embedding_dim}')
+# print(f'vocab_size:     {vocab_size:,}')
+# print(f'word count:     {words_digitized.numel():,}')
+# print(f'val idx:        {val_idx:,}')
+# print(f'val size:       {val.numel():,}')
+# print(f'train size:     {train.numel():,}')
+# print(f'val + train:    {val.numel() + train.numel():,}')
+# assert train.numel() + val.numel() == words_digitized.numel() ,'they must be equale!'
 
-for e in range(epochs):
-    model.train()
-    total_loss = 0
-    for i, (data, label) in enumerate(get_next_batch(train, batch_size, seq_len=seq_len), start=1):
+# for e in range(epochs):
+#     model.train()
+#     total_loss = 0
+#     for i, (data, label) in enumerate(get_next_batch(train, batch_size, seq_len=seq_len), start=1):
         
-        # label is not one-hot-encoded, crossentropy can do this on its own
-        data = data.to(device)
-        label = label.to(device).long()
-        # print(f'{data.shape=} {label.shape=}')
-        output , hidden_states = model(data, hidden_states)
+#         # label is not one-hot-encoded, crossentropy can do this on its own
+#         data = data.to(device)
+#         label = label.to(device).long()
+#         # print(f'{data.shape=} {label.shape=}')
+#         output , hidden_states = model(data, hidden_states)
           
-        hidden_states = tuple(h.data for h in hidden_states)
+#         hidden_states = tuple(h.data for h in hidden_states)
      
-        # print(f'{label.shape=}')  # label.shape=torch.Size([32, 30])
-        # print(f'{output.shape=}') # output.shape=torch.Size([32, 30, 28151])
-        # label = label.view(batch_size*seq_len).long()
-        # print(f'{label=}')
-        loss = criterion(output.view(-1,vocab_size), label.view(-1))
+#         # print(f'{label.shape=}')  # label.shape=torch.Size([32, 30])
+#         # print(f'{output.shape=}') # output.shape=torch.Size([32, 30, 28151])
+#         # label = label.view(batch_size*seq_len).long()
+#         # print(f'{label=}')
+#         loss = criterion(output.view(-1,vocab_size), label.view(-1))
             
-        total_loss += loss.item()
-        # print(f'{total_loss=}')
+#         total_loss += loss.item()
+#         # print(f'{total_loss=}')
         
-        optimizer.zero_grad()
-        loss.backward()
-        # note the _, which indicates the inplace operation!
-        # like before this doesnt seem to matter much really! 
-        # training loss decreases however the validation
-        # lossincreases after some epochs! get this to work!
-        torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
-        optimizer.step()
+#         optimizer.zero_grad()
+#         loss.backward()
+#         # note the _, which indicates the inplace operation!
+#         # like before this doesnt seem to matter much really! 
+#         # training loss decreases however the validation
+#         # lossincreases after some epochs! get this to work!
+#         torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.)
+#         optimizer.step()
 
-        if i%interval==0:
-            print(f'Epoch-Iter:: {e}/{epochs}-{i} | Loss: {total_loss/i:.4f} | LR: {scheduler.get_lr()[-1]:.6f}')
+#         if i%interval==0:
+#             print(f'Epoch-Iter:: {e}/{epochs}-{i} | Loss: {total_loss/i:.4f} | LR: {scheduler.get_lr()[-1]:.6f}')
     
-    # decay the lr per epochs
-    scheduler.step()
+#     # decay the lr per epochs
+#     scheduler.step()
 
-    # test 
-    hidden_states = None
-    total_loss_val = 0
-    for i, (data,label) in enumerate(get_next_batch(val, batch_size, seq_len),start=1):
-        with torch.no_grad():
-            model.eval()
+#     # test 
+#     hidden_states = None
+#     total_loss_val = 0
+#     for i, (data,label) in enumerate(get_next_batch(val, batch_size, seq_len),start=1):
+#         with torch.no_grad():
+#             model.eval()
 
-            data = data.to(device)
-            label = label.to(device).long()
+#             data = data.to(device)
+#             label = label.to(device).long()
 
-            output, hidden_states = model(data, hidden_states)
+#             output, hidden_states = model(data, hidden_states)
             
-            hidden_states = tuple(h.data for h in hidden_states)
+#             hidden_states = tuple(h.data for h in hidden_states)
             
-            total_loss_val += criterion(output.view(-1,vocab_size), label.view(-1)).item()
+#             total_loss_val += criterion(output.view(-1,vocab_size), label.view(-1)).item()
             
-            if i % interval ==0:
-                print(f'  Loss-val: {total_loss_val/i:.4f}')
-    print(f'  Loss-val-total: {total_loss_val/i:.4f}')
-#...
-# Epoch-Iter:: 56/60-100 | Loss: 0.8325 | LR: 0.000100
-# Epoch-Iter:: 56/60-200 | Loss: 0.7869 | LR: 0.000100
-#   Loss-val-total: 11.0800
-# Epoch-Iter:: 57/60-100 | Loss: 0.8294 | LR: 0.000100
-# Epoch-Iter:: 57/60-200 | Loss: 0.7825 | LR: 0.000100
-#   Loss-val-total: 11.0806
-# Epoch-Iter:: 58/60-100 | Loss: 0.8234 | LR: 0.000100
-# Epoch-Iter:: 58/60-200 | Loss: 0.7790 | LR: 0.000100
-#   Loss-val-total: 11.0897
-# Epoch-Iter:: 59/60-100 | Loss: 0.8194 | LR: 0.000100
-# Epoch-Iter:: 59/60-200 | Loss: 0.7761 | LR: 0.000100
-#   Loss-val-total: 11.0936
-# 
+#             if i % interval ==0:
+#                 print(f'  Loss-val: {total_loss_val/i:.4f}')
+#     print(f'  Loss-val-total: {total_loss_val/i:.4f}')
+# #...
+# # Epoch-Iter:: 56/60-100 | Loss: 0.8325 | LR: 0.000100
+# # Epoch-Iter:: 56/60-200 | Loss: 0.7869 | LR: 0.000100
+# #   Loss-val-total: 11.0800
+# # Epoch-Iter:: 57/60-100 | Loss: 0.8294 | LR: 0.000100
+# # Epoch-Iter:: 57/60-200 | Loss: 0.7825 | LR: 0.000100
+# #   Loss-val-total: 11.0806
+# # Epoch-Iter:: 58/60-100 | Loss: 0.8234 | LR: 0.000100
+# # Epoch-Iter:: 58/60-200 | Loss: 0.7790 | LR: 0.000100
+# #   Loss-val-total: 11.0897
+# # Epoch-Iter:: 59/60-100 | Loss: 0.8194 | LR: 0.000100
+# # Epoch-Iter:: 59/60-200 | Loss: 0.7761 | LR: 0.000100
+# #   Loss-val-total: 11.0936
+# # 
 
-# TODO:
-# validation goes up! training goes down!
-# next attempt should be to disable attention and only 
-# use an ordinary lstm and see how it performs!
-# using characters only instead of words ran smoothly, both losses decreased without any issues!
-# making me believe we face massive overfitting in our model when using words (as the number
-# of classes/words are in thousands while when using chars its only 38!)
-# 
-# Epoch-Iter:: 57/60-1000 | Loss: 0.5964 | LR: 0.000100
-#   Loss-val-total: 0.7419
-# Epoch-Iter:: 58/60-1000 | Loss: 0.5949 | LR: 0.000100
-#   Loss-val-total: 0.7413
-# Epoch-Iter:: 59/60-1000 | Loss: 0.5944 | LR: 0.000100
-#   Loss-val-total: 0.7415
+# # TODO:
+# # validation goes up! training goes down!
+# # next attempt should be to disable attention and only 
+# # use an ordinary lstm and see how it performs!
+# # using characters only instead of words ran smoothly, both losses decreased without any issues!
+# # making me believe we face massive overfitting in our model when using words (as the number
+# # of classes/words are in thousands while when using chars its only 38!)
+# # 
+# # Epoch-Iter:: 57/60-1000 | Loss: 0.5964 | LR: 0.000100
+# #   Loss-val-total: 0.7419
+# # Epoch-Iter:: 58/60-1000 | Loss: 0.5949 | LR: 0.000100
+# #   Loss-val-total: 0.7413
+# # Epoch-Iter:: 59/60-1000 | Loss: 0.5944 | LR: 0.000100
+# #   Loss-val-total: 0.7415
 
-# the text generation is awful, not sure its becasue of the generation procedure or the model
-# TODO fix the generation / test with plain lstm and see how it goes
-# plain lstm (encoder-plain decoder)
-# Epoch-Iter:: 56/60-1000 | Loss: 1.1627 | LR: 0.000100
-#   Loss-val-total: 1.3113
-# Epoch-Iter:: 57/60-1000 | Loss: 1.1625 | LR: 0.000100
-#   Loss-val-total: 1.3111
-# Epoch-Iter:: 58/60-1000 | Loss: 1.1623 | LR: 0.000100
-#   Loss-val-total: 1.3115
-# Epoch-Iter:: 59/60-1000 | Loss: 1.1621 | LR: 0.000100
-#   Loss-val-total: 1.3118
-# the loss is much higher than the attention version, it didnt decrease as rapidly as the attention
-# version, and the text generation is aweful nonetheless
-# TODO use single classification instead of looping for plain lstm
-# Epoch-Iter:: 57/60-1000 | Loss: 0.9309 | LR: 0.000100
-#   Loss-val-total: 1.0851
-# Epoch-Iter:: 58/60-1000 | Loss: 0.9295 | LR: 0.000100
-#   Loss-val-total: 1.0852
-# Epoch-Iter:: 59/60-1000 | Loss: 0.9281 | LR: 0.000100
-#   Loss-val-total: 1.0849
-#loss decreased when I used classification in a single call but the generation is still nonsensical and gibrish
-# TODO I guess it could be the way we are generating the text, next change the way we generate the text
-# first start by trainig sequence of 1 and testing eval like before, then use a nn.linear 
-# to create an intermediate representation before feeding it to the decoder, but we need to
-# somehow make it work with different channel numbers! thats the issue! here when sampling
-#
-# sequence 1 result: 
-# Epoch-Iter:: 57/60-45000 | Loss: 1.8432 | LR: 0.000100
-#   Loss-val-total: 1.9065
-# Epoch-Iter:: 58/60-45000 | Loss: 1.8459 | LR: 0.000100
-#   Loss-val-total: 1.9096
-# Epoch-Iter:: 59/60-45000 | Loss: 1.8457 | LR: 0.000100
-#   Loss-val-total: 1.9089
-# text generation doesnt seem complete giberish anymore, they have a bit of structure, but
-# not alot, could be due to insufficient training/higher loss, notet hat we used the old sampler
-# that uses single character each time. 
-# TODO: train a bit more and see if it helps with the output, if so, then switch to attention
-# and training with seq=1 and see how it performs, then decide on the next move
-# Epoch-Iter:: 86/90-45000 | Loss: 1.8145 | LR: 0.000100
-#   Loss-val-total: 1.8954
-# Epoch-Iter:: 87/90-45000 | Loss: 1.8144 | LR: 0.000100
-#   Loss-val-total: 1.8954
-# Epoch-Iter:: 88/90-45000 | Loss: 1.8144 | LR: 0.000100
-#   Loss-val-total: 1.8954
-# Epoch-Iter:: 89/90-45000 | Loss: 1.8143 | LR: 0.000100
-#   Loss-val-total: 1.8954
-# more training didnt change the loss that much, but the text generation seems a tiny bit better
-# you can see words better formed, verbs better formed but the grammar, structure is still missing
-# TODO next lets try with attention with seq of 1 
-# ok its obismally bad! 
-#TODO fix the attention mechanism. we shouldnt be feeding the input to the decoder like this
-# changed the code to fix the attention mechanism part 1: 
-# Epoch-Iter:: 86/90-1000 | Loss: 2.7969 | LR: 0.000100
-#   Loss-val-total: 2.8033
-# Epoch-Iter:: 87/90-1000 | Loss: 2.7969 | LR: 0.000100
-#   Loss-val-total: 2.8029
-# Epoch-Iter:: 88/90-1000 | Loss: 2.7966 | LR: 0.000100
-#   Loss-val-total: 2.8028
-# Epoch-Iter:: 89/90-1000 | Loss: 2.7971 | LR: 0.000100
-#   Loss-val-total: 2.8033
-# the loss decreased, but the convergence is slow, it need more training
-# TODO next disable the gradient clipping part/try to train more with higher lr
-# the gradient clipping removal didnt do anything, but lowering the lr to 0.001 resulted in
-# much faster convergence and much lower loss both during training and validation:
-# this was trained for 90 epochs which got worse and model diverged after epoch 30
-# Epoch-Iter:: 28/90-1000 | Loss: 0.3809 | LR: 0.001000
-#   Loss-val-total: 0.5979
-# Epoch-Iter:: 29/90-1000 | Loss: 0.3810 | LR: 0.001000
-#   Loss-val-total: 0.5953
-# Epoch-Iter:: 30/90-1000 | Loss: 0.2737 | LR: 0.000010
-#   Loss-val-total: 0.5775
-# Epoch-Iter:: 31/90-1000 | Loss: 0.1969 | LR: 0.000100
-#   Loss-val-total: 0.5857
-# Epoch-Iter:: 32/90-1000 | Loss: 0.1596 | LR: 0.000100
-#   Loss-val-total: 0.6120
-# Epoch-Iter:: 33/90-1000 | Loss: 0.1384 | LR: 0.000100
-#   Loss-val-total: 0.6330
-# so I traind for the second time this time for 30 epochs only 
-# Epoch-Iter:: 26/30-1000 | Loss: 0.4237 | LR: 0.001000
-#   Loss-val-total: 0.6812
-# Epoch-Iter:: 27/30-1000 | Loss: 0.4257 | LR: 0.001000
-#   Loss-val-total: 0.6520
-# Epoch-Iter:: 28/30-1000 | Loss: 0.4038 | LR: 0.001000
-#   Loss-val-total: 0.6898
-# Epoch-Iter:: 29/30-1000 | Loss: 0.3875 | LR: 0.001000
-#   Loss-val-total: 0.6460
-# the loss is very low, but the text generation is nonsense, all the classes are 1!
-# which shouldnt happen, and therefore it keeps generating <sos> for all timesteps/characters
-# TODO find and fix the issue 
-#%%
-def predict(model, input, hidden_states=None, topk=5):
-    model.eval()
-    # int2word = int2word
-    # word2int = word2int
-    unique_chars = len(int2word)
-    # print(char2int)
-    # convert input string into corrosponding ids and add a batch dim
-    input =  torch.tensor([word2int[input]]).reshape(-1,1).to('cuda')
-    # input =  torch.tensor([word2int['<sos>']]).reshape(-1,1).to('cuda')
-    output, hidden_states = model(input, hidden_states)
+# # the text generation is awful, not sure its becasue of the generation procedure or the model
+# # TODO fix the generation / test with plain lstm and see how it goes
+# # plain lstm (encoder-plain decoder)
+# # Epoch-Iter:: 56/60-1000 | Loss: 1.1627 | LR: 0.000100
+# #   Loss-val-total: 1.3113
+# # Epoch-Iter:: 57/60-1000 | Loss: 1.1625 | LR: 0.000100
+# #   Loss-val-total: 1.3111
+# # Epoch-Iter:: 58/60-1000 | Loss: 1.1623 | LR: 0.000100
+# #   Loss-val-total: 1.3115
+# # Epoch-Iter:: 59/60-1000 | Loss: 1.1621 | LR: 0.000100
+# #   Loss-val-total: 1.3118
+# # the loss is much higher than the attention version, it didnt decrease as rapidly as the attention
+# # version, and the text generation is aweful nonetheless
+# # TODO use single classification instead of looping for plain lstm
+# # Epoch-Iter:: 57/60-1000 | Loss: 0.9309 | LR: 0.000100
+# #   Loss-val-total: 1.0851
+# # Epoch-Iter:: 58/60-1000 | Loss: 0.9295 | LR: 0.000100
+# #   Loss-val-total: 1.0852
+# # Epoch-Iter:: 59/60-1000 | Loss: 0.9281 | LR: 0.000100
+# #   Loss-val-total: 1.0849
+# #loss decreased when I used classification in a single call but the generation is still nonsensical and gibrish
+# # TODO I guess it could be the way we are generating the text, next change the way we generate the text
+# # first start by trainig sequence of 1 and testing eval like before, then use a nn.linear 
+# # to create an intermediate representation before feeding it to the decoder, but we need to
+# # somehow make it work with different channel numbers! thats the issue! here when sampling
+# #
+# # sequence 1 result: 
+# # Epoch-Iter:: 57/60-45000 | Loss: 1.8432 | LR: 0.000100
+# #   Loss-val-total: 1.9065
+# # Epoch-Iter:: 58/60-45000 | Loss: 1.8459 | LR: 0.000100
+# #   Loss-val-total: 1.9096
+# # Epoch-Iter:: 59/60-45000 | Loss: 1.8457 | LR: 0.000100
+# #   Loss-val-total: 1.9089
+# # text generation doesnt seem complete giberish anymore, they have a bit of structure, but
+# # not alot, could be due to insufficient training/higher loss, notet hat we used the old sampler
+# # that uses single character each time. 
+# # TODO: train a bit more and see if it helps with the output, if so, then switch to attention
+# # and training with seq=1 and see how it performs, then decide on the next move
+# # Epoch-Iter:: 86/90-45000 | Loss: 1.8145 | LR: 0.000100
+# #   Loss-val-total: 1.8954
+# # Epoch-Iter:: 87/90-45000 | Loss: 1.8144 | LR: 0.000100
+# #   Loss-val-total: 1.8954
+# # Epoch-Iter:: 88/90-45000 | Loss: 1.8144 | LR: 0.000100
+# #   Loss-val-total: 1.8954
+# # Epoch-Iter:: 89/90-45000 | Loss: 1.8143 | LR: 0.000100
+# #   Loss-val-total: 1.8954
+# # more training didnt change the loss that much, but the text generation seems a tiny bit better
+# # you can see words better formed, verbs better formed but the grammar, structure is still missing
+# # TODO next lets try with attention with seq of 1 
+# # ok its obismally bad! 
+# #TODO fix the attention mechanism. we shouldnt be feeding the input to the decoder like this
+# # changed the code to fix the attention mechanism part 1: 
+# # Epoch-Iter:: 86/90-1000 | Loss: 2.7969 | LR: 0.000100
+# #   Loss-val-total: 2.8033
+# # Epoch-Iter:: 87/90-1000 | Loss: 2.7969 | LR: 0.000100
+# #   Loss-val-total: 2.8029
+# # Epoch-Iter:: 88/90-1000 | Loss: 2.7966 | LR: 0.000100
+# #   Loss-val-total: 2.8028
+# # Epoch-Iter:: 89/90-1000 | Loss: 2.7971 | LR: 0.000100
+# #   Loss-val-total: 2.8033
+# # the loss decreased, but the convergence is slow, it need more training
+# # TODO next disable the gradient clipping part/try to train more with higher lr
+# # the gradient clipping removal didnt do anything, but lowering the lr to 0.001 resulted in
+# # much faster convergence and much lower loss both during training and validation:
+# # this was trained for 90 epochs which got worse and model diverged after epoch 30
+# # Epoch-Iter:: 28/90-1000 | Loss: 0.3809 | LR: 0.001000
+# #   Loss-val-total: 0.5979
+# # Epoch-Iter:: 29/90-1000 | Loss: 0.3810 | LR: 0.001000
+# #   Loss-val-total: 0.5953
+# # Epoch-Iter:: 30/90-1000 | Loss: 0.2737 | LR: 0.000010
+# #   Loss-val-total: 0.5775
+# # Epoch-Iter:: 31/90-1000 | Loss: 0.1969 | LR: 0.000100
+# #   Loss-val-total: 0.5857
+# # Epoch-Iter:: 32/90-1000 | Loss: 0.1596 | LR: 0.000100
+# #   Loss-val-total: 0.6120
+# # Epoch-Iter:: 33/90-1000 | Loss: 0.1384 | LR: 0.000100
+# #   Loss-val-total: 0.6330
+# # so I traind for the second time this time for 30 epochs only 
+# # Epoch-Iter:: 26/30-1000 | Loss: 0.4237 | LR: 0.001000
+# #   Loss-val-total: 0.6812
+# # Epoch-Iter:: 27/30-1000 | Loss: 0.4257 | LR: 0.001000
+# #   Loss-val-total: 0.6520
+# # Epoch-Iter:: 28/30-1000 | Loss: 0.4038 | LR: 0.001000
+# #   Loss-val-total: 0.6898
+# # Epoch-Iter:: 29/30-1000 | Loss: 0.3875 | LR: 0.001000
+# #   Loss-val-total: 0.6460
+# # the loss is very low, but the text generation is nonsense, all the classes are 1!
+# # which shouldnt happen, and therefore it keeps generating <sos> for all timesteps/characters
+# # TODO find and fix the issue 
+# #%%
+# def predict(model, input, hidden_states=None, topk=5):
+#     model.eval()
+#     # int2word = int2word
+#     # word2int = word2int
+#     unique_chars = len(int2word)
+#     # print(char2int)
+#     # convert input string into corrosponding ids and add a batch dim
+#     input =  torch.tensor([word2int[input]]).reshape(-1,1).to('cuda')
+#     # input =  torch.tensor([word2int['<sos>']]).reshape(-1,1).to('cuda')
+#     output, hidden_states = model(input, hidden_states)
 
-    output = output.softmax(dim=1)
-    # print(f'{output=}')
-    # now our output has probabilities for each sequence/timestep
-    # we will choose the highest one here 
-    probs, indexes = output.topk(k=topk, dim=1)
-    indexes = indexes.cpu().data.squeeze()
-    probs = probs.cpu().data.squeeze()
-    # print(f'{probs.shape=}')
-    # print(f'{indexes.shape=}')
-    # if we were to use numpy, we would have to write it like this, 
-    # use indexes, and also provide the probablities for these 
-    # char = np.random.choice(indexes.numpy(),p=probs.numpy()/probs.numpy().sum())
-    # note we have to renormalize the probs so that each of these new probablities
-    # also note that, we sample from the indexes, each index represents a character
-    # so sampling from them means choosing between different characters based on their
-    # probablities here.
-    if probs.numel()==1: # if topk=1
-        char = indexes.item()
-    else:
-        char = indexes[torch.multinomial(probs/probs.sum(dim=-1), num_samples=1, replacement=True)].item()
-    return int2word[char], hidden_states
+#     output = output.softmax(dim=1)
+#     # print(f'{output=}')
+#     # now our output has probabilities for each sequence/timestep
+#     # we will choose the highest one here 
+#     probs, indexes = output.topk(k=topk, dim=1)
+#     indexes = indexes.cpu().data.squeeze()
+#     probs = probs.cpu().data.squeeze()
+#     # print(f'{probs.shape=}')
+#     # print(f'{indexes.shape=}')
+#     # if we were to use numpy, we would have to write it like this, 
+#     # use indexes, and also provide the probablities for these 
+#     # char = np.random.choice(indexes.numpy(),p=probs.numpy()/probs.numpy().sum())
+#     # note we have to renormalize the probs so that each of these new probablities
+#     # also note that, we sample from the indexes, each index represents a character
+#     # so sampling from them means choosing between different characters based on their
+#     # probablities here.
+#     if probs.numel()==1: # if topk=1
+#         char = indexes.item()
+#     else:
+#         char = indexes[torch.multinomial(probs/probs.sum(dim=-1), num_samples=1, replacement=True)].item()
+#     return int2word[char], hidden_states
 
-def sample(model, size=10, prompt='hello there',topk=5):
+# def sample(model, size=10, prompt='hello there',topk=5):
     
-    # chars = [ch.lower() for ch in starter_message]
-    h = None
-    prompt = prompt.lower()
-    # add the prompt/start message
-    chars = list(prompt)
-    # print(unique_chars)
-    # now append the new generated text 
-    # by first feeding the whole prompt/starter message to 
-    # condition the model, and then the append the last output
-    # (which is what we want) to the chars list
-    for ch in prompt:
-        o,h = predict(model, ch, h, topk=topk)
-    chars.append(ch)
+#     # chars = [ch.lower() for ch in starter_message]
+#     h = None
+#     prompt = prompt.lower()
+#     # add the prompt/start message
+#     chars = list(prompt)
+#     # print(unique_chars)
+#     # now append the new generated text 
+#     # by first feeding the whole prompt/starter message to 
+#     # condition the model, and then the append the last output
+#     # (which is what we want) to the chars list
+#     for ch in prompt:
+#         o,h = predict(model, ch, h, topk=topk)
+#     chars.append(ch)
 
-    # now start from the last newly generated character
-    # we just got from previous loop, use it to generate
-    # new characters, as many as the size dictates.
-    # chars[-1] grabs the last freshly generated character
-    # from previous attempt and feeds it to the network to
-    # generate new one. the new one is then appended to the
-    # chars list and this continues until we have generated
-    # the right amount of characters specified by size 
-    for _ in range(size):
-        o, h = predict(model, chars[-1], h, topk=topk)
-        chars.append(o) 
+#     # now start from the last newly generated character
+#     # we just got from previous loop, use it to generate
+#     # new characters, as many as the size dictates.
+#     # chars[-1] grabs the last freshly generated character
+#     # from previous attempt and feeds it to the network to
+#     # generate new one. the new one is then appended to the
+#     # chars list and this continues until we have generated
+#     # the right amount of characters specified by size 
+#     for _ in range(size):
+#         o, h = predict(model, chars[-1], h, topk=topk)
+#         chars.append(o) 
         
-    # finally we convert all into a big string
-    return ''.join(chars)
-outputz = sample(model, size=30, prompt='the projec',topk=1)
-print(repr(outputz))
+#     # finally we convert all into a big string
+#     return ''.join(chars)
+# outputz = sample(model, size=30, prompt='the projec',topk=1)
+# print(repr(outputz))
 
 #%%
 # #this is basically a decoder part -old should be deleted
@@ -2817,20 +2835,12 @@ print(repr(outputz))
 #         super().__init__()
         
 #         # todo: 
-#         # i believe the lstm is decoder here, but I beleive it should have been lstm cell, which processes
-#         # decoders input for each timestep and goes on untill all tokens are generated.
-#         # with lstm, we feed the decoders input, get the whole output(all next hiddenstates) based on 
-#         # this single input which I guess can be also correct in a way, but not entirly due to paper.
-#         # also if we use lstm cell, we should not do softmax on the output, as thats only for the final
-#         # layer to calculate the actual outputs for the last timestep (that is when the last timestep is
-#         # reached, we get all previous hidden-states and do a softmax to get class probablities for each
-#         # timestep.)
-#         # but with current implementation, we use decoder-inputs, calculate outputs for all timesteps
+#         # with current implementation, we use decoder-inputs, calculate outputs for all timesteps
 #         # but only save the current timestep, then go for a second round, use the final hiddenstate of our
 #         # decoder(lstm second output), and feed it to attention cell as the decoders previous hidden-state
 #         # which is then used in the attention mechanisim with the encoders hiddenstate and the input values
 #         # so its not wrong I guess becasue its doing it for each step!
-#         # , but we should be able to do this using lstm cell as well. lets see
+#         # but we should be able to do this using lstm cell as well. lets see
 #         self.lstm = nn.LSTM(input_size=hidden_size * 2, hidden_size=hidden_size,num_layers=num_layers,
 #                            batch_first=True)
 
@@ -2840,7 +2850,6 @@ print(repr(outputz))
 #     # for this to work, we must have a loop in our training procesure
 #     # where we feed one timestep at a time. 
 #     def attention_cell(self, x_t, hidden_states_t, encoder_outputs):
-
 #         # x_t = self.embedding(x_t)
 #         # since lstm has two states, h and c, we only care about h!
 #         (h_prev, c) = hidden_states_t
@@ -3544,7 +3553,7 @@ class SkipGramNegativeSamplingLoss(nn.Module):
 #%% image captioning
 # 
 #%% GRU
-# sentiment analysis 
+# sentiment analysis
 
 
 #%% word embedding 
