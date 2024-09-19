@@ -2948,28 +2948,32 @@ evaluate_and_visualize_attention()
 #%% sentiment analysis 
 # lets do sentiment analysis . we read a bunch of reviews with their corrosponding labels
 # here are the steps we need to take
-# we know our label contains words, positive and neagative, so we convert them into numbers, 1, 0
+# we know our label contains words, positive and neagative, so we convert them into numbers, 0, 1
 # our reviews must be dgitized so we can feed them into our network  , but before that we need
 # to do some preprocessings. the preprocessings include 
 # 1. make everything lower case -not needed really
 # 2. remove punctuations 
 # 3. remove special characters such as \n 
-# 4. split only words! we dont want to create text, so creating dictionaries of characters 
+# 4. split only words! we dont want to generate text, so creating dictionaries of characters 
 # as apposed to creating dictionary of words is not going to suit us, becasue we intend on 
 # using word embedding, and relationship between words need to be found out! this is not possible
-# with characters! 
-# 5. thats nearly basically it(there are still some left), 
+# with characters!
+# 5. thats nearly basically it(there are still more to this but we are good for now, keep reading!), 
 # we need to create two dictionaries for converting word2int and in2words ()
-# there is one thing to note that, we start our intergers from 1 and not 0. we will be using 0 
-# later on for padding the input so we can have batches of the same size. 
-# 6.so we order our words based on  their frequency! the most frequent wants get to the top and
-# the least freqyent one goes to the bottom of the list. 
+# there is one thing to note though, we start our intergers from 1 and not 0. we will be using 0 
+# later on for padding the input so we can have batches of the same size. (we can use any number really
+# but 0 is convienet)
+# 6.so we order our words based on their frequency! the most frequent ones get to the top and
+# the least frequent ones go to the bottom of the list.(why? we'll see)
 # 7. an important step is to just normalize/standardize the length. since we want to use batch
-# we need to pick a length. we cant use the bigest one, becasue we may waste alot of space 
-# so we search and remove the larges and smallest ones. 
+# we need to pick a length. we cant use the bigest one, becasue we may waste alot of space, 
+# especially if the majority of our samples are way shorter than the biggest sample in the dataset! 
+# so we search and remove the larges and smallest ones.
 # 8. good lets go 
 import numpy as np 
 import string
+from collections import Counter
+
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -2978,76 +2982,129 @@ import torch.optim as optim
 %matplotlib inline 
 
 # first lets read our files 
-with open('/media/hossein/SSD1/code_dl/reviews.txt','r') as file: 
-    reviews_raw = file.read().lower()
-with open('/media/hossein/SSD1/code_dl/labels.txt', 'r') as file: 
-    labels_raw = file.read().lower()
-# lets see what we have here 
-print(repr(reviews_raw[:2000]))
-print(repr(labels_raw[:20]))
-# ok, good, now lets remove punctuations and \ns
-reviews_raw = ''.join([c for c in reviews_raw if c not in string.punctuation])
-print(repr(reviews_raw[:2]))
+with open('/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/reviews.txt','r') as file: 
+    reviews = file.read().lower()
+with open('/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/labels.txt', 'r') as file: 
+    labels = file.read().lower()
+    
+# lets see what we have here
+# so we have many reviews that are each separated by a new line
+# likewise, each line in the labels belongs to the corrosponding 
+# review
+print(f'{repr(reviews[:2000])=}')
+print(f'{repr(labels[:20])=}')
 
-# ok now lets remove \ns
-reviews_raw_split = reviews_raw.split('\n')
-# print(repr(reviews_raw[:200]))
-# ok good, now lets create our wordlist from reviews
-reviews_words_list = ''.join(reviews_raw_split).split()
+# ok, good, now lets remove punctuations, this is so that words that are
+# adjacent to punctuations are not detected as new words ('go' vs 'go.')
+# and basically they are treated the same.
+reviews = ''.join([c for c in reviews if c not in string.punctuation])
+print(f'{repr(reviews[:200])=}')
+
+# now lets separate each review using \n (line break)
+reviews_list = reviews.split('\n')
+print(f'{reviews_list[:2]=}')
+
+#good, now lets create our words list from the reviews
+reviews_words_list = reviews.split()
 print(reviews_words_list[:20])
-#ok good, now lets get each words frequency and also sort them based on that 
-# first get each words frequency in our list. we use Counter from collections for that
-from collections import Counter
-words_dict = Counter(reviews_words_list)
-print(words_dict['the'])
-# now lets sort these from highest to lowest 
-words_sorted_list = sorted(words_dict,key=words_dict.get,reverse=True)
-# print(words_dict_sorted)
+
+# now to create our vocabs(word2int/int2word dictionaries), we need to grab a list of unique words
+# our reviews_words_list contains a lot of duplicates for each word, so we need to get rid of them
+# this is infact to filter such duplicate words. The subsequent sorting is just there to give us back
+# an ordered list of words! which we then can use to create our word2int/int2word dictionaries
+# and also see what words are more frequently used and what are less frequently used.
+# obviously we can use set() to remove duplicates if we dont want the word frequencies!
+# and we can use a list comprehension, and not sort anything! but we did it anyway 
+word_counts = Counter(reviews_words_list)
+# so to make this not completely useless, lets see how good/bad are repeated in our dataset!
+print(f"#times 'good' has been used: {word_counts['good']=:,}")
+print(f"#times 'bad' has been used : {word_counts['bad']=:,}")
+# note that these dont mean anything! these dont necessarily mean there are
+# more positive reviews than negative ones, rather they show frequency of use
+# a bad review may use several positive words in the review but ultimately show its bad
+# but on the otherside, the existence of positive words, increases the chances of a 
+# review to be positive. lets not get over our heads and let the model decide after the training:)
+
+# sort these from highest to lowest count, and get the desired word list
+# (check IDF -inverse document frequency (comes handy in rag systems/searching mechanism as one of the criterias))
+words_sorted_list = sorted(word_counts, key=word_counts.get, reverse=True)
+
 int2word = dict(enumerate(words_sorted_list,1))
 word2int = {word:idx for idx,word in int2word.items()}
-print(f'int2word[1] {int2word[1]}')
-print(f'word2int["the"] {word2int["the"]}')
-# now lets digitize our label 
-labels = [1 if word=='positive' else 0 for word in labels_raw.split('\n')]
-print(f'labels[:50](raw): \n{labels_raw[:54]}')
-print(f'labels[:50]: {labels[:6]}')
+
+print(f'{len(word2int)=:,}')
+print(f'{len(int2word)=:,}')
+# the happens to be the most frequently used word in our dataset! interesting!!! lets move on!
+print(f'{int2word[1]=}')
+print(f'{word2int["the"]=}')
+
+# now lets digitize our label
+# instead of doing '1 if word=='positive' else 0' 
+# I simplified it as int(word=='positive')
+# if its true, it will be 1, and if its not, 
+# it will be 0! its shorter and easier to read!
+labels_digitized = [int(word=='positive') for word in labels.split('\n')]
+print(f'labels[:50](raw): \n{labels[:54]}')
+print(f'labels[:50]: {labels_digitized[:6]}')
 
 # now lets create the digitized version of the reviews 
 reviews_digitized=[]
-for each_review in reviews_raw_split:
-    # create a temp list of words separated by space for each review by doing .split()
-    reviews_digitized.append([word2int[w] for w in each_review.split()])
+for review in reviews_list:
+    # create a temp list of words separated by space
+    # for each review by doing .split()
+    reviews_digitized.append([word2int[w] for w in review.split()])
 
-print(len(reviews_digitized))
-print(reviews_raw_split[:2])
-print(reviews_digitized[:2])
+print(f'{len(reviews_digitized)=:,}')
+print(f'{reviews_list[0]=}')
+print(f'{reviews_digitized[0]=}')
+
 #%%
-# ok the frequency is clear, they are sorted, lets find the biggest and smallest reviews
-max_len = max([len(rev) for rev in reviews_digitized])
-min_len = min([len(rev) for rev in reviews_digitized])
-dic_rev_length = Counter(len(rev) for rev in reviews_digitized)
-print(f'max length: {max_len} and min_len : {min_len}')
-print(dic_rev_length[2])
-print(f'max: {max(dic_rev_length)}')
-print(f'min: {min(dic_rev_length)}')
-print(f'max count {dic_rev_length[max_len]}')
-print(f'min count {dic_rev_length[min_len]}')
+# lets find the longest and shortest reviews
+# this allows us to better choose a max-length
+# that suits us the best.
+# sidenote: note that we are using reviews_digitazed instead of reviews_list
+# becasue, reviews_list contains white characters as well which doesnt exist
+# in reviews_digitized (we remove them using split()),
+# this doesnt change the final outcome though, However it does make our approach
+# using reviews_digitized much faster (the max length in review_list is 13,740,
+# while in reviews_digitized its only 2,541!
+min_len = min([len(r) for r in reviews_digitized])
+max_len = max([len(r) for r in reviews_digitized])
+print(f'min length: {min_len:,} and max_len: {max_len:,}')
 
-# lets remove the ones with zero index 
-# we dont this, since we also need to remove the corrosponding labels
+review_length_counts = Counter(len(r) for r in reviews_digitized)
+min_len_cnt = review_length_counts[min_len]
+max_len_cnt = review_length_counts[max_len]
+# this counter gives us the same min/max length as we just calculated 
+print(f'min: {min(review_length_counts):,}')
+print(f'max: {max(review_length_counts):,}')
+# this also allows us to query and see, how many reviews 
+# exist with certain length for example there are
+# 1 review with length of 0! and 0 reviews with length of 2!
+# this makes it easier for us to choose a more suitable max_length
+# for our reviewes. 
+print(f'reviews with length of 0 words: {review_length_counts[0]}')
+print(f'reviews with length of 2 words: {review_length_counts[2]}')
+print(f'reviews with length of 150 words: {review_length_counts[150]}')
+
+print(f'max count {max_len_cnt:,}')
+print(f'min count {min_len_cnt:,}')
+
+# lets remove the ones with min/max lengths
+# new_reviews = [review for review in reviews_digitized if not len(review) in (min_len,max_len)]
+# but wait! we dont this, since we also need to remove the corrosponding labels
 # so we instead get the index and remove the reviews based on their index
-# new_reviews = [review for review in reviews_digitized if len(review)!=0]
-# new_reviews2 = [review for review in new_reviews if len(review)!=2514]
-idxs = [idx for idx,review in enumerate(reviews_digitized) if len(review)==min_len]
-print(f'idxs: {idxs[:10]}')
-idxs += [idx for idx,review in enumerate(reviews_digitized) if len(review)==max_len]
-new_reviews = [review for idx,review in enumerate(reviews_digitized) if idx not in (idxs)]
-print(f'idxs: {idxs[:10]}')
-print(len(reviews_digitized))
-print(len(new_reviews))
-# lets remove the labels 
-new_labels = [label for idx, label in enumerate(labels) if idx not in (idxs)]
-print(new_labels[:10])
+idxs_to_ignore = [idx for (idx,review) in enumerate(reviews_digitized) if len(review) in (min_len,max_len)]
+# lets check wether the min_len,max_len are removed! since we had 
+assert len(idxs_to_ignore) == min_len_cnt + max_len_cnt, 'min/max length are not removed!'
+# now lets grab them reviews!
+new_reviews = [review for (idx,review) in enumerate(reviews_digitized) if idx not in idxs_to_ignore]
+print(f'{idxs_to_ignore=}')
+print(f'{len(reviews_digitized)=:,}')
+print(f'{len(new_reviews)=:,}')
+# lets remove the labels
+new_labels = [label for (idx, label) in enumerate(labels_digitized) if idx not in idxs_to_ignore]
+print(f'{len(new_labels)=:,}')
 #%%
 # Ok now lets create a function for padding our input
 # we do this so we can create batches and increase the performance
@@ -3055,37 +3112,41 @@ print(new_labels[:10])
 # anyway lets create a function that gets the digitized review and returns a 
 # padded numpy array . we define a maximum length , and fill it from the end
 def pad_input(new_reviews, max_length =200):
-    padded_array = np.zeros(shape=(len(new_reviews), max_length),dtype=np.int32)
-    for i,review in enumerate(new_reviews) : 
-        padded_array[i,-len(review):] = review[:max_length]
-    return padded_array 
+    padded_tensor = torch.zeros(size=(len(new_reviews), max_length), dtype=torch.int32)
+    for i,review in enumerate(new_reviews):
+        padded_tensor[i, -len(review):] = torch.tensor(review[:max_length])
+    return padded_tensor 
 
 reviews_digitized = pad_input(new_reviews, 150)
 print(reviews_digitized[:1])
 #%%
+# now lets define a train/val/test split
 training_frac = 0.80
 tr_idx = int(reviews_digitized.shape[0] * training_frac)
-training_set, remaining_set = reviews_digitized[:tr_idx,:], reviews_digitized[tr_idx:,:]
+training_set = reviews_digitized[:tr_idx,:]
+remaining_set = reviews_digitized[tr_idx:,:]
+
 val_frac = 0.5
 val_idx = int(remaining_set.shape[0]*val_frac)
 val_set = remaining_set[:val_idx,:]
 test_set = remaining_set[val_idx:,:]
-print(training_set.shape)
-print(val_set.shape)
-print(test_set.shape)
+print(f'{training_set.shape=}')
+print(f'{val_set.shape=}')
+print(f'{test_set.shape=}')
 
 # now labels! 
-training_set_label, remaining_set_label = np.array(new_labels[:tr_idx]), np.array(new_labels[tr_idx:])
+training_set_label = torch.tensor(new_labels[:tr_idx])
+remaining_set_label = torch.tensor(new_labels[tr_idx:])
 val_set_label = remaining_set_label[:val_idx]
 test_set_label = remaining_set_label[val_idx:]
 
-print(training_set_label.shape)
-print(val_set_label.shape)
-print(test_set_label.shape)
-print(training_set_label[:2])
+print(f'\n{training_set_label.shape=}')
+print(f'{val_set_label.shape=}')
+print(f'{test_set_label.shape=}')
+print(f'{training_set_label[2]=}')
 # now lets go for the training 
 # we can use the torchTensorDataset for this 
-
+#%%
 import torch 
 import torch.utils.data 
 import torch.nn as nn 
@@ -3093,12 +3154,21 @@ import torch.nn.functional as F
 
 
 batch_size = 50
-# we feed our numpy data and its corrosponding labels , and it will create us a dataset!
-train_dataset = torch.utils.data.TensorDataset(torch.from_numpy(training_set),torch.from_numpy(training_set_label))
-test_dataset = torch.utils.data.TensorDataset(torch.from_numpy(test_set),torch.from_numpy(test_set_label))
-val_dataset = torch.utils.data.TensorDataset(torch.from_numpy(val_set),torch.from_numpy(val_set_label))
+# we feed our data and its corrosponding labels , and it will create us a dataset!
+train_dataset = torch.utils.data.TensorDataset(training_set, training_set_label)
+test_dataset = torch.utils.data.TensorDataset(test_set, test_set_label)
+val_dataset = torch.utils.data.TensorDataset(val_set, val_set_label)
 
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,shuffle=True)
+# if we choose a batchsize that makes the last batch not full
+# assuming we used a batch of 50 e.g., we get an error like: 
+# RuntimeError: Expected hidden[0] size (3, 49, 300), got [3, 50, 300]
+# which is basically complaining that the last batch wasnt 50
+# so one easy way is to use drop_last=True, which ignores that incomplete batch of samples
+# other ways like handling this during training are less effective as you have to 
+# constantly check for this case which happens only once in an epoch but you check all the 
+# time! so this is pretty much the best way unless we want to do the dataloadin part ourseleves
+# like before and handle this there! doesnt really make sense to do that so lets just use drop_last;)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,shuffle=True, drop_last=True)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size,shuffle=False)
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size,shuffle=False)
 
@@ -3110,63 +3180,63 @@ print(features[:2,:30])
 print(labels[:2])
 #%%
 class SentimentLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size,
+    def __init__(self, vocab_size, hidden_size, output_size,
                        embedding_dim=500, num_layers=1, dropout_ratio =0.5):
         super().__init__()
 
-        vocab_size = input_size
-        self.embedding = nn.Embedding(num_embeddings = vocab_size, embedding_dim = embedding_dim)
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        self.embedding = nn.Embedding(num_embeddings=vocab_size,
+                                      embedding_dim=embedding_dim)
+        
         self.lstm = nn.LSTM(input_size=embedding_dim,
                             hidden_size=hidden_size,
                             num_layers=num_layers,
                             batch_first = True, 
                             dropout=dropout_ratio)
         self.fc = nn.Linear(hidden_size, output_size)
-        self.hidden_size = hidden_size
-        self.dropout = nn.Dropout2d(0.3)
-        self.num_layers = num_layers
+        self.lstm_output_dropout = nn.Dropout2d(0.3)
+        self.embd_output_dropout = nn.Dropout2d(0.3)
+        
 
     def forward(self, x, hidden):
-        x= x.long()
-        # print(f'input: {x.shape}')
-        embeddings = self.embedding(x)
-        # if hidden != None:
-        #     print(f'hiddens.shape: {hidden[0].shape} {hidden[1].shape}')   
-        # print(f'input_embeddings: {embeddings.shape}')
+        
+        embeddings = self.embedding(x.long())
+        embeddings = self.embd_output_dropout(embeddings)
+        
         outputs, hidden = self.lstm(embeddings, hidden)
+        outputs = self.lstm_output_dropout(outputs)
 
-        outputs = self.dropout(outputs)
-        # print(outputs.shape)
-        outputs = outputs.contiguous().view(-1, self.hidden_size)
         # we want 0 or 1 
-        outputs = F.sigmoid(self.fc(outputs))
-        # print(f'before reshape: outputs.shape: {outputs.shape}')
+        outputs = F.sigmoid(self.fc(outputs.reshape(-1, self.hidden_size)))
         # lets make the output batch_first again 
         outputs = outputs.view(x.size(0), -1)
-        # print(f'after reshape:  outputs.shape: {outputs.shape}')
-        # print(f'outputs[:,-1].shape: {outputs[:,-1].shape}')
-        # print(outputs.shape)
         # we need the last sequence output, so we get the last one using -1
         return outputs[:,-1], hidden
 
+    # we can simply use None to initialize the hiddenstate instead of this!
+    # I leave it here as a reminder though!
     def init_weights(self, batch_size, device):
-
         weight = next(self.parameters()).data
-        hidden_states = (weight.new_zeros(self.num_layers,batch_size,self.hidden_size).to(device),
-         weight.new_zeros(self.num_layers,batch_size,self.hidden_size).to(device))
+        hidden_states = (weight.new_zeros(self.num_layers, batch_size, self.hidden_size).to(device),
+        weight.new_zeros(self.num_layers, batch_size, self.hidden_size).to(device))
         return hidden_states
 
-
-# Instantiate the model w/ hyperparams
-vocab_size = len(word2int)+1 # +1 for the 0 padding + our word tokens
+# instantiate the model w/ hyperparams
+vocab_size = len(word2int)+1 # +1 for the 0 padding 
 output_size = 1
 embedding_dim = 500 # embedding size, is important!
 hidden_dim = 300 # this is important as well!
 # with embed 1000, hd 300 : 
 n_layers = 3#78.68 with 1 layer, 80% with 2 layers and 81.88 with 3 layers 
 
-model = SentimentLSTM(input_size=vocab_size, hidden_size =hidden_dim,
-                     output_size=output_size,embedding_dim=embedding_dim,num_layers=n_layers,
+model = SentimentLSTM(vocab_size=vocab_size, 
+                      hidden_size =hidden_dim,
+                      output_size=output_size,
+                      embedding_dim=embedding_dim,
+                      num_layers=n_layers,
                       dropout_ratio=0.5)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = model.to(device)
@@ -3176,24 +3246,24 @@ features = features.to(device)
 print(model)
 x,y = model(features, None)
 
+# binary crossentropy becasue we have a single output, its either true of false (>0.5 or not)
 criterion = torch.nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 epochs = 4 
 val_interval = 100
 clip_threshold = 5
-counter=0
 hidden_states = model.init_weights(batch_size,device)
+
 for e in range(epochs):
+    # simply do hidden_states = None!
     hidden_states = model.init_weights(batch_size,device)
-    for features, labels in train_loader:
+    for i,(features, labels) in enumerate(train_loader):
         model.train()
-        #batch counter!
-        counter+=1
 
         features = features.to(device)
         labels = labels.to(device)
-  
+
         outputs, hidden_states = model(features, hidden_states)
         # print(f'hiddens.shape: {hidden_states[0].shape} {hidden_states[1].shape}')   
         hidden_states = tuple(h.data for h in hidden_states)
@@ -3201,94 +3271,79 @@ for e in range(epochs):
         optimizer.zero_grad()
         loss = criterion(outputs, labels.float())
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_threshold)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), clip_threshold)
         optimizer.step()
 
-        if counter%val_interval == 0: 
-            hidden_states = model.init_weights(batch_size, device)
+        if i%val_interval == 0:
+            # see setting it to None works just as well. 
+            # infact you should use this instead of the
+            # other old way!
+            hidden_states = None
             val_losses = []
             for feats, labels in val_loader:
                 with torch.no_grad():
-
                     model.eval()
 
                     feats = feats.to(device)
                     labels = labels.to(device)
+
                     outputs, hidden_states = model(feats, hidden_states)
-                    # print(f'eval: hiddens.shape: {hidden_states[0].shape} {hidden_states[1].shape}')   
                     hidden_states = tuple(h.data for h in hidden_states)
 
                     val_loss = criterion(outputs, labels.float())
                     val_losses.append(val_loss.item())
 
-            print('epoch: {}/{}'.format(e,epochs))
-            print('loss: {}'.format(loss.item()))
-            print('val-loss: {}'.format(np.mean(val_losses)))
+            print(f'Epoch {e}/{epochs} | Loss: {loss.item():.4f} | Val Loss: {np.mean(val_losses):.4f}')
 
-
-
-#%%
-#now lets test this on our test set, here calculate accuracy and loss@
-hidden_states = model.init_weights(batch_size, device)
+# now lets test this on our test set, here calculate accuracy and loss@
+# hidden_states = model.init_weights(batch_size, device)
+hidden_states = None
 test_losses =[]
-num_corrects = 0
-i=0  
+acc = 0
 
 model.eval()
-for features, labels in test_loader:
+for i, (features, labels) in enumerate(test_loader):
     with torch.no_grad():
-        i+=1
         features = features.to(device)
         labels = labels.to(device)
         outputs, hidden_states = model(features, hidden_states)
         hidden_states = tuple(hidden.data for hidden in hidden_states)
         loss = criterion(outputs, labels.float())
         test_losses.append(loss.item())
-        #acc
-        preds = torch.round(outputs)
-        if i==0: 
-            print(f'preds.shape: {preds.shape}, labels.shape {labels.shape}')
-
-        # results = preds.eq(labels.float().view_as(preds))
-        # result = np.squeeze(results.cpu().numpy())
-        # num_corrects += np.sum(result)
-        results = (preds==labels.float()).sum()
-        num_corrects += results.item()
         
-        #print(num_corrects.item())
-
-print(f'acc= {(num_corrects/len(test_loader.dataset))*100.0} %')
-print(f'loss: {np.mean(test_losses)}')
-
+        # grab the output by rounding it (it becomes 0/1)
+        preds = torch.round(outputs)
+        acc += (preds==labels.float()).float().mean().item()
+                
+print(f'Accuracy= {(acc/len(test_loader))*100.0:.2f}')
+print(f'Loss: {np.mean(test_losses):.4f}')
 
 #%%
-# here test this on your own data! this is called inference ! give it some random text and see 
+# lets test this on our own data! 
+# this is called inference ! give it some random text and see 
 # if it can correctly classify it as positive or negative! 
-
+from string import punctuation
 def tokenize_input(review='damn you son of a gun. that was hell!'):
-    from string import punctuation
     #first lower case all words 
     review = review.lower()
-    #second remove all punctuations
+    # second remove all punctuations
     all_text_no_punc = ''.join(c for c in review if c not in punctuation)
-    #third get all the words 
+    # third get all the words 
     words_list = all_text_no_punc.split()
-
-    digitized=[]
-    digitized.append(np.array([word2int[w] for w in words_list]))
-
+    # digitized=[]
+    digitized = [[word2int[w] for w in words_list]]
     return digitized
 
 test_review_neg = 'The worst movie I have seen; acting was terrible and I want my money back. This movie had bad acting and the dialogue was slow.'
 
 review_digitized = tokenize_input(test_review_neg)
-print(review_digitized)
-
 review_padded = pad_input(review_digitized, 200)
-print(review_padded.shape)
 
-review_padded = torch.from_numpy(review_padded).to(device)
-hidden_states = model.init_weights(1, device)
+# grab the device from a model parameter
+device = next(model.parameters()).device
+review_padded = review_padded.to(device)
+
+hidden_states = None
 outputs, hidden_states = model(review_padded, hidden_states)
 
 pred = torch.round(outputs)
@@ -3297,22 +3352,37 @@ if pred.item() == 0:
     print('negative')
 else:
     print('postive')
+
+# while this might work, this is in no way a good model, to get a decent performance we 
+# would want to use a better/larger model/better regularization/optimization regime
+# we usually dont bother using lstms for these kinds of tasks anymore, we now use transformers!
+# transformers are our goto models when dealing with anything nlp! we will cover transformers in later chapters. 
 #%%
+import numpy as np 
+import string
+from collections import Counter
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 
 # word embedding 
 # for word embedding training we have several methods, word2vec is one of them
 # here we will be using the skipgram model. we can train skipgram model with negative sampling
-# we will implement both! 
-# the skipgram model is simply an embedding layer with an fc layer followed by a logsoftmax
+# we will implement both!
+# the skipgram model is simply an embedding layer with an fullyconnected/linear layer followed by a logsoftmax
 # the skipgram model with negative sampling, is two embedding layers, the embedding layer for input
-# and output must be thesame, we feed uor word to input embedding get target words, feed those
+# and output must be the same, we feed our word to input embedding get target words, feed those
 # target words to output embedding and must get back the initial word that was fed into input 
-# emebdding.  
+# emebdding.
 #
 # The first thing that we do is we need a body of text that we can use as our dataset 
 # and learn the embeddings from. lets use the text8 in data dirctory
-with open(r'data\text8','r') as file : 
+dataset_path = '/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/data/text8.txt'
+with open(dataset_path,'r') as file : 
     corpus_raw = file.read()
+    
 # now we have all the contents which include, words and punctuations and white spaces
 # since we want to learn proper embeddings for 'words' we can remove the punctuations
 # altogether. we also can remove less frequent words. we may also want to remove 'some'
@@ -3321,25 +3391,32 @@ with open(r'data\text8','r') as file :
 # so removing them can help us achieve better embeddings as these noises are removed. 
 # how do we do that? we use a mikolove formula for that which we will get to shortly.
 # but first lets do : 
-# 1. remove punctuations , actually replacing them with proper symbol
+# 1. remove punctuations ,actually replacing them with proper symbols
 # 2. remove less frequent words 
 # 3. remove some common/uncommen words based on mikolove criteria
 # removing punctuations 
 def remove_punctuations(input_corpus):
-    input_corpus = input_corpus.replace('.','<PERIOD>')
-    input_corpus = input_corpus.replace('!','<EXCLAMATION>')
-    input_corpus = input_corpus.replace('(','<LPAR>')
-    input_corpus = input_corpus.replace(')','<RPAR>')
-    input_corpus = input_corpus.replace('[','<LBRAC>')
-    input_corpus = input_corpus.replace(']','<RBRAC>')
-    input_corpus = input_corpus.replace('#','<HASH>')
-    input_corpus = input_corpus.replace("'",'<SingleQuote>')
-    input_corpus = input_corpus.replace('"','<DoubleQuote>')
-    input_corpus = input_corpus.replace(':','<COLON>')
-    input_corpus = input_corpus.replace('$','<DOLLAR>')
-    input_corpus = input_corpus.replace('%','<PERCENT>')
-    input_corpus = input_corpus.replace(';','<SEMICOLON>')
-    input_corpus = input_corpus.replace('-','<DASH>')
+    # this is kind of a glorified version of replace()!
+    # you can think of str.translate() as a more efficient and flexible version of replace().
+    # when we need to perform multiple string replacements.
+    # It allows us to create a translation table with str.maketrans() 
+    # and apply all the replacements in a single pass, 
+    # which can be faster and more concise than chaining multiple replace() calls.
+    translation_table = str.maketrans({'.': '<PERIOD>',
+                                       '!': '<EXCLAMATION>',
+                                       '(': '<LPAR>',
+                                       ')': '<RPAR>',
+                                       '[': '<LBRAC>',
+                                       ']': '<RBRAC>',
+                                       '#': '<HASH>',
+                                       "'": '<SingleQuote>',
+                                       '"': '<DoubleQuote>',
+                                       ':': '<COLON>',
+                                       '$': '<DOLLAR>',
+                                       '%': '<PERCENT>',
+                                       ';': '<SEMICOLON>',
+                                       '-': '<DASH>'})
+    input_corpus = input_corpus.translate(translation_table)
     return input_corpus
 
 corpus = remove_punctuations(corpus_raw)
@@ -3348,57 +3425,67 @@ corpus = remove_punctuations(corpus_raw)
 # create word2int int2word 
 # create subsampling 
 import math, random # used for sqrt and random respectively 
-word_dic = Counter(corpus.split())
-word_dic = {word:freq for word,freq in word_dic.items() if freq>5}
-word_list = sorted(word_dic, key=word_dic.get, reverse=True)
+# lets calculate each words frequency (count) in our dataset
+# we need this for both filtering the least/most used words and
+# also for mikolov formula
+word_counts = Counter(corpus.split())
+word_frequency_min = 5
+word_counts_filtered = {word:freq for word,freq in word_counts.items() if freq>word_frequency_min}
+# get a sorted list of words, ordered in a decending fashion!
+word_list = sorted(word_counts_filtered, key=word_counts_filtered.get, reverse=True)
 # should be 'the'
-print(word_list[0])
-print(len(word_list))
+print(f'{word_list[0]=}')
+print(f'{len(word_list)=}')
+
 # create word2int and int2word dicts
 int2word = dict(enumerate(word_list))
 word2int = {word:idx for idx,word in int2word.items()}
-# now lets do subsampling, we remove some common and uncommon words. using
-# mikolov formula w = sqrt(t/word_freq)
-# lets calculate word frequencies 
+print(f'{int2word=}')
+print(f'{word2int=}')
+# now lets do subsampling, we'll remove some common and uncommon words. 
+# using mikolov formula w = sqrt(t/word_freq)
+# lets calculate word frequencies
 temp_dic = Counter(word_list)
-word_frq_dict = {word:1-math.sqrt(freq/len(word_list)) for word, freq in temp_dic.items()}
+word_frq_dict = {word:1-math.sqrt(freq/len(word_list)) for (word,freq) in temp_dic.items()}
 threshold = 1e-5 
 word_list = [word for word in word_list if random.random() < word_frq_dict[word]]
+print(f'{word_list[0]=}')
+print(f'{len(word_list)=}')
 
-print(word_list[0])
-print(len(word_list))
 # ok now we need to get the target words for each word. we define a function that 
 # accepts a input list, index, windows size 
-def get_target(word_list, idx , window_size=5):
+def get_target(word_list, current_idx , window_size=5):
+    # select a random length between 1 and window_size
+    # we are trying to get words around a given (word index)
     random_len = random.randint(1, window_size)
-    start_idx = idx - random_len if (idx - random_len) > 0 else 0
-    end_idx = idx + random_len if (idx + random_len) <len(word_list) else len(word_list)
+    start_idx = current_idx - random_len if (current_idx - random_len) > 0 else 0
+    end_idx = current_idx + random_len if (current_idx + random_len) <len(word_list) else len(word_list)
 
-    before_words = word_list[start_idx:idx]
-    after_words = word_list[idx+1:end_idx+1]
+    before_words = word_list[start_idx:current_idx]
+    after_words = word_list[current_idx+1:end_idx+1]
     return before_words + after_words
-
-# lets test 
-get_target('Hello brother, howdy?', idx=10,window_size=5)
+#%%
+# lets test with text instead of list of words to see if it works!
+target = get_target('Hello brother, howdy?', current_idx=10, window_size=5)
+# yup it does! 
+print(f'{target=}')
 # now we need to create a batching mechanism
 #test again
-string = [i for i in range(10)]
+idx_list = [i for i in range(10)]
 idx = random.randint(1,5)
 window = 5
-print(f'input : {string}')
+print(f'input : {idx_list}')
 print (f'idx: {idx} window: {window}')
-targets = get_target(string,  idx,  window)
-print(targets)
+targets = get_target(idx_list,  idx,  window)
+print(f'{targets=}')
 # get digitized word
-word_list = [word2int[word] for word in word_list]
+word_list_digitized = [word2int[word] for word in word_list]
 # lets create a batch retriever 
 def get_batch(word_list, batch_size=10, window_size=5):
-
     word_cnt = len(word_list)
     total_batches_cnt = word_cnt//batch_size
     word_lists = word_list[:total_batches_cnt * batch_size]
     # we need a X and Y which contains each xs targets 
-
     for idx in range(0, len(word_lists), batch_size):
         batch = word_lists[idx: idx + batch_size]
         X,Y = [],[] 
@@ -3409,8 +3496,7 @@ def get_batch(word_list, batch_size=10, window_size=5):
             Y.extend(y_target)
         yield X, Y
 
-
-w,t = next(iter(get_batch(word_list,3)))
+w,t = next(iter(get_batch(word_list_digitized, 3)))
 print(w)
 print(t)
 
@@ -3447,16 +3533,17 @@ def cosine_similarity_validation(word2int, embedding_layer, validation_size, win
 
     val_words = common_words_idx + uncommon_words_idx
     val_words = torch.LongTensor(val_words)
-    embeddings = embedidng_layer(val_words.unsqueeze(0))
-    magnitutues = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze()
+    embeddings = embedding_layer(val_words.unsqueeze(0))
+    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze()
 
     similarity = torch.mm(embeddings,embedding_layer.weight.t())/magnitutes 
 
     return val_words, similarity 
 
+#%% 
 # now ok. its time to create our model for embedding learning using skipgram! model
 class SkipGram(nn.Module):
-    def __ini__(self, vocab_size, embedding_size=300):
+    def __init__(self, vocab_size, embedding_size=300):
         super().__init__()
 
         self.embedding_layer = nn.Embedding(vocab_size, embedding_size)
@@ -3468,7 +3555,65 @@ class SkipGram(nn.Module):
         log_probs = F.log_softmax(x,dim=1)
         return log_probs
 
+# now lets start the actual training!
+# Define the model, loss, and optimizer
+embedding_size = 300
+vocab_size = len(word2int)
+model = SkipGram(vocab_size, embedding_size)
+criterion = nn.CrossEntropyLoss()  # or implement negative sampling
+optimizer = optim.Adam(model.parameters(), lr=0.003)
+
+# Training loop
+num_epochs = 5
+batch_size = 64
+window_size = 5
+
+for epoch in range(num_epochs):
+    total_loss = 0
+    for X, Y in get_batch(word_list_digitized, batch_size=batch_size, window_size=window_size):
+        X = torch.LongTensor(X)
+        Y = torch.LongTensor(Y)
+        
+        # Forward pass
+        optimizer.zero_grad()
+        output = model(X)
+        
+        # Compute loss
+        loss = criterion(output, Y)
+        total_loss += loss.item()
+        
+        # Backward pass and optimization
+        loss.backward()
+        optimizer.step()
+    
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss:.4f}")
+
+# Save model
+torch.save(model.state_dict(), "skipgram_model.pth")
+
+# now lets visualize them 
+#%%
+# Save embeddings
+embeddings = model.embedding_layer.weight.detach().cpu().numpy()
+np.save("word_embeddings.npy", embeddings)
+
+# Visualize with PCA or t-SNE
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+
+pca = PCA(n_components=2)
+reduced_embeddings = pca.fit_transform(embeddings[:100])  # Plot first 100 words
+plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
+for i, word in enumerate(word_list[:100]):
+    plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
+plt.show()
+
+
+#%%
 # ok, now lets create word emebedding using skipgram with negative sampling 
+# why? becasue negative sampling significantly reduces the computation of 
+# softmax across the full vocabulary! which is instead of predicting all
+# possible words, predict only positive and sampled negative words.
 # basically what we do here is that we have two embeddings, we feed a word into
 # first emebdding get couple of target words that are similar and then feed one of 
 # those words into the second embedding and we should get the first word that was initially
@@ -3480,7 +3625,7 @@ class SkipGramWithNegativeSampling(nn.Module):
 
         self.vocab_size = vocab_size
         self.input_embedding = nn.Embedding(vocab_size, embedding_size)
-        self.output_emebedding = nn.Embedding(vocab_size,embedding_dim)
+        self.output_embedding = nn.Embedding(vocab_size,embedding_dim)
         self.noise_distribution = noise_dist
     
     # forward, input and output and noise embeddings
@@ -3497,7 +3642,7 @@ class SkipGramWithNegativeSampling(nn.Module):
         
         noise_words = torch.multinomial(distribution, batch_size*n_sample,replacement=True)
 
-        noise_embeddings = self.output_emebedding(noise_words).view(batch_size,n_sample,-1)
+        noise_embeddings = self.output_embedding(noise_words).view(batch_size,n_sample,-1)
         return noise_embeddings
 
 # now ok. now lets create a loss function for ourselves 
@@ -3523,7 +3668,6 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         noise_embedidngs = noise_embedidngs
         loss2 = torch.bmm(noise_embedidngs.neg(),input_embeddings)
         loss2 = loss2.sum(dim=1)
-
         return torch.mean(loss1+loss2)
 
 
