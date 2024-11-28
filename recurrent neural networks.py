@@ -3358,6 +3358,52 @@ else:
 # we usually dont bother using lstms for these kinds of tasks anymore, we now use transformers!
 # transformers are our goto models when dealing with anything nlp! we will cover transformers in later chapters. 
 #%%
+# word embedding 
+# for word embedding training we have several methods, word2vec is one of them
+# here we will be using the skipgram model. we can train skipgram model with negative sampling
+# we will implement both!
+# the skipgram model is simply an embedding layer with a fullyconnected/linear layer 
+# followed by a logsoftmax.
+# the skipgram model with negative sampling, is two embedding layers, 
+# the embedding layer for the input and output must be the same, 
+# we feed our word to input embedding get target words, feed those
+# target words to output embedding and must get back the initial word 
+# that was fed into input emebdding.
+
+# There are several methods for training word embeddings, Word2Vec is the most popular one.
+# In Word2Vec, we have two main approaches/implementations: Skip-Gram and CBOW (Continuous Bag of Words). 
+# Here, we’ll focus on the Skip-Gram model, and implement it with and without Negative Sampling.
+#
+# the normal skip-gram model works this way:
+# given a center word (input word), it predicts the context words(surrounding words)
+# the model itself is pretty simple. its made of : 
+# An embedding layer, which maps input words to a vector representation.
+# followed by a fully connected layer/linear layer, which transforms the embeddings
+# which finally is fed into a log-softmax layer, to output the probabilities of context words.
+# The model is trained to maximize the probability of correct context words appearing around 
+# a given input word.
+
+# Skip-Gram with Negative Sampling
+# In the Skip-Gram with Negative Sampling (SGNS) variant, we modify the architecture and loss function
+# for efficiency and effectiveness.
+# in our model, we now have two embedding layers, one for the input words and
+# one for the output (context) words.
+# The embeddings from these layers are adjusted separately.
+# 
+# the training prcess goes this way: 
+# we Feed an input word into the input embedding layer to get its vector representation.
+# we Use this representation to predict multiple target context words by/through the output embedding layer.
+# Instead of updating all context word probabilities (as in the full softmax),
+# we use Negative Sampling:
+# in which we Select a small number of positive pairs (input word and actual context words).
+# and then randomly sample several negative pairs (input word and random/non-context words) 
+# from a noise distribution.
+#
+# this will make sure :
+# High similarity between input and actual context words and
+# Low similarity between input and randomly sampled negative words.
+
+import random 
 import numpy as np 
 import string
 from collections import Counter
@@ -3367,15 +3413,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-# word embedding 
-# for word embedding training we have several methods, word2vec is one of them
-# here we will be using the skipgram model. we can train skipgram model with negative sampling
-# we will implement both!
-# the skipgram model is simply an embedding layer with an fullyconnected/linear layer followed by a logsoftmax
-# the skipgram model with negative sampling, is two embedding layers, the embedding layer for input
-# and output must be the same, we feed our word to input embedding get target words, feed those
-# target words to output embedding and must get back the initial word that was fed into input 
-# emebdding.
 #
 # The first thing that we do is we need a body of text that we can use as our dataset 
 # and learn the embeddings from. lets use the text8 in data dirctory
@@ -3423,34 +3460,172 @@ corpus = remove_punctuations(corpus_raw)
 # now remove less frequent words 
 # sort the word list 
 # create word2int int2word 
+# calculate mikolove formula
 # create subsampling 
-import math, random # used for sqrt and random respectively 
+
+# note: 
+# Ive got this wrong initially, so I leave this portion of it commented out here
+# and explain why this is wrong and how I went wrong! the correct implementation 
+# follows afterwards.
 # lets calculate each words frequency (count) in our dataset
 # we need this for both filtering the least/most used words and
 # also for mikolov formula
-word_counts = Counter(corpus.split())
-word_frequency_min = 5
-word_counts_filtered = {word:freq for word,freq in word_counts.items() if freq>word_frequency_min}
+# word_counts = Counter(corpus.split())
+# word_frequency_min = 5
+# word_counts_filtered = {word:freq for word,freq in word_counts.items() if freq>word_frequency_min}
 # get a sorted list of words, ordered in a decending fashion!
-word_list = sorted(word_counts_filtered, key=word_counts_filtered.get, reverse=True)
+# word_list = sorted(word_counts_filtered, key=word_counts_filtered.get, reverse=True)
+# 
 # should be 'the'
-print(f'{word_list[0]=}')
-print(f'{len(word_list)=}')
-
+# print(f'{word_list[0]=}')
+# print(f'{len(word_list)=}')
 # create word2int and int2word dicts
-int2word = dict(enumerate(word_list))
-word2int = {word:idx for idx,word in int2word.items()}
-print(f'{int2word=}')
-print(f'{word2int=}')
+# int2word = dict(enumerate(word_list))
+# word2int = {word:idx for idx,word in int2word.items()}
+# print(f'{int2word=}')
+# print(f'{word2int=}')
+# 
 # now lets do subsampling, we'll remove some common and uncommon words. 
 # using mikolov formula w = sqrt(t/word_freq)
 # lets calculate word frequencies
-temp_dic = Counter(word_list)
-word_frq_dict = {word:1-math.sqrt(freq/len(word_list)) for (word,freq) in temp_dic.items()}
-threshold = 1e-5 
-word_list = [word for word in word_list if random.random() < word_frq_dict[word]]
-print(f'{word_list[0]=}')
-print(f'{len(word_list)=}')
+# temp_dic = Counter(word_list)
+# word_frq_dict = {word:1-math.sqrt(freq/len(word_list)) for (word,freq) in temp_dic.items()}
+# threshold = 1e-5 
+# word_list = [word for word in word_list if random.random() < word_frq_dict[word]]
+# print(f'{word_list[0]=}')
+# print(f'{len(word_list)=}')
+######
+# whats wrong with this? 
+# first of all I failed to apply the actual Mikolov's formula!(I found out it doesnt work during training!)
+# second of all, I filtered the words based on a probability which 
+# is not correct. freq/len(word_list) does not correctly calculate the word frequency.
+# I should have divided the word count by the total number of words in the corpus, 
+# not the number of unique words in the vocabulary.
+# I also pretty obviously didnt use threshold t, which is central to Mikolov's method and instead used my own
+# thresholding procedure!
+# third, my filtering step is inconsistent because word_list is reused without recalculating 
+# valid probabilities after filtering (im using the opposite of mikolove's method here basically
+# see my explanation below)
+#
+# Correct implementation
+words_in_corpus = corpus.split() # should be 253,854 words
+word_counts = Counter(words_in_corpus)
+# total number of words in the corpus
+total_count = len(words_in_corpus) # or we could also do sum(word_counts.values())
+print(f'Total number of words in the corpus: {total_count:,}')
+# now lets remove scarce/rarely used words!
+min_word_count = 5
+words_in_corpus = [word for word in words_in_corpus if word_counts[word] > min_word_count]
+print(f'Total number of words in the corpus: {len(words_in_corpus):,}')
+# now lets get the new words count again
+word_counts = Counter(words_in_corpus)
+# and sort them in a deceinding fashion so that the 
+# most frequent ones come first. the sorting comes 
+# handy later on for visualization purposes
+word_list = sorted(word_counts, key=word_counts.get, reverse=True)
+# and now lets create the dictionaries for word2int and int2word
+int2word = dict(enumerate(word_list))
+word2int = {word:idx for idx,word in int2word.items()}
+print(f'{len(int2word)=:,}')
+print(f'{len(word2int)=:,}')
+# subsampling
+# now its time to apply the mikolove formula/method. 
+# for this we need to first calculate the word
+# frequencies with respect to the whole corpus
+word_freqs = {word: freq/total_count for word, freq in word_counts.items()}
+print(f'{word_freqs['the']=:.4f}')
+# this is the 
+threshold = 1e-5
+# here we calculate the mikolov formula (1-sqrt(t/f(w)))
+# where t is the threshold parameter and f(w_i) is the 
+# frequency of the ith word (w_i) in the whole dataset.
+# this is basically the probability that a word is discarded.
+# as for the idea behind doing so, recall that frequent words such as "the",
+# "of", "for", etc don't provide much context to the surrounding words. 
+# Therefore discarding some of these words, can practically remove some 
+# of the noise in our data. this will both speed up our training 
+# and also improve the final representation.(more on this in a moment)
+# This process is called subsampling by Mikolov. 
+# For each word in the training set, we'll discard it with probability given by
+# (1-sqrt(t/f(w)))
+probablity_drop = {word: 1 - np.sqrt(threshold / word_freqs[word]) for word in word_counts}
+print(f'{len(probablity_drop)=:,}')
+#%%
+# since here we want to grab the words, we use 1-prob, which means grab the words
+# that are more probable than being discarded(grab rare words more ofthen than words
+# such as the, of, and which are much more frequent)
+# note that if we dont do 1-prob, obviously we will be having larger word_list, and it 
+# would take much longer to train to say the least. this would also have 
+# more important implications than simply a longer training process.
+# This simple change, is infact the opposite of mikolov's approach which means 
+# frequent words (with high probablity_drop[word] such as the, of, etc)
+# will be more likely to be kept.
+# likewise, rare words (the ones with low probablity_drop[word]) will therefore be
+# less likely to be kept.
+# This essentially reverses the intended effect of Mikolov's subsampling which in turn results in :
+# 1.Frequent words being overrepresented:
+# recall that in the Mikolov’s method, frequent words like "the", "and",
+# and "is" are intentionally downsampled to avoid overwhelming the model
+# with redundant, less informative patterns. while in our modified approach,
+# these frequent words are retained at a higher rate, leading to their 
+# overrepresentation in the training data.
+# 
+# 2. Rare words being undersampled
+# Likewise, Rare or contextually rich words (which provide valuable information
+# for learning and happen to be much less frequent than the likes of 'the','is',etc)
+# are more likely to be dropped under this modification.
+# This decreases the diversity of the training data and makes it harder for the
+# model to learn meaningful embeddings for these words.
+# 
+# 3. Negative Impact on Training Efficiency
+# Frequent words often dominate the corpus but contribute less 
+# to learning meaningful representations.
+# Retaining them disproportionately increases computational overhead 
+# without improving model quality, as the model wastes time optimizing
+# for frequent, less informative words.
+# 
+# 4. Poor Embedding Quality
+# Word embeddings rely on the contextual diversity provided by various words. 
+# By discarding rare words and retaining frequent ones, the model may fail to
+# capture meaningful semantic relationships.
+# This could lead to embeddings that perform poorly on downstream tasks,
+# such as semantic similarity, word analogy tasks, or other NLP benchmarks.
+# and it shows in our result as well. 
+#
+# In my experience, the loss decreases much better, and the outcome, at least
+# breifly looking at them, looks pretty the same! 
+# #TODO : check more. I dont see any worse outcome! just the contrary it seems better!
+# however, if you look closer
+# you'll see the meanings are not as closely related as when we follow the mikoloves
+# method. our changes will capture a general relationship between words, but fails
+# to capture detail relationship. to give you a better mental image, compare the two
+# outcomes, trained with the same paramters, but trained with different approaches
+# 1.sample following mikolov method: 
+# -any       | if, be, otherwise, certain, must
+# -english   | french, scottish, british, welsh, dictionary
+# -being     | as, been, or, less, but
+# -then      | if, a, the, x, function
+# -wheel     | wheels, switches, rear, brakes, drive
+# -timeline  | sites, com, modern, links, timelines
+# -coined    | term, describe, phrase, popularized, synonymously
+# -graduate  | undergraduate, education, college, faculty, students
+# -Epoch 5/50 | Iter 3600 | Loss: 9.3952
+#
+# 2. sample not following mikolov method:
+# -english   | french, british, german, italian, spanish
+# -coined    | invented, introduced, discovered, replaced, installed
+# -wheel     | engine, electric, steam, armour, muscle
+# -graduate  | students, college, undergraduate, university, school
+word_list = [word for word in words_in_corpus if random.random() < (1-probablity_drop[word])]
+print(f'{len(word_list)=:,}')
+# create word2int and int2word dicts
+# int2word = dict(enumerate(word_list))
+# word2int = {word:idx for idx,word in int2word.items()}
+# print(f'{len(int2word)=:,}')
+# print(f'{len(word2int)=:,}')
+#%%
+print(f'{int2word=}')
+print(f'{word2int=}')
 
 # ok now we need to get the target words for each word. we define a function that 
 # accepts a input list, index, windows size 
@@ -3467,7 +3642,7 @@ def get_target(word_list, current_idx , window_size=5):
 #%%
 # lets test with text instead of list of words to see if it works!
 target = get_target('Hello brother, howdy?', current_idx=10, window_size=5)
-# yup it does! 
+# yup it does!
 print(f'{target=}')
 # now we need to create a batching mechanism
 #test again
@@ -3497,19 +3672,20 @@ def get_batch(word_list, batch_size=10, window_size=5):
         yield X, Y
 
 w,t = next(iter(get_batch(word_list_digitized, 3)))
-print(w)
-print(t)
+print(f'{w=}')
+print(f'{t=}')
 
 # now lets define cosine similarity 
-def cosine_similarity(word2int, embedding_layer, word, topk=5):
+def cosine_similarity(word2int, embedding_layer, word, topk=5, device='cpu'):
     # get word index
-    word_idx = word2int[word]
+    word_idx = torch.tensor(word2int[word], device=device).long()
+    # print(f'{word_idx=}')
     # get word embedding
     embeddings = embedding_layer(word_idx)
     embeddings = embeddings.unsqueeze(0) # add a batch dimension
     # now cosine similarity is word embedding 
-    embeddings = torch.LongTensor(embeddings)
-    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze()
+    # embeddings = torch.LongTensor(embeddings)
+    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(dim=0)
     similarity = torch.mm(embeddings, embedding_layer.weight.t())/magnitutes 
 
     return similarity 
@@ -3517,30 +3693,37 @@ def cosine_similarity(word2int, embedding_layer, word, topk=5):
 # lets create a cosine similarity for validation words, to see how certain words
 # are doing. we create some random words, and take their cosine simlarity in the 
 # embeddings. if their target words are plausible then we are good! lets do this 
-import numpy as np 
-def cosine_similarity_validation(word2int, embedding_layer, validation_size, window_size=100):
+import numpy as np
+
+def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
+                                 common_start_index=0,
+                                 uncommon_start_index=2000):
     # first lets create some random word indexes 
     # we get some common words and some uncommon words. if you recall, we sorted
     # our words based on their frequencies, so that the most frequent ones stay 
-    # atop and less frequent ones stay at the bottom. 
-
+    # atop and less frequent ones stay at the bottom, therefore choosing a smaller 
+    # common_start_index means choose more frequently used words, and a larger uncommon_start_index
+    # means, choose less frequently used words.
+    device = next(embedding_layer.parameters()).device
     # random.sample(sequence, k)
     # Parameters:
     # sequence: Can be a list, tuple, string, or set.
     # k: An Integer value, it specify the length of a sample.
-    common_words_idx = np.array( random.sample(range(0,window_size),validation_size//2) )
-    uncommon_words_idx = np.array(random.sample(range(2000,2000+window_size),validation_size//2))
-
-    val_words = common_words_idx + uncommon_words_idx
-    val_words = torch.LongTensor(val_words)
-    embeddings = embedding_layer(val_words.unsqueeze(0))
-    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze()
+    common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index+window_size), validation_size//2) )
+    uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index+window_size), validation_size//2))
+    # append both more common and less common word ids together  
+    val_words = torch.concat((common_words_idx ,uncommon_words_idx)).to(device)
+    embeddings = embedding_layer(val_words)
+    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(0)
 
     similarity = torch.mm(embeddings,embedding_layer.weight.t())/magnitutes 
 
     return val_words, similarity 
 
+
 #%% 
+random.seed(10)
+np.random.seed(10)
 # now ok. its time to create our model for embedding learning using skipgram! model
 class SkipGram(nn.Module):
     def __init__(self, vocab_size, embedding_size=300):
@@ -3556,23 +3739,33 @@ class SkipGram(nn.Module):
         return log_probs
 
 # now lets start the actual training!
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Define the model, loss, and optimizer
 embedding_size = 300
 vocab_size = len(word2int)
+
 model = SkipGram(vocab_size, embedding_size)
-criterion = nn.CrossEntropyLoss()  # or implement negative sampling
+model.to(device)
+# note we are using log_softmax, so we must use nllloss here,
+criterion = nn.NLLLoss()  # or implement negative sampling
 optimizer = optim.Adam(model.parameters(), lr=0.003)
 
 # Training loop
-num_epochs = 5
-batch_size = 64
+num_epochs = 50
+batch_size = 512
 window_size = 5
+validation_size = 8
+# a batchsize of 64, results in around 1000 iterations
+# with a batchsize of 512, there is around 9000 iterations
+interval = 9000
 
 for epoch in range(num_epochs):
-    total_loss = 0
-    for X, Y in get_batch(word_list_digitized, batch_size=batch_size, window_size=window_size):
-        X = torch.LongTensor(X)
-        Y = torch.LongTensor(Y)
+    losses = []
+    for i,(X, Y) in enumerate(get_batch(word_list_digitized, 
+                                        batch_size=batch_size, 
+                                        window_size=window_size), start=1):
+        X = torch.LongTensor(X).to(device)
+        Y = torch.LongTensor(Y).to(device)
         
         # Forward pass
         optimizer.zero_grad()
@@ -3580,34 +3773,122 @@ for epoch in range(num_epochs):
         
         # Compute loss
         loss = criterion(output, Y)
-        total_loss += loss.item()
+        losses.append(loss.item())
         
         # Backward pass and optimization
         loss.backward()
         optimizer.step()
-    
-    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss:.4f}")
+        
+        if i%interval==0:
+            # getting examples and similarities      
+            valid_examples, valid_similarities = evaluate_embeddings(model.embedding_layer,
+                                                                     window_size=window_size,
+                                                                     validation_size=validation_size,
+                                                                     common_start_index=100,
+                                                                     uncommon_start_index=4000)
+            # get topk highest similar words
+            _, closest_idxs = valid_similarities.topk(6) 
+            
+            valid_examples = valid_examples.to('cpu')
+            closest_idxs =  closest_idxs.to('cpu')
+            
+            print(f' Validation similarity test:')
+            for ii, valid_idx in enumerate(valid_examples):
+                closest_words = [int2word[idx.item()] for idx in closest_idxs[ii]][1:]
+                print(f"  -{int2word[valid_idx.item()]:<10}| {', '.join(closest_words)}")
+            
+            print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
+
+    print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
 
 # Save model
 torch.save(model.state_dict(), "skipgram_model.pth")
-
+# after 5 epochs this is what we get: 
+# the loss doesnt show it properly, but using similarity check
+# we can clearly see the converging process where similar words
+# start to show up eventually.
+#  Validation similarity test:
+#   -any       | peru, zodiacal, posed, encouraging, sociologists
+#   -being     | vocals, caco, herbs, averted, ean
+#   -english   | dissidents, taraza, eyre, pes, minicomputer
+#   -city      | nicea, coherentism, grinnell, ampex, verdon
+#   -wheel     | incision, destroys, casper, scone, metals
+#   -viii      | swirling, metazoa, redefining, zionists, safl
+#   -timeline  | rapeseed, pentagons, sentences, coronets, reset
+#   -coined    | susa, auditory, punitive, casas, afdb
+#  -Epoch 0/50 | Iter 100 | Loss: 11.0113
+# and after afew more training: 
+# we see it starts to learn some relationships among some words:
+#  Validation similarity test:
+#   -then      | provence, if, maximally, place, geometrically
+#   -english   | distinctions, words, language, canadian, ngg
+#   -city      | cities, tiers, suburbs, metropolitan, town
+#   -any       | definition, disjoint, does, have, surah
+#   -timeline  | profile, miscalculation, experienced, hodges, paper
+#   -wheel     | incision, destroys, acrylic, costanza, casper
+#   -coined    | auditory, geological, grimaldi, susa, linguist
+#   -viii      | vii, pope, unwilling, staves, didier
+#  -Epoch 1/50 | Iter 4300 | Loss: 9.9559
+# and it gets better as training goes on . 
+# interstingly loss despite decreasing, doesnt properly 
+# shows the rate of change as clearly as we expect/want,
+# the similarity shows the improvements much better!)
+# -Epoch 5/50 | Iter 3500 | Loss: 9.3953
+#  Validation similarity test:
+#   -any       | if, be, otherwise, certain, must
+#   -english   | french, scottish, british, welsh, dictionary
+#   -being     | as, been, or, less, but
+#   -then      | if, a, the, x, function
+#   -wheel     | wheels, switches, rear, brakes, drive
+#   -timeline  | sites, com, modern, links, timelines
+#   -coined    | term, describe, phrase, popularized, synonymously
+#   -graduate  | undergraduate, education, college, faculty, students
+#  -Epoch 5/50 | Iter 3600 | Loss: 9.3952
+#
+# Validation similarity test:
+#   -city      | downtown, cities, metropolitan, town, located
+#   -being     | often, sometimes, so, very, be
+#   -any       | not, if, be, can, apply
+#   -english   | french, american, seven, irish, swedish
+#   -viii      | vii, ix, iv, iii, england
+#   -wheel     | wheels, brakes, rear, shaft, engine
+#   -timeline  | external, com, references, online, faq
+#   -coined    | describe, term, surrealism, popularized, myth
+#  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
+# Epoch 15/50, Loss: 9.1774
+#
 # now lets visualize them 
+#%%
+%matplotlib inline
+%config InlineBackend.figure_format = 'retina'
+
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+
+embeddings = model.embedding_layer.weight.detach().cpu().numpy()
+viz_words = 100
+tsne = TSNE()
+embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
+
+fig, ax = plt.subplots(figsize=(16, 16))
+for idx in range(viz_words):
+    plt.scatter(*embed_tsne[idx, :], color='steelblue')
+    plt.annotate(int2word[idx], (embed_tsne[idx, 0], embed_tsne[idx, 1]), alpha=0.7)
 #%%
 # Save embeddings
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-np.save("word_embeddings.npy", embeddings)
+np.save("word_embeddings_skipgram_nonmikolve.npy", embeddings)
 
 # Visualize with PCA or t-SNE
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 
 pca = PCA(n_components=2)
-reduced_embeddings = pca.fit_transform(embeddings[:100])  # Plot first 100 words
+reduced_embeddings = pca.fit_transform(embeddings[:50])  # Plot first 100 words
 plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
-for i, word in enumerate(word_list[:100]):
+for i, word in enumerate(word_list[:50]):
     plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
 plt.show()
-
 
 #%%
 # ok, now lets create word emebedding using skipgram with negative sampling 
@@ -3619,68 +3900,383 @@ plt.show()
 # those words into the second embedding and we should get the first word that was initially
 # enetered. in doing so, we also feed some noise words, that we use to achieve our loss
 # becasue simply trying every single words would impose huge burden. lets see how it is done
+
 class SkipGramWithNegativeSampling(nn.Module):
-    def __ini__(self, vocab_size, embedding_size, noise_dist=None):
+    def __init__(self, vocab_size, embedding_size, noise_dist=None):
         super().__init__()
-
-        self.vocab_size = vocab_size
         self.input_embedding = nn.Embedding(vocab_size, embedding_size)
-        self.output_embedding = nn.Embedding(vocab_size,embedding_dim)
+        self.output_embedding = nn.Embedding(vocab_size, embedding_size)
         self.noise_distribution = noise_dist
-    
-    # forward, input and output and noise embeddings
-    def forward(self, x):
-        input_embeddings_res = self.input_embedding(x)
-        output_embeddings_res = self.output_embedding(x)
-        return input_embeddings_res, output_embeddings_res
 
-    def forward(self, batch_size, n_sample):
-        if self.noise_distribution == None:
-            distribution = torch.ones(self.vocab_size)
-        else:
-            distribution = self.noise_distribution
+    def forward(self, input_words, target_words, n_samples):
+        # Get embeddings for input and target words
+        # TODO use positive words instead of targetwords 
+        # TODO and use negative words instead of noise_words
+        input_embeds = self.input_embedding(input_words)  # (batch_size, embedding_dim)
+        target_embeds = self.output_embedding(target_words)  # (batch_size, embedding_dim)
         
-        noise_words = torch.multinomial(distribution, batch_size*n_sample,replacement=True)
+        # Generate noise embeddings
+        noise_words = torch.multinomial(self.noise_distribution, 
+                                        input_words.size(0) * n_samples, 
+                                        replacement=True).view(input_words.size(0),
+                                                               n_samples)  # (batch_size, n_samples)
+        noise_embeds = self.output_embedding(noise_words)  # (batch_size, n_samples, embedding_dim)
+        
+        return input_embeds, target_embeds, noise_embeds
 
-        noise_embeddings = self.output_embedding(noise_words).view(batch_size,n_sample,-1)
-        return noise_embeddings
 
 # now ok. now lets create a loss function for ourselves 
 class SkipGramNegativeSamplingLoss(nn.Module):
     def __init__(self):
         super().__init__()
-    
+
     def forward(self, input_embeddings, output_embeddings, noise_embedidngs):
 
         # here we will have two losses. the first one shows how much the input
-        # and output emebeddings are like each other 
+        # and output/target/context emebeddings are like each other 
         # and the second loss is responsbile for creating very different embeddings
         # that is negative sampling part. 
+        # 
+        # basically we have a positive/target embedding, and negative/noise/random embedding
+        # we want the input embedding and our target/positive embedding to be as close as possible
+        # while the input embedding and negative/noise/or random embeddings are as far away as pssible
+        # 
         # in order to see how two embeddings are like each other, we simply multiply them
-        # 1xembeddings 1xembedding , so we should have a 1x1 result.
-        batch_size = input_embeddings.size(0) 
+        # (1xembeddings) and (1xembedding) , so we should have a 1x1 result.
+        
+        batch_size = input_embeddings.size(0)
+        # reshape them so we can multiply them 
         input_embeddings = input_embeddings.view(batch_size, embedding_dim, 1)
         output_embeddings = output_embeddings.view(batch_size, 1, embedding_dim)
-        # log(1) = 0, log(0)=1
+        # recall log(1) = 0, log(0)=1
+        # since batches are involved we simply use the bmm (bacth-matrix-multiply)
+        # and because we want probablities, so we use sigmoid.
+        # and for numerical stability we use log!
+        #  
+        # basically sigmoid maps our dot product (similarity) to a probability between 0 and 1.
+        # and log converts this probability into a log-probability, which makes it easier to sum probabilities (log-sum trick) during optimization.
+        # this overall allows us to enjoy: 
+        # Numerical Stability: by using the log-probability we avoid potential issues with small probabilities (as log values scale better).
+        # Gradient Computation: The log-probability formulation simplifies gradient calculations, making training more stable and efficient.
+        # and finally maximizing the log probability corresponds to minimizing the negative log-likelihood,
+        # which is a common approach in probabilistic models.
+        # sidenote: we could have used F.logsigmoid() fused operator as well!
+        # see the simplified version below
         loss1 = torch.bmm(input_embeddings, output_embeddings).sigmoid().log().squeeze()
+        
+        # now for our noise/random/megative samples we simply do the same thing
+        # but since the random samples and input embeddings should not be similar
+        # we use a -1 sign in the operation to signal they must to be similar (a large positive number)
+        # and finally we sum all the results to have a single number for loss
+        loss2 = torch.bmm(noise_embedidngs.neg(), input_embeddings).sigmoid().log().sum(dim=1)
+        # and we add them both and try to minize the whole loss
+        return -torch.mean(loss1+loss2)
 
-        # now for our noise 
-        noise_embedidngs = noise_embedidngs
-        loss2 = torch.bmm(noise_embedidngs.neg(),input_embeddings)
-        loss2 = loss2.sum(dim=1)
-        return torch.mean(loss1+loss2)
+# we could simply our loss further like this
+# class SkipGramNegativeSamplingLoss(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#     def forward(self, input_embeds, target_embeds, noise_embeds):
+#         pos_score = torch.bmm(target_embeds.unsqueeze(1), input_embeds.unsqueeze(2)).squeeze()  # (batch_size)
+#         pos_loss = F.logsigmoid(pos_score)
+#         neg_score = torch.bmm(noise_embeds.neg(), input_embeds.unsqueeze(2)).squeeze()  # (batch_size, n_samples)
+#         neg_loss = F.logsigmoid(neg_score).sum(dim=1)  
+#         return -(pos_loss + neg_loss).mean()
 
+def create_noise_distribution(word_freqs, power=0.75):
+    # The negative sampling requires sampling "noise words" (i.e. random words from
+    # the vocabulary) to contrast with positive examples. 
+    # so we need a noise distribution to sample from. 
+    # In order to have a noise distribution, we need probablities! 
+    # how do we create one? 
+    # we can make a frequency distribution of words in the corpus and then 
+    # normalized it to represent probabilities (i.e., a unigram distribution)
+    # 
+    # we can calculate it as:
+    # unigram_dist [𝑖] = count(𝑤_𝑖)/total_word_count
+    # where count(𝑤_𝑖) is the number of occurrences of word 𝑤_𝑖
+    # in the corpus, and total_word_count is the total number of words.
+    # we already have word_freqs dictionary, so we can easily do : 
+    # word_freqs = [cnt for k,cnt in word_freqs.items()]
+    # unigram_dist = word_freqs / sum(word_freqs)
+    #
+    # sidenote: refresher 
+    # A unigram distribution is a probability distribution over individual words (or tokens)
+    # in a corpus. It represents the relative frequency of each word, essentially giving the
+    # likelihood of randomly picking a specific word from the corpus.
+    # 
+    # The prefix Uni in Uni-gram means one, likewise bi means two, and tri means three)
+    # therefore, "Unigram" simply refers to single words or tokens, the same goes to
+    # bigram, that is a "bigram" refers to pairs of consecutive words, 
+    # and "trigram" refers to three-word sequences.
+    #
+    # The unigram distribution is a frequency-based distribution 
+    # where each word's probability is proportional to how often it appears in the corpus.
+    # 
+    # How do we compute it then?
+    # simpe! to calculate the unigram distribution, we simply: 
+    # 1.Count the occurrences of each word in the corpus and then
+    # 2.Normalize these counts by dividing by the total number of words in the corpus.
+    # 
+    # For a word 𝑤_𝑖, the unigram probability 𝑃(𝑤_𝑖) is:
+    # 𝑃(𝑤_𝑖) = count(𝑤_𝑖) / total_number_of_words_in_corpus
+    # Where:count(𝑤_𝑖) is the number of times word 𝑤_𝑖 appears in the corpus.
+    # total number of words in corpus is the sum of all word frequencies.
+    #
+    # but this wouldnt be enough, as not all the words are repeated equally
+    # in our corpus. therefore to account for that we incorporate power 
+    # in our formula like this:
+    # 
+    # final_distribution = (unigram_dist**power) / np.sum(unigram_dist**power) 
+    # 
+    # now using the power (unigram_dist ** power) raises the probabilities to a
+    # certain power(more explanation in a moment), which adjusts the distribution to 
+    # favor less frequent words while at the same time keeps frequent words relatively likely.
+    # speaking of the power used, different powers have different implications and effects:
+    # If power = 1, the distribution remains proportional to the unigram distribution.
+    # If power < 1, it smooths the distribution, reducing the dominance of highly frequent words.
+    # If power > 1, it amplifies the dominance of frequent words.
+    # 
+    # with these changes, now the noise distribution ensures that:
+    # Frequent words are more likely to be selected as noise samples.
+    # and the distribution can also be tailored using the power to 
+    # balance between very frequent and less frequent words.
+    # 
+    # sidenote: Why do we use power=0.75?
+    # Empirically, it has been found that using a power of 0.75 provides 
+    # a good trade-off between frequent and rare words, 
+    # improving the quality of word embeddings. 
+    # Frequent words still appear often as negative samples, 
+    # but their dominance is reduced compared to their true frequency in the corpus.
+    # 
+    # finally by doing np.sum(unigram_dist ** power), our adjusted probabilities are summed to
+    # normalize the distribution. this sum ensures the sum of distribution equals 1, making 
+    # it a valid probability distribution.
+    # 
+    # This normalized_dist is then used to sample negative words during training.
+    word_freqs = [cnt for _,cnt in word_freqs.items()]
+    unigram_dist = torch.tensor(word_freqs / np.sum(word_freqs))
+    noise_distribution = unigram_dist ** power/torch.sum(unigram_dist**power)
+    return noise_distribution
+
+def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=200, uncommon_start_index=2000):
+    """
+    Validate the quality of embeddings using cosine similarity.
+    """
+    device = next(model.parameters()).device
+
+    # Randomly select common and uncommon words
+    common_words_idx = torch.tensor(random.sample(range(common_start_index, 
+                                                        common_start_index + window_size),
+                                                  validation_size // 2))
+    uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, 
+                                                          uncommon_start_index + window_size),
+                                                    validation_size // 2))
+
+    val_words = torch.concat((common_words_idx, uncommon_words_idx)).to(device)
+
+    # Get embeddings from input_embedding
+    embeddings = model.input_embedding(val_words)
+    
+    # previously we calculate the cosine similarty ourseleves
+    # pytorch also offers a builtin cosine_similarity function
+    # lets use that this time!
+    # note that pytorch's version works with a single embedding, 
+    # so we have to call it for each embedding in a loop
+    similarities = []
+    for embed in embeddings:
+        sim = F.cosine_similarity(embed.unsqueeze(0), model.input_embedding.weight)
+        similarities.append(sim)
+    cosine_similarities = torch.stack(similarities)  # (N, vocab_size)
+    
+    # print(f'{val_words.shape=}')
+    # print(f'{cosine_similarities.shape=}')
+    return val_words, cosine_similarities
+
+#%%
+# before we continue with training lets first see
+# what words pop up at which indexes, this gives us
+# a better idea what word to choose
+# for our similarity validation process
+# too small numbers are usually reserved for the,of,etc
+# which are not what we want, remember we have 63K words
+# so choose freely, we are not bound to 0, 100, 200 or even 2000!
+# play with the numbers and better see the similar words
+# 
+start=200
+print(f'words starting at {start}:')
+for i in range(start,start+window_size):
+    print(f'{i}: {int2word[i]}')
+#%%
+
+# now lets start the actual training!
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# Define the model, loss, and optimizer
+embedding_size = 300
+vocab_size = len(word2int)
+
+# Initialize noise distribution
+noise_dist = create_noise_distribution(word_freqs)
+noise_dist = noise_dist.to(device)
+
+model = SkipGramWithNegativeSampling(vocab_size, embedding_size,noise_dist)
+model.to(device)
+# note we are using log_softmax, so we must use nllloss here,
+criterion = SkipGramNegativeSamplingLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.003)
+
+# Training loop
+num_epochs = 50
+batch_size = 512
+window_size = 5
+validation_size = 8
+interval = 9000
+for epoch in range(num_epochs):
+    losses = []
+    for i, (X, Y) in enumerate(get_batch(word_list_digitized, 
+                                         batch_size=batch_size, 
+                                         window_size=window_size), start=1):
+        X = torch.LongTensor(X).to(device)
+        Y = torch.LongTensor(Y).to(device)
+
+        # Forward pass
+        optimizer.zero_grad()
+        input_embeds, target_embeds, noise_embeds = model(X, Y, n_samples=5)
+        loss = criterion(input_embeds, target_embeds, noise_embeds)
+        
+        # Backward pass and optimization
+        loss.backward()
+        optimizer.step()
+
+        losses.append(loss.item())
+        
+        if i % interval == 0:
+            valid_examples, valid_similarities = evaluate_embeddings(model,
+                                                         validation_size=8,
+                                                         window_size=window_size, 
+                                                         common_start_index=200, 
+                                                         uncommon_start_index=60000)
+
+            valid_examples = valid_examples.cpu()
+            valid_similarities = valid_similarities.cpu()
+
+            # Find the top-k most similar words for each validation example
+            for i, valid_idx in enumerate(valid_examples):
+                closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
+                closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
+                print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+            print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
+            
+    print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
+# Save model
+torch.save(model.state_dict(), "skipgram_negativesampling_model.pth")
+#%%
+# Test after each epoch
+valid_examples, valid_similarities = evaluate_embeddings(model,
+                                                         validation_size=16,
+                                                         window_size=10, 
+                                                         common_start_index=200, 
+                                                         uncommon_start_index=2000)
+
+valid_examples = valid_examples.cpu()
+valid_similarities = valid_similarities.cpu()
+
+# Find the top-k most similar words for each validation example
+for i, valid_idx in enumerate(valid_examples):
+    closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
+    closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
+    print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+#%%
+
+test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
+test_indices = [word2int[word] for word in test_words if word in word2int]
+
+# Get their embeddings
+test_embeddings = model.input_embedding(torch.tensor(test_indices).to(device))
+
+# Compute pairwise cosine similarity to see how each word is related to eachother
+similarities = torch.mm(test_embeddings, test_embeddings.t()).cpu().detach().numpy()
+
+# Display similarity matrix
+import pandas as pd
+df = pd.DataFrame(similarities, index=test_words, columns=test_words)
+print(df)
+
+
+def nearest_neighbors(word, model, word2int, int2word, k=5):
+    if word not in word2int:
+        print(f"Word '{word}' not in vocabulary.")
+        return
+    idx = word2int[word]
+    embedding = model.input_embedding(torch.tensor([idx]).to(device))
+    
+    # Compute cosine similarity with all embeddings
+    all_embeddings = model.input_embedding.weight
+    # print(f'{all_embeddings.shape=}')
+    # print(f'{embedding.shape=}')
+    similarity = F.cosine_similarity(embedding, all_embeddings)
+    # print(f'{similarity.shape=}')
+    # Get top-k similar words
+    closest_indices = similarity.topk(k + 1).indices.cpu().numpy()  # k+1 to include the word itself
+    closest_words = [int2word[i] for i in closest_indices if i != idx]
+    
+    print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
+
+# Test with some words
+# Given a word, find its nearest neighbors:
+nearest_neighbors('king', model, word2int, int2word)
+#%%
+#%%
+%matplotlib inline
+%config InlineBackend.figure_format = 'retina'
+
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+
+embeddings = model.input_embedding.weight.detach().cpu().numpy()
+viz_words = 100
+tsne = TSNE()
+embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
+
+fig, ax = plt.subplots(figsize=(16, 16))
+for idx in range(viz_words):
+    plt.scatter(*embed_tsne[idx, :], color='steelblue')
+    plt.annotate(int2word[idx], (embed_tsne[idx, 0], embed_tsne[idx, 1]), alpha=0.7)
+#%%
+# Save embeddings
+embeddings = model.input_embedding.weight.detach().cpu().numpy()
+np.save("word_embeddings_skipgram_negativesampling.npy", embeddings)
+
+# Visualize with PCA or t-SNE
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+
+pca = PCA(n_components=2)
+reduced_embeddings = pca.fit_transform(embeddings[:50])  # Plot first 100 words
+plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
+for i, word in enumerate(word_list[:50]):
+    plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
+plt.show()
+
+
+# recap
+# we used cosine similarity values to show High similarity for semantically related words.
+# we saw that words with similar contexts cluster together in the embedding space.
+# we also used nearest neighbors to see how the model produces meaningful and 
+# related words for a given word.
+# 
+# to improve the results:
+# obviously we start fine-tuning if the results aren't as good as we expected, 
+# training longer or adjusting the hyperparameters (e.g., learning rate, embedding size)
+# directly affects the outcome.
+# also in subsampling part, ensuring frequent words are not overly dominant improves the results
+# and finally, its important to use a large enough validation set to assess embedding quality 
+# better.
+# 
 
 
 #%%
 # TEXT CNN https://mlwhiz.com/blog/2019/03/09/deeplearning_architectures_text_classification/?utm_campaign=shareaholic&utm_medium=reddit&utm_source=news 
-
-
-#%% transformers
-# https://www.reddit.com/r/MachineLearning/comments/dlhcub/d_are_small_transformers_better_than_small_lstms/
-
-
-
 
 
 #%% CTCloss
@@ -3690,46 +4286,6 @@ class SkipGramNegativeSamplingLoss(nn.Module):
 # https://stats.stackexchange.com/questions/320868/what-is-connectionist-temporal-classification-ctc
 # https://distill.pub/2017/ctc/
 # https://github.com/cmudeeplearning11785/Fall2018-tutorials/tree/master/recitation-8
-
-
-
-
-#%% image captioning
-# 
-#%% GRU
-# sentiment analysis
-
-
-#%% word embedding 
-
-
-#%%
-# Transformers
-# https://pytorch.org/tutorials/intermediate/spatial_transformer_tutorial.html
-# 
-# For many years, LSTMs has been state-of-the-art when it comes to NLP tasks.
-# However, recent advancements in Attention-based models and Transformers have
-# produced even better results. With the release of pre-trained transformer
-# models such as Google’s BERT and OpenAI’s GPT, the use of LSTM has been 
-# declining. 
-
-
-#%% CTC loss 
-
-#%% wordembedding 
-
-
-#%% Attention /LSTM with attention 
-
-
-#%% Image captioning!
-
-#%% BERT, and new sota for nlp stuff!!!
-# https://mccormickml.com/2019/05/14/BERT-word-embeddings-tutorial/
-#%% rnn-autoencoder (sequence 2 sequence autoencoders),
-# sequence to sequence (with bidirection) : https://towardsdatascience.com/understanding-bidirectional-rnn-in-pytorch-5bd25a5dd66 
-# seq2seq_vae
-
 
 #%%
 # Named-Entity Recognition(NER). 
