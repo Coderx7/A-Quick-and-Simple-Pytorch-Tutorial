@@ -146,7 +146,7 @@ import matplotlib.pyplot as plt
 
 # Ok, enough talking lets get busy and have our first auto encoder. 
 # before we continue, we should pickup a dataset. I chose MNIST as its simple enough
-# to be used in different types of autoencoders with quick training time. 
+# to be used in different types of autoencoders with short training time. 
 # after we created our dataset, we will implement different types of AutoEncoders 
 dataset_train = datasets.MNIST(root='MNIST',
                                train=True,
@@ -170,20 +170,48 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 4, cols =11):
+def view_images(imgs, labels, rows = 12, cols =11):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
     imgs = imgs.detach().cpu().numpy().transpose(0,2,3,1)
-    fig = plt.figure(figsize=(8,4))
-    for i in range(imgs.shape[0]):
+    # sidenote: note that if we use a large figsize, with a high dpi
+    # we may get an error complaining the image size is too big! it 
+    # refers to the whole matplotlib figure on which we are drawing 
+    # our images! so make sure you set the right numbers here!
+    # also note the figsize row,cols, if you use the wrong size
+    # there might not be enough space to display the labels at the top!
+    # (try (6,4) and see the result!)
+    fig = plt.figure(figsize=(4,6),dpi=100)
+    
+    max_plots = rows*cols
+    # make sure we don't face an error for trying to
+    # creating more subplots than available
+    if imgs.shape[0]<max_plots:
+        num_plots = imgs.shape[0] 
+    else:
+        num_plots = max_plots
+        print(f'Warning, number of images({imgs.shape[0]}) exceed figures plots({max_plots}). Only displaying the first {max_plots} images. (Hint: Increase rows/cols)')
+    
+    for i in range(num_plots):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
         # since mnist images are 1 channeled(i.e grayscale), matplotlib
         # only accepts these kinds of images without any channesl i.e 
         # instead of the shape 28x28x1, it wants 28x28
         ax.imshow(imgs[i].squeeze(), cmap='Greys_r')
         ax.set_title(labels[i].item())
-    plt.tight_layout(pad=1,rect= (0, 0, 40, 40))
+    
+    # we can use plt.tight_layout(pad=1,rect= (0, 0, 2, 2)) to have nice
+    # compact figure, we could also simply use tight_layout and let 
+    # matplotlib handle the padding, and scaling, but in this case lets
+    # use rect to scale our images so they are larger in the plot!
+    # (try numbers like 0.8, 1, 2, 20!)
+    # sidenote, when using large numbers here, you may get an error if
+    # you have used a large figuresize with a large dpi, I made that
+    # clear just a few lines back, these are related!
+    plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
+    # plt.tight_layout()
+    plt.show()
 
 # now lets view some 
 imgs, labels = next(iter(dataloader_train))
@@ -194,7 +222,7 @@ view_images(imgs, labels,13,10)
 # The first autoencoder weare going to implement is the simplest one, 
 # a linear autoencoder.
 # creating an autoencoder is just like any other module we have seen so far, simply
-# inherit from nnModule and define the needed layers and call them in the forward()
+# inherit from nn.Module and define the needed layers and call them in the forward()
 # method the way you should. lets do this :
 class LinearAutoEncoder(nn.Module):
     def __init__(self, embedingsisze=32):
@@ -211,7 +239,7 @@ class LinearAutoEncoder(nn.Module):
         # accepts the input. since this is a linear layer,
         # we have to flatten the input and our 28x28 image
         # will simply have 28x28=784 input features 
-        # The simplest form can be an a one layered encoder
+        # The simplest form can be a one layered encoder
         # and a 1 layered decoder! of course we can add more
         # layers between them, but lets see how this performs
         self.fc1 = nn.Linear(28*28, embedingsisze)
@@ -219,7 +247,7 @@ class LinearAutoEncoder(nn.Module):
         self.fc2 = nn.Linear(embedingsisze, 28*28)
 
     def forward(self, inputs):
-        # our foward pass is nothing specially
+        # our foward pass is nothing special
         # simply feed these layers in order!
         # but before that, we must flatten our input!
         inputs = inputs.view(inputs.size(0), -1)
@@ -251,16 +279,16 @@ def train(model, dataloader, optimizer, scheduler, epochs, device):
             loss.backward()
             optimizer.step()
             if i% 2000==0:        
-                print(f'epoch: ({e}/{epochs}) loss: {loss.item():.6f} lr:{scheduler.get_lr()}')
+                print(f'epoch: ({e}/{epochs}) loss: {loss.item():.6f} lr:{scheduler.get_lr()[-1]:.6f}')
         scheduler.step()
     print('done')
 
 # Now lets see the output of our autoencoder
-def test(model,device):
+def test(model,device,rows,cols):
     imgs, labels = next(iter(dataloader_test))
     imgs = imgs.to(device)
     outputs = model(imgs)
-    view_images(outputs, labels)
+    view_images(outputs, labels,rows=rows,cols=cols)
 #%%
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -269,14 +297,14 @@ optimizer = optim.Adam(model_linear_ae.parameters(), lr = 0.1)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 train(model_linear_ae, dataloader_train, optimizer, scheduler, 20, device) 
-test(model_linear_ae, device)    
+test(model_linear_ae, device,rows=9,cols=5)
 # so this is the linear autoencoder! in order to make a vanila autoencoder
 # which may refer to a version with nonlinear activation functions, you 
-# only need to apply a transformation function .
-# in the fowarad pass and in order  to get a good result, you need to add a few more 
+# only need to apply a transformation function in the fowarad pass and 
+# in order  to get a good result, you need to add a few more 
 # layers .(we do this in the next architecture )
 # we can get better results with more epochs and decaying learnng rate,
-#  but it wont make a drastic change! specially on more complex data, as its 
+#  but it wont make a drastic change! especially on more complex data, as its 
 # just a linear model.
 #%%
 # in order to be able to capture more complex structures,... in  the input data
@@ -300,8 +328,16 @@ class MLPAutoEncoder(nn.Module):
         output = F.relu(self.fc2(output))
         # decore part
         output = F.relu(self.fc3(output))
-        # since the output is images, values should 
+        # since our output is image, values should 
         # be in the range [0, 1]!
+        #sidenote: note that unlike our previous example,
+        # we are now using a sigmoid transformation function here.
+        # this is needed as we have used transformation/activaion
+        # functions on several layers before, hence not linear
+        # anymore. using sigmoid gives us a clear image! as it
+        # enforces the values to be in range valid for images!
+        # removing the ghosting and other alike artifacts from the image.
+        # try removing sigmoid and running the example again
         output = F.sigmoid(self.fc4(output))
         output = output.view(-1, 1, 28, 28)
         return output 
@@ -313,7 +349,7 @@ print(model_mlp_ae)
 optimizer = optim.Adam(model_mlp_ae.parameters(), lr = 0.01) 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 train(model_mlp_ae, dataloader_train, optimizer, scheduler, 20, device)    
-test(model_mlp_ae,device)  
+test(model_mlp_ae,device,rows=13,cols=10)  
 #%%
 # While our mlp model is more powerful than the previous model, it is not suitable for data such as images
 # for image like data, we use conv layers! and hence our new autoencoder is Convolutional AutoEncoder. 
@@ -322,10 +358,12 @@ test(model_mlp_ae,device)
 # your network gets deeper, you may see that your model may train sometimes and not the 
 # other times and the loss may not decrease. when you see this, you should know this is
 # happening becasue of the depth of your network.  use the batchnorm and all will be good. 
-# thats why I created two functions for this very purpose. try creating your network with
-# and without batchnormalization enabled and see the difference (try running for several 
-# times with the one with no batchnormalization to see that sometimes it may work and some 
-# times it will fail, but with batchnorm, it will always work!)
+# thats why I created two functions for this very purpose. 
+# try creating your network with and without batchnormalization enabled and see the difference
+# (try running for several times with the one with no batchnormalization to see that sometimes 
+# it may work and some times it will fail (the loss doesnt decrease it fluctuates around loss: 0.1xxx),
+# but with batchnorm, it will always work!(the loss decreases 100x more (around 0.001xx)))
+# remember to enable/disable batchnorm for both conv_bn() and deconv_bn()
 def conv_bn(in_,out_,k_size=3, s=2,pad=0,bias=False,batchnorm=True):
     layers = []
     layers.append(nn.Conv2d(in_,out_,kernel_size=k_size,stride=s,padding=pad,bias=bias))
@@ -364,6 +402,8 @@ class ConvAutoEncoder(nn.Module):
         self.deconv6 = deconv_bn(64, 128, 4, 2) 
         self.deconv7 = deconv_bn(128, 256, 5, 2)
         # and since our image is 1 channel, this last layer will produce a singe image!
+        # note we disable batchnorm for the last layer
+        # sidenote when using batchnorm, theres no need for a bias anymore! it becomes redundant!
         self.conv8 = deconv_bn(256, 1, 6, 1,0,True,False)
          
 
@@ -388,7 +428,7 @@ optimizer = optim.Adam(model_c.parameters(), lr =0.001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 model_c = model_c.to(device)
 train(model_c, dataloader_train, optimizer, scheduler, 20, device)    
-test(model_c, device)  
+test(model_c, device,rows=13,cols=10)
 # As an excersize try to replace all ConvTranspose2d Layers with Conv2d+Upsample
 # and see how the outputs turn out !
 #%% 
@@ -404,8 +444,10 @@ test(model_c, device)
 # prior to feeding it to our model and then compare the reconstructed image with the actual
 # original image which is noise free. in doing this, network will learn to remove noise from
 # images. we will use the same criterion. nearly 99% of what we saw until now is the same 
-# and we just will add a simplenoise lets see that 
-noise_threshold = 0.5
+# and we just will add a simplenoise lets see that.
+
+# here we specify how noisy our images become
+noise_intensity_threshold = 0.5
 epochs = 20
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # the quality and performance of our model in denoising will increase as we
@@ -417,7 +459,99 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 # before we go on lets view a sample of noisy images : 
 imgs,labels = next(iter(dataloader_test))
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+# to add noise to our images, we create a random tensor with the same shape as our image batch
+# so we can easily add them together, before adding them together though, we
+# use a number to specify how much noise we want to apply to our images
+# the smaller the threshold number, the fainter the noise (values) become
+# and therefore the less our image is affected, the larger the threshold
+# number, the stronger/heavier/more noticeable the noise becomes and therefore
+# our image is more affected. 
+# note that I named that number noise_intensity_threshold to make it apparent 
+# that it only affects the magnitude of our noise tensor. it does not specify
+# what precentage of the image is applied with the noise!(or how many pixels are affected)
+# rather it only specifies "how much" "every single pixel" in our images are affected
+# by the noise.
+# also after we added the noise to our images, we need to normalzie them so the images 
+# contain only valid values (values betwen 0-1). thats why we clamp the data afterward.
+# 
+# sidenote: TODO: (shorten the long explanations and stop repeating the same thing over and over again!)
+# we usually use smaller noise thresholds (e.g., 0.1 or 0.2) for tasks like denoising, 
+# where our goal is to remove subtle noise, we can use more intense noise as well, but 
+# but the likelihood of removing fine details in the images during the denoising process 
+# increases drastically.
+# The noise threshold determines the level at which noise is separated from the true signal.
+# so smaller thresholds are used when the noise level is low. this ensures that the denoising 
+# process doesnt mistakenly remove fine image details or important structures, 
+# which could otherwise be interpreted as noise and removed consequently.
+# For autoencoders, introducing smaller noise levels during training 
+# (e.g., Gaussian noise scaled with small thresholds like 0.1) can improve the denoising
+# performance on low-noise images.
+# we use larger noise thresholds (e.g., 0.5) for other usecases such as data-augmentation, 
+# but not excessivly large (e.g. .7, 0.9, 1.0).
+# larger values (e.g., 1.0+) are usually used for specific usecase like for example to test the robustness
+# of our models against heavily corrupted samples.
+# 
+# sidenote2: 
+# What we described here is known as noise scaling and its usually done 
+# for controlling the intensity or strength of the noise, and not the proportion/precentage
+# of the image that is affected.
+# 
+# When we scale the noise by a factor like 0.5, we are controlling the magnitude
+# of the noise values, not the percentage of the image that is affected. 
+# To make this a bit more clear lets step back a bit, and see how we create random values
+# and what implications follow. 
+# 
+# To create a random value, we usually either use a uniform distribution or a normal distribution
+# (we briefly talked about them in basic pytorch introduction chapter, 
+# and we know there are many other distributions, but for what we are dealing with here,
+# these are the two distributions that we normally use(rand/randn)). 
+# 
+# In pytorch we either use torch.rand_like(imgs) or torch.randn_like(imgs) to create a
+# random tensor with the same shape as our input tensor.  
+# torch.rand_like(imgs) generates random values uniformly distributed between 0 and 1.
+# while torch.randn_like(imgs) generates random values from a Gaussian (normal) distribution 
+# with a mean of 0 and a standard deviation of 1.
+# 
+# Now, when we multiply the noise by a number like 0.5, we are in fact scaling the magnitude
+# of the noise values, which for the uniform noise, the noise values would now range between 0 and 0.5.
+# and for gaussian/normal noise, the standard deviation of the noise would become 0.5 (it shrinks by half
+# !explain more).
+# 
+# when we add this scaled noise to the original image, this means every pixel in the image
+# is affected by the noise, but the strength of the noise depends on the scaling factor.
+
+# The scaling factor (noise_intensity_threshold) determines how much the noise affects
+# the image, i.e.if we use a smaller value (e.g., 0.1), the noise will be subtle and less noticeable
+# and the image remains mostly intact, with only slight variations introduced by the noise.
+# (i.e. noise_intensity_threshold = 0.1 adds very faint noise)
+# whereas if we use a larger value (e.g., 0.5 or 1.0) the noise will be much stronger and
+# more noticeable, and the image becomes significantly affected/distorted, with more pronounced 
+# variations.(i.e. noise_intensity_threshold = 0.5 adds moderate noise,
+# while noise_intensity_threshold = 1.0 adds a strong noise)
+
+# so the scaling of the noise does not affect the percentage of the image that is noisy.
+# rather,Every pixel in the image is affected by the noise and the scaling factor 
+# only determines how much each pixel is altered, not how many pixels are altered.
+# For example: If noise_intensity_threshold = 0.5, every pixel in the image will have 
+# noise added, but the noise values will range between 0 and 0.5.
+# If noise_threshold = 1.0, every pixel will still have noise added, but the noise values 
+# will range between 0 and 1.0.
+#%%
+# we can visualize this effect easily as well
+# grab an image and apply different levels of noise threshold/intensity
+imgs = next(iter(dataloader_train))[0][0].unsqueeze(0)
+noise_thresholds = [0.1, 0.2, 0.5, 0.7, 1.0, 2.0]
+fig, axes = plt.subplots(1, len(noise_thresholds), figsize=(16,4))
+for i, threshold in enumerate(noise_thresholds):
+    noisy_imgs = imgs + threshold * torch.rand_like(imgs)
+    noisy_imgs = noisy_imgs.clamp(0, 1)
+    axes[i].imshow(noisy_imgs[0, 0], cmap='gray')
+    axes[i].set_title(f'Noise Threshold = {threshold}')
+    axes[i].axis('off')
+    # plt.tight_layout(pad=1,rect=[0,0,2,2])
+plt.show()
+#%%
+imgs = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 
@@ -428,7 +562,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
 
         #apply noise to our image 
-        imgs_noisy = imgs + noise_threshold * torch.rand_like(imgs)
+        imgs_noisy = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
         # clip all values outside of 0,1 becasue our image values 
         # should be in this range!
         imgs_noisy = imgs_noisy.clamp(0,1)
@@ -445,7 +579,7 @@ for e in range(epochs):
 # lets see how the network does on noisy image!
 imgs,labels = next(iter(dataloader_test))
 imgs = imgs.to(device)
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+imgs = imgs + noise_intensity_threshold * torch.rand_like(imgs)
 
 imgs.clamp_(0,1)
 view_images(imgs,labels)
@@ -473,7 +607,7 @@ class ConvolutionalAutoEncoder_v2(nn.Module):
     def forward(self, inputs):
         output = self.encoder(inputs)
         return self.decoder(output)
-                               
+
 
 noise_threshold = 0.5
 epochs = 20
