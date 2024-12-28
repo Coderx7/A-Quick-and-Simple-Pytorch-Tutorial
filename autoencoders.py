@@ -459,8 +459,12 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 # before we go on lets view a sample of noisy images : 
 imgs,labels = next(iter(dataloader_test))
-# to add noise to our images, we create a random tensor with the same shape as our image batch
-# so we can easily add them together, before adding them together though, we
+# To add noise to our images, we create a random tensor with the same shape 
+# as our image batch so we can easily add them together. we used torch.rand_like(), 
+# which generates random values from a uniform distribution between 0 and 1. 
+# we could have also used torch.randn_like(), (which generates random values 
+# from a normal distribution (Gaussian) with a mean of 0 and a standard deviation of 1). 
+# before adding them together though, we
 # use a number to specify how much noise we want to apply to our images
 # the smaller the threshold number, the fainter the noise (values) become
 # and therefore the less our image is affected, the larger the threshold
@@ -473,7 +477,72 @@ imgs,labels = next(iter(dataloader_test))
 # by the noise.
 # also after we added the noise to our images, we need to normalzie them so the images 
 # contain only valid values (values betwen 0-1). thats why we clamp the data afterward.
+
+# sidenote:
+# we said both of these methods(uniform and normal distributions) allow us to add noise, but they produce different types of noise,
+# and you may ask, why would we want to choose one over the other? or whats the difference between them? 
+# choosing between these two distributions, has different implications. 
+# like for example, uniform noise is evenly spread across a range, while  
+# Gaussian noise tends to cluster around the mean with some outliers.
+# this in turn means a few things:
+# For one, if we use a uniform distribution to generate noise,
+# it means we plan on generating noise where every value within a specified range (e.g., 0 to 1) 
+# is equally likely.
+# This results in noise that is evenly spread across the range, it doesnt favor any part
+# more than others, every part/range has the same importance, therefore creating a 
+# flat/consistent perturbation across the image.
+# Uniform noise is therefore useful for simulating random, unbiased distortions, 
+# such as sensor noise or quantization errors but it looks more "artificial" and is evenly distributed.
+# we also use uniform noise when we have no idea about the underlying distribution, 
+# and want to avoid introducing bias that could heavily affect the posterior distribution.
 # 
+# Unlike uniform distribution, we use normal distribution to generate noise from 
+# a Gaussian (normal) distribution with a mean of 0 and a standard deviation of 1.
+# This means the noise values are more likely to be close to the mean (0), with 
+# fewer extreme values (outliers). In other words, the noise favors values 
+# around the mean more than those farther away.
+# Gaussian noise is often used to simulate natural noise, such as thermal noise 
+# in electronic systems or subtle variations in lighting. Gaussian noise is thus 
+# more natural and resembles real-world noise.
+# 
+# and finally to answer the question of which one to use: use whatever suites the job!
+# we usually use gaussian noise by default unless theres a reason to use uniform or other
+# types of noise.
+# Gaussian noise was and still is the most widely used type of noise in denoising autoencoders.
+# because it is still our best choice for modeling natural noise, and many real-world noise
+# sources (e.g., camera sensor noise, audio noise) are well-approximated by Gaussian distributions.
+# in applications such as image denoising, audio denoising, and signal processing, 
+# Gaussian noise is the default choice.
+# 
+# sidenote3:
+# it should be obvious that if we use real world noise instead of gaussian noise, we may
+# see a good improvement. but catching real world noise is not always an easy task, and
+# gausian noise does a pretty good job, so thats why we dont see a lot of papers doing it
+# however, there are several cases that do such as : 
+# DnCNN: Beyond a Gaussian Denoiser: Residual Learning of Deep CNN for Image Denoising 2017
+# CBDNet: Toward Convolutional Blind Denoising of Real Photographs 2019
+# RIDNet: Real Image Denoising with Feature Attention 2019
+# etc 
+# there are more papers that tried to use realworld noise. but how do you capture real world noise?
+# to capture real world noise, we take photos or videos in noisy conditions 
+# (low-light conditions or with high ISO settings where noise is more pronounced).
+# we capture several images of a static scene (e.g., a blank wall or a dark room) 
+# using the same camera settings. we then take the mean image to estimate the clean signal.
+# and subtract it from each individual image and save result which is the noise for each sample.
+# the steps nearly the same for audio or prety much anything else. 
+# for example for audio: 
+# we record audio in environments where the noise is present (e.g., a busy street, a crowded room).
+# record as many samples as we need in the said environment,
+# use a filtering or signal processing (spectral analysis) to isolate the noise component and 
+# save the noise samples.
+# and then during training, use these noise samples and add them to clean data. 
+# note that clean data may not be that clean, (unless you make sure it is, either synthetically generated
+# or generated in a noise free environment whatever the case is)
+
+#%%
+imgs = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
+imgs.clamp_(0,1)
+view_images(imgs,labels)
 # sidenote: TODO: (shorten the long explanations and stop repeating the same thing over and over again!)
 # we usually use smaller noise thresholds (e.g., 0.1 or 0.2) for tasks like denoising, 
 # where our goal is to remove subtle noise, we can use more intense noise as well, but 
@@ -536,7 +605,6 @@ imgs,labels = next(iter(dataloader_test))
 # noise added, but the noise values will range between 0 and 0.5.
 # If noise_threshold = 1.0, every pixel will still have noise added, but the noise values 
 # will range between 0 and 1.0.
-#%%
 # we can visualize this effect easily as well
 # grab an image and apply different levels of noise threshold/intensity
 imgs = next(iter(dataloader_train))[0][0].unsqueeze(0)
@@ -550,11 +618,16 @@ for i, threshold in enumerate(noise_thresholds):
     axes[i].axis('off')
     # plt.tight_layout(pad=1,rect=[0,0,2,2])
 plt.show()
-#%%
-imgs = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
-imgs.clamp_(0,1)
-view_images(imgs,labels)
 
+# to make things tidier lets create a simple function to do the job
+def add_noise(imgs, noise_intensity_threshold=0.5, uniform_distribution=False):
+    noise_tensor = torch.rand_like(imgs) if uniform_distribution else torch.randn_like(imgs)
+    return imgs + (noise_intensity_threshold * noise_tensor)
+
+noise_threshold = 0.5
+uniform_dist = True
+
+print(f'Training with {noise_threshold=:.4f} and {"uniform" if uniform_dist else "normal"} distribution')
 print(model)
 for e in range(epochs):
     loss_epoch = 0.0
@@ -562,7 +635,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
 
         #apply noise to our image 
-        imgs_noisy = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
+        imgs_noisy = add_noise(imgs, noise_threshold, uniform_dist)
         # clip all values outside of 0,1 becasue our image values 
         # should be in this range!
         imgs_noisy = imgs_noisy.clamp(0,1)
@@ -573,18 +646,18 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
         loss_epoch += loss.item()
-    print(f'epoch: {e}/{epochs} loss: {loss.item()} lr: {scheduler.get_lr()}')
+    print(f'epoch: {e}/{epochs} loss: {loss.item():.4f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 # lets see how the network does on noisy image!
 imgs,labels = next(iter(dataloader_test))
 imgs = imgs.to(device)
-imgs = imgs + noise_intensity_threshold * torch.rand_like(imgs)
-
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 new_noise_free_imgs = model(imgs)
 view_images(new_noise_free_imgs,labels)
+# note that we can improve our results with a better training regime(optimizer/shceduler/architecture)
 #%%
 # you may ask, so far we have been starting with a large number of channels, 
 # and gradually decreased and at the same time shrunk the spatial extend, what if we do
@@ -608,8 +681,8 @@ class ConvolutionalAutoEncoder_v2(nn.Module):
         output = self.encoder(inputs)
         return self.decoder(output)
 
-
 noise_threshold = 0.5
+uniform_dist = True
 epochs = 20
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # the quality and performance of our model in denoising will increase as we
@@ -621,7 +694,7 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 # before we go on lets view a sample of noisy images : 
 imgs,labels = next(iter(dataloader_test))
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 
@@ -632,7 +705,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
 
         #apply noise to our image 
-        imgs_noisy = imgs + noise_threshold * torch.rand_like(imgs)
+        imgs_noisy = add_noise(imgs, noise_threshold, uniform_dist)
         # clip all values outside of 0,1 becasue our image values 
         # should be in this range!
         imgs_noisy = imgs_noisy.clamp(0,1)
@@ -643,13 +716,13 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
         loss_epoch += loss.item()
-    print(f'epoch: {e}/{epochs} loss: {loss.item()} lr: {scheduler.get_lr()}')
+    print(f'epoch: {e}/{epochs} loss: {loss.item():.4f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 # lets see how the network does on noisy image!
 imgs,labels = next(iter(dataloader_test))
 imgs = imgs.to(device)
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 
 imgs.clamp_(0,1)
 view_images(imgs,labels)
@@ -665,10 +738,11 @@ view_images(new_noise_free_imgs,labels)
 # contraint on the activity of the hidden representations, so fewer units would "fire" 
 # at a given time.
 # in order to have sparsity, we need to have overcomplete representations. so lets 
-# implement a sparse autoencoder in this section and see how it performs. 
+# we implement a sparse autoencoder in this section and see how it performs. 
 # as I said earlier, aside from the normal reconstruction loss, we need a new regularizer
-# lets create this regularizer now. We are going to create a Function object that applies
-# l1penalty we inherit from autograd.Function class for this. 
+# lets create this regularizer now. 
+# We are going to create a Function object that applies
+# l1penalty we inherit from autograd.Function class for this.
 # good exlanation https://www.youtube.com/watch?v=7mRfwaGGAPg
 
 import copy # sed for deep copy of our weights
@@ -717,6 +791,7 @@ class L1Penalty(Function):
         # we return None
         return grad_input, None
 
+
 # now lets create our architecture 
 class SparseAutoEncoder(nn.Module):
     def __init__(self, embeddingsize=400, tied_weights = False):
@@ -736,19 +811,166 @@ class SparseAutoEncoder(nn.Module):
         # self.encoder = F.linear(input, weight, bias=False)
         # self.decoder = F.linear(input, weight.t(), bias=False)
         # we can also simply define our new weight and assigne it to both modules
+        # this is not true, there is no sharing going on here! at all
         if self.tied_weights:
-            weights = nn.Parameter(torch.randn_like(self.encoder[0].weight))
-            self.encoder[0].weight.data = weights.clone()
-            self.decoder[0].weight.data = self.encoder[0].weight.data.t()
-        
-
-    def forward(self, input):
+            self.weights = nn.Parameter(torch.randn_like(self.encoder[0].weight))
+            # note we use .data, so we directly link the underlying storage
+            # for encoder weight to our parameter storage. if we dont use .data
+            # we'll get an error saying we have to use nn.Parameter()!
+            # or we will have to use the functional form instead.
+            self.encoder[0].weight.data = self.weights
+            # note that if we use id() we see they are different, 
+            # however, this is expected as this is a just a view, 
+            # not a new parameter, the actual underlying data is the same
+            # and we can see this during training and after it
+            # when we visualize the weights 
+            # see the explanation a head where I gave a dummy test to prove this!
+            self.decoder[0].weight.data = self.weights.t()
+            # print(f'{id(self.weights)=}\n{id(self.weights.t())=}')
+               
+    def forward(self, input, apply_gradient_constraint=False, l1_weight=0):
         input = input.view(input.size(0), -1)
         output_enc = self.encoder(input)
+        # we apply the L1penalty during forward pass
+        # we have to do this in order for the altered gradients
+        # to take effect in training, during loss calculation we simply
+        # just use the reconstruction loss
+        if apply_gradient_constraint:
+            output_enc = L1Penalty.apply(output_enc, l1_weight)
+        
         rec_imgs = self.decoder(output_enc)
         rec_imgs = rec_imgs.view(input.size(0), 1, 28, 28)
         return output_enc, rec_imgs
 
+#%%
+# heres a test to show that our way of sharing weights is actually correct
+# and is the same as using the functional form! 
+# sidenote:
+# after thourough investigation I noticed the functional form is the one to truly
+# share weights and not wasting anything (try removing the nonfunctional related codes
+# such as encoder/decoder and where we assign shared weights to them) and then 
+# run the functional form, you'll see our number of paramters will be 14! which is
+# exactly what we want. 
+# however, if we use the nonfunctional form, although we set it up with a shared weight
+# (remember we didnt use its bias!), the linear module will still have its default weights
+# and they will take space and count as separate parameters!
+# so the nonfunctional version we are using, although seemingly shares the underlying dtype
+# will result in wasted param count!
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SharedWeightsAE(nn.Module):
+    def __init__(self, input_dim=4, embedding_dim=2, use_functional=False):
+        super().__init__()
+
+        self.use_functional = use_functional
+        self.encoder = nn.Linear(input_dim,embedding_dim)
+        self.decoder = nn.Linear(embedding_dim,input_dim)
+        
+        # Define a shared weight
+        self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
+        self.encoder_bias = nn.Parameter(torch.zeros(embedding_dim))
+        self.decoder_bias = nn.Parameter(torch.zeros(input_dim))
+       
+        self.encoder.weight.data = self.shared_weight
+        self.decoder.weight.data = self.shared_weight.t()
+        
+
+    def encoder_func(self, x):
+        return F.linear(x, self.shared_weight, self.encoder_bias)
+
+    def decoder_func(self, x):
+        return F.linear(x, self.shared_weight.t(), self.decoder_bias)
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        
+        if self.use_functional:
+            encoded = self.encoder_func(x)
+            decoded = self.decoder_func(encoded)    
+        else:
+            encoded = self.encoder(x)
+            decoded = self.decoder(encoded)
+        return encoded, decoded
+
+use_functional=True
+model = SharedWeightsAE(input_dim=4, embedding_dim=2, use_functional=use_functional)
+# Dummy data
+x = torch.randn(4, 1, 2, 2)
+x = x.view(x.size(0), -1)
+
+# Forward pass
+encoded, decoded = model(x)
+
+# lets check weight sharing before we directly update the weights
+print('before update:')
+if use_functional:
+    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
+    # note that since transposing(calling .t()) creates a temporary view
+    # the id and values will be different (values are obviously different because its transposed!)
+    # so to show that the underlying data is indeed the same, we transpose it back!
+    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
+else:
+    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
+    # same as before, double transpose to get the same view as the original shared_weight used by encoder
+    print(f'decoders weight(transposed):\n {model.decoder.weight.t().reshape(model.encoder.weight.shape).detach().numpy()}')
+        
+    
+# now lets update the shared weight directly!
+# this should reflect in both the encoder and decoder weights
+model.shared_weight.data += 1.0
+# model.encoder.weight.data += 1.0
+# model.decoder.weight.data += 1.0
+
+print('\nafter the direct update:')
+if use_functional:
+    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
+    # same as before, double transpose to get the same view as the original shared_weight used by encoder
+    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
+    # heres a nother check to make sure they all match!
+    assert torch.eq(model.shared_weight, model.shared_weight.t().t()).all(),'they must match!'
+else:
+    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
+    # same as before, double transpose to get the same view as the original shared_weight used by encoder
+    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
+    # heres a nother check to make sure they all match!
+    assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
+    
+    
+# Verify weight sharing: Gradient Accumulation Check
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+loss = F.mse_loss(decoded, x)
+loss.backward()
+
+print('\ngradients:')
+print('shared weight gradients:', model.shared_weight.grad)
+print('shared weight encoder gradients:', model.encoder.weight.grad)
+print('shared weight decoder gradients:', model.decoder.weight.grad)
+
+# now lets take one step and see how the shared weights are affected
+# this shows us whether they are truly shared or not!
+optimizer.step()
+
+print('\nafter the optimizer update:')
+if use_functional:
+    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
+    # same as before, double transpose to get the same view as the original shared_weight used by encoder
+    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
+    # heres a nother check to make sure they all match!
+    assert torch.eq(model.shared_weight, model.shared_weight.t().t()).all(),'they must match!'
+else:
+    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
+    # same as before, double transpose to get the same view as the original shared_weight used by encoder
+    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
+    # heres a nother check to make sure they all match!
+    assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
+    
+# weight sharing: Parameter List Check
+print(f'model param count: {sum(p.numel() for p in model.parameters()):,}')
+for name,param in model.named_parameters():
+    print(f'{name}:{id(param)} {tuple(param.shape)}')
+#%%
 
 def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
     """
@@ -758,16 +980,19 @@ def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, 
     2: sparsity using kl divergence
     """
     criterion = nn.MSELoss()
-    loss = criterion(reconstructed_imgs, imgs)
+    reconstruction_loss = criterion(reconstructed_imgs, imgs)
 
     if penalty_type == 0:
         sparsity_loss = torch.mean(abs(outputs_enc))
-        return loss + sparsity_loss
+        return reconstruction_loss + sparsity_loss
     elif penalty_type == 1:
         # apply the l1penalty on the weights of our encoder
-        # through added term in backpropagation
-        output = L1Penalty.apply(outputs_enc, l1_weight)
-        return loss
+        # through added term in backpropagation during forward pass
+        # here we simply grab the reconstruction loss
+        # Compute gradients of encoder output w.r.t. input
+        # gradients = torch.autograd.grad(outputs_enc.sum(), model.encoder[0].weight, create_graph=True)[0]
+        # print(f'{output.shape=}') # (128,400)
+        return reconstruction_loss
     else:
         # use kl divergence, calculate ro^ which is the
         # mean of activations in our hidden layer in which
@@ -793,38 +1018,59 @@ def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, 
         
         kl = torch.sum(ro * torch.log(ro / ro_hat) +
                       (1 - ro) * torch.log((1 - ro) / (1 - ro_hat)))
-        return loss + (Beta * kl)
+        return reconstruction_loss + (Beta * kl)
 
 
-epochs = 50
-penalty_type = 0
+#%%
+
+epochs = 20
+# penalty_type = 0
 # ro 0.01 ~ 0.05 or l1_weight 
-sparsity_ratio = 0.1
+# for gradient based constrained the ratio
+# needs to be small for our example around 0.0001
+sparsity_ratio = 0.01
 loss_type = 2
+tied_weights = 1
 # at the end read the Cyclical Annealing Schedule section to get a very good idea about
 # how you can achieve better result and why!
-Beta = 3 
+Beta = 1
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sae_model = SparseAutoEncoder(embeddingsize=400,                             
-                              tied_weights=True).to(device)
-optimizer = torch.optim.Adam(sae_model.parameters(), lr = 0.1) 
+                              tied_weights=tied_weights).to(device)
+optimizer = torch.optim.Adam(sae_model.parameters(), lr = 0.01) 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10) 
 
-print(sae_model)        
+print(sae_model)
+print(f'param count: {sum(p.numel() for p in model.parameters()):,}')
 # lets save the weights of our encoder and decoders before we train them 
 # and then compare them with the new weights after training and see how
 # they changed!
 init_weights_encoder = copy.deepcopy(sae_model.encoder[0].weight.data) 
 init_weights_decoder = copy.deepcopy(sae_model.decoder[0].weight.data)
 imgs_list =[]
-# now lets start training ! 
+# now lets start training!
 for e in range(epochs):
     for imgs,_ in dataloader_train:
         imgs = imgs.to(device)
-        output_enc, rec_imgs = sae_model(imgs)
-        loss = sparse_loss_function(output_enc, rec_imgs, imgs, loss_type, sparsity_ratio, Beta)
+        output_enc, rec_imgs = sae_model(imgs,
+                                         apply_gradient_constraint=(loss_type==1),
+                                         l1_weight=sparsity_ratio)
+        loss = sparse_loss_function(output_enc, 
+                                    rec_imgs, 
+                                    imgs, 
+                                    penalty_type=loss_type,
+                                    l1_weight=sparsity_ratio,
+                                    Beta=Beta)
         optimizer.zero_grad()
         loss.backward()
+        # Inspect the gradients
+        # print("Weight gradients (shared):")
+        # This should be non-zero and aggregate contributions from both encoder and decoder
+        # print(f'{model.weights.grad=}')
+        # print(f'{model.encoder.weight.grad=}')
+        # print(f'{model.decoder.weight.grad=}')
+        
+        
         optimizer.step()
     print(f'epoch: {e}/{epochs} loss: {loss.item():.6f} lr = {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
@@ -832,7 +1078,7 @@ for e in range(epochs):
     # for viewing later on to see how the training affects the
     # result we get
     imgs_list.append((imgs[0],rec_imgs[0]))
-#%% 
+#%%
 # now lets first visualize the image/reconstruction pairs and how they look : 
 def visualize(imgs_list, rows=5, cols=10):
     fig = plt.figure(figsize=(15,2))
@@ -874,14 +1120,10 @@ def visualize_grid2(imgs, label, normalize=True):
     ax.imshow(x)
     ax.set_title(label)
 
-trained_W_encoder = sae_model.encoder[0].weight.data.cpu(
-).clone().view(sae_model.encoder[0].out_features, 1, 28, 28)
-trained_W_decoder = sae_model.decoder[0].weight.data.cpu(
-).clone().view(sae_model.decoder[0].in_features, 1, 28, 28)
-init_weights_encoder = init_weights_encoder.view(
-    sae_model.encoder[0].out_features, 1, 28, 28).cpu()
-init_weights_decoder = init_weights_decoder.view(
-    sae_model.decoder[0].in_features, 1, 28, 28).cpu()
+trained_W_encoder = sae_model.encoder[0].weight.data.cpu().clone().reshape(sae_model.encoder[0].out_features, 1, 28, 28)
+trained_W_decoder = sae_model.decoder[0].weight.data.cpu().clone().reshape(sae_model.decoder[0].in_features, 1, 28, 28)
+init_weights_encoder = init_weights_encoder.reshape(sae_model.encoder[0].out_features, 1, 28, 28).cpu()
+init_weights_decoder = init_weights_decoder.reshape(sae_model.decoder[0].in_features, 1, 28, 28).cpu()
 
 w_diff_encoder = init_weights_encoder - trained_W_encoder
 w_diff_decoder = init_weights_decoder - trained_W_decoder
@@ -892,18 +1134,18 @@ w_decoders_transposed = sae_model.decoder[0].weight.data.cpu().clone().t()
 # encoders, lets transpose it again and reshape it.
 # here I show both the encoders, weight and our decoders weight
 # transposed! 
-print(trained_W_encoder.shape)
-print(w_decoders_transposed.shape)
+print(f'{trained_W_encoder.shape=}')
+print(f'{w_decoders_transposed.shape=}')
 w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[0].out_features, 1, 28, 28)
 # note that the decoder weights (in terms of original data) will be smoothed encoders weights
 # (also in terms of original data)
 # info from : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
 # end of the page, in the ppt slide image
 
-print(init_weights_encoder.shape)
+print(f'{init_weights_encoder.shape=}')
 visualize_grid2(init_weights_encoder, 'Initial weights')
 visualize_grid2(trained_W_encoder, 'Trained weights(Encoder)')
-visualize_grid2(w_diff_encoder, 'weights diff (Encoder)')
+# visualize_grid2(w_diff_encoder, 'weights diff (Encoder)')
 visualize_grid2(trained_W_decoder,'Trained Weights (Decoder)')
 visualize_grid2(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
 # the black shows negative values, and white show positive values
