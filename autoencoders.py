@@ -845,62 +845,85 @@ class SparseAutoEncoder(nn.Module):
 #%%
 # heres a test to show that our way of sharing weights is actually correct
 # and is the same as using the functional form! 
-# sidenote:
-# after thourough investigation I noticed the functional form is the one to truly
-# share weights and not wasting anything (try removing the nonfunctional related codes
-# such as encoder/decoder and where we assign shared weights to them) and then 
-# run the functional form, you'll see our number of paramters will be 14! which is
-# exactly what we want. 
-# however, if we use the nonfunctional form, although we set it up with a shared weight
-# (remember we didnt use its bias!), the linear module will still have its default weights
-# and they will take space and count as separate parameters!
-# so the nonfunctional version we are using, although seemingly shares the underlying dtype
-# will result in wasted param count!
+# sidenote/tldr:
+# both functional and nonfunctional forms share the weights and they both work
+# prefectly fine. however theres a catch here, in our nonfunctional method, we 
+# bypass pytorch's autograd system (gradient tracking), but as I explain later, this doesnt pose a
+# n issue for us in this case. but it causes some inconsitencies which are not desired
+# (such as wasted parameters). itd be safer to use functional form especially if 
+# we plan on working something more complex! see the explanation at the end
+# 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class SharedWeightsAE(nn.Module):
-    def __init__(self, input_dim=4, embedding_dim=2, use_functional=False):
+    def __init__(self, input_dim=4, embedding_dim=2):
         super().__init__()
-
-        self.use_functional = use_functional
         self.encoder = nn.Linear(input_dim,embedding_dim)
         self.decoder = nn.Linear(embedding_dim,input_dim)
-        
-        # Define a shared weight
+        # define a single weight and assign it to both encoder and decoder
         self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
-        self.encoder_bias = nn.Parameter(torch.zeros(embedding_dim))
-        self.decoder_bias = nn.Parameter(torch.zeros(input_dim))
-       
+        # note we use .data to directly access the underlying storage and link
+        # shared weight parameter's underlying storage with encoder/decoder's together
+        # note that, by doing this, we are bypassing pytorchs autograd system in
+        # tracking gradients, that is, pytorch will not be able to track gradients here
+        # but this doesnt pose an issue for us, as the grad property for each module will
+        # be populated properly during training (though the shared_weight wont have any gradients
+        # for this reason, but since the underlying storage is linked, the changes will take
+        # place in the same storage and everything will be fine, 
+        # see my final explanation at the end)
         self.encoder.weight.data = self.shared_weight
         self.decoder.weight.data = self.shared_weight.t()
         
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return encoded, decoded
 
-    def encoder_func(self, x):
+# heres the functional version
+class SharedWeightsAEFunctional(nn.Module):
+    def __init__(self, input_dim=4, embedding_dim=2):
+        super().__init__()
+        # a single weight parameter is used for both encoder and decoder
+        self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
+        # since we use the functional form of linear layer, 
+        # we also prepare a separate bias parameter for 
+        # the encoder and decoder as well(they are not shared obviously!)
+        self.encoder_bias = nn.Parameter(torch.zeros(embedding_dim))
+        self.decoder_bias = nn.Parameter(torch.zeros(input_dim))
+
+    # instead of a module, we now create a method to easily call them
+    # just like the previous version
+    def encoder(self, x):
         return F.linear(x, self.shared_weight, self.encoder_bias)
 
-    def decoder_func(self, x):
+    def decoder(self, x):
         return F.linear(x, self.shared_weight.t(), self.decoder_bias)
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
-        
-        if self.use_functional:
-            encoded = self.encoder_func(x)
-            decoded = self.decoder_func(encoded)    
-        else:
-            encoded = self.encoder(x)
-            decoded = self.decoder(encoded)
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
         return encoded, decoded
 
-use_functional=True
-model = SharedWeightsAE(input_dim=4, embedding_dim=2, use_functional=use_functional)
-# Dummy data
+
+torch.manual_seed(5)
+
+use_functional=False
+
+if use_functional:
+    model = SharedWeightsAEFunctional(input_dim=4, embedding_dim=2)
+else:
+    model = SharedWeightsAE(input_dim=4, embedding_dim=2)
+    
+# dummy data
 x = torch.randn(4, 1, 2, 2)
+# flatten it so we dont have to resize it back :d its a dummy test!
 x = x.view(x.size(0), -1)
 
-# Forward pass
+# forward pass
 encoded, decoded = model(x)
 
 # lets check weight sharing before we directly update the weights
@@ -910,12 +933,13 @@ if use_functional:
     # note that since transposing(calling .t()) creates a temporary view
     # the id and values will be different (values are obviously different because its transposed!)
     # so to show that the underlying data is indeed the same, we transpose it back!
+    # doesnt make much sense, when we are using the functional form though!
     print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
 else:
     print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
     # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.decoder.weight.t().reshape(model.encoder.weight.shape).detach().numpy()}')
-        
+    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
+    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
     
 # now lets update the shared weight directly!
 # this should reflect in both the encoder and decoder weights
@@ -934,19 +958,22 @@ else:
     print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
     # same as before, double transpose to get the same view as the original shared_weight used by encoder
     print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
+    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
     # heres a nother check to make sure they all match!
     assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
     
-    
-# Verify weight sharing: Gradient Accumulation Check
+# to verify weight sharing we can check gradient accumulation
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 loss = F.mse_loss(decoded, x)
 loss.backward()
 
 print('\ngradients:')
-print('shared weight gradients:', model.shared_weight.grad)
-print('shared weight encoder gradients:', model.encoder.weight.grad)
-print('shared weight decoder gradients:', model.decoder.weight.grad)
+if use_functional:
+    print('shared weight gradients:', model.shared_weight.grad)
+else:
+    print('shared weight gradients:', model.shared_weight.grad)
+    print('shared weight encoder gradients:', model.encoder.weight.grad)
+    print('shared weight decoder gradients:', model.decoder.weight.grad)
 
 # now lets take one step and see how the shared weights are affected
 # this shows us whether they are truly shared or not!
@@ -963,13 +990,49 @@ else:
     print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
     # same as before, double transpose to get the same view as the original shared_weight used by encoder
     print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
+    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
     # heres a nother check to make sure they all match!
     assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
     
 # weight sharing: Parameter List Check
-print(f'model param count: {sum(p.numel() for p in model.parameters()):,}')
+print(f'\nmodel param count: {sum(p.numel() for p in model.parameters()):,}')
 for name,param in model.named_parameters():
     print(f'{name}:{id(param)} {tuple(param.shape)}')
+    
+# ! edit
+# by doing self.encoder.weight.data = self.shared_weight directly we assign 
+# the storage of self.shared_weight to self.encoder.weight as a result
+# both self.encoder.weight and self.shared_weight reference the same underlying memory
+# so updates to one will reflect in the other.
+# the same applies to self.decoder.weight and self.shared_weight.t() (.t() just creates
+# a temporary view, the underlying stoage is the same hence why they are linked properly!)
+# Pytorchs autograd system doesnt see/track the manual .data assignment,
+# however, this doesnt pose any issues as gradients are computed independently 
+# for self.encoder.weight and self.decoder.weight during backpropagation.
+# self.shared_weight.grad remains None though because self.shared_weight 
+# isnt directly part of the computation graph anymore (because of .data assignment we did)
+# but the encoder and decoder gradients accumulate correctly in self.encoder.weight.grad
+# and self.decoder.weight.grad anyway since they are tracked as parameters of their 
+# respective layers.
+# another sign of weights being shared is that, the encoder, decoder, and shared weight 
+# norms match because their storage is shared.
+# updates to any one of these will reflect in the others.
+# when optimizer.step() is called, the optimizer updates self.encoder.weight and 
+# self.decoder.weight using their respective gradients. 
+# since these weights share the same storage as self.shared_weight, the shared weight 
+# is implicitly updated as well.
+# 
+# so using .data to share weights allows for value synchronization but bypasses 
+# the autograd system, leading to:
+# gradients not being computed for self.shared_weight.
+# independent gradients for self.encoder.weight and self.decoder.weight.
+# 
+# In this setup, gradients for self.shared_weight are effectively distributed between
+# self.encoder.weight.grad and self.decoder.weight.grad.
+# If we need gradients for self.shared_weight, we should use the functional form or 
+# explicitly ensure self.shared_weight is part of the computation graph.
+# Avoid .data Assignment for Weight Sharing:
+# as it can lead to non-intuitive behaviors, especially in more complex setups.
 #%%
 
 def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
