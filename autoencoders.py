@@ -10,6 +10,33 @@
 # and then upsample that feature vector gradually until they
 # reach to the original size, and then try to reconstruct the
 # input(so our input image acts as a label as well!). 
+
+# sidenote2: # !EDIT this - rewrite it 
+# in other words, the encoder actually 'encodes' the input data with large dimensions, 
+# into a latent (hidden) representation space (usually called z),
+# with much smaller dimensions than the original dimensions of the data
+# This type of design is typically referred to as a 'bottleneck',
+# as the encoder needs to learn an efficient and unique representation,
+# to compress data from the original higher-dimensional space into this lower-dimensional space.
+
+# !EDIT this - rewrite it 
+# sidenote: 
+# its like  a typical network we have already seen, a typical CNN,
+# it takes in an image (e.g. a 3d tensor of size(28,28,1)), 
+# and convert it to a much more compact and denser representation at the end
+# (eg. 1d tensor of size 100). This dense representation is then
+# used by a classifier (can be a single fc layer, or multiple layers/ablock/etc)
+# to classify the image.
+# now the encoder does pretty much the same thing, 
+# it takes in an input and produces a much smaller representation (the encoding)), 
+# like in a cnn , this new dense representation needs to contain useful/necessary data
+# for the classifier to properly does it job.
+# the difference is that, instead of a classifer at the end, 
+# theres another network that does something else (in our case reconstructiong the input data
+# from that dense representation) so as you can see this is not something weird!
+# 
+
+# 
 # during this process of reconstructing the input data
 # from the compressed representation, the new representation is
 # developed and can be used for various applications. 
@@ -18,7 +45,7 @@
 # reconstructs the input from the mentioned feature vector is called
 # a "Decoder". 
 # when we have successfully trained our autoencoder, we can use its
-# new representation instead of our new data. so we can use it for 
+# new representation instead of our data. we can use it for 
 # dimensionality reduction just like PCA (if linear) and much more 
 # powerful than that when using a deep nonlinear autoencoder! 
 # we can use the new representation for lots of applications including
@@ -29,11 +56,13 @@
 # The usage is not limited to such usescases, we can get fancy and creative 
 # for example and make a black and white image , color again! or denoise our input
 # reconstruct missing parts, create new data/images, visualizations, etc!
-# there are lots and lots of use cases for autoencoders
-# However, note that, the notion of compression spoke here is different than that of
+# there are lots and lots of use cases for autoencoders(and in general generative models)
+# However, note that, the notion of compression spoken here is different than that of
 # what you find in different media formats such as jpeg, mp3, etc. 
 # Autoencoders do not work well on unseen data and thus usually have difficulties 
-# generalizing well to unseen data. more on this later  
+# generalizing well to unseen data.(more on this later) so the techniques and nature of
+#! work is different here (explain better!!)
+# 
 # There are different kinds of Autoencoders, they can be linear, or
 # nonlinear, shallow, or deep, convolutional, or not, etc
 # we will cover some of the most famous variants here. 
@@ -320,14 +349,18 @@ class MLPAutoEncoder(nn.Module):
         self.fc3 = nn.Linear(embedingsisze, 64)
         self.fc4 = nn.Linear(64, 28*28)
 
-
-    def forward(self, inputs):
-        inputs = inputs.view(inputs.size(0), -1)
+    # lets create encoder/decoder methods separately this time
+    # so we can use them easier later (for visualization etc) 
+    def encoder(self, inputs):
         # encoder part
+        inputs = inputs.view(inputs.size(0), -1)
         output = F.relu(self.fc1(inputs))
         output = F.relu(self.fc2(output))
+        return output
+    
+    def decoder(self, inputs):
         # decore part
-        output = F.relu(self.fc3(output))
+        output = F.relu(self.fc3(inputs))
         # since our output is image, values should 
         # be in the range [0, 1]!
         #sidenote: note that unlike our previous example,
@@ -340,16 +373,131 @@ class MLPAutoEncoder(nn.Module):
         # try removing sigmoid and running the example again
         output = F.sigmoid(self.fc4(output))
         output = output.view(-1, 1, 28, 28)
+        return output
+    
+    def forward(self, inputs):
+        output = self.encoder(inputs)
+        output = self.decoder(output)
         return output 
 
-model_mlp_ae = MLPAutoEncoder().to(device)
+model_mlp_ae = MLPAutoEncoder(32).to(device)
 print(model_mlp_ae)
 
 # criterion = nn.MSELoss()
 optimizer = optim.Adam(model_mlp_ae.parameters(), lr = 0.01) 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 train(model_mlp_ae, dataloader_train, optimizer, scheduler, 20, device)    
-test(model_mlp_ae,device,rows=13,cols=10)  
+test(model_mlp_ae,device,rows=13,cols=10)
+# note, the loss sometimes doesnt decrease which is expected 
+# rerun the experiment to get a better result!
+#%%
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+# lets also visualize the encodings/features learned by our encoder
+# and see whether/how well these features are separated. 
+# this kind of visualization specifically becomes intersting when we
+# start implementing other types of autoencoders such as VAE. 
+# when we get there we'll explain this further. 
+# ok, to do this, one way is to use scatter plot and display
+# each sample that way that is, we feed our images to the encoder,
+# grab the feature vector and then display it in a scatterplot.
+# since we are going to use scatter plot, our feature vector must be 2D
+# (that is it needs to have 2 numbers!) if its not, we need to use pca or tsne
+# to project them into 2d.
+def plot_embedding_clusters(model, dataloader_train, use_pca=False):
+    model.eval()
+    # grab the device from model parameter
+    device = next(model.parameters()).device
+    # grab all the features, because tsne needs to be applied to 
+    # the whole dataset all atonce not batch by batch
+    all_features = []
+    all_labels = []
+
+    with torch.no_grad():
+        for imgs, lbls in dataloader_train:
+            imgs = imgs.to(device)
+            # Get feature vectors
+            feature_vectors = model.encoder(imgs).detach().cpu().view(imgs.size(0), -1).numpy()
+            all_features.append(feature_vectors)
+            all_labels.append(lbls.numpy())
+
+    # concatenate all batches
+    all_features = np.concatenate(all_features, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    if use_pca:
+        reducer = PCA(n_components=2)
+        # since pca is sensitive to the scale of features and 
+        # if the features are not properly scaled (e.g. mean-centered and variance-normalized),
+        # it can produce poor projections we scale the features here!
+        scaler = StandardScaler()
+        all_features = scaler.fit_transform(all_features)
+    else:
+        reducer = TSNE(n_components=2, random_state=66, perplexity=30)
+
+    plt.figure(figsize=(10, 8))
+    # print(f'{all_features[0].shape[-1]}')
+    
+    if all_features[0].shape[-1] >2 :
+        # features2d are coordinates showing where each datapoint is
+        features2d = reducer.fit_transform(all_features)
+        # print(f'{features2d[:5]}')
+    else:
+        features2d = all_features
+    # tab10, is a colormap inwhich it has 10 colors, therefore its a prefect choice for us    
+    scatter = plt.scatter(features2d[:, 0], features2d[:, 1], c=all_labels, cmap='tab10', alpha=0.6)
+
+    # add class labels to each cluster for better visualization
+    # to do this we need t o calculate the centeroid(i.e. mean) of each cluster
+    # which is basically taking the average of all the points for that cluster
+    # and then use plt.text to add class numbers
+    
+    # note we dont need all the labels, just one for each cluster!
+    for label in list(range(10)):
+        # find the centroid of each cluster
+        # note that the values in features2d are coordinates(when using tsne),
+        # which are the 2D positions of the data points
+        # since our data are stored sequentially we know each row(class label) 
+        # in all_labels belong to a corresponding data point in features2d.
+        # that is for example, if all_labels[0] = 0, it means the first data point
+        # in features2d belongs to class 0.
+        # we use this to grab all the points belonging to a specific label one at a time 
+        centroid = np.mean(features2d[all_labels == label], axis=0)
+        # annotate the centroid with the class label
+        plt.text(centroid[0], centroid[1], str(label), fontsize=12, fontweight='bold',
+                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D")
+    plt.colorbar(scatter, label='Class Label')
+    plt.show()
+
+plot_embedding_clusters(model_mlp_ae, dataloader_train, use_pca=False)
+# 
+# if we used embedding_dim=2 in our previous examples, we would get a drastically different image
+# try that and see the difference. 
+# TODO: note explain why tsne is a better choice here when our feature dim >2D
+# note that we use PCA, when we are dealing with linear relationships
+# which is not the case here (we are not doing a simple linear transformation here)
+# it would also tend to produce more overlapping clusters,(apposed to distinct/wellseparated ones)
+# when the data has complex, non-linear relationships (which is our case try use_pca=True))
+# because of this, tsne is the right choice here as its specifically designed 
+# for highdimensioal data. (it preserves local structures in high-dimensional data 
+# that is the relationships between nearby points is preserved
+# and it tries to keep points that are nearby in high-dimensional
+# space close together in the lower dimension (our 2D projection).
+# and its used extensively for visualizing clusters/groups in high dimensional data
+# (compared to pca, it produces more distinct and well-separated clusters 
+# in the 2D projection.
+# (also pca focuses on preserving global structures (i.e., the overall variance in the data).
+# and its less effective at preserving local relationships, which can make clusters less distinct
+# in the 2D projection.)
+
+# sidenote2: 
+# tsne hyperparameters like perplexity and learning rate, control 
+# the balance between preserving local and global structures.
+# so tuning them can improve the visualization.
+
 #%%
 # While our mlp model is more powerful than the previous model, it is not suitable for data such as images
 # for image like data, we use conv layers! and hence our new autoencoder is Convolutional AutoEncoder. 
@@ -729,6 +877,8 @@ view_images(imgs,labels)
 new_noise_free_imgs = model(imgs)
 view_images(new_noise_free_imgs,labels)
 #%%
+plot_embedding_clusters(model, dataloader_train, use_pca=False)
+#%%
 # sparse autoencoder: these kinds of autoencoders simply use a regularizer term so that
 # the features are more sparse! usually l1 loss is used! 
 #  In the previous examples, the representations were only constrained by the size of the
@@ -743,9 +893,11 @@ view_images(new_noise_free_imgs,labels)
 # lets create this regularizer now. 
 # We are going to create a Function object that applies
 # l1penalty we inherit from autograd.Function class for this.
-# good exlanation https://www.youtube.com/watch?v=7mRfwaGGAPg
+# good exlanation 
+# andrew ng standford classnotes 2011: https://web.stanford.edu/class/cs294a/sparseAutoencoder_2011new.pdf
+# a good video worth watching: https://www.youtube.com/watch?v=7mRfwaGGAPg
 
-import copy # sed for deep copy of our weights
+import copy # used for deep copy of our weights
 from torch.autograd import Function  # used for implementing l1_lenalty 
 class L1Penalty(Function):
     # we override the forward method with our own arguments (input, l1_weight)
@@ -798,38 +950,49 @@ class SparseAutoEncoder(nn.Module):
         super().__init__()
         self. tied_weights = tied_weights
 
-        self.encoder = nn.Sequential(nn.Linear(28*28, embeddingsize),
-                                    nn.Sigmoid())# or relu
+        self.encoder = nn.Sequential(nn.Flatten(),# instead of flattening the input in forward, we do it in encoder!
+                                     nn.Linear(28*28, embeddingsize),
+                                     nn.Sigmoid())# or relu
         self.decoder = nn.Sequential(nn.Linear(embeddingsize, 28*28),
-                                    nn.Sigmoid())
+                                     nn.Sigmoid())
         # you may see some people, use the shared weights between encoder
         # and decoder, i.e. decoder uses the transposed weightmatrix of the 
-        # encoder. for doing this  there are couple of ways. 
+        # encoder. for doing this  there are couple of ways.
         # one of way is to use the functional form and simply 
         # use one weight and its transpose like this 
         # weight = nn.Parameter(torch.rand(input_dim, output_dim))
-        # self.encoder = F.linear(input, weight, bias=False)
-        # self.decoder = F.linear(input, weight.t(), bias=False)
+        # self.encoder = F.linear(input, weight, bias=bias_param)
+        # self.decoder = F.linear(input, weight.t(), bias=bias_param2)
         # we can also simply define our new weight and assigne it to both modules
-        # this is not true, there is no sharing going on here! at all
+        # note that this nonfunction method is nuisanced! and you need to be aware
+        # of that. (see my explanations ahead)
         if self.tied_weights:
-            self.weights = nn.Parameter(torch.randn_like(self.encoder[0].weight))
+            self.weights = nn.Parameter(torch.randn_like(self.encoder[1].weight))
             # note we use .data, so we directly link the underlying storage
             # for encoder weight to our parameter storage. if we dont use .data
             # we'll get an error saying we have to use nn.Parameter()!
             # or we will have to use the functional form instead.
-            self.encoder[0].weight.data = self.weights
+            self.encoder[1].weight.data = self.weights
             # note that if we use id() we see they are different, 
             # however, this is expected as this is a just a view, 
             # not a new parameter, the actual underlying data is the same
             # and we can see this during training and after it
             # when we visualize the weights 
-            # see the explanation a head where I gave a dummy test to prove this!
+            # see the explanation ahead where I gave a more in depths explanation to ptove
+            # this!
             self.decoder[0].weight.data = self.weights.t()
             # print(f'{id(self.weights)=}\n{id(self.weights.t())=}')
-               
+    
+    # if we were to use the functional form
+    # we would have these instead of the linear modules
+    # def encoder(self, input):
+    #     return F.sigmoid(F.linear(input, weight=self.weights,bias=encoder_bias))
+    
+    # def decoder(self, input):
+    #     return F.sigmoid(F.linear(input, weight=self.weights.t(),bias=decoder_bias))
+    
     def forward(self, input, apply_gradient_constraint=False, l1_weight=0):
-        input = input.view(input.size(0), -1)
+        # input = input.view(input.size(0), -1) # replaced it with flatten in encoder
         output_enc = self.encoder(input)
         # we apply the L1penalty during forward pass
         # we have to do this in order for the altered gradients
@@ -848,15 +1011,12 @@ class SparseAutoEncoder(nn.Module):
 # sidenote/tldr:
 # both functional and nonfunctional forms share the weights and they both work
 # prefectly fine. however theres a catch here, in our nonfunctional method, we 
-# bypass pytorch's autograd system (gradient tracking), but as I explain later, this doesnt pose a
-# n issue for us in this case. but it causes some inconsitencies which are not desired
+# bypass pytorch's autograd system (gradient tracking), but as I explain later, 
+# this doesnt pose an issue for us in this case. 
+# but it causes some inconsitencies which are not desired
 # (such as wasted parameters). itd be safer to use functional form especially if 
 # we plan on working something more complex! see the explanation at the end
 # 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class SharedWeightsAE(nn.Module):
     def __init__(self, input_dim=4, embedding_dim=2):
         super().__init__()
@@ -866,18 +1026,18 @@ class SharedWeightsAE(nn.Module):
         self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
         # note we use .data to directly access the underlying storage and link
         # shared weight parameter's underlying storage with encoder/decoder's together
-        # note that, by doing this, we are bypassing pytorchs autograd system in
-        # tracking gradients, that is, pytorch will not be able to track gradients here
-        # but this doesnt pose an issue for us, as the grad property for each module will
+        # note that, by doing this, we are bypassing pytorchs autograd system ,
+        # and causes it not to be able to track this operation and therefor track
+        # the gradients. This will in-turn make the gradients for the shared_weight
+        # to be None!
+        # this however doesnt pose an issue for us, as the grad property for each module will
         # be populated properly during training (though the shared_weight wont have any gradients
         # for this reason, but since the underlying storage is linked, the changes will take
-        # place in the same storage and everything will be fine, 
-        # see my final explanation at the end)
+        # place in the same storage and everything will be fine, see my final explanation at the end)
         self.encoder.weight.data = self.shared_weight
         self.decoder.weight.data = self.shared_weight.t()
         
     def forward(self, x):
-        x = x.view(x.size(0), -1)
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return encoded, decoded
@@ -903,152 +1063,304 @@ class SharedWeightsAEFunctional(nn.Module):
         return F.linear(x, self.shared_weight.t(), self.decoder_bias)
 
     def forward(self, x):
-        x = x.view(x.size(0), -1)
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return encoded, decoded
 
-
 torch.manual_seed(5)
+def main(use_functional=True):
+    print('-'*40)
+    print(f"Using {'Functional' if use_functional else 'Non-Functional'} Form")
 
-use_functional=False
+    if use_functional:
+        model = SharedWeightsAEFunctional(input_dim=4, embedding_dim=2) 
+    else:
+        model = SharedWeightsAE(input_dim=4, embedding_dim=2)
 
-if use_functional:
-    model = SharedWeightsAEFunctional(input_dim=4, embedding_dim=2)
-else:
-    model = SharedWeightsAE(input_dim=4, embedding_dim=2)
-    
-# dummy data
-x = torch.randn(4, 1, 2, 2)
-# flatten it so we dont have to resize it back :d its a dummy test!
-x = x.view(x.size(0), -1)
+    # our input
+    x = torch.randn(3, 4)
 
-# forward pass
-encoded, decoded = model(x)
+    # forward pass
+    _, decoded = model(x)
 
-# lets check weight sharing before we directly update the weights
-print('before update:')
-if use_functional:
-    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
+    # lets check weight sharing before we directly update the weights
+    print('\nBefore update:')
+    encoders_weight = model.shared_weight if use_functional else model.encoder.weight
+    decoders_weight = model.shared_weight.t() if use_functional else model.decoder.weight
+    print(f'Encoders Weight:\n {encoders_weight.detach().numpy()}')
     # note that since transposing(calling .t()) creates a temporary view
-    # the id and values will be different (values are obviously different because its transposed!)
-    # so to show that the underlying data is indeed the same, we transpose it back!
-    # doesnt make much sense, when we are using the functional form though!
-    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
-else:
-    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
-    # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
-    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
-    
-# now lets update the shared weight directly!
-# this should reflect in both the encoder and decoder weights
-model.shared_weight.data += 1.0
-# model.encoder.weight.data += 1.0
-# model.decoder.weight.data += 1.0
+    # the id() will be different (values order are obviously different because
+    # the shape is different after transposing!) so to better show that the 
+    # underlying data is indeed the same, we transpose it back!
+    # to get the same view as the original shared_weight used by encoder
+    print(f'Decoders Weight(transposed):\n {decoders_weight.t().detach().numpy()}')
 
-print('\nafter the direct update:')
-if use_functional:
-    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
-    # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
-    # heres a nother check to make sure they all match!
-    assert torch.eq(model.shared_weight, model.shared_weight.t().t()).all(),'they must match!'
-else:
-    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
-    # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
-    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
-    # heres a nother check to make sure they all match!
-    assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
-    
-# to verify weight sharing we can check gradient accumulation
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-loss = F.mse_loss(decoded, x)
-loss.backward()
+    # now lets update the shared weight directly!
+    # this should reflect in both the encoder and decoder weights
+    model.shared_weight.data += 1.0
+    # model.encoder.weight.data += 1.0
+    # model.decoder.weight.data += 1.0
 
-print('\ngradients:')
-if use_functional:
-    print('shared weight gradients:', model.shared_weight.grad)
-else:
-    print('shared weight gradients:', model.shared_weight.grad)
-    print('shared weight encoder gradients:', model.encoder.weight.grad)
-    print('shared weight decoder gradients:', model.decoder.weight.grad)
+    print('\nAfter direct update:')
+    print(f'Encoders weight:\n {encoders_weight.detach().numpy()}')
+    print(f'Decoders weight(transposed):\n {decoders_weight.t().detach().numpy()}')
+    # Heres another check to make sure they all match!
+    assert torch.eq(encoders_weight, decoders_weight.t()).all(),'They must match!'
 
-# now lets take one step and see how the shared weights are affected
-# this shows us whether they are truly shared or not!
-optimizer.step()
+    # lets see how gradients are affected/properly accumulated
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    loss = F.mse_loss(decoded, x)
+    loss.backward()
 
-print('\nafter the optimizer update:')
-if use_functional:
-    print(f'encoders weight:\n {model.shared_weight.detach().numpy()}')
-    # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.shared_weight.t().t().detach().numpy()}')
-    # heres a nother check to make sure they all match!
-    assert torch.eq(model.shared_weight, model.shared_weight.t().t()).all(),'they must match!'
-else:
-    print(f'encoders weight:\n {model.encoder.weight.detach().numpy()}')
-    # same as before, double transpose to get the same view as the original shared_weight used by encoder
-    print(f'decoders weight(transposed):\n {model.decoder.weight.t().detach().numpy()}')
-    print(f'weight norms:\n{model.shared_weight.norm()}, {model.encoder.weight.norm()}, {model.decoder.weight.t().norm()}')    
-    # heres a nother check to make sure they all match!
-    assert torch.eq(model.encoder.weight, model.decoder.weight.t()).all(),'they must match!'
+    print('\nGradient check:')
+    # shared_weight only has grads when using functional form,
+    # in nonfunctional form its grads are None!
+    print(f'shared_weight Gradients:\n{model.shared_weight.grad}')
+    if not use_functional:
+        # in nonfunctional form, the gradients are accumulated properly for 
+        # respective parameters as they are part of linear layer and autograd
+        # system handles it normally
+        print(f'Encoder Gradients:\n{encoders_weight.grad}')
+        print(f'Decoder Gradients:\n{decoders_weight.grad.t()}')
+        
+    # now lets take one sgd step and see how the shared weights
+    # are affected. this shows us whether they are truly shared or not!
+    optimizer.step()
+
+    print('\nAfter the optimizer update:')
+    print(f'Encoders weight:\n {encoders_weight.detach().numpy()}')
+    print(f'Decoders weight(transposed):\n {decoders_weight.t().detach().numpy()}')
     
-# weight sharing: Parameter List Check
-print(f'\nmodel param count: {sum(p.numel() for p in model.parameters()):,}')
-for name,param in model.named_parameters():
-    print(f'{name}:{id(param)} {tuple(param.shape)}')
+    print(f'Weight Norms:')
+    print(f' shared_weight:   {model.shared_weight.norm()}')
+    print(f' encoders_weight: {encoders_weight.norm()}')
+    print(f' decoders_weight: {decoders_weight.t().norm()}')
     
+    # Heres another check to make sure they all match!
+    assert torch.eq(encoders_weight, decoders_weight.t()).all(),'They must match!'
+
+    # note the difference in param count between the two methods
+    # this is another of those nuisaunses we face when we bypass the autograd system!
+    print(f'\nmodel param count: {sum(p.numel() for p in model.parameters()):,}')
+    for name,param in model.named_parameters():
+        print(f'{name}:{id(param)} {tuple(param.shape)}')
+
+main(use_functional=True)
+main(use_functional=False)
+
 # ! edit
+# Ok! so to recap here
 # by doing self.encoder.weight.data = self.shared_weight directly we assign 
-# the storage of self.shared_weight to self.encoder.weight as a result
-# both self.encoder.weight and self.shared_weight reference the same underlying memory
-# so updates to one will reflect in the other.
-# the same applies to self.decoder.weight and self.shared_weight.t() (.t() just creates
-# a temporary view, the underlying stoage is the same hence why they are linked properly!)
-# Pytorchs autograd system doesnt see/track the manual .data assignment,
-# however, this doesnt pose any issues as gradients are computed independently 
-# for self.encoder.weight and self.decoder.weight during backpropagation.
+# the storage of self.shared_weight to self.encoder.weight and as a result
+# both self.encoder.weight and self.shared_weight reference the same 
+# underlying memory so updates to one will reflect in the other aswell.
+# the same rule applies to our decoder's weight (self.decoder.weight) 
+# and self.shared_weight.t() (.t() just creates a temporary view, 
+# the underlying stoage is the same hence why theres no issue in using transposing in our .data trick!)
+# we saw that by doing so Pytorchs autograd system doesnt see/track this manual
+# .data assignment, and therefore wont be able to do certain things properly like before
+# like tracking these manual operations involved and their gradients however,
+# this doesnt pose any issues as gradients are computed independently 
+# for self.encoder.weight and self.decoder.weight during backpropagation(because they are
+# part of linear module, and autograd system knows them and properly does its job there).
 # self.shared_weight.grad remains None though because self.shared_weight 
 # isnt directly part of the computation graph anymore (because of .data assignment we did)
 # but the encoder and decoder gradients accumulate correctly in self.encoder.weight.grad
 # and self.decoder.weight.grad anyway since they are tracked as parameters of their 
 # respective layers.
-# another sign of weights being shared is that, the encoder, decoder, and shared weight 
-# norms match because their storage is shared.
+# we also used another check to make sure the weights were shared
+# which was the encoder, decoder, and shared weight norms match because
+# their storage is shared.
 # updates to any one of these will reflect in the others.
-# when optimizer.step() is called, the optimizer updates self.encoder.weight and 
-# self.decoder.weight using their respective gradients. 
-# since these weights share the same storage as self.shared_weight, the shared weight 
-# is implicitly updated as well.
+# (when optimizer.step() is called, the optimizer updates self.encoder.weight and 
+# self.decoder.weight using their respective gradients. since these weights share 
+# the same storage as self.shared_weight, the shared weight is implicitly updated as well.)
 # 
-# so using .data to share weights allows for value synchronization but bypasses 
-# the autograd system, leading to:
+# recap of recap!:d
+# so using .data to share weights allows value synchronization but in doing so bypasses 
+# the autograd system, which leads to:
 # gradients not being computed for self.shared_weight.
-# independent gradients for self.encoder.weight and self.decoder.weight.
+# unlike functional form, we will have independent gradients for self.encoder.weight and
+# self.decoder.weight.
 # 
-# In this setup, gradients for self.shared_weight are effectively distributed between
+# this way, gradients for self.shared_weight are effectively distributed between
 # self.encoder.weight.grad and self.decoder.weight.grad.
-# If we need gradients for self.shared_weight, we should use the functional form or 
+# If we need gradients for self.shared_weight, we use the functional form or 
 # explicitly ensure self.shared_weight is part of the computation graph.
-# Avoid .data Assignment for Weight Sharing:
-# as it can lead to non-intuitive behaviors, especially in more complex setups.
+# all things said, itd be better to basically try to avoid .data assignment trick 
+# for weight sharing beucase it can lead to weird behaviors, especially in more 
+# complex architectures
 #%%
+# Todo: 
+# !edit make this short, and move the full explanation to after the code
+# so it doesnt clutter the whole thing!
+# also theres a lot of repition and this really needs to be addressed!
 
-def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
+# now lets get back to what we were doing and write the loss function.
+# but before we commit to that, we need to understand there are two types of sparsity
+# when it comes to implementation details.  
+# its either sparsity on parameters(weights) or sparsity on representations(activations)
+#  
+# each of these types serve different purposes and are achieved differently
+# sparsity on parameters (parameter/weight sparsity) as the name suggests targets
+# the weights of the network and aims to set many of the wights to exactly zero. 
+# this is done by using L1 regularization as an additional penalty term 
+# alongside the reconstruction loss (e.g. MSE loss) in our loss function.
+# L1 regurlarization term penalizes the absolute values of the weights and
+# makes the network try to favor more important features, and make other 
+# less important ones to go towards zero during training.
+# 
+# sidenote1:
+# we also have sparsity on activation where instead of weights, we use activations values,
+# while some of the effects can overlap, they are not the same, and their goals 
+# and mechanisms differ.
+# we will see this in a moment when we talk about sparsity on representation(more explanation in a moment)  
+
+# this will result in a model with fewer effective connections which help 
+# the model to generalize better by focusing only on the important
+# features instead of memorizing everything. it also helps save memory since 
+# fewer weights need to be stored, and will also reduce computation overhead
+# becasue fewer weights need calculations.
+# it also makes the model more interpretable because a sparse model is obviously
+# simpler now and naturally focuses on the most important connections, making it
+# easier to identify which features or patterns(relationships/connections) the 
+# model relies on. 
+# 
+#!edit sidenote2: 
+# This is why, we can say, in many cases sparsity effectively performs implicit 
+# feature selection. (by eliminating irrelevant or redundant features. (e.g. weights connected to unimportant
+# input features may be pruned, which highlights the critical variables that influence 
+# the models predictions.)
+
+# therefore parameter sparsity is very useful for things like model compression,
+# where we want our models to be light and efficient.
+# (also visualizing and analyzing the learned relationships/weight connections will
+# be much better/easier as there are fewer interactions to analyze,
+# which makes its also useful from the interpretability and analysis of the model point of view
+# (give example about llm usgae (like https://transformer-circuits.pub/2024/scaling-monosemanticity/)))
+# 
+# sparsity on representation (or sparse representation/activation) on the other hand,
+# aims to make sure only a small number of neurons in the hidden layers are active for
+# a given input.
+# like the previous method, this is also done by adding an extra term for sparsity constraint
+# to the loss function. 
+# this term is usually based on KL divergence and tries to keep the activations low on average(
+# each neuron only fire for a subset of inputs. more explanation later on).
+# this is done to force the network to focus on capturing the most important features 
+# while ignoring redundant stuff.
+# 
+# sidenote 4:
+# note that neurons with sparse activations usually end up having weights that are 
+# specialized for certain inputs or patterns, but this doesnt necessarily mean 
+# the weights themselves are sparse. for example, a single neuron may very well 
+# have dense weights (i.e. non-zero connections to many input features) but activate 
+# only for specific patterns in the input.) so sparsity of activations doesnt necessarily
+# mean sparsity in weights (although we might see some sparsity there, but its a sideeffect
+# not the explicit /direct/intentional effect of this type of sparsity)
+# 
+# this kind of sparsity therefore is useful for tasks like dimensionality
+# reduction, feature extraction, or unsupervised learning when we are trying to learn
+# compact and meaningful representations.
+
+# !todo remove 
+# sidenote : (from andrewng's standford classnotes on sparse autoencoders 2011)
+# ...we will think of a neuron as being "active" (or as "firing")
+# if its output value is close to 1, or as being "inactive" if its output value is
+# close to 0. We would like to constrain the neurons to be inactive most of the
+# time)
+# 
+# the sparse Autoencoder proposed by Andrew NG() 
+# is able to learn a sparse representation and it is well known that l1 regularization
+# encourages sparsity on parameters.
+
+#
+# ok to recap what we have just covered:
+# in sparsity on activations the goal is to make the neuron activations sparse, 
+# ensuring that only a small subset of neurons in a layer are active (i.e., non-zero)
+# for a given input.
+# This is achieved by adding a sparsity term like KL divergence to the
+# loss function, which encourages neurons to have low average activation
+# (which using sigmoid means fire only for a few samples in the batch (explained more in detail ahead!)).
+# 
+# Neurons with sparse activations often end up with weights that are specialized
+# for certain inputs or patterns, but this doesn’t necessarily mean the weights 
+# themselves are sparse.for example, a single neuron may have dense weights 
+# (non-zero connections to many input features) but activate only for specific 
+# patterns in the input.
+#
+# in sparsity on parameters however, the goal is to directly make the weights sparse,
+# setting many of them to exactly zero(or very close to zero making them practically inactive(i.e. zero!)), 
+# regardless of the activations.
+# This is achieved by explicitly penalizing the absolute values of weights (using L1 regularization).
+# furthermore, sparse weights can indirectly lead to sparse activations because if many 
+# connections are pruned (set to zero), the input to some neurons will also 
+# reduce. However, this is not guaranteed nor is it the primary goal of sparsity on parameters.
+# their primary goal is to lead to fewer effective connections in the model.
+#
+# moreover, sparsity on activations targets the outputs (neurons' responses), 
+# while sparsity on parameters targets the weights (connections).
+# Sparsity on activations may result in some weights becoming redundant 
+# (effectively sparse), but it doesn't explicitly enforce this while 
+# sparsity on parameters directly enforces zero weights but may or may not result in
+# sparse activations.
+#
+# sparsity on activations helps in learning compact, meaningful representations, 
+# especially useful in dimensionality reduction and feature extraction tasks.
+# sparsity on parameters on the other hand reduces model size, computational cost, 
+# and memory usage, making it suitable for resource-constrained environments like 
+# mobile or edge devices.
+# though today we have other means to make models suitable for such environments, 
+# post trainig quantizations and pruning are two examples we will also cover in a 
+# later chapter inshaallah)
+#
+# can sparsity on activations imply sparsity on parameters?
+# sometimes yes it does. in cases where the sparsity on activations heavily 
+# constrains the neurons, weights connected to consistently inactive neurons 
+# may become unnecessary and could be pruned or driven to zero. 
+# This can lead to sparsity in parameters as a secondary effect.
+# its worth reiterating that this is not always the case and sparse activations 
+# may still use dense weights, especially when those weights are necessary to 
+# achieve selective neuron activation.
+# therefore while sparsity on activations and sparsity on parameters can influence 
+# each other, they are quite different and are used to achieve different goals.
+
+# TODO summarize our explanation - its too long!!! 
+
+# now that we know a bit about how this works, lets implement these cases here 
+# we will be implementing both the sparsity on parameter and activations. 
+# using l1 regurlarization,  gradient sparsity and we also implement kl divergence
+# version as well which should give us the best result
+
+#TODO this is ugly as hell, use proper keywords, and better merge this with the actual
+# architecture (model) so we dont have seaprate bits and pieces scattered all over!
+
+# we need model to access its parameters as well, so we add model as parameter here
+def sparse_loss_function(model, outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
     """
     penalty_type : 
-    0: sparsity on activations 
-    1: sparsity using l1 penalty using gradient enforcemet
-    2: sparsity using kl divergence
+    0: sparsity on parameter
+    1: sparsity on activations 
+    2: sparsity using l1 penalty using gradient enforcemet
+    3: sparsity using kl divergence
     """
+    
+    # in all losses we have the basic reconstruction loss, for sparsity
+    # we add an additional term.
     criterion = nn.MSELoss()
     reconstruction_loss = criterion(reconstructed_imgs, imgs)
+    
+    if penalty_type == 0: # sparsity on parameter
+        # we enforce a constrain on the model weights/parameters
+        # we add all the trainable parameters magnitudes 
+        parameters_sum = sum(torch.sum(torch.abs(p)) for p in model.parameters() if p.requires_grad)
+        # we can normalize the result so the number of parameters doesnt
+        # skew our result (our choice of lambda/Beta)
+        # param_count = sum(p.numel() for p in model.parameters())
+        sparsity_loss = parameters_sum #/param_count
+        # print(f'{reconstruction_loss:.6f} {sparsity_loss=:.6f} {parameters_sum}')
+        return reconstruction_loss + (Beta*sparsity_loss)
 
-    if penalty_type == 0:
-        sparsity_loss = torch.mean(abs(outputs_enc))
-        return reconstruction_loss + sparsity_loss
-    elif penalty_type == 1:
+    elif penalty_type == 1: # sparsity on parameter-using gradient enforcement
         # apply the l1penalty on the weights of our encoder
         # through added term in backpropagation during forward pass
         # here we simply grab the reconstruction loss
@@ -1056,47 +1368,118 @@ def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, 
         # gradients = torch.autograd.grad(outputs_enc.sum(), model.encoder[0].weight, create_graph=True)[0]
         # print(f'{output.shape=}') # (128,400)
         return reconstruction_loss
-    else:
-        # use kl divergence, calculate ro^ which is the
-        # mean of activations in our hidden layer in which
-        # we want sparsity
-        # the idea here is that each neurons activation should be sparse
-        # that means, its values need to be zero or close to zero. now 
-        # how do we do that? we set a threshold, we call it ro and set it
-        # to a value e.g. 0.05 and then check the mean of each neurons 
-        # activations, and call it ro_hat, we compare our ro_hat against
-        # our threshold which is ro! then we penalize all neurons that 
-        # their ro_hat is larger than the threshold. but how do we compare 
-        # them? we use kl divergence. why? we can model two distributions (bernolli)
-        # being p and q with the probability of success ro and ro_hat respectively
-        # the idea is, to ensure the predicted distribution is as close to the 
-        # actual one and we can model this with kl divergence
+    
+    elif penalty_type == 2: # sparsity on activation
+        sparsity_loss = torch.mean(abs(outputs_enc))
+        return reconstruction_loss + sparsity_loss
+    
+    elif penalty_type == 3:# sparsity on representation/activation
+        # for this loss we need to use KL divergence, and
+        # calculate what we refer to here as ro^ (ro_hat) which is the
+        # mean of activations in our hidden layer (in fact any layer we want sparsity to be
+        # enabeled/enforced) and then compare it with a threshold and if its larger than that we penalize the neurons.
+        # basically the idea here is that each neuron's activation should be sparse (that is 
+        # the activation values need to be close to zero most of the time, but not always(obviously!) and only a few of them be active)
+        # this makes/encourages the model to learn and detect more distinct and meaningful features in our traing data.
+        # and it goes like this, we first specify a sparsity level/threshold, 
+        # which we call ro(ρ) (we choose this threshold (e.g 0.05 to specify 
+        # the ratio of sparsity) and it represents the ideal probability of a neuron
+        # being active (non-zero). that is we like our neurons to be active 5% of the 
+        # times(or 5% of the inputs in ourbatch) and for the remaining 95% of the inputs, 
+        # its output should be close to zero.
+        #
+        # (sidenote: 
+        # when we say a neuron is active, we mean that the neuron's output (after the activation function, 
+        # i.e sigmoid in our case) is significantly greater than zero.
+        # in other words, the neuron is firing (values close to 1) and
+        # contributing to the learning process for a particular input. 
+        # by setting ro to 0.05, we are basically saying that, on average, each neuron 
+        # should be active for only 5% of the inputs or in other words, it should average 
+        # to 0.05 across all inputs in the batch which. 
+        # (note that averging to 0.05 and being active for 5% of neurons can only be synomous if 
+        # two assumptions hold here. first our activation function outputs near-zero values for 
+        # most inputs and second, the non-zero activations are significantly larger and sparse (e.g. sigmoid values near 1, by sparse we mean they are few here as the rest are nearly zero! when we have few activations near 1, then by defnition its sparse!).
+        # only then the mean (0.05) aligns with the proportion of inputs for which the 
+        # neuron is active. 
+        # (again think about it this way, if the neurons activation in our batch
+        # averages to be around 0.05, it means the absolute majority of its activations have been really
+        # tiny (near zero), but a few of them had very large values (close to 1) that averaging them all 
+        # resulted in 0.05. if we consider sigmoid here, which outputs 0-1, and can be treated as a probability
+        # then we can also say, our neuron here, was active for 5% of the inputs in our batch, hopefully
+        # this is clear now!) 
+        # this encourages the neuron to be selective in its responses, firing strongly for specific inputs
+        # while remaining close to zero for most others.
+        #
+        # sidenote2: 
+        # what if instead of sigmoid we used something liek relu(an unbounded activation 
+        # function that doesnt result in probablities)
+        # what happens then? as we know in relu, activations are non-negative and unbounded (0 to infinity)
+        # in this case, ρ/ro no longer represents a probability but instead it reflects 
+        # the desired average activation magnitude across all inputs in the batch.
+        # for example, if we set ρ(ro)=0.05, it means the neuron should output values 
+        # whose mean is around 0.05, even though individual activations might vary 
+        # greatly (some large, some small, many zeros). the sparsity constraint still 
+        # works similarly and it encourages most activations to be small or zero,
+        # while occasionally allowing higher values.
+        # in practice, however, KL divergence is more naturally suited to bounded, 
+        # probabilistic outputs (i.e. when we are dealing with probablities and hence using sigmoid/softamx outputs)
+        # for other cases, we use other methods for indirectly enforcing sparsity on weights
+        # which we covered before (like l1 regularization).
         #  
+        # next, we calculate the actual mean activation of each neuron across 
+        # the batch. we call this ro_hat (ρ̂).
+        # the idea is to compare ro_hat to our target ro. if ro_hat deviates 
+        # from ro, we apply a penalty. neurons with ro_hat much larger than ro 
+        # are overactive and need to be penalized to push their activations 
+        # closer to the target sparsity. 
+        # but how do we compare ro_hat and ro? this is where KL divergence comes in. 
+        # KL divergence measures the difference between two probability distributions
+        # we treat ro as the "true" distribution and ro_hat as the "predicted" 
+        # distribution. we want to minimize the KL divergence between them to 
+        # ensure that ro_hat is as close to ro as possible.
+        # notice ro_hat is a scalar since torch.mean reduces all elements to a single value
         ro_hat = torch.mean(outputs_enc).to(imgs.device)
-        ro = torch.ones_like(ro_hat).to(imgs.device) * l1_weight
+        # ro is also a scaler, or a weight/threshold
+        # previously I had done # ro = torch.ones_like(ro_hat).to(imgs.device) * l1_weight
+        # which was unnecessary as ro_hat was a scaler all along!
+        ro = l1_weight
         # ro and ro_hat must be probablities, what we have now is just logits
         # so we use softmax to turn our logits into probabilties
         # remember our activation function must be sigmoid 
         # print(ro.shape, ro_hat.shape)
-        
+        # now that we have ro and ro_hat as probabilities, 
+        # we calculate the KL divergence between them.
+        # remember, the KL divergence for Bernoulli distributions is defined as:
+        # KL(p || q) = p * log(p / q) + (1 - p) * log((1 - p) / (1 - q))
+        # where p is ro and q is ro_hat. this tells us how "far" ro_hat 
+        # is from ro. ideally, we want this value to be as small as possible.
+        # note that we need to sum up the KL divergence across all neurons, as we want 
+        # the overall sparsity penalty for the layer, not just for individual neurons.
         kl = torch.sum(ro * torch.log(ro / ro_hat) +
                       (1 - ro) * torch.log((1 - ro) / (1 - ro_hat)))
+        # this sparsity penalty can now be added to the total loss,
+        # alongside the reconstruction loss
+        # this ensures that the network not only learns its primary task but also 
+        # maintains sparsity in the hidden layer.
         return reconstruction_loss + (Beta * kl)
-
-
+    else:
+        raise Exception(f'Unknown penalty type ({penalty_type}) entered!')
+    
 #%%
-
+# now lets train!
 epochs = 20
 # penalty_type = 0
 # ro 0.01 ~ 0.05 or l1_weight 
 # for gradient based constrained the ratio
-# needs to be small for our example around 0.0001
-sparsity_ratio = 0.01
-loss_type = 2
-tied_weights = 1
+# needs to be small for our example around 0.0001~1e-4
+sparsity_ratio = 1e-4
+loss_type = 3
+tied_weights = True
 # at the end read the Cyclical Annealing Schedule section to get a very good idea about
 # how you can achieve better result and why!
-Beta = 1
+# for sparsity on parameters lambda = 1e-6 (loss=0)
+# for sparsity on representation(kl divergance) 2
+Beta = 1e-6
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sae_model = SparseAutoEncoder(embeddingsize=400,                             
                               tied_weights=tied_weights).to(device)
@@ -1104,11 +1487,11 @@ optimizer = torch.optim.Adam(sae_model.parameters(), lr = 0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10) 
 
 print(sae_model)
-print(f'param count: {sum(p.numel() for p in model.parameters()):,}')
+print(f'param count: {sum(p.numel() for p in sae_model.parameters()):,}')
 # lets save the weights of our encoder and decoders before we train them 
 # and then compare them with the new weights after training and see how
 # they changed!
-init_weights_encoder = copy.deepcopy(sae_model.encoder[0].weight.data) 
+init_weights_encoder = copy.deepcopy(sae_model.encoder[1].weight.data) 
 init_weights_decoder = copy.deepcopy(sae_model.decoder[0].weight.data)
 imgs_list =[]
 # now lets start training!
@@ -1118,7 +1501,8 @@ for e in range(epochs):
         output_enc, rec_imgs = sae_model(imgs,
                                          apply_gradient_constraint=(loss_type==1),
                                          l1_weight=sparsity_ratio)
-        loss = sparse_loss_function(output_enc, 
+        loss = sparse_loss_function(sae_model,
+                                    output_enc,
                                     rec_imgs, 
                                     imgs, 
                                     penalty_type=loss_type,
@@ -1126,14 +1510,6 @@ for e in range(epochs):
                                     Beta=Beta)
         optimizer.zero_grad()
         loss.backward()
-        # Inspect the gradients
-        # print("Weight gradients (shared):")
-        # This should be non-zero and aggregate contributions from both encoder and decoder
-        # print(f'{model.weights.grad=}')
-        # print(f'{model.encoder.weight.grad=}')
-        # print(f'{model.decoder.weight.grad=}')
-        
-        
         optimizer.step()
     print(f'epoch: {e}/{epochs} loss: {loss.item():.6f} lr = {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
@@ -1142,7 +1518,53 @@ for e in range(epochs):
     # result we get
     imgs_list.append((imgs[0],rec_imgs[0]))
 #%%
-# now lets first visualize the image/reconstruction pairs and how they look : 
+plot_embedding_clusters(sae_model, dataloader_train, use_pca=False)
+#%%
+# note that using tied weights we get a better result and much lower loss, as this acts as a regularizer on
+# its own which is not the case when weights are independant and require more trainig/regularization
+# also note that the parameter count is not decreased even though we are using shared weights
+# this is another nuasce of the nonfunctional method where autograd system is bypassed!
+# 
+# now lets see how sparse our weights have become
+# to calculate this we can simply get the number of zero weights
+# and divide them by the total number of weights!
+def calculate_sparsity(model, tolerance=1e-5):
+    # total parameter count
+    total_weights_cnt = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # treat values within our tolerence as zero
+    # (i.e. values too close to zero are treated as zero)
+    # we do this because of floating point number funkiness! (we dont get exact matches)
+    zero_weights_cnt = sum(torch.sum(torch.abs(param) < tolerance).item() for param in model.parameters())
+    sparsity_percentage = (zero_weights_cnt / total_weights_cnt) * 100
+    return sparsity_percentage
+
+# to make it a bit more detailed, lets show them in a layerwise fashion
+def display_layer_wise_sparsity(model, tolerance=1e-5):
+    for name, module in model.named_children():
+        sparsity_precentage = (calculate_sparsity(module, tolerance))
+        print(f'Layer {name}: Sparsity: {sparsity_precentage:.4f}%')
+
+tolerance=1e-4
+sparsity_precentage = calculate_sparsity(sae_model, tolerance)
+print(f'sparsity_precentage={sparsity_precentage:.6f}')
+display_layer_wise_sparsity(sae_model,tolerance)
+
+# now lets first visualize the sparsity, image/reconstruction pairs and how they look : 
+# lets simply show a histogram of our models weights this should give us a good idea 
+# about how sparse the weights have become  
+def plot_weight_distribution(model):
+    all_weights = list(p.detach().cpu().numpy().flatten() 
+                       for p in model.parameters() 
+                       if p.requires_grad)    
+    all_weights = np.concatenate(all_weights)
+    plt.hist(all_weights, bins=100, range=(-0.4, 0.4))
+    plt.title("Weight Distribution")
+    plt.xlabel("Weight Value")
+    plt.ylabel("Frequency")
+    plt.show()
+
+plot_weight_distribution(sae_model)
+#%%
 def visualize(imgs_list, rows=5, cols=10):
     fig = plt.figure(figsize=(15,2))
     plt.subplots_adjust(wspace=0,hspace=0)
@@ -1163,29 +1585,143 @@ visualize(imgs_list)
 # we had the initial weights saved so lets subtract them
 # from the trained one and see the diffs , it will show us
 # where the changes happened 
+#%%
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 
-def visualize_grid(imgs, rows=20, cols=20):
-    fig = plt.figure(figsize=(20, 20))
+# def visualize_grid(imgs, label, rows=20, cols=20):
+#     fig = plt.figure(figsize=(10, 10))
+#     imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+#     plt.title(label)
+#     for i in range(imgs.shape[0]):
+#         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
+#         img = imgs[i]
+#         # normalize to 0-1 range
+#         # Add small epsilon to avoid division by zero
+#         img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
+#         # print(f'{img.min()=:.4f} {img.max()=:.4f}')
+#         ax.imshow(img, cmap='Greys_r')
+# 
+# lets make it a bit better and add a colorbar so 
+# we can make out the color values
+def visualize_grid(imgs, label, rows=20, cols=20):
+    fig = plt.figure(figsize=(10, 10))
     imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
-    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.title(label)
+    # normalize the colorbar scales based on the image min/max values
+    # since we need to work with 1 min/max we use the global min/max
+    # but here we inidividually normalize the images int 0-1 so we
+    # we can ignore this
+    # global_min = np.min(imgs)
+    # global_max = np.max(imgs)
+    # norm = Normalize(vmin=global_min, vmax=global_max)
     for i in range(imgs.shape[0]):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
-        ax.imshow(imgs[i], cmap='Greys_r')
+        img = imgs[i]
+        # normalize to 0-1 range (already normalized globally using `norm`)
+        # if we were to use the global min/max we would do 
+        # img = norm(img)
+        # but now we do this like before
+        img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
+        ax.imshow(img, cmap='gray')
+
+    # Add a single color bar to the right side (left, bottom, width, height)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  
+    # we would have used norm, here if we used the global norm, but since we didnt
+    # we can simply use None!
+    cbar = plt.colorbar(ScalarMappable(norm=None, cmap='gray'), cax=cbar_ax)
+    cbar.set_label('Pixel Value Range')  # Label for the color bar
+    plt.subplots_adjust(wspace=0.0, hspace=0.0, right=0.9)  # Adjust space to fit color bar
+    plt.show()
+
+# we could combine all images and get a final image, everything stays the same!
+def visualize_grid0(imgs, label, rows=20, cols=20, normalize=True):
+    # normalize the images
+    imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+    # we add a + 1e-8 so in case we have 0 in the denominator, we dont face any errors
+    imgs = [(img - img.min()) / (img.max() - img.min() + 1e-8) for img in imgs]
+    # combine all the images into a single big image
+    height, width = imgs[0].shape[:2]
+    
+    # the placeholder for our larger image which contains all our images
+    big_img = np.zeros((height * rows, width * cols), dtype=np.float32)
+    for idx, img in enumerate(imgs):
+        if idx >= rows * cols:
+            break
+        row, col = divmod(idx, cols)
+        big_img[row * height:(row + 1) * height, col * width:(col + 1) * width] = img
+
+    # plot the image
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(1, 1, 1, xticks=[], yticks=[])
+    ax.imshow(big_img, cmap='gray')
+    ax.set_title(label)
+    # images are already normalized so no need for a normalizer here
+    # sidenote: 
+    # the colormap Greys is not the same as gray!
+    # using the gray colormap (cmap='gray'), by default maps 
+    # lower intensity values (0) to black and higher intensity values (1) to white.
+    # In Greys, the color mapping is reversed, with lower intensity values (0) mapped
+    # to white and higher intensity values (1) mapped to black.
+    # when using the outcome may look the same, but the interpertation differs)
+    cbar = plt.colorbar(ScalarMappable(norm=None, cmap='gray'), ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Pixel intensity (Normalized)' if normalize else 'Pixel Intensity')
 
 
-def visualize_grid2(imgs, label, normalize=True):
+# we can also do this using opencv and can easily see the pixel values
+# by zooming in!(press q to close the current image window and see the next ones)
+import cv2
+def visualize_grid_cv2(imgs, label, rows=20, cols=20):
+    # normalize the images
+    imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+    imgs = [(img - img.min()) / (img.max() - img.min() + 1e-8) for img in imgs]
+    # combine all the images into a single large image
+    height, width = imgs[0].shape[:2]
+    big_img = np.zeros((height * rows, width * cols), dtype=np.float32)
+    for idx, img in enumerate(imgs):
+        if idx >= rows * cols:
+            break
+        row, col = divmod(idx, cols)
+        big_img[row * height:(row + 1) * height, col * width:(col + 1) * width] = img
+
+    # convert to 0-255 (uint8)
+    big_img = (big_img * 255).astype(np.uint8)
+    
+    cv2.imshow(label, big_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# and finally we could have also used pytorch's makegrid to do the same thing
+# note that the image is different because of the way the images are normalized
+# in pytorch using global normalization, ie. unlike what we have done so far,
+# it first combines the images, creating a big image, and then normalizes that
+# big image with the min/max of it which is the min and max among all images
+# this is obviously different than normalizing each image individually using its onw
+# min/max lvaues. 
+def visualize_grid0(imgs, label, normalize=True):
     fig = plt.figure(figsize=(10, 10))
     imgs = imgs.cpu()  
     plt.subplots_adjust(wspace=0, hspace=0)
-    x = torchvision.utils.make_grid(
+    
+    img_grid = torchvision.utils.make_grid(
         imgs, nrow=20, normalize=normalize).numpy().transpose(1, 2, 0)
+    # print(img_grid.min(), img_grid.max())
+    # normalize the colorbar scales based on the image min/max values
+    if normalize:
+        norm = Normalize(vmin=0, vmax=1)
+    else:
+        norm = Normalize(vmin=img_grid.min(), vmax=img_grid.max())
+        
     ax = fig.add_subplot(1, 1, 1, xticks=[], yticks=[])
-    ax.imshow(x)
+    ax.imshow(img_grid,'gray')
     ax.set_title(label)
+    
+    cbar = plt.colorbar(ScalarMappable(norm=norm, cmap='gray'), ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Pixel intensity (Normalized)' if normalize else 'Pixel Intensity')
 
-trained_W_encoder = sae_model.encoder[0].weight.data.cpu().clone().reshape(sae_model.encoder[0].out_features, 1, 28, 28)
+trained_W_encoder = sae_model.encoder[1].weight.data.cpu().clone().reshape(sae_model.encoder[1].out_features, 1, 28, 28)
 trained_W_decoder = sae_model.decoder[0].weight.data.cpu().clone().reshape(sae_model.decoder[0].in_features, 1, 28, 28)
-init_weights_encoder = init_weights_encoder.reshape(sae_model.encoder[0].out_features, 1, 28, 28).cpu()
+init_weights_encoder = init_weights_encoder.reshape(sae_model.encoder[1].out_features, 1, 28, 28).cpu()
 init_weights_decoder = init_weights_decoder.reshape(sae_model.decoder[0].in_features, 1, 28, 28).cpu()
 
 w_diff_encoder = init_weights_encoder - trained_W_encoder
@@ -1195,52 +1731,57 @@ w_decoders_transposed = sae_model.decoder[0].weight.data.cpu().clone().t()
 
 # in order to see that decoders weight is infact the same as
 # encoders, lets transpose it again and reshape it.
-# here I show both the encoders, weight and our decoders weight
+# here I show both the encoders weight and our decoders weight
 # transposed! 
 print(f'{trained_W_encoder.shape=}')
 print(f'{w_decoders_transposed.shape=}')
-w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[0].out_features, 1, 28, 28)
+w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[1].out_features, 1, 28, 28)
 # note that the decoder weights (in terms of original data) will be smoothed encoders weights
 # (also in terms of original data)
 # info from : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
 # end of the page, in the ppt slide image
 
 print(f'{init_weights_encoder.shape=}')
-visualize_grid2(init_weights_encoder, 'Initial weights')
-visualize_grid2(trained_W_encoder, 'Trained weights(Encoder)')
-# visualize_grid2(w_diff_encoder, 'weights diff (Encoder)')
-visualize_grid2(trained_W_decoder,'Trained Weights (Decoder)')
-visualize_grid2(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
-# the black shows negative values, and white show positive values
-# and the gray shows zero values.
+visualize_grid(init_weights_encoder, 'Initial weights')
+visualize_grid(trained_W_encoder, 'Trained weights(Encoder)')
+visualize_grid(w_diff_encoder, 'weights diff (Encoder)')
+visualize_grid(trained_W_decoder,'Trained Weights (Decoder)')
+visualize_grid(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
+# after normalization, the white spots denote 1/255, and black areas denote 0 (close to 0)
+# anything in between (i.e. gray) shows the numbers in between.
+# (if unnormalized the black shows negative values, and white show positive values
+# and the gray shows zero values.)
 # we start from a high positive and high negative values in our initial
 # weights. and then after training and imposing sparsity we can see that
 # we are mostly seeing gray colors which indicate the values are zero!
-# and that is what we were after!
+# and that is what we were after!(unnormalized visualization)
 # if you look at the w_diff, you can see that there are lots of high and
 # low (negative) values as well. this is becsaue  in order to make the
 # weights have more reasonable weights, they had to be decreased/increased
-#%% 
+#%%
+#! edit choose different types and see which one gives us the best pretraiing result
+#! this should give us a better intuition as which one is best for this if we had the right intuition before(explanation in loss section)
+# 
 # the cool thing about autoencoders are that we can use them to pretrain
 # our weights on our data and then use that for classification or etc. 
 # this was actually done a lot back in the day until 2014/2015. 
 # in that era, the use of xavier initialization algorithm accompanied by 
 # batchnormalization killed the need for pretraining in this way. but lets 
-# see how we can do this if the needs be. 
+# see how we can do this if the needs be.
 # its simple, just like finetuning, we may add/remove the layers we want
 # here we will remove the decoder part and instead add a classifier
-# lets remove the decoder 
+# lets remove the decoder
 layers_before_decoder = list(sae_model.children())[:-1]
 sae_model2 = nn.Sequential(*layers_before_decoder)
 # since we created a sequential model here, we should add a new module
-# using add_module. because if we simplt do sth like : 
+# using add_module. because if we simplt do sth like:
 # sae_model2.classifier = nn.Linear(sae_model2[0].out_features, 10)
-# classifier will be just an attribute, and for the forward pass we 
-# need to do sth like 
+# classifier will be just an attribute, and for the forward pass we
+# need to do sth like
 # output=sae_model2.forward(input)
 # output = sae_model2.classifier(output)
-# so this is not ideal at all. therefore we do : 
-sae_model2.add_module('classifier', nn.Linear(sae_model2[0][0].out_features, 10))
+# so this is not ideal at all. therefore we do:
+sae_model2.add_module('classifier', nn.Linear(sae_model2[0][1].out_features, 10))
 print(sae_model2)
 #%% now that we have our model built lets run trainng and pay attention
 # what is the first accuracy we get
@@ -1265,59 +1806,604 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
     acc = acc/len(dataloader_train)
-    print(f'epoch: ({e}/{epochs}) acc: {acc*100:.4f} loss: {loss.item():.6f} lr: {scheduler.get_lr():.6f}')
+    print(f'epoch: ({e}/{epochs}) acc: {acc*100:.4f} loss: {loss.item():.6f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 
 # now you can try it without running the autoencoder training and 
 # see how it performs.
-# Important note : 
-# There is a difference between sparsity on parameter and sparsity on representation.
-# Sparse Autoencoder proposed by Andrew NG is able to learn a sparse representation 
-# and it is well known that l1 regularization encourages sparsity on parameters.
-# They are different lets explain this in more detail!
+# without pretraining (i.e. trainig sparseautoencoder first)
+# this is what we get:
+# epoch: (0/20) acc: 70.3653 loss: 0.887669 lr: 0.100000
+# epoch: (1/20) acc: 79.6976 loss: 0.591737 lr: 0.100000
+# epoch: (2/20) acc: 82.3894 loss: 0.516348 lr: 0.100000
+# epoch: (3/20) acc: 84.0965 loss: 0.648719 lr: 0.100000
+# epoch: (4/20) acc: 85.3295 loss: 0.411724 lr: 0.100000
+# epoch: (5/20) acc: 85.9312 loss: 0.439958 lr: 0.001000
+# epoch: (6/20) acc: 86.0341 loss: 0.512782 lr: 0.010000
+# epoch: (7/20) acc: 86.1232 loss: 0.448194 lr: 0.010000
+# epoch: (8/20) acc: 86.2333 loss: 0.557446 lr: 0.010000
+# epoch: (9/20) acc: 86.3046 loss: 0.428177 lr: 0.010000
+# epoch: (10/20) acc: 86.3592 loss: 0.440234 lr: 0.000100
+# epoch: (11/20) acc: 86.3648 loss: 0.394169 lr: 0.001000
+# epoch: (12/20) acc: 86.3776 loss: 0.358289 lr: 0.001000
+# epoch: (13/20) acc: 86.3904 loss: 0.359354 lr: 0.001000
+# epoch: (14/20) acc: 86.3877 loss: 0.469507 lr: 0.001000
+# epoch: (15/20) acc: 86.3971 loss: 0.460794 lr: 0.000010
+# epoch: (16/20) acc: 86.3977 loss: 0.474029 lr: 0.000100
+# epoch: (17/20) acc: 86.4016 loss: 0.335743 lr: 0.000100
+# epoch: (18/20) acc: 86.4005 loss: 0.519619 lr: 0.000100
+# epoch: (19/20) acc: 86.4055 loss: 0.347018 lr: 0.000100
+# but if we first trained our sparseautoencoder and then ran the classification
+# we would get 
+# epoch: (0/20) acc: 87.8931 loss: 0.334116 lr: 0.100000
+# epoch: (1/20) acc: 90.2050 loss: 0.276905 lr: 0.100000
+# epoch: (2/20) acc: 91.3398 loss: 0.350305 lr: 0.100000
+# epoch: (3/20) acc: 92.1424 loss: 0.247515 lr: 0.100000
+# epoch: (4/20) acc: 92.6760 loss: 0.159887 lr: 0.100000
+# epoch: (5/20) acc: 92.9753 loss: 0.202914 lr: 0.001000
+# epoch: (6/20) acc: 93.0326 loss: 0.191703 lr: 0.010000
+# epoch: (7/20) acc: 93.1244 loss: 0.269451 lr: 0.010000
+# epoch: (8/20) acc: 93.1579 loss: 0.239176 lr: 0.010000
+# epoch: (9/20) acc: 93.2074 loss: 0.252368 lr: 0.010000
+# epoch: (10/20) acc: 93.2336 loss: 0.353381 lr: 0.000100
+# epoch: (11/20) acc: 93.2353 loss: 0.301774 lr: 0.001000
+# epoch: (12/20) acc: 93.2347 loss: 0.390216 lr: 0.001000
+# epoch: (13/20) acc: 93.2347 loss: 0.303082 lr: 0.001000
+# epoch: (14/20) acc: 93.2336 loss: 0.321064 lr: 0.001000
+# epoch: (15/20) acc: 93.2375 loss: 0.203758 lr: 0.000010
+# epoch: (16/20) acc: 93.2370 loss: 0.294605 lr: 0.000100
+# epoch: (17/20) acc: 93.2347 loss: 0.250669 lr: 0.000100
+# epoch: (18/20) acc: 93.2364 loss: 0.270309 lr: 0.000100
+# epoch: (19/20) acc: 93.2370 loss: 0.173221 lr: 0.000100
+# not only we started with a much higher accuracy(~20% higher), 
+# we also achieved higher accuracy at the end.obviously we used
+# the bareminimum, using better architecture, better training regime
+# the results can get better.
 
-# Notes: 
-# For imposing the sparsity constraint instead of l1 norm, we can
-# also use KL divergance the principle is the same, where we took 
-# the average of the activations at each layer that we want their 
-# weights to be sparse, this time we calculate
-# the kl-loss  which is like this : 
-# def kl_divergence(p, p_hat):
-#     funcs = nn.Sigmoid()
-#     p_hat = torch.mean(funcs(p_hat), 1)
-#     p_tensor = torch.Tensor([p] * len(p_hat)).to(device)
-#     return torch.sum(p_tensor * torch.log(p_tensor) - p_tensor * torch.log(p_hat) + (1 - p_tensor) * torch.log(1 - p_tensor) - (1 - p_tensor) * torch.log(1 - p_hat))
 
 # finally  this was a simple autoencoder, we can have several layers
 # and also you can use batchnormalization, etc for your deep autoencoders as well
-
+# needless to say, from coding prespective we have a horrible code base
+# which can be improved a lot! but for now it suffices as we were after the
+# core concepts of the autoencoders for a real world scenario we take our time
+# and code properly so it is maintainable and easy to understand and follow!
+# !TODO: refactor codes, and make them more presentable while keeping it simple
 
 #%%
-# -VAE (Variational Autoencoders) 
-# -Creating MNIST Like digits 
+# -VAE (Variational Autoencoders)
+# -Creating MNIST Like digits
 # -The Reparametrization Trick
-# Variational Autoencoders (VAEs) have one fundamentally unique property that 
-# separates them from vanilla autoencoders, and it is this property that makes
-# them so useful for generative modeling: their latent spaces are, by design,
-# continuous, allowing easy random sampling and interpolation.
 
-# It achieves this by doing something that seems rather surprising at first: 
-# making its encoder not output an encoding vector of size n, rather, outputting
-# two vectors of size n: a vector of means, μ, and another vector of standard
-# deviations, σ
-# They form the parameters of a vector of random variables of length n, with 
-# the i-th element of μ and σ being the mean and standard deviation of the i-th
-# random variable, X_i, from which we sample, to obtain the sampled encoding 
-# which we pass onward to the decoder:
-# This stochastic generation means, that even for the same input, while the mean
-# and standard deviations remain the same, the actual encoding will somewhat vary
-# on every single pass simply due to sampling.
+
+# intori shoro konim
+# I guess if we started the introduction with intuitions it would be better
+# When talking about VAEs, we come accross two view points.
+# (there are two common themes when you search for vae explantions)
+# one that involves the underlying differences between VAEs and other types of autoencoders, 
+# and the other, a somewhat higher level view point which is more involved 
+# in terms of how it works from distribution point of view. 
+# I'll be explaining these two common view points, and hopefully at the end
+# we will have an in-depth and rigiours understanding of VAE fundamentals and their inner workings
+# this should give us a much better understanding that should come in handy later in 
+# our researches. 
+# 
+# TLDR:
+# vae is different with conventional autoencoders in that, the encoder does not create
+# a single latent vector representation, instead, it creates two vectors. one for mean
+# and another for standard deviation. the decoder creates the latent vector z from these
+# two vectors, by sampling using them. and then uses this vector to reconstruct the input
+# simply put, the encoder creates different mean/stds for each class by which we can generate
+# samples similar to said classes. moreimportantly, because of the way VAE is built, its
+# possible to go from one class to another in a gradual manner, which means we can actually
+# have new variations in input that does not exist in the dataset explicitly.
+# 
+# now having this said, lets elaborate on this in depth. 
+# 
+# In depth explanation: 
+# VAEs, clustering of latent representation/spaces? 
+# initially we wanted to create random images just like the ones in our datasets
+# this was usually to create synthetic data for training purposes, 
+# or extracting somewhat meaningful features or pretraining our model before doing
+# the actual training (back in the day most of the time as training was very hard 
+# due to vanishing/exploding gradient issues at the time, its still the ccase as 
+# well especially in llm domain! though)
+# a bit later we found that, creating random data(images mostly at first) isnt 
+# really that attractive, and we can actually do much more and much better, 
+# for one, people started experimenting with controling the generation process 
+# and attemping to create all sorts of things!
+# this becomes especially useful/important if we can change or alter the data we 
+# already have!
+# for example, imagine adding beard to your image, retouch it, see how you look with
+# glasses on, etc all sorts of things, as you can imagine, this is a lot more useful,
+# and has a lot of real-world applications.
+# VAEs and the likes (conditional VAEs, other types of generative models) have 
+# come for this goal!(sort of!)
+
+#!EDIT  
+# what does make VAE especial you may ask? 
+# so far we have implemented and trained different types of autoencoders, regardless of their
+# main differences, (sparse/denoising/etc) one thing that they had in common was that
+# when we look closer at their latent representations, we notice the encoder latent representation
+# (encodings) formed distinctly clustered subspaces for each class. 
+# if you think about it, this makes prefect sense, as distinct encodings for each image 
+# type(or any data really) makes it much easier for the decoder to decode them.
+# and it also aligns very well with our goal of replicating the same images.
+# However, when we decide to build a generative model, where we want to create
+# different variations of the same image class or data, we dont just want to generate
+# the same image we find in our dataset. 
+# 
+# 
+# we want to be able to generate variations on an input image, variations from the whole 
+# dataset, that does not explicitly show up in one image! 
+# it would be great if we could, combine different features from different classes, 
+# and still have a pretty realistic outcome. this means from a technical prespective,
+# to be able to move smoothly in the latent space, and be able to sample from anypart of it. 
+# sampling like this means, we could generate completely novel images that
+# dont exist explicitly in our dataset, depending on where we sample from in our latent
+# space, between which clusters.
+# 
+# our latent space therefore needs to be continuous otherwise, if it has
+# gaps between clusters or in other words, discontinuities, and we try to generate a 
+# variation from there part, the decoder will simply generate an unrealistic output, 
+# because it does not have any idea how to deal with that region of the latent space. 
+# during training, it never saw encoded vectors coming from that region of latent space.
+# this is why having a 'continuous' latent space is crucial here. 
+# in fact this is what that differntiates VAEs from conventional autoencoders
+# (basically any generative model for that matter).
+
+# To address this issue, VAEs offer an intersting solution, instead of mapping inputs to
+# fixed points in the latent space (like traditional autoencoders),
+# they map inputs to probability distributions! specifically, a Gaussian/Normal distribution.
+# This way they ensure the latent space is continuous and smooth, without any gaps or discontinuities.
+# As a result, when we randomly sample from the latent space, the decoder can generate 
+# realistic outputs, even for points it has not explicitly seen during training. 
+# This is because the decoder has learned to generalize across the entire latent space, 
+# rather than just memorizing specific points.
+#
+# The actual process is very simple for the most part, during training, the encoder 
+# doesnt just output a single latent vector, instead, it predicts two vectors, the 
+# mean(μ) and standard deviation(σ) of a Gaussian distribution for each input.
+# The latent representation vector z, is then sampled from this distribution.(in practice however we need 
+# to use a process called the reparameterization trick to get around a technical detail 
+# we will be getting into in a moment other than that this is pretty much it!).
+# This ensures that the latent space is smooth and continuous, as each point in the 
+# latent space corresponds to a valid potential data point.
+# 
+# sidenote: (edit)
+# This sampling process (also refered to as stochastic generation by some reasearchers)
+# means, the actual encoding will be different slightly at each forward pass,
+# even for the same input, with the same mean and standard deviation, hence the name!
+# we see the implication of this and why this is desirable for us in a moment)
+#  
+# this regulariziation allows VAEs to have meaningful interpolation
+# and sampling. for example, if we move smoothly between two points in the latent space,
+# the generated output transitions naturally between the two corresponding data points
+# also randomly sampling points from the latent space produces realistic variations,
+# as every region of the space has been trained during the models learning process 
+# (this works even if the combination of some attributes does not exist in our dataset
+# explicitly, infact this is the actual case here, this is what we were after all along!).
+# 
+# This regularization effect is achieved using a KL divergence loss, which encourages the
+# learned latent distributions to remain close to a standard Gaussian prior (i.e., 
+# a standard normal distribution). (informally speaking, this means the latent variables 
+# cluster around the center of the space (around 0), resembling the properties of a 
+# standard normal distribution.)
+# 
+# (why? see the explanation in implementation below)
+# This ensures latent space is wellorganized and nearby points in the latent space 
+# correspond to similar outputs. This not only avoids gaps in the latent space but also
+# encourages the model to generalize better when generating new data.
+#
+# sidenote- second prespective ():
+# lets see from another prespective, why does this makes sense
+# why would we want to have a distribution instead of a fixed point, what do we get by doing it?
+# lets make this more tangible by an example. 
+# remember we said we want to be able to control variations in our input data? 
+# like we want to make for example a person smile, or we want to add a mustache to 
+# someones face. having a distribution instead of a simple fixed point allows us to 
+# have different smiles, different mustaches and not just a single one.
+# like mona lisa is also smiling, a kid is also smiling, they are clearly different smiles
+# so a distibution for smile, would allow us to sample different samples of smiles for the
+# lack of a better word. and for our mustache example, we can specify different kinds of mustaches
+# small, big, fancy, etc and this applies to just everything and the great thing about it is, 
+# there does not have to be an explicit image in our dataset for it! imagine mona lisa with a mustache!
+# the mustache is in the dataset, there are many images of men having mustaches of different kinds
+# but no mona lisa! or imagine glasses, hats, beard, etc! you get the point. 
+# this happens because, as we previously mentioned, the latent space is smooth and continuous and 
+# the decoder has also learned to generalize across the entire latent space, instead of just memorizing
+# specific points in said latent space. add these to the fact that each point in the 
+# latent space also corresponds to a valid potential data point, and you get the ability to roam that sapce
+# and sample from it! all forms of variations can be achieved using this, gradually moving from one thing
+# in one subspace toward another thing(subspace), and yet have a somewhat sensible output is what this gives us!
+# now back to the main point: 
+
+
+
+# I find jeremy's phenamonal writeup on vaes to be especially great: 
+# ref https://www.jeremyjordan.me/variational-autoencoders/
+#
+# so a second summary: 
+# our encoder recieves the input and produces two vectors
+# one for mean and another for std(in fact it creates log variance which we
+# then convert to standard deviation to then use for sampling, so technically
+# speaking it creates mu and logvar in the network).
+# a normal autoencoder, creates a set of atttibutes 
+# in its final representation vector(e.g attributes or features describing
+# concepts such as, eye, smile, beard, gender, has glasses etc) in 
+# an input image of faces.
+# ideally the autoencoder would learn descriptive attributes 
+# of the input(in the case of faces this may be skin color, whether or not the person
+# is wearing glasses, is female, etc) to describe an observation(i.e. input image)
+# in some compressed representation.
+# 
+# for example a vector could be like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
+# in this example, the input image is described in terms of its latent attributes,
+# each of which being described by a 'single value'.
+#
+# (sidennote:(edit maybe its better if I add them as footnote?! or atleast some of these sidenotes are btter off as footnotes?!)
+# in reality, however, we can not rely on this intuition that a single feature directly
+# describes a single feature in the input, most often, its the combinations of several features
+# that specifies the existence of a certain feature in the input data, but for the sake of explanation
+# imagine this is the case so we can convey the idea behind it)
+# 
+# However, this may not reflect the variety/dynamic range of our input properly(this may be very limiting), 
+# because the compression by nature limits the amount of attributes we can encode. 
+# to get a broader range, we would need to have a larger number of attributes, and that would mean less 
+# compression, and in turn less desired output, soon we will be standing on a fork, 
+# to what extend can we compress and what features(diversity) can we have. do we use smaller number of attibutes and be limted?
+# or use a larger number and face more training issues(issues, talk about? edit)?
+# therefore we may prefer to represent each latent attribute as a 'range of possible values' instead of simply a single one.
+# this would relax the previous limitation, as it can now encode a broader range of variation/retain dynamicity?!
+# while the number of attributes per say would remain intact!/unchanged!
+#
+# For instance, suppose we want to assign a value for the smile attribute for the image of mona lisa,
+# what 'single value' should we assign to reflect her smile? its there, but at the same time its very underdefined
+# if we were to use attributes that indicate the existance of a feature in input, her smile would expectedly
+# get a small value, and be treated as non existant)
+# hence why having a range of values would be very benificial to us where we can describe different types of an attribute (here smile e.g.). 
+# we can achieve this by using probabilistic terms in our work.
+# 
+# the mean and variance that we produce in a vae encoder, is used exactly for this very reason
+# using them, we are learning a distrubution for each attribute and thus mu and variance
+# specify a range of values for each attribute.
+# 
+# [With this approach, we'll now be able to represent each latent attribute for a given input 
+# as a probability distribution. when decoding from the latent representation we'll randomly sample
+# from each latent attribute distribution to generate a vector as input for our decoder.]
+# !edit(excessive or misplaced?)
+# thats why later on, we use these means, variances(actually std) along with an epsilon(act as a random variable)
+# to reconstruct the input image. 
+# 
+# this simply means by producing probablity distribution for each latent attribute, "we're essentially/practically 
+# enforcing a continuous, smooth latent space representation."
+# This means we can now rightfully expect the decoder to be able to accuractly reconstruct the input
+# by sampling from the latent distributions.
+# which in turn means, that the values that are close to eachother, (nearby to one another) in latent space
+# should correspond with very similar reconstructions.(should result in similar reconstructions)
+# 
+# this is assisted/achieved/is made possible by using the mean and variance. 
+# the mean controls where the encoding (value) for an input should be centered around, while
+# the standard deviation controls/specifies the (valid) area (of change) around it, i.e. how much from/how far from the mean the encoding can vary 
+# sampling using mean and variance(actually std) is akin to randomly generating the encodings inside the circle (distribution)
+# which causes the decoder to learn that not only a single point in the latent space 
+# refers to a sample of a calss, but also all nearby points (all the points close to it) do as well!
+# not only this allows the decodeer to decode single, specific encodings in the latent space (which means leaving the decodable
+# latent space discontinuous) but also the ones that slightly vary too(i.e. the ones close to it), 
+# as the decoder is exposed to a range of variations of the encoding of the same input during training.(each time we feedforward a specific sample,
+# the sampling process introduces a slightly different value using the same mu,std (it wont be the same number) although the sample is the same.)
+# This exposes the model to a certain degree of local variations, resulting in a smooth latent space
+# locally(i.e. on a local scale), (that is for similar samples).
+#
+# (jeremy jordan puts this very well:
+# Intuitively, the mean vector controls where the encoding of an input should be 
+# centered around, while the standard deviation controls the “area”, how much from 
+# the mean the encoding can vary. 
+# As encodings are generated at random from anywhere inside the “circle” (the distribution), 
+# the decoder learns that not only is a single point in latent space referring to a sample of that class, 
+# but all nearby points refer to the same as well
+# This allows the decoder to not just decode single, specific encodings in the 
+# latent space (leaving the decodable latent space discontinuous), but ones that 
+# slightly vary too, as the decoder is exposed to a range of variations of the
+# encoding of the same input during training.
+# The model is now exposed to a certain degree of local variation by varying the 
+# encoding of one sample, resulting in smooth latent spaces on a local scale, that is,
+# for similar samples.)
+# 
+# aside from that/moreover, we'd also want overlap between samples that are not very similar aswell, 
+# in order to interpolate between classes.
+# !edit test this without kl and see if this is the case 
+#! edit check we should use std or variance 
+# However, since by default there is no limit/constraint enforcing mean(μ) and std(σ) vectors 
+# to have specific values, the encoder can learn to generate different means μ for different classes, 
+# clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
+# vary much for the same sample (which translates to less uncertainty for the decoder and thus easier decoding). 
+# This allows the decoder to efficiently/easily reconstruct the training data.
+# This is not desirable, as we discussed before. we want the encodings to be as close as 
+# possible yet be still distinct, allowing smooth interpolation between them, creation of new samples.
+# 
+# Therefore in order to prevent this, we introduce the Kullback–Leibler divergence 
+# (KL divergence) and use it in the loss function. The KL divergence measures
+# measures how much two probablity distributions diverge(differ) from each other.
+# !edit
+# Minimizing the KL divergence [loss] means the probability distribution
+# parameters (μ and σ) need to closely resemble that of the target distribution(i.e. original input data).
+# that is they need to be as close as possible (basically resemeble/match? the original data)
+# 
+# from a visualization point of view, (if we try to visualize the encodings spaces we see) it encourages
+# the encoder to distribute all encodings (for all types of inputs,), evenly 
+# around the center of the latent space(this makes the encodings to be distributed evenly around the center of latent space (visually speaking)).
+# the encoder will therefore be penalized when/if it tries to cluster them apart into specific regions, 
+# away from the origin.
+# 
+# However, in practice, with this change, the decoder will have a very hard time to come to good reconstruction
+# if any, simply because the encodings are now simply densely placed randomly, near the center of the latent space, 
+# with little to no regard for similarity among nearby encodings.
+# to the decoder, this simply doesnt make much sense! based on our previous intuitions, nearby points in latent space
+# sh should resemble similar inputs, but now, after such enforcement, they are being place at random places! where they have no bussiness being!)
+# !edit
+# therefore, we use another term in our loss function to circumvent/to get rid of/address this issue. 
+# the reconstruction loss, like standard autoencoders will be made of both the MSE loss(similarity) 
+# and the kl loss (constraining term). this results in [the generation of] a latent space that 
+# address both of our concerns and fullfills them both(edit!), 
+# maintaining the similarity of nearby encodings locally (on the local scale) by clustering,
+# and yet globally, densely packing them near the latent space origin (see visualization).
+# 
+# this is the equilibrium reached by the cluster-forming nature of the
+# reconstruction loss, and the dense packing nature of the KL loss, forming distinct
+# clusters the decoder can decode. 
+# This is great, as it means when randomly generating, if we sample a vector from 
+# the same prior distribution of the encoded vectors, N(0, I),(natural images have normal distribution (unit normal distribution? applies to them as well)) 
+# the decoder will successfully decode it. And if we're interpolating, there are 
+# no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
+
+
+
+############################
+    # recap:
+    # our encoder(denoted as qθ(z∣x)) will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
+    # using these two parameters, we sample our z representation vector(latent vector)
+    # which will be used by the decoder to reconstruct the input.
+    # 
+    # sidenote:
+    # you may see phrases such as "The lower-dimensional space is stochastic" or 
+    # "the latent representation is stochastic", these and similar phrases 
+    # simply refer to the fact that that the representation in the
+    # lower-dimensional space(z) is not deterministic or fixed as we already discussed
+    # instead, it involves randomness/uncertainty because its modeled probabilistically.
+    # our encoder doesnt directly output z it outputs the parameters of the probability
+    # distribution qθ(z∣x) which we then use to sample from to produce the latent vector z 
+    # hence the phrase stochastic, because sampling is involved and it changes each time
+    # (it changes each time even for the same input!)
+    #
+
+    # new edit:
+    # The decoder (denoted as pϕ(x∣z)) will take a latent vector z,
+    # sampled using the mean (mu) and standard deviation (std) from the previous step (encoder's output).
+    # The decoder output is the parameters of the probability distribution of the reconstructed data.
+    # that is, the decoder outputs parameters (i.e. probabilities) for each pixel in the image.
+    # to make this more intuitive and easier to understand, consider the MNIST dataset
+    # as an example. MNIST images are grayscale(.i.e. balck and white), and each pixel
+    # is represented as a value between 0 and 1. 
+    # the probability distribution of a single pixel can then be modeled as a bernoulli
+    # distribution. (becasue we have two outcomes (its either 0 or 1))
+    # furthermore, MNIST images are 28x28x1, meaning each image has 784 pixels in total, which
+    # translates to an input dimensionality of 28x28x1 = 784.
+    # The decoder takes the latent representation z as input and ultimately outputs a vector 
+    # of size 784. This vector represents 784 bernoulli parameters, one for each pixel in the image.
+    # simply put, the decoder 'decodes' the numbers in vector z into 784 numbers between 0 
+    # and 1 in the output, where each number corresponds to the probability of a pixel being 
+    # "on" (1) or "off" (0).
+
+    # sidenote:
+    # The information from the original input (784-dimensional vector in our case) can not be
+    # perfectly preserved, because the decoder only has access to a compressed summary of the
+    # original data represented as the lower-dimensional vector z.
+    # This lossy compression expectedly leads to some loss of details (depending on the amount
+    # of compression of course), as z is designed to only capture the most essential features 
+    # of the input and discard the less important/ less critical ones.
+    # Therefore the quality of this representation depends on how well the encoder-decoder
+    # pair is trained to balance reconstruction accuracy with the constraints of the 
+    # lower-dimensional space (i.e the right choice for the amount of compression (size of vector z,
+    # as too few parameters may very well be insufficient to yield the desired output)
+    # 
+    # sidenote2:
+    # we can measure the quality of the reconstruction process and see how well
+    # our model is doing by using the log-likelihood logpϕ(x∣z), which quantifies how well
+    # the decoder has learned to map the latent representation z back to the original input x. (use latent vector z instead?)
+    # The units of logpϕ(x∣z) are nats(its measure of information content).
+    # Higher values mean the reconstructed data closely matches the original, signifying 
+    # the decoder is capturing the underlying structure of the data effectively.
+    # in the same fashion, the lower values imply more information is lost during
+    # the compression and reconstruction process.
+    # 
+    # sidenote3:
+    # technically speaking, logpϕ(x∣z) measures how probable the original data x is under 
+    # the distribution parameterized by the decoder, given z.
+    # Nats are the natural logarithmic unit of information content, 
+    # commonly used in probabilistic models to quantify log-likelihoods.
+    # Higher log-likelihood means the decoder effectively captures the structure of 
+    # x from z while lower values indicates greater reconstruction loss.
+
+
+    # sidenote4:
+    # note that in this approach we assume the features in the latent space are independent, 
+    # that is, each dimension of z(each feature) contributes independently to the decoded 
+    # output. this way, we are effectively reducing our model complexity (i.e. the complexity
+    # of modeling the relationships between features) and no more need to model complex
+    # relationships between each feature. this simplifies the whole process of sampling 
+    # and reconstruction as we will see in a moment)
+    # 
+    # it should be obvious/its a given that his assumption may not fully capture the true structure 
+    # of the data but its a practical trade-off we are willing to pay in order to have 
+    # much better computational efficiency in training the decoder.
+    # without this we have to face a huge computation burden and a complex sampling process. 
+    # 
+    # why do we need this simplification? 
+    # lets see what happens if we do not use this simplification.
+    # Technically speaking, what we are doing here, is assuming a diagonal covariance 
+    # matrix in a multivariate Gaussian distribution(that is features are independent of each other hence diagonal values and everything else is 0)
+    # 
+    # This assumption impacts both the computational costs involved and how sampling is done in 2 ways:
+    # First a full covariance matrix in an n-dimensional multivariate Gaussian distribution 
+    # has n^2 elements, because it includes both variances (n diagonal elements) and covariances 
+    # (n(n-1)/2 off-diagonal elements). 
+    # without the simplification, the encoder would need to estimate all n^2 parameters
+    # of the covariance matrix, which includes variances and covariances.
+    # however, with the simplification, only n parameters (the variances) need to be learned 
+    # because covariances are assumbed to be zeros.
+    # this dramatically reduces the number of parameters the model has to 
+    # estimate, especially for high dimensional data (take our MNIST example e.g. with
+    # latent dimensions n=50 vs n^2=2500 parameters).
+    # 
+    # moreover, the multivariate Gaussian's log-likelihood involves the inverse of the covariance matrix(i.e.the term 1/Sigma).
+    # computing the inverse of a `nxn` covariance matrix has a computational complexity 
+    # of O(n^3) while for our simplifed case (a diagonal covariance matrix), it is trivial,
+    # its just O(n) (we just need to take the reciprocal of each diagonal element).
+    # 
+    # second, and more importantly, sampling from a general multivariate Gaussian requires decomposing 
+    # the covariance matrix to generate correlated samples. this decomposition operation is also O(n^3).
+    # for our simplified case however, no decomposition is needed, as the features(dimensions) are independent. 
+    # sampling is also as simple as generating univariate Gaussian samples for each dimension,
+    # which is O(n).
+    # 
+    # sidenote:
+    # to be more specific, to generate a sample from a general multivariate Gaussian, 
+    # the covariance matrix Sigma is used to create correlations between dimensions.
+    # that is after generating uncorrelated Gaussian samples, they are transformed 
+    # into correlated samples using the decomposition result.
+    # 
+    # while for our simple case, since each dimension of z is modeled as an independent
+    # Gaussian distribution with its own mean mu_i and variance sigma_i^2 sampling is as simple as:
+    # generating a sample from N(mu_i, sigma_i^2) independently for each dimension i. 
+    # since theres no correlation between dimensions, no additional transformations 
+    # are needed.
+    # 
+    # Why is this useful in Variational Autoencoders (VAEs)?
+    # so to cut a long story short, it boils down to 
+    # learning fewer parameters and easier sampling .
+    # its fewer parameters because (only mu and diagonal Sigma is used)(less work for forward/backward passes)
+    # and it avoids overfitting by simplifying the model, especially when working with limited data.
+    # and easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector, derived from 
+    # diagonal variances).
+    # and sampling from N(mu, sigma^2) is done directly.
+    # 
+    #  
+    # sidenote:
+    # reminder univariate vs multivariate gaussian distribution 
+    # "multivariate" in multivariate gaussian distribution means the distribution
+    # involves more than one variable (or feature)
+    # it generalizes the concept of a univariate Gaussian distribution (which is a
+    # normal distribution with a single variable) to cases where there are 
+    # multiple variables that may or may not be correlated.
+    # in mathematical terms, a multivariate Gaussian distribution for n-dimensional
+    # data is defined by a mean vector and a covariance matrix(sigma).
+    # the mean vector (mu) is an n-dimensional vector, where each element represents
+    # the mean of one variable.
+    # the covariance matrix (Sigma) is an nxn matrix, where the diagonal elements (Sigma_{ii})
+    # represent the variance of each variable and the off-diagonal elements (Sigma_{ij}) 
+    # represent the covariance between pairs of variables.
+    # 
+    # a uivariate Gaussian distribution on the other hand, is simply a normal distribution 
+    # with a single variable.
+    # its defined by a single mu(mean) and a single sigma^2 (variance).(σ^2)
+    # while a multivariate Gaussian distribution is a distribution with two or more variables.
+    # and its defined by a mean 'vector' mu and a covariance 'matrix' Sigma.
+    # 
+    # for a multivariate Gaussian, the number of dimensions corresponds to the 
+    # number of variables/features. (that is for example, a 2D Gaussian involves
+    # two variables and has a 2x2 covariance matrix, a 3D Gaussian involves three 
+    # variables and has a 3x3 covariance matrix and so on)
+    # 
+    # moreover, The covariance matrix Sigma determines how the variables are correlated
+    # If Sigma is diagonal, the variables are uncorrelated (no covariance).
+    # If Sigma has non-zero off-diagonal elements, the variables are correlated.
+    # 
+    # The shape of the probability density function depends on the covariance matrix,
+    # in 2D, if the variables are uncorrelated (diagonal covariance matrix),
+    # the contours of the distribution are circular or elliptical.
+    # If the variables are correlated, the contours are tilted ellipses.
+    #
+    # Univariate Gaussian:A distribution of a single variable x.
+    # p(x) = (1/sqrt(2*pi*sigma^2))*exp(-((x-mu)^2)/(2*sigma^2))
+    # 
+    # Multivariate Gaussian (2D case):
+    # p(x) = (1/((2*pi)^(n/2)*|Sigma|^(1/2)))*exp(-0.5*(x-mu)^T * Sigma^(-1) * (x-mu))
+    # Here, x is a vector (e.g., [x1, x2]), mu is the mean vector (e.g., [mu1, mu2]),
+    # and Sigma is the covariance matrix.
+    
+    # recap:
+    # the term "multivariate" in "multivariate Gaussian distribution" means that the
+    # distribution models more than one variable.
+    # it describes both the individual behavior of each variable (via the mean vector mu)
+    # and their relationships (via the covariance matrix Sigma).
+
+    # In simpler terms:
+    # in a typical multivariate Gaussian distribution, we would need to define both variances
+    # and covariances (how different features are related to each other).
+    # However, by assuming the features are independent (diagonal covariance matrix), we only
+    # need to define the variances of each feature, which simplifies the model significantly.
+    # The decoder samples from this simplified Gaussian distribution and uses the latent vector
+    # to generate a reconstruction of the input data.
+    # Why is this assumption useful?
+    # Using a diagonal covariance matrix (i.e., independent features)
+    # reduces the complexity of the model. We don't need to estimate the covariances between 
+    # features, which would require more parameters and computation.
+    # also assuming independence between features makes the latent space easier to interpret, 
+    # as each dimension of the latent vector corresponds to an independent
+    # variable.
+    # This assumption is common in practice, (especially in VAEs) because
+    # it allows for easier training and implementation while still capturing useful underlying 
+    # structure in the data.
+    
+    # As we briefly pointed out before, this sampling process wont work as is, and it 
+    # requires a clever trick to work as expected.
+    # When training the model, we need to be able to calculate the relationship 
+    # of each parameter in the network with respect to the final output loss using backpropagation. 
+    # 
+    # However, we simply can not do this for a "random sampling process". (not that we cant, we absolutly can,
+    # but it doesnt calculate what we want! which is computing an estimate of the derivative!)
+    # this is where we have to use the previously mentioned trick, commonly known as reparametrization trick
+    # its selfexplanetory once you get the idea behind it:d,
+    # basically it says that we randomly sample ε from a unit Gaussian, and then shift the 
+    # randomly sampled ε by the latent distribution's mean μ and scale it by the 
+    # latent distribution's variance σ, which is effectively the same as using our initial mean and variance,
+    # with the exception now, that, the epsilon itself is treated as a mere input (identity) and wont need backprogapation
+    # (the same way you dont backpropagate to the input images) and the mu,variances will be treated as paramaters
+    # and will be correctly incorporated into the computational graph and backpropagated properly. hence the name re-parameter-ziation. got it?)
+    #
+    # With this reparameterization, we can now optimize the parameters of the distribution
+    # while still maintaining the ability to randomly sample from that distribution.
+    # as to why this doesnt give us the proper estimate, think of it as the difference betweeen
+    # stochastic gradient descent vs gradient decent, the stochastic part referts to the mini batches,
+    # instead of the full training set as one batch, which each of them(mini batches) give an estimate
+    # of the actual gradients, so if the estimate of these mini batches are not close, as we continue,
+    # we get further away from the actual direction of the changes and fail to converge.
+    # kingma argues that, this is why this change, makes the model to have the right estimate
+    # for mu/variances (more on this later)
+
+##############################
+
+
+
+
+#!edit
+# use manifold for \visualization stuff' in the explanation(see my pytorch example pr link)
+# 
+#! edit add note to use BCE for reconstruction loss instead of MSE as it has better performance
+# especially for larger datasets
+#
+# points to do : 
+# 1.draw a 2d manifold for simple uatoencoder output
+# and point out the issues use these 3 lines as headsup
+# 3. cover the Visualization of latent space in jeremyjordan notes 
+#  
+
 # read more  : https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
 # There are other resouces for this as well. its highly recommened to read them: 
 # https://www.jeremyjordan.me/variational-autoencoders/
 # https://jaan.io/what-is-variational-autoencoder-vae-tutorial/
-# https://www.youtube.com/watch?v=uaaqyVS9-rM
+# https://www.youtube.com/watch?v=uaaqyVS9-rM 
 # http://blog.shakirm.com/2015/10/machine-learning-trick-of-the-day-4-reparameterisation-tricks/
 # https://www.reddit.com/r/MLQuestions/comments/dl7mya/a_few_more_questions_about_vaes/
 
@@ -1325,7 +2411,7 @@ for e in range(epochs):
 # leverage VAEs in that domain as well. for now lets see how we can implement this
 # for vision domain. i.e. on mnist dataset
 
-# note: 
+# note: (jeremyjordans blog:)
 # For variational autoencoders, the encoder model is sometimes referred to as
 # the 'recognition model' whereas the decoder model is sometimes referred to as 
 # the 'generative model'.
@@ -1333,163 +2419,248 @@ for e in range(epochs):
 # if you havent read the links I gave you, go read them all. each single one of them
 # will help you grasp one aspect very good!
 #  
-# now lets define our VAE model . 
 
 
+
+# Viewppoint 2! what is VAE and how does it work? why was it created? whats the intuition behind it?
+# explain 
+# 
+
+# sidenote: a much clearer implementation which I wrote for pytorch examples repo at the time: 
+# https://github.com/Coderx7/examples/blob/vae-example-branch/vae/main.py
+# thats not good!)remove it
+#
+# 
+# read this https://deepai.org/machine-learning-glossary-and-terms/manifold-hypothesis 
+# before revising the whole thing. gives a very good picture of the whole thing imho
+# 
+# now lets implement our VAE 
+
+# first lets define conv and deconv blocks,
+# we use two simple functions to this!
+
+def conv(in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False):
+    return nn.Sequential(nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+                            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                            nn.LeakyReLU(0.2))
+
+def deconv(in_dim, out_dim, kernel_size=3, stride=2, padding=1, act = nn.LeakyReLU(0.2), batch_norm=True, bias=False):
+    return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+                            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                            # important note for the last layer there should be no relu
+                            # even if you put a sigmoid after the relu, it wont work!
+                            act)
+
+class conv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False):
+        super().__init__()
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            nn.LeakyReLU(0.2)
+        )
+        # Residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.conv_block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+class deconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=False):
+        super().__init__()
+        self.deconv_block = nn.Sequential(
+            nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            act
+        )
+        # Residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.deconv_block(x)
+        if self.residual_connection:
+            out += x  
+        return out
+
+#! check I used variance and standard deviation correctly here    
+# the overall structure of the VAE is roughly the same it consits of an encoder section 
+# and a decoder section. lets implement them, well explain each part when implementing them
 class VAE(nn.Module):
-    
 
-    def conv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
-        return nn.Sequential(nn.Conv2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
-                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-                             nn.ReLU())
-
-    def deconv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
-        return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
-                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-                             nn.ReLU())
     def __init__(self, embedding_size=100):
         super().__init__()
-
         self.embedding_size = embedding_size
-        # our encoder will give two vectors one for μ and another for σ.
-        # using these two parameter, we sample our z representation vector
-        # which is used by the decoder to reconstruct the input. 
-        # So we can say that The encoder ‘encodes’ the data which is 784-dimensional
-        # into a latent (hidden) representation space z, which is much less than 784
-        # dimensions. This is typically referred to as a ‘bottleneck’ because the 
-        # encoder must learn an efficient compression of the data into this 
-        # lower-dimensional space. Let’s denote the encoder qθ(z∣x). 
-        # We note that the lower-dimensional space is stochastic: 
-        #>> the encoder outputs  parameters to qθ(z∣x), which is a Gaussian probability
-        #   density. 
-        # We can sample from this distribution to get noisy values of the 
-        # representations z .
-
-        self.fc1 = nn.Linear(28*28, 512)
-        self.encoder = nn.Sequential(self.conv(3,768),
-                                     self.conv(768,512),
-                                     self.conv(512,256),
-                                     nn.MaxPool2d(2,2),#16
-                                     self.conv(256,128),
-                                     self.conv(128,64),
-                                     nn.MaxPool2d(2,2),#8
-                                     self.conv(64, 32),
-                                     nn.MaxPool2d(2,2),#4
-                                     self.conv(32, 16),
-                                     nn.MaxPool2d(2,2),#2x2
-                                     self.conv(16, 8),
-                                     nn.MaxPool2d(2,2),#1x1
-                                     )
-
-        self.fc1_mu = nn.Linear(8, self.embedding_size) # mean
+        
+        # for mnist 
+        # self.fc1 = nn.Linear(28*28, 512)
+        self.encoder = nn.Sequential(#nn.Flatten(),
+                                     conv(1,32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,128,stride=2),#3x3
+                                     conv(128,256,stride=2),#2x2
+                                     # note: its best not to shrink too much and at least 
+                                     # retain some spatial dimensions (like 2x2,4x4 (in some cases based on the network even 7x7 is good))
+                                     conv(256,self.embedding_size,stride=2,padding=1),#1x1
+                                     # nn.Linear(28*28, self.embedding_size)
+                                    )
+        # get this from user?
+        # 2x2 is the spatial dims
+        bottleneck_size = self.embedding_size*1*1 
+        # mean
+        self.fc1_mu = nn.Linear(bottleneck_size, self.embedding_size) 
         # we use log since we want to prevent getting negative variance
-        self.fc1_std = nn.Linear(8, self.embedding_size) #logvariance
+        #logvariance
+        self.fc1_std = nn.Linear(bottleneck_size, self.embedding_size) 
 
-        # our decoder will accept a randomly sampled vector using
-        # our mu and std. 
-        # The decoder is another neural net. Its input is the representation z,
-        # it outputs the parameters to the probability distribution of the data,
-        # and has weights and biases ϕ. The decoder is denoted by pϕ(x∣z). 
-        # Running with the handwritten digit example, let’s say the photos are 
-        # black and white and represent each pixel as 0 or 1. 
-        # The probability distribution of a single pixel can be then represented 
-        # using a Bernoulli distribution. The decoder gets as input the latent 
-        # representation of a digit z and outputs 784 Bernoulli parameters,
-        # one for each of the 784 pixels in the image. 
-        # The decoder ‘decodes’ the real-valued numbers in z into 784 real-valued 
-        # numbers between 0 and 1. Information from the original 784-dimensional 
-        # vector cannot be perfectly transmitted, because the decoder only has 
-        # access to a summary of the information 
-        # (in the form of a less-than-784-dimensional vector z). 
-        # How much information is lost? We measure this using the reconstruction 
-        # log-likelihood logpϕ(x∣z) whose units are nats. This measure tells us how 
-        # effectively the decoder has learned to reconstruct an input image x given
-        # its latent representation z.
-        self.decoder = nn.Sequential(nn.Linear(self.embedding_size, 8*1*1),
-                                    deconv(8, 768,kernel_size=4,stride=2),
-                                    deconv(768,512,kernel_size=4,stride=2),
-                                    deconv(512, 256 ,kernel_size=4,stride=2),
-                                    deconv(256,128,kernel_size=4,stride=2),
-                                    deconv(128,3,kernel_size=4,stride=2),
-                                    # deconv(64,32,kernel_size=4,stride=2),
-                                    # deconv(32,3,kernel_size=4,stride=2),
-                                    nn.Sigmoid())
-        # self.decoder = nn.Sequential( nn.Linear(self.embedding_size, 512), 
-        #                               nn.ReLU(),
-        #                               nn.Linear(512, 28*28),
-        #                               # in normal situations we wouldnt use sigmoid
-        #                               # but since we want our values to be in [0,1]
-        #                               # we use sigmoid. for loss we will then have  
-        #                               # to use, plain BCE (and specifically not BCEWithLogits)
-        #                               nn.Sigmoid())
+        #! calculate the logptheta(x|z) as well?
+        #!
+        # mnist?!
+        # we can use dropout/bn to have better training!
+        # sidenote: 
+        # if we start our decoder with a linear layer,
+        # we need to note 2 things:
+        #1. preferably do not shrink too much in decoder, like at least retain some spatial dimension (like 4x4)
+        # if we didnt, then in the decoder start with a larger spatial dim
+        # we add the desired spatial dim in form of multiplication 
+        # like (nn.Linear(self.embedding_size, 128*4*4)) 4*4 being the spatial dims (and is a good choice usually dont go smaller unless you know what youre doings)
+        # next we need to reshape the output properly so the next deconv layers get the
+        # proper input.
+        # we can do this in several ways, but one way would be to do this in forwardpass in
+        # feed the flattened z from encoder to the first layer of decoder (Which is our linear layer)
+        # and then reshape it so the z has the proper 4d shape
+        # z = self.decoder[0](z).reshape(input.size(0),-1,1,1)
+        # then feed the new z to the rest of the layers
+        # reconstructed_img = self.decoder[1:](z)
+        # which is not ideal so we use a simple deconv layer!
+        # so instead we simply use nn.UnFlatten() which makes our lives much easier!
+        # we needed to reshape to deconv layer had proper 4d input tensor
+        # sidenote 2: 
+        # during upsampling stage, we can use different kernel sizes ranging from 
+        # 2 and up. larger kernels can capture more spatial information 
+        # but may introduce artifacts, 
+        # upsampling from very small spatial dimensions (like 1x1) can also result 
+        # in visible artifacts in the reconstructed image. and might lead to 
+        # blurry outputs unless carefully tuned so keep this in mind!
+        # sidenote3 :
+        # to calculate the deconvs output at each stage we use this formula
+        # h is the input dimension (in our case is 2 (our input is 2x2))
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # (h=1,k=4,s=2,p=1) 1-1*2+4-2*1)=2/
+        # (h=2,k=4,s=2,p=1) 2-1*2+4-2*1)=4/
+        # (h=4,k=4,s=2,p=1) 4-1*2+4-2*1=8/ 
+        # (h=8,k=2,s=2,p=1) 8-1*2+2-2*1=14/ 
+        # (h=14,k=4,s=2,p=1)14-1*2+4-2*1=28/ 
+        self.decoder = nn.Sequential(nn.Linear(self.embedding_size, 256*1*1),
+                                     nn.ReLU(),
+                                    #  nn.Dropout(0.1),
+                                     nn.Unflatten(1,(256,1,1)),
+                                     deconv(256,256,kernel_size=4),#2
+                                    #  nn.Dropout(0.05),
+                                     deconv(256,128,kernel_size=4),#4
+                                    #  nn.Dropout(0.01),
+                                     deconv(128,64,kernel_size=4),#8
+                                     deconv(64,32,kernel_size=2),#14
+                                     # remember we dont use batchnorm at the last later
+                                     # beacuse it will destroy the image by trying to normalize it!
+                                     # more importantly dont use relu! even though you use a sigmoid at the end
+                                     # it will prevent the loss to go down. 
+                                     # this simple mistake took a lot of my time! because
+                                     # I simply forgot to check deconv!
+                                     deconv(32,1,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                     # in normal situations we wouldnt use sigmoid
+                                     # but since we want our values to be in [0,1]
+                                     # we use sigmoid. for loss we will then have  
+                                     # to use, plain BCE (and specifically not BCEWithLogits)
+                                    #  nn.Sigmoid()
+                                    )
 
 
 
-    # Rather than directly outputting values for the latent state as we would 
-    # in a standard autoencoder, the encoder model of a VAE will output 
-    # "parameters(mean μ,variance σ) describing a distribution for each dimension in 
-    # the latent space". 
-    # Since we're assuming that our prior follows a normal distribution, we'll output
-    # two vectors describing the mean and variance of the latent state distributions.
-    # If we were to build a true multivariate Gaussian model, we'd need to define a
-    # covariance matrix describing how each of the dimensions are correlated. 
-    # However, we'll make a simplifying assumption that our covariance matrix only 
-    # has nonzero values on the diagonal, allowing us to describe this information 
-    # in a simple vector.
-    # Our decoder model will then generate a latent vector by sampling from these
-    # defined distributions and proceed to develop a reconstruction of the original
-    # input.
-    # However, this sampling process requires some extra attention. When training 
-    # the model, we need to be able to calculate the relationship of each parameter 
-    # in the network with respect to the final output loss using backpropagation. 
-    # However, we simply cannot do this for a "random sampling process". Fortunately,
-    # we can leverage a clever idea known as the "reparameterization trick" which 
-    # suggests that we randomly sample ε from a unit Gaussian, and then shift the 
-    # randomly sampled ε by the latent distribution's mean μ and scale it by the 
-    # latent distribution's variance σ.
-    # With this reparameterization, we can now optimize the parameters of the distribution
-    # while still maintaining the ability to randomly sample from that distribution.
-    # Note: In order to deal with the fact that the network may learn negative values
-    # for σ, we'll typically have the network learn log(σ) and exponentiate(exp)) this value 
+    
+    # Note: 
+    # In order to deal with the fact that the network may learn negative values
+    # for σ, we'll typically have the network learn log(σ) and exponentiate(exp) it 
     # to get the latent distribution's variance.
     def reparamtrization_trick(self, mu, logvar):
         # note : why do we really want the epsilon? 
         # what is the intuition behind it : 
         # watch this : https://youtu.be/9zKuYvjFFS8?t=415
-        # we divide by two because we are eliminating the negative values
-        # and we only care about the absolute possible deviance from standard.
-        # read in depth technical reasons here : 
+        # 
+        # read in depth technical reasons here :
         # all answers contain great explanations 
         # https://stats.stackexchange.com/questions/199605/how-does-the-reparameterization-trick-for-vaes-work-and-why-is-it-important
         # https://stats.stackexchange.com/questions/429315/why-is-reparameterization-trick-necessary-for-variational-autoencoders
         # https://stats.stackexchange.com/questions/342762/how-do-variational-auto-encoders-backprop-past-the-sampling-step/342815#342815
         # https://blog.neurallearningdymaics.com/2019/06/variational-autoencoders-1-motivation.html
         # http://ruishu.io/2018/03/14/vae/
-        # up until now, you show have been convinced that we use reparameterization trick solely 
+        # reading this links up until now, you show have been convinced that we use reparameterization trick solely 
         # because otherwise we couldnt backprop to random node! this however is not the whole story!
-        # Kingma: This reparameterization is useful for our case since it can be used to rewrite an 
+        # from Kingma: This reparameterization is useful for our case since it can be used to rewrite an 
         # expectation w.r.t qϕ(z∣x) such that the Monte Carlo estimate of the expectation is 
-        # differentiable w.r.t. ϕ.
+        # differentiable w.r.t. ϕ. 
         # The issue is not that we cannot backprop through a “random node” in any technical sense. 
         # Rather, backproping would not compute an estimate of the derivative. 
         # Without the reparameterization trick, we have no guarantee that sampling large numbers of z
-        # will help converge to the right estimate of ∇θ.
+        # will help converge to the right estimate of ∇θ.(i.e. its there to avoid a very bad (high variance) estimate.))
         # read in more detail here: 
         # http://gregorygundersen.com/blog/2018/04/29/reparameterization/
         # if you want to know about expectation and what it is, this may help 
         # https://revisionmaths.com/advanced-level-maths-revision/statistics/expectation-and-variance)
+         
+        # !edit 
+        # torch.exp() converts logvar(log(variance)) back to variance (sigma^2)
+        # but note that here, we have the multiplication by 0.5 and then exponentiation
+        # this is equivalent to computing the square root of the variance (its 
+        # asif we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
+        # remember  log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5) = 0.5.log⁡(𝜎^2)
+        # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
+        # so it becomes variance.
+        # 
+        # sidenote:
+        # variance(σ^2) must always be positive because it represents squared differences.
+        # we dont directly optimize σ^2 or σ instead, we work with log(σ^2) (logvar), 
+        # which ensures that the computed variance (σ^2 = exp(logvar)) is always positive,
+        # even if logvar takes negative values. (exp() returns positive)
+        # 
+        # The factor 0.5 in exp(0.5*logvar) comes from the mathematical process of 
+        # computing the standard deviation (σ) from log(σ^2):
+        # σ = sqrt(σ^2) = exp(0.5 * logvar)
+        # 
+        # sidenote2:
+        # variance or standard deviation can take very small or large values, 
+        # leading to potential overflow or underflow in floating-point computations.
+        # representing it as log⁡(σ^2) keeps the range more manageable for optimization.
+        # 
+        # The standard deviation is the square root of variance (σ=√σ^2) 
+        # and represents the 'scale' of the distribution in the same units as the data.
+        # z = μ+σ⋅ϵ, ϵ∼N(0,I)
+        # note here the standard deviation (σ) is necessary because 
+        # multiplying by variance (σ^2) wouldn't make sense dimensionally
+        # it would lead to an incorrect scaling.
+        #
+        # variance (σ^2) is used in the KL divergence term during optimization.
+        # when representing the overall spread of a distribution mathematically.
+        #
+        #
         std = torch.exp(0.5*logvar)
         # epsilon sampled from normal distribution with N(0,1)
+        # we use epsilon so we put the stochasity/randomness in the epslilon itself
+        # so we dont need to calculte gradient for it, we treat it as an input and
+        # this way only optimize mu/std parameters
         eps = torch.randn_like(std)
         # How to sample from a normal distribution with known mean and variance?
         # https://stats.stackexchange.com/questions/16334/ 
         # (tldr: just add the mu , multiply by the var) . 
-        # why we use an epsilon, ? 
+        
+        # why we use an epsilon?
         # you should know by now, if not read the former links I provided.
         # basically there are 2 main explanations, the first one (Which is not true) is
         # because without it, backprop wouldnt work.
-        # for  the random part we sample from normal distribution N(0,1)
+        # for the random part we sample from normal distribution N(0,1)
         # and treat this as a mere input. (like the images that are input and we dont 
         # calculate the gradients for) 
         # we then shift this new sample with the mean and std we have and effectively
@@ -1498,20 +2669,18 @@ class VAE(nn.Module):
         # will make it N(mum std) which is what we want. our expression also now can be
         # easily backpropagated. 
         # also you need to know that, it is also said this reparameterization trick is only done for 
-        # numerical stability and actually  the basic way can be done as well! 
+        # numerical stability and actually the basic way can be done as well! 
         # and finally, the actual reason was given above, we actually do this to guarantee the right estimate 
         # of ∇θ. without this, we have no guarantee that sampling large numbers of z, will help convertence
         # to the right estimates of ∇θ.
         return mu + eps*std
     # 
     def encode(self, input):
-        # input = input.view(input.size(0), -1)
-        # output = F.relu(self.fc1(input))
-        output = self.encoder(input)
-        # we dont use activations here
+        output = self.encoder(input).view(input.size(0),-1)
+        # print(f'{output.shape=}')
+        # note we dont use activations for mu/std
         mu = self.fc1_mu(output)
         log_var = self.fc1_std(output)
-
         # In its original form, VAEs sample from a random node z which is 
         # approximated by the parametric model q(z∣ϕ,x) of the true posterior.
         # Backprop cannot flow through a random node. Introducing a new parameter 
@@ -1521,87 +2690,15 @@ class VAE(nn.Module):
         return z, mu, log_var
 
     def forward(self, input):
-        
-        # our encoder recieves the input and produces two vectors
-        # mean and std. a normal autoencoder, creates a set of atttibutes
-        # in its representation vectot(e.g attributes or features describing
-        # concepts such as, eye, smile, beard, gender, has glasses etc) in 
-        # an input image of faces. so in other words, An ideal autoencoder 
-        # will learn descriptive attributes of faces such as skin color, 
-        # whether or not the person is wearing glasses, is female, etc. in
-        # an attempt to describe an observation(input image) in some compressed representation.
-        # for example a vector could be like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
-        # In the example above, we've described the input image in terms of its latent 
-        # attributes using a 'single value' to describe each attribute. 
-        # However, we may prefer to represent each latent attribute as a 'range of possible values'.
-        # For instance, what 'single value' would you assign for the smile attribute if you feed
-        # in a photo of the Mona Lisa? Using a variational autoencoder, 
-        # we can describe latent attributes in probabilistic terms.
-        # the mean and variance that we produce here, is used exactly for this very reason
-        # using them, we are learning a distrubution for each attribute and thus mu and variance
-        # specify a range of values for each attribute.
-        # [With this approach, we'll now represent each latent attribute for a given input 
-        # as a probability distribution. When decoding from the latent state, we'll randomly
-        # sample from each latent state distribution to generate a vector as input for our decoder.]
-        # thats why later on, we use these means, variances along with an epsilon(act as a random variable)
-        # to reconstruct the input image. 
-        # So By constructing our encoder model to output a range of possible values 
-        # (a statistical distribution) from which we'll randomly sample to feed into our decoder
-        # , we're essentially enforcing a continuous, smooth latent space representation.
-        # For any sampling of the latent distributions, we're expecting our decoder 
-        # to be able to accurately reconstruct the input. 
-        # Thus, values which are nearby to one another in latent space should correspond
-        # with very similar reconstructions.
-        # Intuitively, the mean vector controls where the encoding of an input should be 
-        # centered around, while the standard deviation controls the “area”, how much from 
-        # the mean the encoding can vary. As encodings are generated at random from anywhere
-        # inside the “circle” (the distribution), the decoder learns that not only is a
-        #  single point in latent space referring to a sample of that class, 
-        # but all nearby points refer to the same as well. 
-        # This allows the decoder to not just decode single, specific encodings in the 
-        # latent space (leaving the decodable latent space discontinuous), but ones that 
-        # slightly vary too, as the decoder is exposed to a range of variations of the
-        # encoding of the same input during training. 
-        # The model is now exposed to a certain degree of local variation by varying the 
-        # encoding of one sample, resulting in smooth latent spaces on a local scale, that is,
-        # for similar samples. Ideally, we want overlap between samples that are not very 
-        # similar too, in order to interpolate between classes. 
-        # However, since there are no limits on what values vectors μ and σ can take on,
-        # the encoder can learn to generate very different μ for different classes, 
-        # clustering them apart, and minimize σ, making sure the encodings themselves don’t
-        # vary much for the same sample (that is, less uncertainty for the decoder). 
-        # This allows the decoder to efficiently reconstruct the training data.
-        # What we ideally want are encodings, all of which are as close as possible to each
-        # other while still being distinct, allowing smooth interpolation, and enabling the
-        # construction of new samples.
-        # In order to force this, we introduce the Kullback–Leibler divergence 
-        # (KL divergence[2]) into the loss function. The KL divergence between two probability
-        # distributions simply measures how much they diverge from each other. 
-        # Minimizing the KL divergence here means optimizing the probability distribution
-        # parameters (μ and σ) to closely resemble that of the target distribution.
-        # Intuitively, this loss encourages the encoder to distribute all encodings 
-        # (for all types of inputs, eg. all MNIST numbers), evenly around the center 
-        # of the latent space. If it tries to “cheat” by clustering them apart into 
-        # specific regions, away from the origin, it will be penalized.
-        # Now, using purely KL loss results in a latent space results in encodings densely 
-        # placed randomly, near the center of the latent space, with little regard for 
-        # similarity among nearby encodings. The decoder finds it impossible to decode 
-        # anything meaningful from this space, simply because there really isn’t any meaning.
-        # Optimizing the two together, however, results in the generation of a latent space
-        # which maintains the similarity of nearby encodings on the local scale via clustering,
-        # yet globally, is very densely packed near the latent space origin 
-        # (compare the axes with the original).
-        # Intuitively, this is the equilibrium reached by the cluster-forming nature of the
-        # reconstruction loss, and the dense packing nature of the KL loss, forming distinct
-        # clusters the decoder can decode. This is great, as it means when randomly generating,
-        # if you sample a vector from the same prior distribution of the encoded vectors, N(0, I), 
-        # the decoder will successfully decode it. And if you’re interpolating, there are 
-        # no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
         z, mu, logvar = self.encode(input)
         # decoder 
         reconstructed_img = self.decoder(z)
+        # print(f'{reconstructed_img.shape=}')
         return reconstructed_img, mu, logvar
 
+model = VAE(embedding_size=100)
+img_re, _,_ = model(torch.randn(size=(5,1,28,28)))
+print(f'{img_re.shape=}')
 # Note :
 # In my experience working on the VAE, the KL annealer helps to train the model.
 # To be more specific, when training your encoder and decoders right off the 
@@ -1628,11 +2725,16 @@ class VAE(nn.Module):
 # or we can use reduce='mean'. 
 # if we want to use BCE with reduce='sum' we only calculate the kl
 # with sum. but when we want to use BCE with reduce='mean' or mse
-# we use sume(,-1) and then use torch.mean(loss_recons+kl)
+# we use sum(,-1) and then use torch.mean(loss_recons+kl)
 # we also need to normalize our reconstruction loss by the input dim
 # ension size. 
-
-def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False):
+# the original paper uses bce with sum and it gives the best result
+# the mse version doesnt work well everywhere and is not formal 
+def loss_function(outputs, inputs, mu, logvar, beta,reduction ='mean', use_mse = False):
+    # print(f'{outputs.shape=}')
+    # print(f'{inputs.shape=}')
+    outputs = outputs.view(*inputs.shape)
+    #! beta belongs to entangled vae, the normal vae doesnt have beta scaler
     if reduction == 'sum':
         criterion = nn.BCELoss(reduction='sum')
         reconstruction_loss = criterion(outputs, inputs)
@@ -1641,58 +2743,91 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
         # https://arxiv.org/abs/1312.6114
         # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return reconstruction_loss + KL
+        return reconstruction_loss + beta*KL
     else:
-        if use_mse:
+        if use_mse:# wont work on larger dataset as good as bce(bce works best)
             criterion = nn.MSELoss()
         else: 
             criterion = nn.BCELoss(reduction='mean')
         reconstruction_loss = criterion(outputs, inputs)
-        # normalize reconstruction loss
+        # normalize reconstruction loss otherwise kl will overpower it!
+        # instead of simply using a single image to notmalize kl loss,
+        # lets do it with the whole batch! cuz kl is being calculated 
+        # for the whole batch 
         reconstruction_loss *= 28*28
+        # instead lets divide the kl term bythis number
         KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        return torch.mean(reconstruction_loss + KL)
-
-
+        return torch.mean(reconstruction_loss + beta*KL)
 #%%
+#
 # I set this option to see the full stack-trace when a weird error occurs
 # its good practice to get accustomed to the debugging/profiing facilities provided
 # by pytorch, I might dedicate a separate section for this later on
 # torch.autograd.set_detect_anomaly(True)
 # torch.set_printoptions(profile='full')
-#%%
+#
 # now lets train :
 epochs = 50
-dataset_train = datasets.CIFAR10('cifar10', train=True, download=True,transform=transforms.ToTensor())
-dataset_test = datasets.CIFAR10('cifar10', train=False, download=True,transform=transforms.ToTensor())
 
+dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
+dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+
+# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transforms.ToTensor())
+# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transforms.ToTensor())
+
+#TODO
+# display the manifold for encoder encodings during training and make a gif out of it?
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=128,shuffle=True)
 dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffle=False)
-
-embeddingsize = 2
+# use 1e-4 and see how it disrupts the process, 
+# the kl dominates the loss (squashes the clusters)
+# and the projection with 2 embeddingsize shows it very well!
+# last change:
+# using beta=1e-1 and embdsz=2 using sum seems to be a good fit
+# beta isnt needed technically as it belongs to disentagled version
+# however, to get a quick and decent output im ok with it
+# also the current architecture is in no way a decent one, we can get
+# the same performance using a single layer encoder/decoder as well
+# and it makes it much easier. but! to lay the foundation for larger
+# dataset, I guess these are ok! as it allowed me to explain several concepts
+# embdsz=10 also works.
+# i experimented with separate optimizers, to get good result we need proper
+# hyperparameter tuning
+beta=1e-1
+embeddingsize = 2#2,10
 interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = VAE(embeddingsize).to(device)
-reduction='mean'
-optimizer = torch.optim.Adam(model.parameters(), lr =0.001)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 50)
+reduction='sum'
+optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
+# ther econstruction was off, so I first tried changing encoder, nothing changed so I
+# played with decoder, started with wd nothing happened, went to lr and decaded it and it got better
+# loss decreased! 
+# the embeddingsize from 2 to 10 seems to have made it better.next test with embd=2 
+# then revert back to 10 and change encoder
+# optimizer2 = torch.optim.Adam(model.decoder.parameters(), lr =0.01,weight_decay=1e-5)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
+# scheduler2 = torch.optim.lr_scheduler.MultiStepLR(optimizer2, [5,10,25,45,50])
 
 for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
 
-        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=False)
+        loss = loss_function(preds, imgs, mu, logvar, beta=beta, reduction=reduction, use_mse=False)
         
         optimizer.zero_grad()
+        # optimizer2.zero_grad()
         loss.backward()
         optimizer.step() 
+        # optimizer2.step()
         if i% interval ==0:
-            loss = loss/len(img) if reduction=='sum' else loss
+            loss = loss/len(imgs) if reduction=='sum' else loss
             print(f'epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
                   f'\tloss: {loss.item():.4f}'
-                  f'\tlr: {scheduler.get_lr()}')
+                  f'\tlr: {scheduler.get_lr()[-1]}')
     scheduler.step()
+    # scheduler2.step()
 
 #%% 
 # save the model
@@ -1700,37 +2835,45 @@ torch.save({"states":model.state_dict(),
             "embedding_size":model.embedding_size,
             "optimizer":optimizer.state_dict(),
             "scheduler":scheduler.state_dict()},
-            f"vae_{model.embedding_size}_mean_bce.pth")
+            f"vae_{model.embedding_size}_sum_bce1.pth")
 print('model saved!')
 #%%
 # load the model 
-states = torch.load(f"vae_{model.embedding_size}_mean_bce.pth")
+states = torch.load(f"vae_{model.embedding_size}_sum_bce.pth")
 model.load_state_dict(state_dict=states['states'])
 print('weights loaded')
 #%%
 # generate sth
-from torchvision import utils
-interval = 1000
-embeddingsize = 2
-sample = torch.randn(size=(32, embeddingsize)).to(device)
-# sample *= 0.5+ 0.5
-model.eval()
-imgs = model.decoder(sample)
-print(imgs.shape)
-imgs = imgs.view(-1, 1, 28,28)
-img = utils.make_grid(imgs,nrow=8,normalize=True).cpu().detach().numpy().transpose(1,2,0)
-plt.imshow(img, cmap='Greys_r')
-#%%
-# test
-test_set_size = len(dataloader_test.dataset)
-img_pairs = []
-losses = []
-interval = 10
-with torch.no_grad():
+# generate random images
+@torch.no_grad()
+def generate_random_images(model:VAE, count:int=32, rows:int=8):
+    # simply randomly sampling from a normal distribution will
+    # give us random classes.
+    sample = torch.randn(size=(count, model.embedding_size)).to(device)
+    # we can further influence our generation by imposing different means/stds
+    # sample *= 0.5 + 0.5
+    model.eval()
+    imgs = model.decoder(sample)
+    print(f'{imgs.shape=}')
+    imgs = imgs.view(-1, 1, 28,28)
+    img = make_grid(imgs,nrow=rows,normalize=True).cpu().detach().numpy().transpose(1,2,0)
+    plt.imshow(img, cmap='Greys_r')
+    plt.title('randomly sampled generation')
+
+generate_random_images(model, count=32)
+
+@torch.no_grad()
+def evaluate_on_testset():
+    test_set_size = len(dataloader_test.dataset)
+    img_pairs = []
+    losses = []
+    interval = 10
+    model.eval()
+
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
-        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=False)
+        loss = loss_function(preds, imgs, mu, logvar, beta, reduction=reduction, use_mse=False)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
@@ -1742,95 +2885,229 @@ with torch.no_grad():
             recons = reconstructeds[:20].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
+
+    # plot the losses using pandas! 
+    # this actually is very neat and comes handy very often!
+    # we can have a list of dictionaries, where each value is 
+    # attributed by a key. this way, our keys will be used as
+    # legends and we have a simple plot with minimum hassle
+    import pandas as pd
+    import os
+    pd.DataFrame(losses).plot()
+
+    # lets display them a longside the original ones
+    def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
+        img_cnt = len(img_pairs)
+        print(img_cnt)
+        fig = plt.figure(figsize=(28, 28))
+        for i in range(img_cnt):
+            grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
+                                nrow=nrows,
+                                normalize=True)
+            ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+            ax.imshow(grid_imgs.numpy().transpose(1,2,0))
+            ax.set_title(f'testset reconstruction-{i}')
+            
+            if not os.path.exists('results'):
+                os.makedirs('results')
+            save_image(grid_imgs, f'results/imgs_{i}.jpg')
+
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
+
+evaluate_on_testset()
+
+#! edit choose better function names! 
+# lets plot the latent space encodings and see
+# how the encoded representations of our data
+# look in the latent space
+@torch.no_grad()
+def plot_latent_space_encodings(model, batch_size = 10000):
+
+    dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
+                                                batch_size = batch_size,
+                                                num_workers = num_workers,
+                                                pin_memory=True)
+    imgs, labels = next(iter(dataloader_test2))
+    imgs = imgs.to(device)
+    z_test,_,_ = model.encode(imgs)
+    # since we are using torch.nograd, 
+    # theres no gradients so we dont need to use .detach()
+    # otherwise we had to use it here
+    z_test = z_test.cpu().numpy()
+
+    plt.figure(figsize=(12,10))
+    print(z_test.shape)
+    plt.scatter(x=z_test[:,0],
+                y=z_test[:,1],
+                c=labels.numpy(),
+                alpha=.4,
+                s=3**2,# point size, the biggger the larger the points on the canvas
+                cmap='viridis')
+    plt.colorbar()
+    plt.xlabel('Z[0]')
+    plt.ylabel('Z[1]')
+    plt.title('Latent space encodings of 2 dimensions')
+    plt.show()
+
+#! edit fix this with embd>2
+@torch.no_grad()
+def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_size=28):
+    # display a 2D manifold of the digits
+    # n means we want a figure with nxn digits
+    model.eval()
+    z1 = torch.linspace(lower_bound, upper_bound, n)
+    z2 = torch.linspace(lower_bound, upper_bound, n)
+
+    z_grid = np.dstack(np.meshgrid(z1, z2))
+    z_grid = torch.from_numpy(z_grid).to(device)
+    z_grid = z_grid.reshape(-1, model.embedding_size)
+    # print(f'{z_grid.shape=}')
+    x_pred_grid = model.decoder(z_grid)
+    x_pred_grid= x_pred_grid.cpu().view(-1, 1, img_size,img_size)
+    x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
+    plt.figure(figsize=(20, 20))
+    plt.xlabel('Z_1')
+    plt.ylabel('Z_2')
+    plt.imshow(x)
+    plt.title(f'latent space grid of numbers({n}x{n})')
+    plt.show()
+    
+
+plot_latent_space_encodings(model)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2)
+# plot_embedding_clusters(model, dataloader_train, use_pca=False)
 #%%
-# plot the losses using pandas! 
-# this actually is very neat and comes handy very often!
-# we can have a list of dictionaries, where each value is 
-# attributed by a key. this way, our keys will be used as
-# legends and we have a simple plot with minimum hassle
-import pandas as pd 
-pd.DataFrame(losses).plot()
+# lets see what each class'es mean/std looks like
+# each have their own different mean ,
+# the mean is drastically different than other classes though otherwise it shows
+# the model has not been trained properly
+# we can use this to generate as many images we want for each class
+# we can create as many 0s, 1s or any classes we want! using their mean/std
+#! edit make samples more varied by altering std a bit
+@torch.no_grad()
+def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
+    
+    if len(input_img.shape) == 3:
+        input_img = input_img.unsqueeze(0)
+
+    # grab the device from our model parameters
+    device = next(model.parameters()).device
+    model.eval()
+
+    input_img = input_img.to(device)
+    # grab the mu/logvar for the image class
+    z0, mu, logvar = model.encode(input_img)
+    # convert the logvariance to std
+    std = torch.exp(0.5*logvar)
+    # create latent vectorz by sampling using the mu/std
+    # using random noise(epsillon) to create randomness in output
+    epsillon = torch.randn_like(std)
+    z_random = mu + epsillon * std
+    # how mu+std sample looks like
+    z_plain = mu + std
+    # instead of a single epsilon, we can create as many as
+    # we like, and therefore generate as many images. just
+    # make sure the size matches
+    epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
+    # by changing the std, we can generate slightly different variatations
+    # a higher std introduces more randomness, leading to more diverse outputs,
+    # a lower value generates outputs closer to the mean(mu) which means less variation
+    # we can change this in steps and create a morphing effect
+    # from one image into another. (we will be implementing this in a moment)
+    # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
+    # print(f'{scaler=}')
+    # epsillons *= scaler
+    # print(f'{epsillons=}')
+    z_batch = mu + epsillons * std
+
+    z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
+    # generate images for each latent vector
+    img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
+    # reshape the decoder outputs to the proper image dims
+    img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
+    # combine the images as one so we can display them as one big image
+    # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
+    imgs_combined = torch.dstack([input_img,img_random,img_plain])
+    # combine all images as one so we can better visualize and inspect them
+    img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
+    
+    mu = mu.cpu().numpy().flatten()
+    std = std.cpu().numpy().flatten()
+
+    plt.figure(figsize=(8, 4))#(12,8)
+
+    plt.subplot(2,3,1)
+    plt.plot(mu, label="Mean (μ)")
+    plt.title("Mean (μ)")
+    plt.xlabel("Latent Dimension")
+    plt.ylabel("Value")
+    plt.legend()
+
+    plt.subplot(2,3,2)
+    plt.plot(std, label="std (σ)", color="orange")
+    plt.title("std (σ)")
+    plt.xlabel("Latent Dimension")
+    plt.ylabel("Value")
+    plt.legend()
+    
+    plt.subplot(2,3,4)
+    plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
+    plt.title("Input Image")
+    plt.axis("off")
+        
+    plt.subplot(2,3,5)
+    plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
+    plt.title("similar images")
+    plt.axis("off")
+    
+    
+    plt.tight_layout()
+    plt.show()
+    
+imgs,labels = next(iter(dataloader_test))
+view_images(imgs,labels)
+# mu/std slightly changes for different instance of a class
+# but overall they are roughly the same, they
+# however change dirastically from class to class
+generate_similar_images(model, imgs[3])#0
+generate_similar_images(model, imgs[13])
+generate_similar_images(model, imgs[25])
+generate_similar_images(model, imgs[2])#1
+generate_similar_images(model, imgs[5])
+generate_similar_images(model, imgs[14])
+generate_similar_images(model, imgs[1])#2
+generate_similar_images(model, imgs[32])#3
+generate_similar_images(model, imgs[4])#4
+generate_similar_images(model, imgs[15])#5
+generate_similar_images(model, imgs[11])#6
+generate_similar_images(model, imgs[0])#7
+generate_similar_images(model, imgs[8])#8
+generate_similar_images(model, imgs[7])#9
 
 #%%
-# lets plot the classes in the latent space!
-batch_size = 10000
-dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size = batch_size,
-                                               num_workers = num_workers,
-                                               pin_memory=True)
-imgs, labels = next(iter(dataloader_test2))
-imgs = imgs.to(device)
-z_test,_,_ = model.encode(imgs)
-z_test = z_test.cpu().detach().numpy()
-
-plt.figure(figsize=(12,10))
-print(z_test.shape)
-plt.scatter(x=z_test[:,0],
-            y=z_test[:,1],
-            c=labels.numpy(),
-            alpha=.4,
-            s=3**2,
-            cmap='viridis')
-plt.colorbar()
-plt.xlabel('Z[0]')
-plt.ylabel('Z[1]')
-plt.show()
-#%%
-
-#%%
-# display a 2D manifold of the digits
-embeddingsize = model.embedding_size
-n = 20  # figure with 20x20 digits
-digit_size = 28
-
-z1 = torch.linspace(-2, 2, n)
-z2 = torch.linspace(-2, 2, n)
-
-z_grid = np.dstack(np.meshgrid(z1, z2))
-z_grid = torch.from_numpy(z_grid).to(device)
-z_grid = z_grid.reshape(-1, embeddingsize)
-
-x_pred_grid = model.decoder(z_grid)
-x_pred_grid= x_pred_grid.cpu().detach().view(-1, 1, 28,28)
-x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
-plt.figure(figsize=(10, 10))
-plt.xlabel('Z_1')
-plt.ylabel('Z_2')
-plt.imshow(x)
-plt.show()
-
-#%%
-def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
-    img_cnt = len(img_pairs)
-    print(img_cnt)
-    fig = plt.figure(figsize=(28, 28))
-    for i in range(img_cnt):
-        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
-                            nrow=nrows,
-                            normalize=True)
-        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
-        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
-        save_image(grid_imgs, f'results/imgs_{i}.jpg')
-
-display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
-#%% 
 # now lets generate new images by stepping through the latent space
 import matplotlib.animation as animation
+
 fig = plt.figure()
 ax = fig.add_subplot(111)
-
-plt.rcParams["animation.convert_path"] = r"C:\Program Files\ImageMagick\convert.exe"
 z = torch.randn(size = (30, model.embedding_size)).to(device)
 model.eval()
-def animate(i): 
-    imgs = model.decoder(z*(i*0.03)+0.02)
+def animate(i):
+    # change the latent vector at each step so we get different image
+    # and ultimately a cool animation showing each image morphing into another!
+    # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
+    # so it changes faster. the more farther away from mean, the more different
+    # it becomes from that image
+    imgs = model.decoder(z*(i*0.02)+0.02)
     imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
     new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
     ax.clear()
     ax.imshow(new_img)
 
 anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
-anim.save('vis.gif', writer="imagemagick", extra_args="convert", fps=20)
+# save the git using pillow
+anim.save('vis.gif', writer="pillow", fps=30)
 plt.show()
 
 #%% 
@@ -1865,7 +3142,7 @@ class VAE_Conditional(nn.Module):
         self.fc1 = nn.Linear(28*28 + num_classes, 512)
         # we are actually adding the one_hot encoded length here. 
         self.fc_mu = nn.Linear(512, embedding_size )
-        self.fc_std = nn.Linear(512, embedding_size)
+        self.fc_logvar = nn.Linear(512, embedding_size)
         
         # decoder 
         # our decoder will utilize our conditional factor along side our embedding
@@ -1883,9 +3160,9 @@ class VAE_Conditional(nn.Module):
         inputs = torch.cat((x,y),dim=1)
         output = F.relu(self.fc1(inputs))
         mu = self.fc_mu(output) 
-        std = self.fc_std(output)
-        z = self.reparametrization_trick(mu, std)
-        return z, mu, std
+        logvar = self.fc_logvar(output)
+        z = self.reparametrization_trick(mu, logvar)
+        return z, mu, logvar
 
     def decode(self, z, y):
         z_cond = torch.cat((z,y), dim=1)
@@ -1894,7 +3171,7 @@ class VAE_Conditional(nn.Module):
         return output
 
     def reparametrization_trick(self, mu, logvar):
-        # since we need positive variance we devide by 2
+        # convert into std
         std = torch.exp(logvar * 0.5)
         # sample from a normal distribution N(0,1)
         eps = torch.randn_like(std)
@@ -1903,9 +3180,9 @@ class VAE_Conditional(nn.Module):
         return mu + eps * std
 
     def forward(self, input, y):
-        z, mu, std = self.encode(input, y)
+        z, mu, logvar = self.encode(input, y)
         output = self.decode(z, y)
-        return output, mu, std
+        return output, mu, logvar
 
 def one_hot(input, num_classes=10):
     result = torch.zeros(size=(input.size(0), num_classes))
@@ -1947,7 +3224,7 @@ model = VAE_Conditional(embedding_size).to(device)
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20)
 print(datetime.datetime.now())
-
+img_pairs=[]
 for e in range(epochs):
     for i, (imgs,labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
