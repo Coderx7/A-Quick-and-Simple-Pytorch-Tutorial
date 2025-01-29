@@ -1996,20 +1996,20 @@ for e in range(epochs):
 # encourages the model to generalize better when generating new data.
 #
 # sidenote- second prespective ():
-# lets see from another prespective, why does this makes sense
-# why would we want to have a distribution instead of a fixed point, what do we get by doing it?
-# lets make this more tangible by an example. 
-# remember we said we want to be able to control variations in our input data? 
+# lets view this from another angle, why does this makes sense
+# why would we want to have a distribution instead of fixed points, what do we get by doing it?
+# lets make this more tangible by an example.
+# remember we said earlier we want to be able to control variations in our input data? 
 # like we want to make for example a person smile, or we want to add a mustache to 
-# someones face. having a distribution instead of a simple fixed point allows us to 
+# someones face. having a distribution instead of a fixed point allows us to 
 # have different smiles, different mustaches and not just a single one.
 # like mona lisa is also smiling, a kid is also smiling, they are clearly different smiles
 # so a distibution for smile, would allow us to sample different samples of smiles for the
-# lack of a better word. and for our mustache example, we can specify different kinds of mustaches
+# lack of a better word and for our mustache example, we can specify different kinds of mustaches
 # small, big, fancy, etc and this applies to just everything and the great thing about it is, 
 # there does not have to be an explicit image in our dataset for it! imagine mona lisa with a mustache!
 # the mustache is in the dataset, there are many images of men having mustaches of different kinds
-# but no mona lisa! or imagine glasses, hats, beard, etc! you get the point. 
+# but no mona lisa!(or women for that matter!) or imagine glasses, hats, beard, etc! you get the point. 
 # this happens because, as we previously mentioned, the latent space is smooth and continuous and 
 # the decoder has also learned to generalize across the entire latent space, instead of just memorizing
 # specific points in said latent space. add these to the fact that each point in the 
@@ -2028,18 +2028,19 @@ for e in range(epochs):
 # one for mean and another for std(in fact it creates log variance which we
 # then convert to standard deviation to then use for sampling, so technically
 # speaking it creates mu and logvar in the network).
-# a normal autoencoder, creates a set of atttibutes 
+# this is in contrast to how a traditional autoencoder works.
+# a traditional autoencoder creates a set of atttibutes 
 # in its final representation vector(e.g attributes or features describing
 # concepts such as, eye, smile, beard, gender, has glasses etc) in 
 # an input image of faces.
-# ideally the autoencoder would learn descriptive attributes 
+# the idea here is the autoencoder (hopefully) learns descriptive attributes 
 # of the input(in the case of faces this may be skin color, whether or not the person
-# is wearing glasses, is female, etc) to describe an observation(i.e. input image)
-# in some compressed representation.
+# is wearing glasses, is female, etc) to describe an observation(i.e. our input image)
+# in a compressed representation.
 # 
-# for example a vector could be like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
-# in this example, the input image is described in terms of its latent attributes,
-# each of which being described by a 'single value'.
+# for example one such latent vector could be something like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
+# which is basically describing the input image in terms of its latent attributes,
+# each of which are described by a 'single value'.(note this, its important for our discussion)
 #
 # (sidennote:(edit maybe its better if I add them as footnote?! or atleast some of these sidenotes are btter off as footnotes?!)
 # in reality, however, we can not rely on this intuition that a single feature directly
@@ -2048,68 +2049,68 @@ for e in range(epochs):
 # imagine this is the case so we can convey the idea behind it)
 # 
 # However, this may not reflect the variety/dynamic range of our input properly(this may be very limiting), 
-# because the compression by nature limits the amount of attributes we can encode. 
-# to get a broader range, we would need to have a larger number of attributes, and that would mean less 
-# compression, and in turn less desired output, soon we will be standing on a fork, 
-# to what extend can we compress and what features(diversity) can we have. do we use smaller number of attibutes and be limted?
-# or use a larger number and face more training issues(issues, talk about? edit)?
-# therefore we may prefer to represent each latent attribute as a 'range of possible values' instead of simply a single one.
-# this would relax the previous limitation, as it can now encode a broader range of variation/retain dynamicity?!
-# while the number of attributes per say would remain intact!/unchanged!
+# because the compression by nature limits the amount of attributes we can encode.
+# to get a broader range, we would need to have a larger number of attributes, and that
+# would mean less compression, and in turn less desired(varied) output, soon we will 
+# be standing before a decision, to what extend can we compress and what features(diversity)
+# can we have? do we use smaller number of attibutes and be limted?
+# or use a larger number and face more training issues(issues, explain like what edit)?
+# 
+# therefore we may prefer to represent each latent attribute as a 'range of possible values'
+# instead of simply a 'single one'.
+# this would relax the previous limitation, as it can now encode a broader range of 
+# variation/retain dynamicity! all while the number of attributes per say would remain intact!/unchanged!
 #
-# For instance, suppose we want to assign a value for the smile attribute for the image of mona lisa,
-# what 'single value' should we assign to reflect her smile? its there, but at the same time its very underdefined
-# if we were to use attributes that indicate the existance of a feature in input, her smile would expectedly
-# get a small value, and be treated as non existant)
-# hence why having a range of values would be very benificial to us where we can describe different types of an attribute (here smile e.g.). 
+# For instance, suppose we want to assign a value for the smile attribute for the image
+# of mona lisa, what 'single value' should we assign to reflect her smile? its there, but
+# at the same time its very underdefined! as if shes not smiling at all!
+# if we were to use attributes that indicate the existance of a feature in input, her smile,
+# would expectedly get a small value, and be treated as non existant) if we assigne somewhat
+# higher value, then it would mess with the existing established rule/attributes that rightfully
+# detect images that have defined smiles and would lead the network to wrongly classify similar 
+# features as smile!
+# hence why having a range of values would be very benificial to us where we can describe
+# different types of an attribute (here smile e.g.). 
 # we can achieve this by using probabilistic terms in our work.
 # 
-# the mean and variance that we produce in a vae encoder, is used exactly for this very reason
-# using them, we are learning a distrubution for each attribute and thus mu and variance
-# specify a range of values for each attribute.
+# the mean and variance that we produce in a vae encoder, is used exactly for this very 
+# reason. using them, we are learning 'a distrubution' for 'each attribute' and thus 
+# mu and variance specify a range of values for each attribute.
 # 
-# [With this approach, we'll now be able to represent each latent attribute for a given input 
-# as a probability distribution. when decoding from the latent representation we'll randomly sample
-# from each latent attribute distribution to generate a vector as input for our decoder.]
+# [With this approach, we'll now be able to represent each latent attribute for a given
+# input as a probability distribution. when decoding from the latent representation we'll
+# randomly sample from each latent attribute distribution to generate a vector as input
+# for our decoder.]
 # !edit(excessive or misplaced?)
 # thats why later on, we use these means, variances(actually std) along with an epsilon(act as a random variable)
-# to reconstruct the input image. 
+# to reconstruct the input image.
 # 
-# this simply means by producing probablity distribution for each latent attribute, "we're essentially/practically 
-# enforcing a continuous, smooth latent space representation."
-# This means we can now rightfully expect the decoder to be able to accuractly reconstruct the input
-# by sampling from the latent distributions.
-# which in turn means, that the values that are close to eachother, (nearby to one another) in latent space
-# should correspond with very similar reconstructions.(should result in similar reconstructions)
+# this simply means by producing probablity distribution for each latent attribute, 
+# "we're essentially/practically enforcing a continuous, smooth latent space representation."
+# This means the decoder should be able to accuractly reconstruct the input by sampling from
+# these latent distributions. This also implies that the values that are close
+# to eachother, in latent space will correspond to very similar reconstructions.(i.e. 
+# should result in similar reconstructions)
 # 
-# this is assisted/achieved/is made possible by using the mean and variance. 
+# all of this is is made possible by using the mean and variance produced in the encoder. 
 # the mean controls where the encoding (value) for an input should be centered around, while
-# the standard deviation controls/specifies the (valid) area (of change) around it, i.e. how much from/how far from the mean the encoding can vary 
-# sampling using mean and variance(actually std) is akin to randomly generating the encodings inside the circle (distribution)
+# the standard deviation controls/specifies the (valid) area (of change) around it, i.e. 
+# how much from/how far from the mean the encoding can vary.
+# sampling using mean and std is akin to randomly generating the encodings inside a circle (distribution)
 # which causes the decoder to learn that not only a single point in the latent space 
 # refers to a sample of a calss, but also all nearby points (all the points close to it) do as well!
-# not only this allows the decodeer to decode single, specific encodings in the latent space (which means leaving the decodable
-# latent space discontinuous) but also the ones that slightly vary too(i.e. the ones close to it), 
-# as the decoder is exposed to a range of variations of the encoding of the same input during training.(each time we feedforward a specific sample,
-# the sampling process introduces a slightly different value using the same mu,std (it wont be the same number) although the sample is the same.)
-# This exposes the model to a certain degree of local variations, resulting in a smooth latent space
-# locally(i.e. on a local scale), (that is for similar samples).
+# not only this allows the decodeer to decode single, specific encodings in the latent space 
+# but also the ones that slightly vary too(i.e. the ones close to it), as the decoder is 
+# exposed to a range of variations of the encoding of the same input during training 
+# (each time we feedforward a specific sample, the sampling process introduces a slightly
+# different value using the same mu,std (it wont be the same number) although the input 
+# sample is the same.)
+# This exposes the model to a certain degree of local variations, resulting in a smooth latent 
+# space locally(i.e. on a local scale), (that is for similar samples) but at the same time leavs
+# the decodable latent space discontinuous so different classes can form their own subspaces, otherwise if 
+# they all are mushed up, it would become meaningless! and nearly impossible for the decoder to reconstruct
+# accurately (more on this later))
 #
-# (jeremy jordan puts this very well:
-# Intuitively, the mean vector controls where the encoding of an input should be 
-# centered around, while the standard deviation controls the “area”, how much from 
-# the mean the encoding can vary. 
-# As encodings are generated at random from anywhere inside the “circle” (the distribution), 
-# the decoder learns that not only is a single point in latent space referring to a sample of that class, 
-# but all nearby points refer to the same as well
-# This allows the decoder to not just decode single, specific encodings in the 
-# latent space (leaving the decodable latent space discontinuous), but ones that 
-# slightly vary too, as the decoder is exposed to a range of variations of the
-# encoding of the same input during training.
-# The model is now exposed to a certain degree of local variation by varying the 
-# encoding of one sample, resulting in smooth latent spaces on a local scale, that is,
-# for similar samples.)
-# 
 # aside from that/moreover, we'd also want overlap between samples that are not very similar aswell, 
 # in order to interpolate between classes.
 # !edit test this without kl and see if this is the case 
@@ -2117,50 +2118,71 @@ for e in range(epochs):
 # However, since by default there is no limit/constraint enforcing mean(μ) and std(σ) vectors 
 # to have specific values, the encoder can learn to generate different means μ for different classes, 
 # clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
-# vary much for the same sample (which translates to less uncertainty for the decoder and thus easier decoding). 
-# This allows the decoder to efficiently/easily reconstruct the training data.
-# This is not desirable, as we discussed before. we want the encodings to be as close as 
-# possible yet be still distinct, allowing smooth interpolation between them, creation of new samples.
-# 
-# Therefore in order to prevent this, we introduce the Kullback–Leibler divergence 
-# (KL divergence) and use it in the loss function. The KL divergence measures
-# measures how much two probablity distributions diverge(differ) from each other.
+# vary much for the same sample (which translates to less uncertainty for the decoder and thus 
+# easier decoding). 
+# This allows the decoder to efficiently/easily reconstruct the training data,
+# but it is not desirable for us, as we discussed before we want the encodings to be as close as 
+# possible yet be still distinct, allowing smooth interpolation between them, creating new samples.
+# Therefore in order to prevent this, we introduce the KL divergence and use it in
+# the loss function. The KL divergence measures how much two probablity distributions diverge
+# (differ) from each other.
 # !edit
-# Minimizing the KL divergence [loss] means the probability distribution
-# parameters (μ and σ) need to closely resemble that of the target distribution(i.e. original input data).
+# Minimizing it means the probability distribution parameters (μ and σ) need to closely resemble
+# that of the target distribution(i.e. original input data).
 # that is they need to be as close as possible (basically resemeble/match? the original data)
 # 
-# from a visualization point of view, (if we try to visualize the encodings spaces we see) it encourages
-# the encoder to distribute all encodings (for all types of inputs,), evenly 
-# around the center of the latent space(this makes the encodings to be distributed evenly around the center of latent space (visually speaking)).
+# from a visualization point of view, (if we try to visualize the encodings spaces we see) 
+# it encourages the encoder to distribute all encodings (for all types of inputs,), evenly 
+# around the center of the latent space (this makes the encodings to be distributed evenly 
+# around the center of latent space (visually speaking) (edit: basically to have mean 0, (which means a normal distribution,
+# which again because natural images follow normal distribution so it makes sense!) hence why they cluster at the center)).
 # the encoder will therefore be penalized when/if it tries to cluster them apart into specific regions, 
 # away from the origin.
 # 
-# However, in practice, with this change, the decoder will have a very hard time to come to good reconstruction
-# if any, simply because the encodings are now simply densely placed randomly, near the center of the latent space, 
-# with little to no regard for similarity among nearby encodings.
-# to the decoder, this simply doesnt make much sense! based on our previous intuitions, nearby points in latent space
-# sh should resemble similar inputs, but now, after such enforcement, they are being place at random places! where they have no bussiness being!)
+# However, in practice, with this change, the decoder will have a very hard time to get reconstructions right!
+# if any atall, simply because the encodings are now simply densely placed randomly, near 
+# the center of the latent space, with little to no regard for similarity among nearby encodings.
+# to the decoder, this simply doesnt make much sense! based on our previous intuitions, 
+# nearby points in latent space should resemble similar inputs, but now, after such enforcement,
+# they are being placed at random places! where they have no bussiness being!)
 # !edit
 # therefore, we use another term in our loss function to circumvent/to get rid of/address this issue. 
-# the reconstruction loss, like standard autoencoders will be made of both the MSE loss(similarity) 
+# the reconstruction loss, like standard autoencoders will be made of both the BCE loss(because it treats
+# pixels as probabilities and prevents blurry outputs and usually results in better performance.) 
 # and the kl loss (constraining term). this results in [the generation of] a latent space that 
-# address both of our concerns and fullfills them both(edit!), 
+# addresses both of our concerns and fullfills them both(edit!), 
 # maintaining the similarity of nearby encodings locally (on the local scale) by clustering,
 # and yet globally, densely packing them near the latent space origin (see visualization).
 # 
-# this is the equilibrium reached by the cluster-forming nature of the
-# reconstruction loss, and the dense packing nature of the KL loss, forming distinct
-# clusters the decoder can decode. 
-# This is great, as it means when randomly generating, if we sample a vector from 
-# the same prior distribution of the encoded vectors, N(0, I),(natural images have normal distribution (unit normal distribution? applies to them as well)) 
+# sidenote:
+# we use BCE because the original paper uses BCE, but some implementations started using MSE
+# BCE is preferred in cases where we are dealing with normalized images between 0 and 1
+# like binary or grayscale images, where the goal is to predict whether a pixel is closer to
+# 0 (black) or 1 (white).(because in BCE each pixel value is seen as probabilities, it makes it especially suitable)
+# MSE however, assumes continuous values, meaning it penalizes small differences more harshly,
+# which may lead to blurry reconstructions. for example if we had an image where a 
+# pixel was 0.9 and the predicted value was 0.8, BCE would penalize the small difference in
+# a way that maintains a sharp reconstruction however, MSE, might have lead to an average of
+# multiple possible outputs, causing blurry reconstructions.
+# having this said, MSE is used with color images, especially the ones that are not normalized in 0-1
+# (they are either unbounded, or are normalized [-1,1] it produces smoother but sometimes blurrier
+# reconstructions.)
+# so MSE tends to work better for smooth images, while BCE works well when pixel values behave
+# like probabilities (high contrast regions, thresholded images, etc).
+#
+#
+# this is the equilibrium/fine balance reached by the cluster-forming nature of the
+# reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
+# clusters that the decoder can decode.
+# This means when randomly generating, if we sample a vector from 
+# the same prior distribution of the encoded vectors, N(0, I),(natural images have
+# normal distribution (unit normal distribution? applies to them as well)) 
 # the decoder will successfully decode it. And if we're interpolating, there are 
 # no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
 
 
-
 ############################
-    # recap:
+    # recap of recap (more technical explanation):
     # our encoder(denoted as qθ(z∣x)) will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
     # using these two parameters, we sample our z representation vector(latent vector)
     # which will be used by the decoder to reconstruct the input.
@@ -2225,7 +2247,6 @@ for e in range(epochs):
     # Higher log-likelihood means the decoder effectively captures the structure of 
     # x from z while lower values indicates greater reconstruction loss.
 
-
     # sidenote4:
     # note that in this approach we assume the features in the latent space are independent, 
     # that is, each dimension of z(each feature) contributes independently to the decoded 
@@ -2284,9 +2305,8 @@ for e in range(epochs):
     # learning fewer parameters and easier sampling .
     # its fewer parameters because (only mu and diagonal Sigma is used)(less work for forward/backward passes)
     # and it avoids overfitting by simplifying the model, especially when working with limited data.
-    # and easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector, derived from 
-    # diagonal variances).
-    # and sampling from N(mu, sigma^2) is done directly.
+    # and easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector)
+    # from it, derived from diagonal variances) and sampling from N(mu, sigma) is done directly.
     # 
     #  
     # sidenote:
@@ -2384,7 +2404,8 @@ for e in range(epochs):
 
 ##############################
 
-
+# edit I should split them in separate parts because its got too large!
+# 
 
 
 #!edit
@@ -2393,11 +2414,6 @@ for e in range(epochs):
 #! edit add note to use BCE for reconstruction loss instead of MSE as it has better performance
 # especially for larger datasets
 #
-# points to do : 
-# 1.draw a 2d manifold for simple uatoencoder output
-# and point out the issues use these 3 lines as headsup
-# 3. cover the Visualization of latent space in jeremyjordan notes 
-#  
 
 # read more  : https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
 # There are other resouces for this as well. its highly recommened to read them: 
@@ -2411,16 +2427,13 @@ for e in range(epochs):
 # leverage VAEs in that domain as well. for now lets see how we can implement this
 # for vision domain. i.e. on mnist dataset
 
-# note: (jeremyjordans blog:)
+# note: (from jeremyjordans blog:)
 # For variational autoencoders, the encoder model is sometimes referred to as
 # the 'recognition model' whereas the decoder model is sometimes referred to as 
 # the 'generative model'.
 
 # if you havent read the links I gave you, go read them all. each single one of them
 # will help you grasp one aspect very good!
-#  
-
-
 
 # Viewppoint 2! what is VAE and how does it work? why was it created? whats the intuition behind it?
 # explain 
@@ -2428,7 +2441,7 @@ for e in range(epochs):
 
 # sidenote: a much clearer implementation which I wrote for pytorch examples repo at the time: 
 # https://github.com/Coderx7/examples/blob/vae-example-branch/vae/main.py
-# thats not good!)remove it
+# maybe not!
 #
 # 
 # read this https://deepai.org/machine-learning-glossary-and-terms/manifold-hypothesis 
@@ -2459,7 +2472,7 @@ class conv(nn.Module):
             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
             nn.LeakyReLU(0.2)
         )
-        # Residual connection needs input and output dimensions to match
+        # residual connection needs input and output dimensions to match
         self.residual_connection = (in_dim == out_dim and stride == 1)
 
     def forward(self, x):
@@ -2476,7 +2489,7 @@ class deconv(nn.Module):
             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
             act
         )
-        # Residual connection needs input and output dimensions to match
+        # residual connection needs input and output dimensions to match
         self.residual_connection = (in_dim == out_dim and stride == 1)
 
     def forward(self, x):
@@ -2577,9 +2590,6 @@ class VAE(nn.Module):
                                      # to use, plain BCE (and specifically not BCEWithLogits)
                                     #  nn.Sigmoid()
                                     )
-
-
-
     
     # Note: 
     # In order to deal with the fact that the network may learn negative values
@@ -2699,8 +2709,259 @@ class VAE(nn.Module):
 model = VAE(embedding_size=100)
 img_re, _,_ = model(torch.randn(size=(5,1,28,28)))
 print(f'{img_re.shape=}')
+
+#sidenote:
+# during training we may face something called posterior collapse,
+# it happens when the decoder is more powerful than the encoder
+# and the latent space stops encoding meaningful information 
+# and the decoder ignores the latent variables during reconstruction.
+# in extreme cases, the decoder wont rely on the encoded representation
+# and will only on the prior itself (i.e. the learned latent distribution
+# collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
+# as a result, the latent variables will contain little to no useful information,
+# leading to reconstructions that are too generic or blurry, 
+# and the vae behaves more like a standard autoencoder.
+# 
+# to be more precise, this happens when the kl divergence term dominates the loss.
+# kl divergence job is to ensur the latent space follows a prior (i.e. a Gaussian N(0, I))  
+# but when the kl term is too strong, the model learns to set q(z|x) ≈ p(z) )(i.e., 
+# the posterior collapses to the prior), making z uninformative.
+# as we pointed out this often happens when we use powerful decoders
+# that can reconstruct the data directly from the prior distribution, 
+# without needing latent variables.
+# 
+#edit: obious?/excessive? 
+# if the decoder is too powerful, it can learn to reconstruct x without 
+# relying on z at all which means even if z contains no useful information,
+# the decoder can still reconstruct well, leading to collapsed latents.
+
+# if we use a scaler/factor to normalize the loss (the kl term and reconstruction loss as 
+# its especially the case in Beta-VAEs (which we will see shortly also)), 
+# a large scaler in the kl term forces the latent distribution 
+# too close to the prior, increasing the risk of posterior collapse.
+# when the scaler is too high, the VAE prioritizes regularization over 
+# learning meaningful latent representations
+# 
+# the issue could also come from the reparameterization trick,
+# the reparameterization trick introduces randomness when sampling
+# from (q(z|x)) but if the model learns to reduce this randomness 
+# (e.g. by making standard deviation very small), the latent space
+# may become degenerate.
+# its worth noting that if the latent space is too small, it may also 
+# be forced to collapse.
+
+# There are several techniques that help mitigate this issue by balancing
+# reconstruction quality and latent space learning. 
+# the first and most obvious one is to reduce the kl scaler/weighting,
+# that is instead of a fixed beta/scaler, gradually increase it over training
+# (e.g., use a kl annealing schedule). 
+# this prevents the model from collapsing too early and ensures meaningful
+# latent variables.(i.e. start with beta=0 and increase it slowly to beta=1)
+
+# we can also use a less powerful since if its too powerful, it may learn to ignore z.  
+# this simply means using fewer layers or smaller networks or use stronger bottleneck 
+# constraints.
+
+# we can also instead of minimizing KL loss entirely, enforce a minimum kl value per
+# latent dimension (e.g., 0.1 per latent dimension). this forces the model to use 
+# latent variables even when kl regularization is high.
+
+#!edit what?
+# we can also add skip connections between the encoder and decoder so
+# that reconstruction does not fully rely on z. 
+# Use hierarchical priors or a more structured latent space.(what?!!)
+
+# increasing latent space size, if its too small, can help distribute 
+# information across more dimensions and fix the issue.
+
+# we can also use VQ-VAE variant (Vector Quantized VAEs) which replaces 
+# the continuous latent space with discrete latent embeddings, making the
+# model less prone to collapse. (well cover this as well)
+
+
+#
+#
+### **How to Spot Posterior Collapse in a VAE?**  
+
+# Posterior collapse happens when the VAE **stops using its latent space** and the latent variables **carry little to no information** about the input data. There are several ways to detect if a VAE is experiencing posterior collapse.
+
+# ---
+
+# ## **1. Check KL Divergence Values**  
+# A clear sign of posterior collapse is **extremely low KL divergence**.  
+
+# - If **\( D_{\text{KL}}(q(z|x) || p(z)) \approx 0 \) for most latent dimensions**, it means \( q(z|x) \) has collapsed to the prior \( p(z) \).  
+# - The model is ignoring the latent space, and the decoder is reconstructing directly from the prior.  
+
+# ### **🔍 How to Check KL Divergence in PyTorch**
+# If using a **standard VAE loss**:
+
+# ```python
+# kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1).mean()
+# print(f"KL Divergence: {kl_loss.item()}")
+# ```
+# - If **KL loss is close to zero**, it's a sign of collapse.  
+# - Ideally, KL loss should be **balanced** (not too small, not too large).  
+
+# #### **Visualization Approach**
+# Plot the KL loss over time:
+# ```python
+# plt.plot(kl_losses)  # Store KL loss over training and plot it
+# plt.xlabel("Epoch")
+# plt.ylabel("KL Divergence")
+# plt.title("KL Divergence Over Training")
+# plt.show()
+# ```
+# - **If KL starts high and drops to near-zero**, it's likely a collapse.  
+# - **Healthy training** maintains a nonzero KL value.
+
+# ---
+
+# ## **2. Check Latent Space Variance**
+# If **all latent dimensions** have **almost zero variance**, it means they are not encoding useful information.
+
+# ### **🔍 How to Check Latent Variance**
+# ```python
+# print("Mean of latent variables:", mu.mean().item())
+# print("Standard deviation of latent variables:", torch.exp(0.5 * logvar).mean().item())
+# ```
+# - If the standard deviation **shrinks to nearly zero**, the model isn't effectively using its latent space.  
+# - A good VAE should have a **diverse range of latent activations**.
+
+# #### **Plotting the Latent Space**  
+# You can visualize the mean and variance across training:
+# ```python
+# plt.plot(mu.cpu().detach().numpy(), label="Mean (μ)")
+# plt.plot(torch.exp(0.5 * logvar).cpu().detach().numpy(), label="Std (σ)")
+# plt.xlabel("Latent Dimension")
+# plt.ylabel("Value")
+# plt.legend()
+# plt.show()
+# ```
+# - **If the mean is always near 0 and std is near 1, the model ignores latent space.**  
+
+# ---
+
+# ## **3. Check the Latent Representations**
+# If the **latent encodings** are **almost identical for different inputs**, it means the model isn't using the latent space.
+
+# ### **🔍 How to Check Encodings**
+# Encode two different images and compare their latent variables:
+# ```python
+# z1, mu1, logvar1 = model.encode(image1)
+# z2, mu2, logvar2 = model.encode(image2)
+
+# difference = (mu1 - mu2).abs().mean().item()
+# print(f"Mean absolute difference in latent space: {difference}")
+# ```
+# - If the **difference is close to 0**, the latent space is collapsing.  
+# - There should be noticeable **variation** between different images.
+
+# #### **Visualizing Latent Space with t-SNE**
+# A healthy VAE should separate different inputs in latent space. You can visualize this using **t-SNE**:
+# ```python
+# from sklearn.manifold import TSNE
+
+# z_samples = []  # Store latent vectors
+# labels = []  # Store corresponding class labels
+
+# for i, (img, label) in enumerate(dataloader):
+#     z, mu, logvar = model.encode(img.to(device))
+#     z_samples.append(mu.cpu().detach().numpy())
+#     labels.append(label.numpy())
+
+# z_samples = np.concatenate(z_samples, axis=0)
+# labels = np.concatenate(labels, axis=0)
+
+# tsne = TSNE(n_components=2)
+# z_2d = tsne.fit_transform(z_samples)
+
+# plt.scatter(z_2d[:, 0], z_2d[:, 1], c=labels, cmap="tab10", alpha=0.7)
+# plt.colorbar()
+# plt.title("t-SNE Projection of Latent Space")
+# plt.show()
+# ```
+# - **If all points cluster together, it's collapsed.**
+# - A good latent space **separates different categories**.
+
+# ---
+
+# ## **4. Check the Generated Samples**
+# If the **generated images are nearly identical**, regardless of input variation, it's a sign that the latent space is underutilized.
+
+# ### **🔍 How to Check Generated Images**
+# 1. Sample multiple **random** latent vectors:  
+# ```python
+# z_random = torch.randn(size=(64, model.embedding_size)).to(device)
+# generated_images = model.decoder(z_random)
+# ```
+# 2. Plot the generated images:
+# ```python
+# grid = make_grid(generated_images, nrow=8, normalize=True)
+# plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
+# plt.title("Generated Samples")
+# plt.axis("off")
+# plt.show()
+# ```
+# - **If all images look the same**, posterior collapse is likely happening.  
+# - Healthy VAEs generate **diverse samples**.
+
+# ---
+
+# ## **5. Check How Reconstruction Changes with Latent Space**
+# A properly trained VAE should **smoothly interpolate** between different points in latent space.
+
+# ### **🔍 How to Test Interpolation**
+# Generate latent vectors between two encodings and decode:
+# ```python
+# z1, _, _ = model.encode(image1)
+# z2, _, _ = model.encode(image2)
+
+# alphas = torch.linspace(0, 1, steps=10).to(device)
+# interpolated_z = torch.lerp(z1, z2, alphas[:, None])
+
+# interpolated_images = model.decoder(interpolated_z)
+
+# grid = make_grid(interpolated_images, nrow=10, normalize=True)
+# plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
+# plt.title("Latent Space Interpolation")
+# plt.axis("off")
+# plt.show()
+# ```
+# - **If interpolation doesn’t produce meaningful transitions**, the latent space isn’t being used effectively.
+# - A good VAE should show **smooth changes** between different styles of images.
+
+# ---
+
+# ## **Summary: How to Spot Posterior Collapse**
+# | **Test** | **Expected in Collapsed VAE** | **Healthy VAE** |
+# |------------|----------------------|--------------|
+# | **KL Divergence** | Close to 0 | Balanced KL loss |
+# | **Latent Variance** | Close to 0 | Non-zero variance |
+# | **Latent Differences** | Almost identical | Distinct encodings |
+# | **Generated Images** | Identical outputs | Diverse outputs |
+# | **t-SNE Latent Space** | Single cluster | Well-separated clusters |
+# | **Interpolation** | No meaningful change | Smooth transitions |
+
+# ---
+
+# ## **Conclusion**
+# Detecting posterior collapse requires checking **KL divergence, latent space variance, generated samples, and interpolation behavior**. The best way to **avoid** posterior collapse is to **carefully tune the KL loss, avoid an overly powerful decoder, and use techniques like KL annealing**.
+
+# Would you like help implementing **KL annealing** or **alternative fixes**? 🚀
+#
+#
+
 # Note :
-# In my experience working on the VAE, the KL annealer helps to train the model.
+# for proper training, dont incorporate kl term at the begining. 
+# first train with the reconstruction loss, and then gradually introduce the kl term
+# this should allow the model to arrive at a decent spot! otherwise it wont work properly
+# (except maybe somehow account for the scale of the kl term, which if you do add a scaler 
+# term, would essentially become a disentangled vae which is an improvement over the
+# this (vanilla) version. 
+# this is actually what I learned from the following github author: 
+#
+# "In my experience working on the VAE, the KL annealer helps to train the model.
 # To be more specific, when training your encoder and decoders right off the 
 # bat variationally (KL-term constant) can lead to a lot of instability while 
 # training. So a good first step is to train them as a AE and at some moment 
@@ -2710,7 +2971,7 @@ print(f'{img_re.shape=}')
 # spot before competing with the discriminator. There are many ways of doing
 # this, most are just engineering, hence MOSES's approach also works.
 # For the original VAE i think around epoch 30 we start the KL annealing.
-
+#
 
 # Also read : https://github.com/jxhe/vae-lagging-encoder
 # The code seperates optimization of encoder and decoder in VAE, and performs 
@@ -2782,6 +3043,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffl
 # use 1e-4 and see how it disrupts the process, 
 # the kl dominates the loss (squashes the clusters)
 # and the projection with 2 embeddingsize shows it very well!
+# 
 # last change:
 # using beta=1e-1 and embdsz=2 using sum seems to be a good fit
 # beta isnt needed technically as it belongs to disentagled version
@@ -2800,34 +3062,22 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = VAE(embeddingsize).to(device)
 reduction='sum'
 optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
-# ther econstruction was off, so I first tried changing encoder, nothing changed so I
-# played with decoder, started with wd nothing happened, went to lr and decaded it and it got better
-# loss decreased! 
-# the embeddingsize from 2 to 10 seems to have made it better.next test with embd=2 
-# then revert back to 10 and change encoder
-# optimizer2 = torch.optim.Adam(model.decoder.parameters(), lr =0.01,weight_decay=1e-5)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
-# scheduler2 = torch.optim.lr_scheduler.MultiStepLR(optimizer2, [5,10,25,45,50])
 
 for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
-
         loss = loss_function(preds, imgs, mu, logvar, beta=beta, reduction=reduction, use_mse=False)
-        
         optimizer.zero_grad()
-        # optimizer2.zero_grad()
         loss.backward()
         optimizer.step() 
-        # optimizer2.step()
         if i% interval ==0:
             loss = loss/len(imgs) if reduction=='sum' else loss
             print(f'epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
                   f'\tloss: {loss.item():.4f}'
                   f'\tlr: {scheduler.get_lr()[-1]}')
     scheduler.step()
-    # scheduler2.step()
 
 #%% 
 # save the model
@@ -3300,6 +3550,24 @@ preds = model.decode(z, labels).detach().cpu()
 img = make_grid(preds)
 plt.imshow(img.numpy().transpose(1,2,0),cmap='gray')
 #%%
+import os
+# lets display them a longside the original ones
+def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
+    img_cnt = len(img_pairs)
+    print(img_cnt)
+    fig = plt.figure(figsize=(28, 28))
+    for i in range(img_cnt):
+        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
+                            nrow=nrows,
+                            normalize=True)
+        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
+        ax.set_title(f'testset reconstruction-{i}')
+        
+        if not os.path.exists('results'):
+            os.makedirs('results')
+        save_image(grid_imgs, f'results/imgs_{i}.jpg')
+
 # now lets see the digits 2d manifold
 
 # the normal interpolation that we used for vanila va wont work here
