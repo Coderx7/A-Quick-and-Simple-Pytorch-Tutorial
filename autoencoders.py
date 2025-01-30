@@ -405,7 +405,7 @@ from sklearn.preprocessing import StandardScaler
 # since we are going to use scatter plot, our feature vector must be 2D
 # (that is it needs to have 2 numbers!) if its not, we need to use pca or tsne
 # to project them into 2d.
-def plot_embedding_clusters(model, dataloader_train, use_pca=False):
+def plot_embedding_clusters(model, dataloader_train, title='',use_pca=False):
     model.eval()
     # grab the device from model parameter
     device = next(model.parameters()).device
@@ -468,7 +468,8 @@ def plot_embedding_clusters(model, dataloader_train, use_pca=False):
         plt.text(centroid[0], centroid[1], str(label), fontsize=12, fontweight='bold',
                  bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.3'))
 
-    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D")
+    title = f"\n{title}" if title else ''
+    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D{title}")
     plt.colorbar(scatter, label='Class Label')
     plt.show()
 
@@ -2180,10 +2181,13 @@ for e in range(epochs):
 # the decoder will successfully decode it. And if we're interpolating, there are 
 # no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
 
-
+#! add edits from the second part of explanations, where I talka bout posterior distribution(q(z|x)
+# to make the explanations here clearer for everyone.())
 ############################
     # recap of recap (more technical explanation):
-    # our encoder(denoted as qθ(z∣x)) will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
+    # our encoder(denoted as qθ(z∣x) (i.e. given this input data x, what is the
+    # probability distribution of the latent variable z (i.e. whats the mu,var)) 
+    # will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
     # using these two parameters, we sample our z representation vector(latent vector)
     # which will be used by the decoder to reconstruct the input.
     # 
@@ -2447,6 +2451,37 @@ for e in range(epochs):
 # read this https://deepai.org/machine-learning-glossary-and-terms/manifold-hypothesis 
 # before revising the whole thing. gives a very good picture of the whole thing imho
 # 
+
+
+# note : why do we really want the epsilon in reparameterization trick? 
+# what is the intuition behind it : https://youtu.be/9zKuYvjFFS8?t=415
+# read in depth technical reasons here :
+# all answers contain great explanations 
+# https://stats.stackexchange.com/questions/199605/how-does-the-reparameterization-trick-for-vaes-work-and-why-is-it-important
+# https://stats.stackexchange.com/questions/429315/why-is-reparameterization-trick-necessary-for-variational-autoencoders
+# https://stats.stackexchange.com/questions/342762/how-do-variational-auto-encoders-backprop-past-the-sampling-step/342815#342815
+# https://blog.neurallearningdymaics.com/2019/06/variational-autoencoders-1-motivation.html
+# http://ruishu.io/2018/03/14/vae/
+# 
+# reading this links up until now, you show have been convinced 
+# that we use reparameterization trick solely 
+# because otherwise we couldnt backprop to random node! 
+# this however is not the whole story!
+# from Kingma: 
+# This reparameterization is useful for our case since it can be used to rewrite an 
+# expectation w.r.t qϕ(z∣x) such that the Monte Carlo estimate of the expectation is 
+# differentiable w.r.t. ϕ. 
+# The issue is not that we cannot backprop through a “random node” in any technical sense. 
+# Rather, backproping would not compute an estimate of the derivative. 
+# Without the reparameterization trick, we have no guarantee that sampling large numbers of z
+# will help converge to the right estimate of ∇θ.(i.e. its there to avoid a very bad (high variance) estimate.))
+# 
+# read in more detail here: 
+# http://gregorygundersen.com/blog/2018/04/29/reparameterization/
+# if you want to know about expectation and what it is, this may help 
+# https://revisionmaths.com/advanced-level-maths-revision/statistics/expectation-and-variance)
+
+
 # now lets implement our VAE 
 
 # first lets define conv and deconv blocks,
@@ -2503,14 +2538,13 @@ class deconv(nn.Module):
 # and a decoder section. lets implement them, well explain each part when implementing them
 class VAE(nn.Module):
 
-    def __init__(self, embedding_size=100):
+    def __init__(self, embedding_size=100, input_channels=1):
         super().__init__()
         self.embedding_size = embedding_size
-        
-        # for mnist 
-        # self.fc1 = nn.Linear(28*28, 512)
-        self.encoder = nn.Sequential(#nn.Flatten(),
-                                     conv(1,32),#28x28
+        # number of input channels
+        self.input_channels = input_channels
+
+        self.encoder = nn.Sequential(conv(self.input_channels, 32),#28x28
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
                                      conv(96,128,stride=2),#3x3
@@ -2520,14 +2554,13 @@ class VAE(nn.Module):
                                      conv(256,self.embedding_size,stride=2,padding=1),#1x1
                                      # nn.Linear(28*28, self.embedding_size)
                                     )
-        # get this from user?
-        # 2x2 is the spatial dims
+        # 1x1 is the spatial dims of the output of the last encoder layer
         bottleneck_size = self.embedding_size*1*1 
         # mean
         self.fc1_mu = nn.Linear(bottleneck_size, self.embedding_size) 
         # we use log since we want to prevent getting negative variance
         #logvariance
-        self.fc1_std = nn.Linear(bottleneck_size, self.embedding_size) 
+        self.fc1_logvar = nn.Linear(bottleneck_size, self.embedding_size) 
 
         #! calculate the logptheta(x|z) as well?
         #!
@@ -2583,7 +2616,7 @@ class VAE(nn.Module):
                                      # it will prevent the loss to go down. 
                                      # this simple mistake took a lot of my time! because
                                      # I simply forgot to check deconv!
-                                     deconv(32,1,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                     deconv(32,self.input_channels,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
                                      # in normal situations we wouldnt use sigmoid
                                      # but since we want our values to be in [0,1]
                                      # we use sigmoid. for loss we will then have  
@@ -2596,44 +2629,21 @@ class VAE(nn.Module):
     # for σ, we'll typically have the network learn log(σ) and exponentiate(exp) it 
     # to get the latent distribution's variance.
     def reparamtrization_trick(self, mu, logvar):
-        # note : why do we really want the epsilon? 
-        # what is the intuition behind it : 
-        # watch this : https://youtu.be/9zKuYvjFFS8?t=415
-        # 
-        # read in depth technical reasons here :
-        # all answers contain great explanations 
-        # https://stats.stackexchange.com/questions/199605/how-does-the-reparameterization-trick-for-vaes-work-and-why-is-it-important
-        # https://stats.stackexchange.com/questions/429315/why-is-reparameterization-trick-necessary-for-variational-autoencoders
-        # https://stats.stackexchange.com/questions/342762/how-do-variational-auto-encoders-backprop-past-the-sampling-step/342815#342815
-        # https://blog.neurallearningdymaics.com/2019/06/variational-autoencoders-1-motivation.html
-        # http://ruishu.io/2018/03/14/vae/
-        # reading this links up until now, you show have been convinced that we use reparameterization trick solely 
-        # because otherwise we couldnt backprop to random node! this however is not the whole story!
-        # from Kingma: This reparameterization is useful for our case since it can be used to rewrite an 
-        # expectation w.r.t qϕ(z∣x) such that the Monte Carlo estimate of the expectation is 
-        # differentiable w.r.t. ϕ. 
-        # The issue is not that we cannot backprop through a “random node” in any technical sense. 
-        # Rather, backproping would not compute an estimate of the derivative. 
-        # Without the reparameterization trick, we have no guarantee that sampling large numbers of z
-        # will help converge to the right estimate of ∇θ.(i.e. its there to avoid a very bad (high variance) estimate.))
-        # read in more detail here: 
-        # http://gregorygundersen.com/blog/2018/04/29/reparameterization/
-        # if you want to know about expectation and what it is, this may help 
-        # https://revisionmaths.com/advanced-level-maths-revision/statistics/expectation-and-variance)
-         
-        # !edit 
-        # torch.exp() converts logvar(log(variance)) back to variance (sigma^2)
-        # but note that here, we have the multiplication by 0.5 and then exponentiation
+        # !edit combine them in one paragraph, we have too many sidenotes that we can 
+        # !incorporate into the actual text I guess! 
+        # torch.exp() converts logvar(log(variance) which our network produces) back to
+        # variance (sigma^2) but note that here, we have the multiplication by 0.5 and
+        # then exponentiation.
         # this is equivalent to computing the square root of the variance (its 
         # asif we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
-        # remember  log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5) = 0.5.log⁡(𝜎^2)
+        # remember log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5)=0.5.log⁡(𝜎^2)
         # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
         # so it becomes variance.
         # 
         # sidenote:
         # variance(σ^2) must always be positive because it represents squared differences.
-        # we dont directly optimize σ^2 or σ instead, we work with log(σ^2) (logvar), 
-        # which ensures that the computed variance (σ^2 = exp(logvar)) is always positive,
+        # we dont directly optimize σ^2 or σ instead we work with log(σ^2) (logvar), 
+        # which ensures that the computed variance (σ^2=exp(logvar)) is always positive,
         # even if logvar takes negative values. (exp() returns positive)
         # 
         # The factor 0.5 in exp(0.5*logvar) comes from the mathematical process of 
@@ -2641,20 +2651,19 @@ class VAE(nn.Module):
         # σ = sqrt(σ^2) = exp(0.5 * logvar)
         # 
         # sidenote2:
-        # variance or standard deviation can take very small or large values, 
-        # leading to potential overflow or underflow in floating-point computations.
-        # representing it as log⁡(σ^2) keeps the range more manageable for optimization.
+        # why do we use logvariance instead of variance?
+        # because variance (also standard deviation) can take very small or large values, 
+        # that can lead to overflow or underflow in floating-point computations, therefore
+        # representing it as log⁡(σ^2) avoids that issue.
         # 
-        # The standard deviation is the square root of variance (σ=√σ^2) 
-        # and represents the 'scale' of the distribution in the same units as the data.
-        # z = μ+σ⋅ϵ, ϵ∼N(0,I)
-        # note here the standard deviation (σ) is necessary because 
-        # multiplying by variance (σ^2) wouldn't make sense dimensionally
-        # it would lead to an incorrect scaling.
-        #
-        # variance (σ^2) is used in the KL divergence term during optimization.
-        # when representing the overall spread of a distribution mathematically.
-        #
+        # sidenote2:
+        # The standard deviation represents the 'scale' of the distribution 
+        # in the same units as the data.(z = μ+σ⋅ϵ, ϵ∼N(0,I))
+        # note here for sampling we use the standard deviation (σ) not variance!
+        # because multiplying by variance (σ^2) wouldn't make sense dimensionally
+        # and it would lead to an incorrect scaling.
+        # we use variance (σ^2) in the KL divergence term during optimization though
+        # (when representing the overall spread of a distribution).
         #
         std = torch.exp(0.5*logvar)
         # epsilon sampled from normal distribution with N(0,1)
@@ -2668,8 +2677,9 @@ class VAE(nn.Module):
         
         # why we use an epsilon?
         # you should know by now, if not read the former links I provided.
-        # basically there are 2 main explanations, the first one (Which is not true) is
-        # because without it, backprop wouldnt work.
+        # basically there are 2 main explanations, the first one (Which is not accurate) is
+        # because without it, backprop wouldnt work atall, its impossible to backprop!(which 
+        # is not really the accurate, its possible and it works, but with a caveat!).
         # for the random part we sample from normal distribution N(0,1)
         # and treat this as a mere input. (like the images that are input and we dont 
         # calculate the gradients for) 
@@ -2678,264 +2688,36 @@ class VAE(nn.Module):
         # (since our eps has 0 mean and std 1, adding it with mu, and scaling it by std
         # will make it N(mum std) which is what we want. our expression also now can be
         # easily backpropagated. 
-        # also you need to know that, it is also said this reparameterization trick is only done for 
-        # numerical stability and actually the basic way can be done as well! 
-        # and finally, the actual reason was given above, we actually do this to guarantee the right estimate 
-        # of ∇θ. without this, we have no guarantee that sampling large numbers of z, will help convertence
-        # to the right estimates of ∇θ.
+        # also you need to know that, it is also said this reparameterization trick 
+        # is only done for numerical stability and actually the basic way can be done as well!
+        # and finally, the actual reason was given above, we actually do this to guarantee 
+        # the right estimate of ∇θ. without this, we have no guarantee that sampling large 
+        # numbers of z, will help convertence to the right estimates of ∇θ.(think about 
+        # stochastic gradident decent vs gradient decent and how the former gives us an estimate
+        # for the latter (a good estimate) and if it fails to do so,it would no more represent
+        # the gradient decent/the actual gradient.)
         return mu + eps*std
     # 
     def encode(self, input):
         output = self.encoder(input).view(input.size(0),-1)
-        # print(f'{output.shape=}')
         # note we dont use activations for mu/std
         mu = self.fc1_mu(output)
-        log_var = self.fc1_std(output)
-        # In its original form, VAEs sample from a random node z which is 
-        # approximated by the parametric model q(z∣ϕ,x) of the true posterior.
-        # Backprop cannot flow through a random node. Introducing a new parameter 
-        # ϵ allows us to reparameterize z in a way that allows backprop to flow 
-        # through the deterministic nodes. this is called reparamerization trick
+        log_var = self.fc1_logvar(output)
         z = self.reparamtrization_trick(mu, log_var)
         return z, mu, log_var
 
     def forward(self, input):
         z, mu, logvar = self.encode(input)
-        # decoder 
         reconstructed_img = self.decoder(z)
         # print(f'{reconstructed_img.shape=}')
         return reconstructed_img, mu, logvar
 
-model = VAE(embedding_size=100)
-img_re, _,_ = model(torch.randn(size=(5,1,28,28)))
+# test the vae and the output shape, making sure 
+# we didnt mess sth up in encoder/decoder
+input_channels=1
+model = VAE(embedding_size=100, input_channels=input_channels)
+img_re, _,_ = model(torch.randn(size=(5,input_channels,28,28)))
 print(f'{img_re.shape=}')
-
-#sidenote:
-# during training we may face something called posterior collapse,
-# it happens when the decoder is more powerful than the encoder
-# and the latent space stops encoding meaningful information 
-# and the decoder ignores the latent variables during reconstruction.
-# in extreme cases, the decoder wont rely on the encoded representation
-# and will only on the prior itself (i.e. the learned latent distribution
-# collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
-# as a result, the latent variables will contain little to no useful information,
-# leading to reconstructions that are too generic or blurry, 
-# and the vae behaves more like a standard autoencoder.
-# 
-# to be more precise, this happens when the kl divergence term dominates the loss.
-# kl divergence job is to ensur the latent space follows a prior (i.e. a Gaussian N(0, I))  
-# but when the kl term is too strong, the model learns to set q(z|x) ≈ p(z) )(i.e., 
-# the posterior collapses to the prior), making z uninformative.
-# as we pointed out this often happens when we use powerful decoders
-# that can reconstruct the data directly from the prior distribution, 
-# without needing latent variables.
-# 
-#edit: obious?/excessive? 
-# if the decoder is too powerful, it can learn to reconstruct x without 
-# relying on z at all which means even if z contains no useful information,
-# the decoder can still reconstruct well, leading to collapsed latents.
-
-# if we use a scaler/factor to normalize the loss (the kl term and reconstruction loss as 
-# its especially the case in Beta-VAEs (which we will see shortly also)), 
-# a large scaler in the kl term forces the latent distribution 
-# too close to the prior, increasing the risk of posterior collapse.
-# when the scaler is too high, the VAE prioritizes regularization over 
-# learning meaningful latent representations
-# 
-# the issue could also come from the reparameterization trick,
-# the reparameterization trick introduces randomness when sampling
-# from (q(z|x)) but if the model learns to reduce this randomness 
-# (e.g. by making standard deviation very small), the latent space
-# may become degenerate.
-# its worth noting that if the latent space is too small, it may also 
-# be forced to collapse.
-
-# There are several techniques that help mitigate this issue by balancing
-# reconstruction quality and latent space learning. 
-# the first and most obvious one is to reduce the kl scaler/weighting,
-# that is instead of a fixed beta/scaler, gradually increase it over training
-# (e.g., use a kl annealing schedule). 
-# this prevents the model from collapsing too early and ensures meaningful
-# latent variables.(i.e. start with beta=0 and increase it slowly to beta=1)
-
-# we can also use a less powerful since if its too powerful, it may learn to ignore z.  
-# this simply means using fewer layers or smaller networks or use stronger bottleneck 
-# constraints.
-
-# we can also instead of minimizing KL loss entirely, enforce a minimum kl value per
-# latent dimension (e.g., 0.1 per latent dimension). this forces the model to use 
-# latent variables even when kl regularization is high.
-
-#!edit what?
-# we can also add skip connections between the encoder and decoder so
-# that reconstruction does not fully rely on z. 
-# Use hierarchical priors or a more structured latent space.(what?!!)
-
-# increasing latent space size, if its too small, can help distribute 
-# information across more dimensions and fix the issue.
-
-# we can also use VQ-VAE variant (Vector Quantized VAEs) which replaces 
-# the continuous latent space with discrete latent embeddings, making the
-# model less prone to collapse. (well cover this as well)
-
-
-# How to Spot Posterior Collapse in a VAE?
-# ok but how does it look like when this happens practically?
-# we said one sign was overly generic images or blury ones. but theres more to it. 
-# as we said, posterior collapse happens when the VAE stops using its latent space and
-# the latent variables carry little to no information about the input data. 
-# 
-# !Edit
-# A clear sign of posterior collapse is extremely low kl term.  
-# if (D_KL(q(z|x) || p(z)) ≈ 0 ) for most latent dimensions, 
-# it means (q(z|x)) has collapsed to the prior (p(z)).  
-# The model is ignoring the latent space, and the decoder is 
-# reconstructing directly from the prior.
-
-# from the loss prespective, if kl loss is close to zero, its a sign of collapse.  
-# ideally, kl loss should be balanced (not too small, not too large).  
-
-# using visualization approach:
-# we can plot the kl loss over time:
-# ```python
-# plt.plot(kl_losses)
-# plt.xlabel("epoch")
-# plt.ylabel("kl Divergence")
-# plt.title("kl Divergence Over Training")
-# plt.show()
-# ```
-# if kl starts high and drops to near-zero, it's likely a collapse.
-# a healthy training maintains a nonzero KL value
-
-# check latent space variance
-# if all latent dimensions have almost zero variance, it means they are not
-# encoding useful information.
-
-# we can check latent variance simply like this:
-# ```python
-# print("Mean of latent variables:", mu.mean().item())
-# print("Standard deviation of latent variables:", torch.exp(0.5 * logvar).mean().item())
-# ```
-# if the standard deviation shrinks to nearly zero, the model isnt 
-# effectively using its latent space. a good VAE should have a 
-# diverse range of latent activations.
-
-# we can visualize the mean and variance across training:
-# ```python
-# plt.plot(mu.cpu().detach().numpy(), label="Mean (μ)")
-# plt.plot(torch.exp(0.5 * logvar).cpu().detach().numpy(), label="Std (σ)")
-# plt.xlabel("Latent Dimension")
-# plt.ylabel("Value")
-# plt.legend()
-# plt.show()
-# ```
-# if the mean is always near 0 and std is near 1, the model ignores latent space.  
-# 
-
-# we can check the latent representations,
-# if the latent encodings are almost identical for different inputs, it means the 
-# model isnt using the latent space.
-
-# to check the encodings we can encode two different images 
-# and compare their latent variables:
-# ```python
-# z1, mu1, logvar1 = model.encode(image1)
-# z2, mu2, logvar2 = model.encode(image2)
-
-# difference = (mu1 - mu2).abs().mean().item()
-# print(f"Mean absolute difference in latent space: {difference}")
-# ```
-# if the difference is close to 0, the latent space is collapsing.  
-# there should be noticeable variation between different images
-
-# we can visualizing latent space with t-sne
-# A healthy VAE should separate different inputs in latent space. 
-# we can visualize this using t-sne:
-# ```python
-# from sklearn.manifold import TSNE
-
-# z_samples = []  # Store latent vectors
-# labels = []  # Store corresponding class labels
-
-# for i, (img, label) in enumerate(dataloader):
-#     z, mu, logvar = model.encode(img.to(device))
-#     z_samples.append(mu.cpu().detach().numpy())
-#     labels.append(label.numpy())
-
-# z_samples = np.concatenate(z_samples, axis=0)
-# labels = np.concatenate(labels, axis=0)
-
-# tsne = TSNE(n_components=2)
-# z_2d = tsne.fit_transform(z_samples)
-
-# plt.scatter(z_2d[:, 0], z_2d[:, 1], c=labels, cmap="tab10", alpha=0.7)
-# plt.colorbar()
-# plt.title("t-SNE Projection of Latent Space")
-# plt.show()
-# ```
-# if all points cluster together, it's collapsed.
-# a good latent space separates different categories.
-
-# we can check the generated samples:
-# if the generated images are nearly identical, regardless of input variation,
-# its a sign that the latent space is underutilized.
-
-# we can Check Generated Images:
-# sample multiple random latent vectors:  
-# ```python
-# z_random = torch.randn(size=(64, model.embedding_size)).to(device)
-# generated_images = model.decoder(z_random)
-# ```
-# plot the generated images:
-# ```python
-# grid = make_grid(generated_images, nrow=8, normalize=True)
-# plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
-# plt.title("Generated Samples")
-# plt.axis("off")
-# plt.show()
-# ```
-# if all images look the same, posterior collapse is likely happening.  
-# healthy VAEs generate diverse samples.
-
-# we can check how reconstruction changes with latent space:
-# a properly trained VAE should smoothly interpolate between 
-# different points in latent space.
-
-# to test interpolation
-# we can generate latent vectors between two encodings and decode:
-# ```python
-# z1, _, _ = model.encode(image1)
-# z2, _, _ = model.encode(image2)
-
-# alphas = torch.linspace(0, 1, steps=10).to(device)
-# interpolated_z = torch.lerp(z1, z2, alphas[:, None])
-# interpolated_images = model.decoder(interpolated_z)
-
-# grid = make_grid(interpolated_images, nrow=10, normalize=True)
-# plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
-# plt.title("Latent Space Interpolation")
-# plt.axis("off")
-# plt.show()
-# ```
-# if interpolation doesnt produce meaningful transitions, the latent space
-# isnt being used effectively.
-# a good VAE should show smooth changes between different styles of images
-
-# recap
-# | Test | Expected in Collapsed VAE | healthy VAE |
-# |------------|----------------------|--------------|
-# | **KL Divergence** | Close to 0 | Balanced KL loss |
-# | **Latent Variance** | Close to 0 | Non-zero variance |
-# | **Latent Differences** | Almost identical | Distinct encodings |
-# | **Generated Images** | Identical outputs | Diverse outputs |
-# | **t-SNE Latent Space** | Single cluster | Well-separated clusters |
-# | **Interpolation** | No meaningful change | Smooth transitions |
-
-# detecting posterior collapse requires checking KL divergence, 
-# latent space variance, generated samples, and interpolation behavior.
-# The best way to avoid posterior collapse is to carefully tune the KL loss, 
-# avoid an overly powerful decoder, and use techniques like KL annealing.
-
 
 # Note :
 # for proper training, dont incorporate kl term at the begining. 
@@ -2943,20 +2725,8 @@ print(f'{img_re.shape=}')
 # this should allow the model to arrive at a decent spot! otherwise it wont work properly
 # (except maybe somehow account for the scale of the kl term, which if you do add a scaler 
 # term, would essentially become a disentangled vae which is an improvement over the
-# this (vanilla) version. 
-# this is actually what I learned from the following github author: 
-#
-# "In my experience working on the VAE, the KL annealer helps to train the model.
-# To be more specific, when training your encoder and decoders right off the 
-# bat variationally (KL-term constant) can lead to a lot of instability while 
-# training. So a good first step is to train them as a AE and at some moment 
-# slowly switch on the KL term. It allows the model to arrive to a 'decent' 
-# spot (trained as AE) before going VAE. A similar pattern lies with ORGAN, 
-# you need to train pre-train your generators so that they are in a decent 
-# spot before competing with the discriminator. There are many ways of doing
-# this, most are just engineering, hence MOSES's approach also works.
-# For the original VAE i think around epoch 30 we start the KL annealing.
-#
+# this (vanilla) version, but would still face some issues such as posterior collapse.
+# we'll explain this in amoment, but before that, lets keep this simple for now.
 
 # Also read : https://github.com/jxhe/vae-lagging-encoder
 # The code seperates optimization of encoder and decoder in VAE, and performs 
@@ -2975,10 +2745,10 @@ print(f'{img_re.shape=}')
 # we also need to normalize our reconstruction loss by the input dim
 # ension size. 
 # the original paper uses bce with sum and it gives the best result
-# the mse version doesnt work well everywhere and is not formal 
-def loss_function(outputs, inputs, mu, logvar, beta,reduction ='mean', use_mse = False):
-    # print(f'{outputs.shape=}')
-    # print(f'{inputs.shape=}')
+# the mse version doesnt work well everywhere
+#!edit lets not use beta here, and show how hard it can get, so after it we
+#! introduce beta and other techniques to fight the issues?
+def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False, normalize=True):
     outputs = outputs.view(*inputs.shape)
     #! beta belongs to entangled vae, the normal vae doesnt have beta scaler
     if reduction == 'sum':
@@ -2988,22 +2758,40 @@ def loss_function(outputs, inputs, mu, logvar, beta,reduction ='mean', use_mse =
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
         # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return reconstruction_loss + beta*KL
+        # since we are using sum as reduction for our reconstruction loss (all samples loss sum)
+        # our kl loss needs to be summed over all dimensions and all batch 
+        # which gievs us a single scalar value.
+        # the bad thing is, since its summed over batch, the batchsize affects the training
+        # we need to use different lr for different batchsizes
+        # because the gradients also scale with the batchsize, 
+        # therefore learning rate needs to be ajusted accordingly)
+        # also this means more instability as its harder to balance the two terms like this
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return reconstruction_loss + kl_loss
     else:
-        if use_mse:# wont work on larger dataset as good as bce(bce works best)
+        if use_mse:
             criterion = nn.MSELoss()
-        else: 
+        else:
             criterion = nn.BCELoss(reduction='mean')
         reconstruction_loss = criterion(outputs, inputs)
-        # normalize reconstruction loss otherwise kl will overpower it!
-        # instead of simply using a single image to notmalize kl loss,
-        # lets do it with the whole batch! cuz kl is being calculated 
-        # for the whole batch 
-        reconstruction_loss *= 28*28
-        # instead lets divide the kl term bythis number
-        KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        return torch.mean(reconstruction_loss + beta*KL)
+        # here for the kl loss we only sum over the latent dimensions,
+        # this gives us a single loss for each sample, 
+        # we need to take the mean of the whole batch and this makes it independent of 
+        # the batchsize and should give us a more stable loss, this is more aligned with
+        # our reconstruction loss which we do the same thing (take the mean of the whole batch (i.e. reduction=mean))
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+        # we also need to normalize the reconstruction/kl loss otherwise kl will overpower it!
+        # and we would get nonsens as output, (since the image is averaged pixelwise, but kl is summed for each sample
+        # its not balanced properly)
+        # we need to either divide kl loss by the image dimensions, 
+        # or multiply reconstruction loss by the image dimensions to scale it up a bit
+        scaler = 28*28 if normalize else 1
+        # note since we sumed over the latent dimension, we will have batchsize of losses
+        # which we need to average to get a single loss value
+        # this is a bit more stable than our previous version, but it will still be hard
+        # to train properly, we will see in a moment how that goes. to fix it, a quick way
+        # would be to use the beta variant, which we will cover shortly.
+        return scaler*reconstruction_loss + kl_loss.mean()
 #%%
 #
 # I set this option to see the full stack-trace when a weird error occurs
@@ -3013,18 +2801,34 @@ def loss_function(outputs, inputs, mu, logvar, beta,reduction ='mean', use_mse =
 # torch.set_printoptions(profile='full')
 #
 # now lets train :
+# mnist dataset is a very simple dataset, and using embsize=2 we get good results right of the bat
+# but this is not the case all the time, if we use more complex datasets, we quickly see 
+# no matter how much we try dont get good results with this implementation, its expected, 
+# but for now, lets not get ahead of ourselves, and stick to mnist for now, just try 
+# different embeddingsize and hyperparamters to see how far you can get. even with mnist
+# we will be facing issues here, we'll be discussing the issues we face here shortly and fix them all
+# I also added cifar10 example (we made our model so it can handle both 1 and 3 input channels
+# I just resized cifar10 so the changes is minimal here ))
 epochs = 50
 
 dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
 dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
 
-# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transforms.ToTensor())
-# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transforms.ToTensor())
+transformations = transforms.Compose([transforms.Resize(28),
+                                      transforms.ToTensor()])
+dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
 
 #TODO
 # display the manifold for encoder encodings during training and make a gif out of it?
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=128,shuffle=True)
 dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffle=False)
+
+# imgs, lbls = next(iter(dataloader_train))
+# print(f'{imgs.shape=}')
+# print(f'{imgs.max()=}')
+# print(f'{imgs.min()=}')
+
 # use 1e-4 and see how it disrupts the process, 
 # the kl dominates the loss (squashes the clusters)
 # and the projection with 2 embeddingsize shows it very well!
@@ -3040,12 +2844,22 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffl
 # embdsz=10 also works.
 # i experimented with separate optimizers, to get good result we need proper
 # hyperparameter tuning
-beta=1e-1
+# beta=1e-1
+
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_dimension = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 embeddingsize = 2#2,10
+reduction='sum'#mean
+# to see how it affects our result, when using using reduction='mean'
+# set normalization to False, without normalization we wont learn 
+# anything meaningful! (reduction='sum' doesnt use normalization)
+normalize = True #False
+# whether to use mse instead of bce in our loss
+use_mse = False
 interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = VAE(embeddingsize).to(device)
-reduction='sum'
+
+model = VAE(embeddingsize,input_dimension).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
 
@@ -3053,12 +2867,11 @@ for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
-        loss = loss_function(preds, imgs, mu, logvar, beta=beta, reduction=reduction, use_mse=False)
+        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=use_mse, normalize=normalize)
         optimizer.zero_grad()
         loss.backward()
-        optimizer.step() 
+        optimizer.step()
         if i% interval ==0:
-            loss = loss/len(imgs) if reduction=='sum' else loss
             print(f'epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
                   f'\tloss: {loss.item():.4f}'
                   f'\tlr: {scheduler.get_lr()[-1]}')
@@ -3067,21 +2880,27 @@ for e in range(epochs):
 #%% 
 # save the model
 torch.save({"states":model.state_dict(),
+            "epochs":epochs,
             "embedding_size":model.embedding_size,
+            "reduction":reduction,
+            "normalize":normalize,
+            "use_mse":reduction,
             "optimizer":optimizer.state_dict(),
             "scheduler":scheduler.state_dict()},
-            f"vae_{model.embedding_size}_sum_bce1.pth")
+            f"vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}.pth")
 print('model saved!')
 #%%
 # load the model 
-states = torch.load(f"vae_{model.embedding_size}_sum_bce.pth")
+states = torch.load(f"vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}.pth")
 model.load_state_dict(state_dict=states['states'])
 print('weights loaded')
 #%%
-# generate sth
-# generate random images
+# now lets create some functions 
+# for visualization and see how our model does
+# 
+# generate random images by randomly sampling from a simple normal distribution!
 @torch.no_grad()
-def generate_random_images(model:VAE, count:int=32, rows:int=8):
+def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,28)):
     # simply randomly sampling from a normal distribution will
     # give us random classes.
     sample = torch.randn(size=(count, model.embedding_size)).to(device)
@@ -3089,16 +2908,37 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8):
     # sample *= 0.5 + 0.5
     model.eval()
     imgs = model.decoder(sample)
-    print(f'{imgs.shape=}')
-    imgs = imgs.view(-1, 1, 28,28)
+    # print(f'{imgs.shape=}')
+    imgs = imgs.view(-1, *img_shape)
     img = make_grid(imgs,nrow=rows,normalize=True).cpu().detach().numpy().transpose(1,2,0)
     plt.imshow(img, cmap='Greys_r')
     plt.title('randomly sampled generation')
 
-generate_random_images(model, count=32)
+# generate_random_images(model, count=32)
+
+# lets now display the original images next to their reconstruction
+# to see the quality of reconstruction
+def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
+    img_cnt = len(img_pairs)
+    fig = plt.figure(figsize=(28, 28))
+    
+    if save_result:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+    for i in range(img_cnt):
+        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
+                            nrow=nrows,
+                            normalize=True)
+        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
+        ax.set_title(f'{title}-{i}')
+
+        if save_result:
+            save_image(grid_imgs, f'{save_dir}/imgs_{i}.jpg')
 
 @torch.no_grad()
-def evaluate_on_testset():
+def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28,28)):
     test_set_size = len(dataloader_test.dataset)
     img_pairs = []
     losses = []
@@ -3108,16 +2948,17 @@ def evaluate_on_testset():
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
-        loss = loss_function(preds, imgs, mu, logvar, beta, reduction=reduction, use_mse=False)
+        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=False)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
-            f'\tloss: {(loss).item():.4f}')
+            f'\tLoss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
-            imgs = imgs[:20].cpu().detach().numpy()
-            recons = reconstructeds[:20].numpy()
+            reconstructeds = preds.cpu().detach().view(-1, *img_shape)
+            # grab the first few images and their reconstructions
+            imgs = imgs[:sample_count].cpu().detach().numpy()
+            recons = reconstructeds[:sample_count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
 
@@ -3127,29 +2968,13 @@ def evaluate_on_testset():
     # attributed by a key. this way, our keys will be used as
     # legends and we have a simple plot with minimum hassle
     import pandas as pd
-    import os
-    pd.DataFrame(losses).plot()
-
-    # lets display them a longside the original ones
-    def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
-        img_cnt = len(img_pairs)
-        print(img_cnt)
-        fig = plt.figure(figsize=(28, 28))
-        for i in range(img_cnt):
-            grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
-                                nrow=nrows,
-                                normalize=True)
-            ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
-            ax.imshow(grid_imgs.numpy().transpose(1,2,0))
-            ax.set_title(f'testset reconstruction-{i}')
-            
-            if not os.path.exists('results'):
-                os.makedirs('results')
-            save_image(grid_imgs, f'results/imgs_{i}.jpg')
-
+    ax= pd.DataFrame(losses).plot()
+    ax.set_title('testset loss')
+    plt.show()
+    
     display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
 
-evaluate_on_testset()
+# evaluate_on_testset(model, dataloader_test)
 
 #! edit choose better function names! 
 # lets plot the latent space encodings and see
@@ -3164,7 +2989,7 @@ def plot_latent_space_encodings(model, batch_size = 10000):
                                                 pin_memory=True)
     imgs, labels = next(iter(dataloader_test2))
     imgs = imgs.to(device)
-    z_test,_,_ = model.encode(imgs)
+    z_test,*_ = model.encode(imgs)
     # since we are using torch.nograd, 
     # theres no gradients so we dont need to use .detach()
     # otherwise we had to use it here
@@ -3184,21 +3009,111 @@ def plot_latent_space_encodings(model, batch_size = 10000):
     plt.title('Latent space encodings of 2 dimensions')
     plt.show()
 
+# lets now see how the latent space looks like with tsne
+# the previous version plot_embedding_cluster would look at
+# the encoders output, before they were used to create the
+# latent vector z. hopefully this gives us a better picture
+@torch.no_grad()
+def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
+    model.eval()
+    # grab the device from model parameter
+    device = next(model.parameters()).device
+    # grab all the features, because tsne needs to be applied to 
+    # the whole dataset all atonce not batch by batch
+    all_features = []
+    all_labels = []
+
+    for imgs, lbls in dataloader_train:
+        imgs = imgs.to(device)
+        # Get feature vectors
+        latent_feature_vectors,*_ = model.encode(imgs)
+        all_features.append(latent_feature_vectors.cpu().view(imgs.size(0), -1).numpy())
+        all_labels.append(lbls.numpy())
+
+    # concatenate all batches
+    all_features = np.concatenate(all_features, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    if use_pca:
+        reducer = PCA(n_components=2)
+        # since pca is sensitive to the scale of features and 
+        # if the features are not properly scaled (e.g. mean-centered and variance-normalized),
+        # it can produce poor projections we scale the features here!
+        scaler = StandardScaler()
+        all_features = scaler.fit_transform(all_features)
+    else:
+        reducer = TSNE(n_components=2, random_state=66, perplexity=30)
+
+    plt.figure(figsize=(10, 8))
+    # print(f'{all_features[0].shape[-1]}')
+    
+    if all_features[0].shape[-1] >2 :
+        # features2d are coordinates showing where each datapoint is
+        features2d = reducer.fit_transform(all_features)
+        # print(f'{features2d[:5]}')
+    else:
+        features2d = all_features
+    # tab10, is a colormap inwhich it has 10 colors, therefore its a prefect choice for us    
+    scatter = plt.scatter(features2d[:, 0], features2d[:, 1], c=all_labels, cmap='tab10', alpha=0.6)
+
+    # add class labels to each cluster for better visualization
+    # to do this we need t o calculate the centeroid(i.e. mean) of each cluster
+    # which is basically taking the average of all the points for that cluster
+    # and then use plt.text to add class numbers
+    
+    # note we dont need all the labels, just one for each cluster!
+    for label in list(range(10)):
+        # find the centroid of each cluster
+        # note that the values in features2d are coordinates(when using tsne),
+        # which are the 2D positions of the data points
+        # since our data are stored sequentially we know each row(class label) 
+        # in all_labels belong to a corresponding data point in features2d.
+        # that is for example, if all_labels[0] = 0, it means the first data point
+        # in features2d belongs to class 0.
+        # we use this to grab all the points belonging to a specific label one at a time 
+        centroid = np.mean(features2d[all_labels == label], axis=0)
+        # annotate the centroid with the class label
+        plt.text(centroid[0], centroid[1], str(label), fontsize=12, fontweight='bold',
+                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    title = f"\n{title}" if title else ''
+    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D{title}")
+    plt.colorbar(scatter, label='Class Label')
+    plt.show()
+
 #! edit fix this with embd>2
 @torch.no_grad()
-def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_size=28):
-    # display a 2D manifold of the digits
+def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28)):
+    # lets see if the transition in our latent space is smooth
+    # that is we should be able to smoothly transition from one
+    # class to the other, at least this is what we are tryting 
+    # to see.
+    # we create a vector of equally spaced values, and try to
+    # visualize these vectors, (they act as our latent vector z)
+    # since they are equally spaced, we can see how they change
+    # gradually, ideally we want them to have a smooth transition
+    # from one class to another. 
+    # so lets see how our interpolation turns out
     # n means we want a figure with nxn digits
     model.eval()
+    # we are basically creating a z vector, with n, equally spaced value
+    # starting from lowerbound, up until upperbound (e.g from -2 to 2)
+    # we create 2 such vectors, so we can create a grid of numbers
+    # treating one z for xaxis and another for the yaxis. 
     z1 = torch.linspace(lower_bound, upper_bound, n)
     z2 = torch.linspace(lower_bound, upper_bound, n)
-
+    # using np.meshgrid, we create our grid, meshgrid, simply 
+    # expands z1 and z2 into 2D grids, by first repeats z1 values in
+    # x-axis (rows) and then repeats the z2 values in y-axis(columns),
+    # and finally using np.dstack, they are combined and the result 
+    # will be a 3dgrid where each xy is made up of z1 and z2 values.
+    # (test with a small example like linspace(-2,2,5), and see how it goes)
     z_grid = np.dstack(np.meshgrid(z1, z2))
     z_grid = torch.from_numpy(z_grid).to(device)
     z_grid = z_grid.reshape(-1, model.embedding_size)
     # print(f'{z_grid.shape=}')
     x_pred_grid = model.decoder(z_grid)
-    x_pred_grid= x_pred_grid.cpu().view(-1, 1, img_size,img_size)
+    x_pred_grid= x_pred_grid.cpu().view(-1, *img_shape)
     x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
     plt.figure(figsize=(20, 20))
     plt.xlabel('Z_1')
@@ -3206,12 +3121,758 @@ def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_si
     plt.imshow(x)
     plt.title(f'latent space grid of numbers({n}x{n})')
     plt.show()
-    
-
+#%%
+# for mnist this is the default but since I wanted
+# us also to be able to experiment with cifar10, I 
+# decided to also add the image shape as arguments
+# so we can easily see cifar10 examples as well
+img_shape=(3,28,28)
+generate_random_images(model, count=32, img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, img_shape=img_shape)
 plot_latent_space_encodings(model)
+plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2, img_shape=img_shape)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=img_shape)
+#%%%
+
+# incorporate these into the following text 
+# in mafhoom prior/posterior distribution inja bayad khob montaghel beshe
+#
+# khosasan aval posterior collapse ro tozih bedim chie ya inke posterior = prior shode
+# yanee chi bad baghie ezafe beshe.
+# kheily kholase posterior collapse yanee, data vorodi ignore mishe! encoder ke vazifash
+# peyda kardan etelaad distribution baraye har input data hast, mire ye distribution normal (0,1)
+# ro yad migier ke (in prior has ke ma moshakas kardim), be jaye inke bere N(mu(x),sigma(x)) ro
+# yad begire. baraye hamin yanee kolan noise normal yadmigire! na chizi marbod be data vorodi
+# 
+ 
+# now if we try to play with parameters, we'll see its really hard to get it working!
+# and our results look either blury! too similar/generic. 
+# so lets talk about the issues we are facing and try to address them 
+#
+# During training we may face something called posterior collapse,
+# it can happen for several reasons, but the primarily, it happens
+# when the decoder is more powerful than the encoder and the latent
+# space stops encoding meaningful information and the decoder ignores
+# the latent features/variables during reconstruction.
+# in extreme cases, the decoder wont even rely on the encoded representation
+# and will only rely on the prior itself (i.e. the learned latent distribution
+# collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
+# as a result, the latent features/variables will contain little to no useful information,
+# leading to reconstructions that are too generic or blurry, 
+# and the vae behaves more like a standard autoencoder.
+# 
+# (posterior collapse occurs when the encoder ignores the latent space,
+# in a way that the learned latent distribution becomes close to the prior
+# distribution (e.g. a standard normal distribution (N(0,I)), regardless 
+# of the input images. 
+# in other words, the encoder ignores the input data! therefore the decoder 
+# reconstructs the data primarily from its learned prior or noise, rather than 
+# utlizing meaningful information encoded in the latent space. 
+# (it uses the patterns it learns from the prior distribution))
+# #! edit, this needs more refining,
+# sidenote:
+# to refresh our memory heres a little sidenote:
+# the posterior distribution (q(z|x)) represents the distribution 
+# of the latent variable(vector) (z) conditioned on the data (x).
+# in other words, it means given this input data x, what is the
+# probability distribution of the latent variable (z) (i.e. whats the (mu,sigma)?
+# the encoder  approximates this posterior (q(z|x)) using a
+# learned distribution, parameterized as a Gaussian distribution 
+# that is q(z|x) = N(mu(x), sigma(x))
+# where the encoder learns the mean (mu(x)) and variance (sigma(x)) for each input (x).
+# 
+# now, the prior distribution p(z) is a simple, predefined distribution 
+# over the latent space (z). we chose the prior to be p(z) = N(0, I)
+# which if you remember means z is assumed to come from a multivariate
+# Gaussian distribution with mean 0 and identity covariance (diagnol covariance/independent dimensions! see the previous discussion!)
+# 
+# the kl term enforces a regularization on the latent space, ensuring that
+# 1. q(z|x) i.e. posterior distribution does not deviate too far from the simple prior p(z).
+# 2. the latent space stays smooth and meaningful, making it easier to sample from.
+# 
+# Why is it bad if the Posterior becomes too close to the prior?
+# if the posterior q(z|x) gets too close to the prior distribution 
+# it means mu(x) ≈ 0 and sigma(x) ≈ I for all inputs, which is when
+# we say it collapses to exactly match the prior (p(z))
+# basically it says the inputs (X) are ignored!(the whole point was to learn mu,sig for each x
+# and now, it treats as if they dont exist at all! it simply models N(0,I), i.e. noise!)
+# 
+# When this happens technically speaking we say:
+# the latent space becomes uninformative because q(z|x) no longer depends
+# on the input x. 
+# it means the encoder gives up on learning meaningful latent representations, 
+# and the decoder reconstructs the data purely from noise sampled from (p(z) = N(0,I)),
+# or directly learns shortcuts from the reconstruction loss.
+# The vae essentially fails to use the latent space for encoding useful information
+# about the data.
+# 
+# now reason about collapse comes after
+# for example like this : 
+# This happens because the KL divergence is minimized too aggressively, 
+# overpowering the reconstruction loss.
+
+# note that in a good vae, the posterior q(z|x) should be "close enough"
+# to the prior p(z) for regularization, but not so close that it ignores x.
+# The reconstruction loss ensures that the posterior q(z|x) encodes meaningful information
+# about the input x, while the KL divergence ensures that the latent space remains smooth 
+# and aligned with the prior.(we dont want our posterior to deviate from the prior, because
+# we assumed given our prior we can regenerate the samples that look like our input)
+
+# now you know why we dont just minimize the KL loss alone cuz it would collapse q(z|x)
+# to p(z), causing
+# 1. No meaningful relationship between x and z (posterior collapse).
+# 2. The decoder reconstructs data from noise or directly minimizes reconstruction loss
+# without using the latent space.
+#
+# so we use both losses together and balance reconstruction and KL loss:
+# loss = reconstruction_loss + beta . kl_loss(q(z|x) | p(z))
+# this ensures that: the latent space is regularized (via KL),
+# and the encoder learns meaningful encodings of the data (via reconstruction loss).
+# 
+# so for short: 
+# The prior distribution p(z) is fixed and simple (N(0, I)).
+# The posterior distribution q(z|x) is learned and depends on the data x using reconstruction loss in encoder.
+# The goal of the KL divergence is not to minimize it to zero, 
+# but to balance it with the reconstruction loss to maintain a useful latent space.
+# posterior collapse happens when the KL divergence dominates, leading the encoder 
+# to ignore (x) and match the prior directly.
+#
+# prior distribution p(z): 
+# is a predefined distribution over z (e.g. N(0, I))
+# regularizes the latent space to stay simple and smooth
+# independent of the data x.
+# fixed by design (e.g., Gaussian)
+# 
+# posterior distribution q(z|x) 
+# is the distribution of z given data x, learned by the encoder
+# encodes meaningful information about x into z.
+# depends on the input x
+# learned by the vae during training.
+# 
+#
+# 
+# If the encoder is too simple (e.g. insufficient capacity, few layers, 
+# or too small latent dimensions), it may fail to encode meaningful 
+# representations of the input data.
+# This makes it easy for the latent space to drift toward the prior,
+# as the KL divergence loss (minimizing the distance between posterior and prior)
+# dominates over reconstruction loss.
+# 
+# note that posterior collapse can happen for several reasons, a simple or underpowered 
+# encoder is one of the possible causes. However, its often the result of an interplay 
+# of factors rather than just the simplicity of the encoder.
+# 
+# to be more precise, this happens when the kl divergence term dominates the loss.
+# kl divergence job is to ensur the latent space follows a prior (i.e. a Gaussian N(0, I))  
+# but when the kl term is too strong, the model learns to set q(z|x) ≈ p(z) )(i.e., 
+# the posterior collapses to the prior), making z uninformative.
+# as we pointed out this usually happens when we use a powerful decoder
+# that can reconstruct the data directly from the prior distribution,without 
+# needing latent variables.
+# 
+#edit: obvious?/excessive? 
+# if the decoder is too powerful, it can learn to reconstruct x without 
+# relying on z at all which means even if z contains no useful information,
+# the decoder can still reconstruct well, leading to collapsed latents.
+
+# thats not the only reason though, if we use a large scaler/factor to normalize the loss 
+# (the kl term and reconstruction loss (its especially the case in beta-vaes(distenagled vaes) 
+# which we will also cover)), a large scaler in the kl term forces the latent distribution 
+# too close to the prior, increasing the risk of posterior collapse.
+# when the scaler is too high, the vae prioritizes regularization over 
+# learning meaningful latent representations.
+# 
+# the issue could also stem from the reparameterization trick,
+# if you recall, the reparameterization trick job was to introduce 
+# randomness when sampling from (q(z|x)), if the model learns to 
+# reduce this randomness (e.g. by making standard deviation very small),
+# the latent space may become degenerate.
+# its worth noting that if the latent space is too small, it may also 
+# be forced to collapse.
+
+# so it could be several things that can contribute to this issue, altogether or alone. 
+# likewise, there are several solutions/techniques that can help mitigate this issue
+# and in a way they all do this by balancing the reconstruction quality and latent space 
+# learning properly. 
+# the first and most obvious one is to reduce the kl scaler/weighting, if its
+# set too high, if this is not the case, and we still face issues during training, 
+# then we can use a gradual approach, that is instead of a fixed scaler, 
+# gradually increase it over time (e.g. use a kl annealing schedule).
+# this should prevent the model from collapsing too early and should give meaningful
+# latent encodings(i.e. we start with beta=0 and increase it slowly to beta=1)
+# practically starting with no kl constraint, and gradually adding little bits by bits
+# so we get to a good spot)
+# !edit check if my explanation is correct
+# we can also instead of minimizing kl loss entirely, enforce a minimum kl value per
+# latent dimension (e.g. 0.1) this forces the model to use latent encodings
+# even when kl regularization is high.(we dont want our kl term to be 0 or near zero
+# so enforcing a minimum value of kl for each dimension essentially means, we are making
+# that dimension to do somework and contribute a bit so cllectively, the latent space
+# gets to have at least some useful information for the decoder to utilize)
+# 
+# using a less powerful decoder is another obvious choice, since if its too powerful,
+# it may learn to ignore latent vector z altogether. this is straightforward
+# we just start using fewer layers or smaller networks or use a stronger bottleneck
+# constraint.
+# also increasing latent space size(if its too small) can also help distribute 
+# information across more dimensions and fix the issue.
+# 
+# we can also add skip connections between the encoder and decoder so
+# that reconstruction does not fully rely on latent vector z.
+# by doing so, we allow some direct flow of information
+# from the encoder to the decoder which reduces the decoder's 
+# reliance on a potentially collapsed z, encouraging meaningful latents)
+# the idea is if the decoder still gets useful low-level 
+#!edit)
+# features even if z is uninformative, we can prevent posterior collapse(is it correct?)
+# sidenote(the encoders output and the latent vector z need to be the same
+# size because we concatenate them together and work on that z' vector goin
+# forward! (well see this in a moment))
+
+# sidenote:
+# !EDIT include the paper names/urls/refs
+# this doesnt really belong here, because it belongs to heirarchial vaes
+# but since the idea makes sense, I guess I include it here. (it really should 
+# be explained in its own section). anyway lets explain this as well: 
+#
+# Assuming the latent vector z follows a simple Gaussian prior,
+# p(z)=N(0,I) (i.e. all latent dimensions are independent and normally distributed
+# around 0 with unit variance) as we already discussed, 
+# can be too simplistic for complex data such as faces, natural images, sentences etc,
+# if we relax this constraint by using a more structured latent space(e.g 
+# hierarchical priors), we should get a much better result, 
+# that is instead of assuming a single Gaussian prior ,
+# we introduce a structured or hierarchical latent representation.
+# this allows latent variables to be dependent on each other, 
+# leading to a more flexible and powerful model.
+# (that is, instead of just one latent variable z, we introduce multiple
+# latent levels, higher level latents control more abstract/global 
+# features, while lower levels refine details.
+# !edit paper link
+# sidenote:
+# the idea for hierarchical priors comes from hierarchical vae paper,
+# which proposed instead of one latent vector z we use multiple latent vectors!
+# the latters depending on the previous ones.(assuimg we use 2 latent vectors, 
+# the second mu,logvar would use the first latent vector z to create the second
+# set of mu and logvar which we would then use to create latent vector z2 using 
+# reparameterization trick! and ultimately use this second z to reconstrcut the image)
+# the idea was having multiple layers of latent variables with
+# dependencies between them would improve expressiveness of
+# the latent space, and help the network to model complex multimodal distributions
+# and more importanty reduce posterior collapse, as higher layers 
+# retain the global structure while lower layers capture 
+# the finer details(z1 learns higher level global features and z2 
+# learns lowerlevel fine-grained features)(we dont bother going this route though!)
+# !Edit add refs/papers- check papers/refs
+# ref https://arxiv.org/abs/1705.07120
+# a similar approach was introduced by VampPrior (Variational Mixture of Gaussians)
+# which said, instead of a single Gaussian prior, use a mixture of Gaussians.
+# this captures multi-modal distributions (e.g. different facial expressions in images)
+# we can also use VQ-VAE variant (Vector Quantized VAEs) which replaces 
+# the continuous latent space with discrete latent embeddings, making the
+# model less prone to collapse. (well cover this as well)
+
+# so now lets rewrite our vae, this time with the enhancements
+#
+
+#!edit use this instead of the above? or merge
+# Posterior collapse can happen for several reasons, and yes, a simple 
+# or underpowered encoder is one of the possible causes. 
+# However, its often the result of an interplay of factors 
+# rather than just the simplicity of the encoder. 
+# 
+# 
+# Reasons for Posterior Collapse:
+# 
+# Overly Powerful Decoder:
+# if the decoder is too powerful (for the dataset/ or compared to encoder)
+# it can learn to reconstruct the data directly from the prior distribution(N(0,I)) 
+# or even from noise. the encoder then has no incentive to learn meaningful 
+# latent representations leading to collapse.
+
+# Simple or Underpowered Encoder:
+# if the encoder is too simple (or it has too small latent dimensions),
+# it may fail to encode meaningful representations of the input data
+# this makes it easy for the latent space to drift toward the prior, 
+# as the kl loss dominates over the reconstruction loss.
+#
+# the kl term job is to make the posterior align with the prior distribution (minimize the distance between them)
+# but if this term is given too much weight (e.g with a large beta), 
+# the encoder will prioritize minimizing kl term over learning a meaningful posterior
+# this forces the latent space to collapse to the prior.
+
+# Poor Training Dynamics (Learning Rate, Warm-Up):
+# at the begining of the training, the decoder may dominate because it learns faster
+# than the encoder this can result in posterior collapse because the 
+# encoder gets stuck in a local minimum where it ignores the latent space entirely.
+# without a kl warmup schedule (gradually increasing the weight of kl term during training,
+# the kl term can overwhelm the reconstruction loss early on.
+
+# insufficient Regularization in Latent Space:
+# if theres no mechanism to ensure meaningful latent representations
+# (e.g., free-bits regularization, disentanglement techniques), 
+# the encoder might collapse to the simplistic/trivial solution of aligning the
+# posterior with the prior.
+
+# if the dataset is simple (e.g., small or low-dimensional), 
+# the decoder may easily reconstruct data without requiring meaningful latent codes.
+# this is often seen in tasks like MNIST digit reconstruction, where the decoder can 
+# perform well using only prior information.
+
+# Signs That the Encoder is Too Simple:
+# The kl term quickly drops to zero during training, even for complex data.
+# the reconstruction loss may improve, but the latent space doesn't 
+# encode useful information (latent codes are random or meaningless).
+# increasing the capacity of the encoder (e.g., deeper layers, more neurons)
+# significantly improves performance.
+
+# How to Fix Posterior Collapse (When the Encoder is Too Simple):
+# Increase Encoder Capacity:
+# add more layers or neurons to the encoder.
+# use techniques like residual connections or
+# attention to make the encoder more expressive.
+
+# Regularize the Decoder:**
+# reduce the decoder's capacity to prevent it from
+# "cheating" and relying on the prior.
+# add dropout or other regularization techniques to 
+# the decoder.
+
+# Use a KL Warm-Up Schedule:
+# gradually increase the weight of the kl term during 
+# training so that the encoder learns meaningful representations 
+# before being forced to match the prior.
+
+# Apply Free-Bits Regularization:
+# enforce a minimum KL loss for each latent dimension to ensure 
+# that the encoder uses the latent space effectively.
+
+# Tune (beta):
+# reduce (beta) as a high (beta) value can over-prioritize the kl term.
+
+# Change the Prior Distribution:
+# use a more expressive prior (e.g., hierarchical or structured priors)
+# that better matches the data distribution, so the encoder doesnt
+# collapse to a simple normal distribution.
+
+
+# Final Thoughts:
+# A simple encoder can contribute to posterior collapse, but its not the sole reason.
+# The issue typically arises from a combination of:
+# an expressive decoder,
+# overweighting of the KL term,
+# poor training dynamics, or
+# simple data.
+# by addressing these factors holistically, we can prevent posterior collapse 
+# and ensure the model learns meaningful latent representations.
+
+
+
+class VAE(nn.Module):
+    def __init__(self, embedding_size=100, skip_connection=False, add_extra_noise=False, noise_weight=0.1):
+        super().__init__()
+        
+        self.embedding_size = embedding_size
+        # whether to use skip connection from encoder to decoder
+        self.use_skip_con = skip_connection
+        # whether to use extra noise in latent vector z
+        # to make images more diverse(in fact prevent them from posterior collapse)
+        self.add_extra_noise = add_extra_noise
+        # a simple weight to control the amount of noise applied on our z
+        self.noise_weight = noise_weight
+        
+        self.encoder = nn.Sequential(conv(1,32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,128,stride=2),#3x3
+                                     conv(128,256,stride=2),#2x2
+                                     conv(256,self.embedding_size,stride=2,padding=1),#1x1
+                                    )
+        bottleneck_size = self.embedding_size*1*1
+        self.fc_mu = nn.Linear(bottleneck_size, self.embedding_size) 
+        self.fc_logvar = nn.Linear(bottleneck_size, self.embedding_size)
+        
+        decoder_in_dim = self.embedding_size + bottleneck_size if self.use_skip_con else self.embedding_size
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # (h=1,k=4,s=2,p=1)
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*1*1),
+                                     nn.ReLU(),
+                                     nn.Unflatten(1,(256,1,1)),
+                                     deconv(256,256,kernel_size=4),#2
+                                     deconv(256,128,kernel_size=4),#4
+                                     deconv(128,64,kernel_size=4),#8
+                                     deconv(64,32,kernel_size=2),#14
+                                     deconv(32,1,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                    )
+    
+    def reparamtrization_trick(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        z = mu + eps*std
+        if self.add_extra_noise:
+            # if the latent space is too smooth, it will create generic images(not varied enough)
+            # by making the latent encodings more random/adding more randomness, we introduce more
+            # diversity(the decoder should be able to create more diverse/different images (hopefully!))
+            # adding noise to latent vector forces latent space to be used aswll, (making it 
+            # more random makes decoder try harder and pay more attention to the latentspace
+            # to also model the noise, otherwise, it could follow a simple normal distribution and hence
+            #! ignore latent space altogether! (edit check my explanation/reasoning))
+            # I added a noiseweight so we can have finer control over the added noise!
+            z += self.noise_weight*torch.randn_like(z)
+        return z
+    
+    def encode(self, input):
+        output = self.encoder(input).view(input.size(0),-1)
+        mu = self.fc_mu(output)
+        log_var = self.fc_logvar(output)
+        z = self.reparamtrization_trick(mu, log_var)
+        return z, output, mu, log_var
+
+    def decode(self, z, encoder_output):
+        if self.use_skip_con:
+            z = torch.cat([z, encoder_output], dim=-1)
+        reconstructed_img = self.decoder(z)
+        return reconstructed_img
+    
+    def forward(self, input):
+        z, encoder_output, mu, logvar = self.encode(input)
+        reconstructed_img = self.decode(z, encoder_output)
+        return reconstructed_img, mu, logvar
+
+    def calculate_loss(self, outputs, inputs, mu, logvar, beta, reduction='sum', use_mse=False, use_freebits=False, min_kl=0):
+        outputs = outputs.view(*inputs.shape)
+        criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
+        reconstruction_loss = criterion(outputs, inputs)
+
+        # !edit
+        # free bits regularization technique from https://arxiv.org/abs/1611.02731
+        # ref https://stats.stackexchange.com/questions/267924/explanation-of-the-free-bits-technique-for-variational-autoencoders
+        # enforcing a minimum kl loss value for each latent dimension  
+        # prevents the kl term from going below min_kl value, essentially
+        # making sure each latent dimension contributes at least some fixed
+        # amount of information(at least some information is stored in latent space)
+        # and therefore prevents the encoder from collapsing all 
+        # latent dimensions to zero variance
+        # # freebits ensures each latent dimension carries some information, clamp KL loss to min value
+        if use_freebits:
+            #! check if my implementation is correct/ if explanation is correct
+            # calculates kl term for each dimensions (shape: (batch, latent_dim)
+            kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+             # enforce minimum kl per each dimension for the whole batch (does it make it wosre?!)
+            # kl_loss = torch.sum(torch.clamp(kl_per_dim, min=min_kl))
+            # or we can only sum over the dimensions only and average that!?(which one?)
+            kl_loss = torch.clamp(kl_per_dim, min=min_kl).sum(dim=-1).mean()
+        else:
+            # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+            # sum over the whole batch, giving us a single loss 
+            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        # having a large weight for kl term (i.e. beta>1) can encourage a
+        # structured and more meaningful latent space, but we need careful tuning
+        total_loss = reconstruction_loss + (beta*kl_loss)
+        return total_loss, reconstruction_loss, kl_loss
+
+# test the vae and the output shape, making sure 
+model = VAE(embedding_size=100)
+img_re, _,_ = model(torch.randn(size=(5,1,28,28)))
+print(f'{img_re.shape=}')
+#%%
+# lets train our model again
+# but this time, lets make things a bit tiddier!
+
+def plot_training_metrics(mu_list, std_list, kl_losses, losses):
+    epochs = range(len(mu_list))
+    lists = (mu_list,std_list,kl_losses,losses)
+    labels = ('Mean (μ)',"Standard Deviation (σ)", "KL Loss" , "Total Loss")
+    colors = ['blue','orange','green','red']
+    fig = plt.figure(figsize=(12, 8))
+    for i,(lst,label) in enumerate(zip(lists, labels)):
+        ax = fig.add_subplot(2, 2, i+1,)
+        ax.plot(epochs, lst, color=colors[i], label=label)
+        ax.set_title(f'{label} Over Time')
+        ax.set_xlabel('Epochs')
+        ax.set_ylabel(label)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, reduction, interval, kl_anealing, use_freebits, min_kl=0):
+
+    optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
+    # a clear sign of posterior collapse is an extremely low kl term.
+    # so if kl loss is close to zero, its a sign of collapse.  
+    # so we keep track of it
+    kl_losses=[]
+    losses = []
+    # also if all latent dimensions have almost zero variance,
+    # it means they are not encoding useful information 
+    # (they are roughly zero which means no learning is going on!!)
+    # so by checking their values we can also get a hint!
+    mu_list = []
+    std_list = []
+    
+    for e in range(epochs):
+        for i, (imgs, labels) in enumerate(dataloader_train):
+            imgs = imgs.to(device)
+            preds,mu, logvar = model(imgs)
+            
+            # kl annealing prevents kl loss from overwhelming early training,
+            # so we increase its beta gradually
+            if kl_anealing:
+                # a large kl term will cause posterior collapse, especially at begining
+                # because before the model gets the chance to learn meaningful features
+                # to reconstruct properly, the kl term had already forced it
+                # to match the simplistic normal distribution(i.e. q(z|x) = (p(z)),)
+                # so we start with a small scaler/beta and gradually increase it at 
+                # each epoch this should allow our model to first learn reconstruction 
+                # and then gradually apply the kl term (which mind you is a regulariziation term)
+                # without it dominating the whole loss
+                beta = min(1,e/epochs)
+                
+            loss, recon_loss, kl_loss = model.calculate_loss(preds, imgs, 
+                                                             mu, logvar,
+                                                             beta=beta, 
+                                                             reduction=reduction,
+                                                             use_mse=False,
+                                                             use_freebits=use_freebits,
+                                                             min_kl=min_kl
+                                                             )
+            
+            losses.append(loss.item())
+            # ideally, the kl loss should be balanced 
+            # not too small and not too large
+            # and defninetly nothing close to 0!
+            kl_losses.append(kl_loss.item())
+
+            # grab mean/stds 
+            # if the standard deviation becomes too small and 
+            # goes to nearly zero, the model isnt 
+            # effectively using its latent space,
+            # we should have a diverse range of latent activations
+            # (again zero/close to zero, is a sign of 
+            # not learning/contributing much to the whole process)
+            # as for what we should be expecting, 
+            # if the mean is always near 0 and std is near 1,
+            # this means the model ignores the latent space 
+            # (it means it has learned the prior (normal distribution N(0,I))!)
+            mu_list.append(mu.mean().item())
+            std_list.append(torch.exp(logvar*0.5).mean().item())
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step() 
+            if i% interval ==0:
+                print(f'Epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
+                    f' | Loss: {np.mean(losses):.4f}'
+                    f' | KL-Loss: {np.mean(kl_losses):.4f}'
+                    f' | (μ,σ): ({np.mean(mu_list):.4f} , {np.mean(std_list):.4f})'
+                    f' | lr: {scheduler.get_lr()[-1]}')
+        scheduler.step()
+    # plot mu/std, klloss and see how they behaved
+    plot_training_metrics(mu_list, std_list, kl_losses, losses)    
+
+#! edit merge these two together? since we can display the diff
+# next to plots as well!?
+# some introspection functions to see if our model has collapsed!
+def check_latent_representation_diversity(model:VAE, dataloader):
+    # if we compare two different inputs latent vectors
+    # and they are nearly the same, it means our model 
+    # has collapsed! the encodings for different classes
+    # must be very different.
+    # if the difference is close to 0, the latent space 
+    # is collapsing! there should be noticeable variation
+    # between different images
+    device = next(model.parameters()).device
+    imgs,labels = next(iter(dataloader))
+    # grab two random classes
+    classes = torch.randint(0,10,size=(2,))
+    # get the indexes for said classes
+    indices = torch.where((labels == classes[0]) | (labels == classes[1]))[0]
+    # and pick only two images for comparison
+    imgs = imgs[indices[:2]]
+    imgs = imgs.to(device)
+    zs,_,mus,logvars = model.encode(imgs)
+    # could do: 
+    # difference = mus.diff(dim=0).abs().mean().item()
+    # but since we have 2 its easier to read we do:
+    difference = (mus[0]-mus[1]).abs().mean().item()
+    print(f'difference between two latent images: {difference:4f}')
+    # could use math.close(difference,0,abs_tol=1e-6) aswell
+    # but this should do it as well (doesnt need an extra import!)
+    collapsing = abs(difference)<1e-6
+    print(f'Collapsing!!!' if collapsing else 'No collapsing. all is OK!')
+    
+# check if our latent space is smooth and gives us 
+# smooth iterpolation between classes
+def check_laten_representation_interpolation(model:VAE, dataloader, interpolation_steps=10):
+    device = next(model.parameters()).device
+    imgs,labels = next(iter(dataloader))
+    # grab two random classes
+    classes = torch.randint(0,10,size=(2,))
+    # get the indexes for said classes
+    indices = torch.where((labels == classes[0]) | (labels == classes[1]))[0]
+    # and pick only two images for comparison
+    imgs = imgs[indices[:2]]
+    imgs = imgs.to(device)
+    latent_vectors,encoder_outputs, *_ = model.encode(imgs)
+    
+    #lets create a nicely stepped vector of values
+    # and use it to feed our decoder to see how our
+    # our decoder interpolates between the latentvectors
+    # with these values and whether the interpolation is 
+    # smooth and final result looks good
+    alphas = torch.linspace(0, 1, steps=interpolation_steps).to(device)
+    interpolated_z = torch.lerp(latent_vectors[0], latent_vectors[1], alphas[:, None])
+    # generate 10 interpolated images between our given latent vectors
+    interpolated_images = model.decoder(interpolated_z)
+    grid = make_grid(interpolated_images, nrow=interpolation_steps, normalize=True)
+    plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
+    plt.title("Latent Space Interpolation")
+    plt.axis("off")
+    plt.show()
+#%%
+# before we start our training lets have a quick review:
+# if kl loss is too small we can use kl annealing or Free Bits  
+# if latent space is unstructured we can use beta>1  
+# if the decoder is too strong we need to reduce decoder capacity(large dropout,fewer layers etc)
+# if all outputs look the same, we can add noise to z to fix that
+# now lets start training!
+
+
+dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
+dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transforms.ToTensor())
+# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transforms.ToTensor())
+
+batch_size = 128
+dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
+dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
+
+epochs = 50#100
+interval = 2000
+lr = 0.01
+weight_decay = 1e-4
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+embedding_size = 2#2,10,20
+# use beta>1 forces the model to
+# use latent space more efficiently
+#
+beta=4 #1,2,4,1e-4
+reduction='sum'
+kl_anealing=False
+use_skipconnection=False
+add_extra_noise=False
+use_freebits=False
+min_kl=0.1
+model = VAE(embedding_size, use_skipconnection, add_extra_noise).to(device)
+
+train(model, dataloader_train, lr=lr,
+      weight_decay=weight_decay,
+      device=device,
+      epochs=epochs, 
+      beta=beta,
+      reduction=reduction,
+      interval=interval,
+      kl_anealing=kl_anealing,
+      use_freebits=use_freebits,
+      min_kl=min_kl)
+#%%
+check_latent_representation_diversity(model, dataloader_train)
+check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+generate_random_images(model, count=32)
+evaluate_on_testset(model, dataloader_test)
+plot_latent_space_encodings(model)
+plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2)
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2)
-# plot_embedding_clusters(model, dataloader_train, use_pca=False)
+#%%
+# test with embd=2, 20, with larger epoch and lower epoch 
+# (with anealing and without, so the effect of epoch shows itself
+# (basically gradual decrease shows its potential when properly used not in small epochs (we could also use batches!))
+# withskipconnection and without
+# and show that simply one metric (like mean) doesnt show the full extend of the issue
+# and using several clues make it much easier to know whats wrong!
+# compare the visualizations, should give very good intuitions
+# check decoder with huge dropouts to simulate weaker version
+# use noise if images are similar
+# recap the info - with solutions for each issue 
+
+#recap
+# ok lets quickly recap what changes we included this time and why:
+# we said there are several issues that can cuz a posterior collapse
+# one sign was overly generic images or blury ones. 
+# 
+# another clear sign is an extremely low kl term.
+# if kl loss is close to zero, its a sign of collapse.  
+# (if it starts high and drops to near zero, its probably
+# a collapse, because means its too easy for the model to set q(z|x)
+# close to p(z)) a nonzero value is what we want during training.
+# freebits regularization would help because it makes sure 
+# each dimension is at least doing something!(contributing positively and
+# latent space actually does have some information!)
+# note that a large beta is not bad per say, its just that too large of 
+# a value especially at the begining hinders the model learning.
+# a properly large beta can force more structured latent space
+# and lead to meaningful separation in the latent space as well
+# (it makes the kl loss larger, the recostruction loss needs to do
+# a better job at separation to lower the loss otherwise everything goes south fast!).
+#
+# the third sign is, if the latent encodings standard deviation gets 
+# nearly zero, it means the model isnt using its 
+# latent space effectively, 
+# we should have a diverse range of latent activations
+# if the mean is always near 0 and std is near 1, 
+# it means the model ignores the latent space(its using the p(z) only!).
+# 
+# forth, we can check the encodings and see if the
+# latent encodings are almost identical(for different inputs)
+# or not, if they are, then it means the model isnt
+# using the latent space.
+# (simply encode two different images 
+# and compare their latent encodings,
+# if the difference is close to 0, the latent space is collapsing
+# there should be noticeable variation between different images)
+#
+# fifth, we can visualizing the latent space with t-sne(pca is not good, its linear and wont work properly for nonlinear relationships which is ourcase)
+# if all the points cluster together, it's collapsed,
+# (a good latent space should separate different categories, otherwise reconstruction shows how bad it is)
+#
+# we can check the generated samples and tell if osmething is wrong!
+# if the generated images are nearly identical, regardless of input changes,
+# its a sign that the latent space is underutilized.
+# if all images look the same, posterior collapse is likely happening.  
+# a good VAE should generate diverse samples
+#(we can check how reconstruction changes with latent space,
+# a properly trained VAE should smoothly interpolate between 
+# different points in latent space.not being able to do this means,
+# theres something wrong, depending on the severity, it could be a collapsed posterior,
+# or simply a bad training regime (needs more trainig, inefficent model, etc (well talk more about this))
+# if interpolation doesnt produce meaningful transitions, the latent space
+# isnt being used effectively.)
+#
+
+# recap of our recap!
+# why do we face posterior collapse? it happens when the encoder ignores the latent space 
+# and learns a simplestic/trivial distribution, making the decoder reconstruct only from noise. 
+# kl loss must not be close to 0 , it should be balanced (have nonzero values)
+# the variance must not be close to 0, we should have non-zero variance
+# different encodings must not be (nearly) identical, all encodings must be distinc
+# generated images  must not be identical, obviously we must have diverse generations/outputs
+# when using t-sne the latent space must not have a single cluster,  we must see  well-separated clusters
+# when interpolating we must not see abrupt/sudden/weird/unmeaningful changes, we must see smooth transitions from one class into another
+# 
+# as we saw in our experiments, detecting posterior collapse often 
+# requires checking kl term value, the latent space variance, 
+# generated outputs and interpolation behavior.
+# The best way to avoid posterior collapse is to carefully tune the kl loss, 
+# use beta scaler, with kl anealing and avoid an overly powerful decoder(or a simple encoder!),
+# other techniques such as freebits regularization, noise addtion, skipconnection come next.
+
+
 #%%
 # lets see what each class'es mean/std looks like
 # each have their own different mean ,
@@ -3232,7 +3893,7 @@ def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, row
 
     input_img = input_img.to(device)
     # grab the mu/logvar for the image class
-    z0, mu, logvar = model.encode(input_img)
+    z0, enc_outputs, mu, logvar = model.encode(input_img)
     # convert the logvariance to std
     std = torch.exp(0.5*logvar)
     # create latent vectorz by sampling using the mu/std
@@ -3271,32 +3932,31 @@ def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, row
     std = std.cpu().numpy().flatten()
 
     plt.figure(figsize=(8, 4))#(12,8)
-
+    
     plt.subplot(2,3,1)
     plt.plot(mu, label="Mean (μ)")
     plt.title("Mean (μ)")
-    plt.xlabel("Latent Dimension")
+    plt.xlabel("Latent dimension")
     plt.ylabel("Value")
     plt.legend()
 
     plt.subplot(2,3,2)
-    plt.plot(std, label="std (σ)", color="orange")
-    plt.title("std (σ)")
-    plt.xlabel("Latent Dimension")
+    plt.plot(std, label="Std (σ)", color="orange")
+    plt.title("Std (σ)")
+    plt.xlabel("Latent dimension")
     plt.ylabel("Value")
     plt.legend()
     
     plt.subplot(2,3,4)
     plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
-    plt.title("Input Image")
+    plt.title("Input image")
     plt.axis("off")
         
     plt.subplot(2,3,5)
     plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
-    plt.title("similar images")
+    plt.title("Similar images")
     plt.axis("off")
-    
-    
+        
     plt.tight_layout()
     plt.show()
     
@@ -3344,6 +4004,11 @@ anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=Tr
 # save the git using pillow
 anim.save('vis.gif', writer="pillow", fps=30)
 plt.show()
+#%%
+
+
+
+
 
 #%% 
 # Conditional VAE 
