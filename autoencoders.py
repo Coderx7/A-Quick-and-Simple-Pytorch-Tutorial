@@ -3525,11 +3525,14 @@ class VAE(nn.Module):
         reconstructed_img = self.decode(z, encoder_output)
         return reconstructed_img, mu, logvar
 
-    def calculate_loss(self, outputs, inputs, mu, logvar, beta, reduction='sum', use_mse=False, use_freebits=False, min_kl=0):
+    def calculate_loss(self, outputs, inputs, mu, logvar, beta, reduction='sum', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
+        _,h,w,c = inputs.shape
         outputs = outputs.view(*inputs.shape)
         criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
         reconstruction_loss = criterion(outputs, inputs)
-
+        # weight for reconstruction loss 
+        # we apply it only when reduction='mean'(I explaned below)
+        scaler = 1
         # !edit
         # free bits regularization technique from https://arxiv.org/abs/1611.02731
         # ref https://stats.stackexchange.com/questions/267924/explanation-of-the-free-bits-technique-for-variational-autoencoders
@@ -3548,13 +3551,41 @@ class VAE(nn.Module):
             # kl_loss = torch.sum(torch.clamp(kl_per_dim, min=min_kl))
             # or we can only sum over the dimensions only and average that!?(which one?)
             kl_loss = torch.clamp(kl_per_dim, min=min_kl).sum(dim=-1).mean()
+            # scale reconstructions?
+            # scaler = h*w*c if normalize else 1
         else:
-            # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-            # sum over the whole batch, giving us a single loss 
-            kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            if reduction == 'sum':
+                # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+                # since we are using sum as reduction for our reconstruction loss (all samples loss sum)
+                # our kl loss needs to be summed over all dimensions and all samples in the batch 
+                # which gievs us a single scalar value.
+                # the bad thing is, since its summed over batch, the batchsize affects the training
+                # we need to use different lr for different batchsizes because the gradients also
+                # scale with the batchsize, therefore learning rate needs to be ajusted accordingly)
+                # also this means more instability as its harder to balance the two terms like this
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            else: #reduction == 'mean'
+                # here for the kl loss we only sum over the latent dimensions,
+                # this gives us a single loss for each sample, 
+                # we need to take the mean of the whole batch and this makes it independent of 
+                # the batchsize and should give us a more stable loss, this is more aligned with
+                # our reconstruction loss which we do the same thing (take the mean of the whole batch (i.e. reduction=mean))
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+                # we also need to normalize the reconstruction/kl loss otherwise kl will overpower it!
+                # and we would get nonsens as output, (since the image is averaged pixelwise, but kl is summed for each sample
+                # its not balanced properly)
+                # we need to either divide kl loss by the image dimensions, 
+                # or multiply reconstruction loss by the image dimensions to scale it up a bit
+                # todo apply scaler to the freebits as well?
+                scaler = h*w*c if normalize else 1
+                # reconstruction_loss *= scaler
+                # note since we sumed over the latent dimension, we will have batchsize of losses
+                # which we need to average to get a single loss value
+                kl_loss = kl_loss.mean()
+
         # having a large weight for kl term (i.e. beta>1) can encourage a
         # structured and more meaningful latent space, but we need careful tuning
-        total_loss = reconstruction_loss + (beta*kl_loss)
+        total_loss = (scaler*reconstruction_loss) + (beta*kl_loss)
         return total_loss, reconstruction_loss, kl_loss
 
 # test the vae and the output shape, making sure 
@@ -3582,7 +3613,7 @@ def plot_training_metrics(mu_list, std_list, kl_losses, losses):
     plt.tight_layout()
     plt.show()
 
-def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, reduction, interval, kl_anealing, use_freebits, min_kl=0):
+def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, reduction, normalize, interval, kl_anealing, use_freebits, min_kl=0):
 
     optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
@@ -3622,7 +3653,8 @@ def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, r
                                                              reduction=reduction,
                                                              use_mse=False,
                                                              use_freebits=use_freebits,
-                                                             min_kl=min_kl
+                                                             min_kl=min_kl,
+                                                             normalize=normalize
                                                              )
             
             losses.append(loss.item())
@@ -3729,6 +3761,7 @@ def check_laten_representation_interpolation(model:VAE, dataloader, interpolatio
 dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
 dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
 
+# for cifar10 a better architecture and training regime is required
 # transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
 # dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
 # dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
@@ -3746,11 +3779,12 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 embedding_size = 2#2,10,20
-# use beta>1 forces the model to
+# beta>1 forces the model to
 # use latent space more efficiently
 #
 beta=4 #1,2,4,1e-4
 reduction='sum'
+normalize = True # for reduction='mean'
 kl_anealing=False
 use_skipconnection=False
 add_extra_noise=False
@@ -3764,21 +3798,24 @@ train(model, dataloader_train, lr=lr,
       epochs=epochs, 
       beta=beta,
       reduction=reduction,
+      normalize=normalize,
       interval=interval,
       kl_anealing=kl_anealing,
       use_freebits=use_freebits,
       min_kl=min_kl)
 #%%
+img_shape=(1,28,28)
 check_latent_representation_diversity(model, dataloader_train)
 check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-generate_random_images(model, count=32)
-evaluate_on_testset(model, dataloader_test)
+generate_random_images(model, count=32,img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test,img_shape=img_shape)
 plot_latent_space_encodings(model)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
-generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2)
-generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape)
 #%%
+#! edit get cifar10 to work?
 # test with embd=2, 20, with larger epoch and lower epoch 
 # (with anealing and without, so the effect of epoch shows itself
 # (basically gradual decrease shows its potential when properly used not in small epochs (we could also use batches!))
