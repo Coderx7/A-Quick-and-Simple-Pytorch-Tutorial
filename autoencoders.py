@@ -2785,7 +2785,10 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
         # its not balanced properly)
         # we need to either divide kl loss by the image dimensions, 
         # or multiply reconstruction loss by the image dimensions to scale it up a bit
-        scaler = 28*28 if normalize else 1
+        # todo use input dims instead of hardcoded dims
+        # scaler = 28*28 if normalize else 1
+        _,h,w,c = inputs.shape
+        scaler = h*w*c if normalize else 1
         # note since we sumed over the latent dimension, we will have batchsize of losses
         # which we need to average to get a single loss value
         # this is a bit more stable than our previous version, but it will still be hard
@@ -2814,10 +2817,11 @@ epochs = 50
 dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
 dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
 
-transformations = transforms.Compose([transforms.Resize(28),
-                                      transforms.ToTensor()])
-dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
-dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+## uncomment these lines to test with cifar10 
+## (only do this after you ave experimented with mnist)
+# transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
+# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
 
 #TODO
 # display the manifold for encoder encodings during training and make a gif out of it?
@@ -2826,28 +2830,11 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffl
 
 # imgs, lbls = next(iter(dataloader_train))
 # print(f'{imgs.shape=}')
-# print(f'{imgs.max()=}')
-# print(f'{imgs.min()=}')
-
-# use 1e-4 and see how it disrupts the process, 
-# the kl dominates the loss (squashes the clusters)
-# and the projection with 2 embeddingsize shows it very well!
-# 
-# last change:
-# using beta=1e-1 and embdsz=2 using sum seems to be a good fit
-# beta isnt needed technically as it belongs to disentagled version
-# however, to get a quick and decent output im ok with it
-# also the current architecture is in no way a decent one, we can get
-# the same performance using a single layer encoder/decoder as well
-# and it makes it much easier. but! to lay the foundation for larger
-# dataset, I guess these are ok! as it allowed me to explain several concepts
-# embdsz=10 also works.
-# i experimented with separate optimizers, to get good result we need proper
-# hyperparameter tuning
-# beta=1e-1
+# make sure the images are in range(0,1)
+# print(f'range = ({imgs.min()},{imgs.max()})')
 
 # if its mnist use 1 if its cifar10 use 3 for input channel
-input_dimension = 1 if isinstance(dataset_train,datasets.MNIST) else 3
+input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 embeddingsize = 2#2,10
 reduction='sum'#mean
 # to see how it affects our result, when using using reduction='mean'
@@ -2859,7 +2846,7 @@ use_mse = False
 interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-model = VAE(embeddingsize,input_dimension).to(device)
+model = VAE(embeddingsize, input_channel).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
 
@@ -2895,8 +2882,8 @@ states = torch.load(f"vae_{model.embedding_size}_{reduction}_{'normalized' if no
 model.load_state_dict(state_dict=states['states'])
 print('weights loaded')
 #%%
-# now lets create some functions 
-# for visualization and see how our model does
+# now lets write some functions for visualization 
+# and see how our model does
 # 
 # generate random images by randomly sampling from a simple normal distribution!
 @torch.no_grad()
@@ -3001,7 +2988,7 @@ def plot_latent_space_encodings(model, batch_size = 10000):
                 y=z_test[:,1],
                 c=labels.numpy(),
                 alpha=.4,
-                s=3**2,# point size, the biggger the larger the points on the canvas
+                s=3**2,# point size, the biggger the value, the larger the points on the canvas
                 cmap='viridis')
     plt.colorbar()
     plt.xlabel('Z[0]')
@@ -3122,11 +3109,7 @@ def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_sh
     plt.title(f'latent space grid of numbers({n}x{n})')
     plt.show()
 #%%
-# for mnist this is the default but since I wanted
-# us also to be able to experiment with cifar10, I 
-# decided to also add the image shape as arguments
-# so we can easily see cifar10 examples as well
-img_shape=(3,28,28)
+img_shape=(1,28,28)
 generate_random_images(model, count=32, img_shape=img_shape)
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape)
 plot_latent_space_encodings(model)
@@ -3471,10 +3454,11 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 
 
 class VAE(nn.Module):
-    def __init__(self, embedding_size=100, skip_connection=False, add_extra_noise=False, noise_weight=0.1):
+    def __init__(self, embedding_size=100, input_channel=1, skip_connection=False, add_extra_noise=False, noise_weight=0.1):
         super().__init__()
         
         self.embedding_size = embedding_size
+        self.input_channel = input_channel
         # whether to use skip connection from encoder to decoder
         self.use_skip_con = skip_connection
         # whether to use extra noise in latent vector z
@@ -3483,7 +3467,7 @@ class VAE(nn.Module):
         # a simple weight to control the amount of noise applied on our z
         self.noise_weight = noise_weight
         
-        self.encoder = nn.Sequential(conv(1,32),#28x28
+        self.encoder = nn.Sequential(conv(self.input_channel,32),#28x28
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
                                      conv(96,128,stride=2),#3x3
@@ -3504,7 +3488,7 @@ class VAE(nn.Module):
                                      deconv(256,128,kernel_size=4),#4
                                      deconv(128,64,kernel_size=4),#8
                                      deconv(64,32,kernel_size=2),#14
-                                     deconv(32,1,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                     deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
                                     )
     
     def reparamtrization_trick(self, mu, logvar):
@@ -3574,8 +3558,9 @@ class VAE(nn.Module):
         return total_loss, reconstruction_loss, kl_loss
 
 # test the vae and the output shape, making sure 
-model = VAE(embedding_size=100)
-img_re, _,_ = model(torch.randn(size=(5,1,28,28)))
+input_channel=3
+model = VAE(embedding_size=100, input_channel=input_channel)
+img_re, _,_ = model(torch.randn(size=(5,input_channel,28,28)))
 print(f'{img_re.shape=}')
 #%%
 # lets train our model again
@@ -3743,8 +3728,10 @@ def check_laten_representation_interpolation(model:VAE, dataloader, interpolatio
 
 dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
 dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
-# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transforms.ToTensor())
-# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transforms.ToTensor())
+
+# transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
+# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
 
 batch_size = 128
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
@@ -3756,6 +3743,8 @@ lr = 0.01
 weight_decay = 1e-4
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 embedding_size = 2#2,10,20
 # use beta>1 forces the model to
 # use latent space more efficiently
@@ -3767,7 +3756,7 @@ use_skipconnection=False
 add_extra_noise=False
 use_freebits=False
 min_kl=0.1
-model = VAE(embedding_size, use_skipconnection, add_extra_noise).to(device)
+model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
 train(model, dataloader_train, lr=lr,
       weight_decay=weight_decay,
