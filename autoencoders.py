@@ -418,7 +418,7 @@ def plot_embedding_clusters(model, dataloader_train, title='',use_pca=False):
         for imgs, lbls in dataloader_train:
             imgs = imgs.to(device)
             # Get feature vectors
-            feature_vectors = model.encoder(imgs).detach().cpu().view(imgs.size(0), -1).numpy()
+            feature_vectors = model.encoder(imgs).cpu().view(imgs.size(0), -1).numpy()
             all_features.append(feature_vectors)
             all_labels.append(lbls.numpy())
 
@@ -2487,25 +2487,26 @@ for e in range(epochs):
 # first lets define conv and deconv blocks,
 # we use two simple functions to this!
 
-def conv(in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False):
+def conv(in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False, act=nn.ReLU()):
     return nn.Sequential(nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-                            nn.LeakyReLU(0.2))
+                            act)
 
-def deconv(in_dim, out_dim, kernel_size=3, stride=2, padding=1, act = nn.LeakyReLU(0.2), batch_norm=True, bias=False):
+def deconv(in_dim, out_dim, kernel_size=3, stride=2, padding=1, act = nn.ReLU(), batch_norm=True, bias=False):
     return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
                             # important note for the last layer there should be no relu
                             # even if you put a sigmoid after the relu, it wont work!
                             act)
 
+# a simplistic res module
 class conv(nn.Module):
-    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2)):
         super().__init__()
         self.conv_block = nn.Sequential(
             nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-            nn.LeakyReLU(0.2)
+            act
         )
         # residual connection needs input and output dimensions to match
         self.residual_connection = (in_dim == out_dim and stride == 1)
@@ -2836,7 +2837,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffl
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 embeddingsize = 2#2,10
-reduction='sum'#mean
+reduction='mean'#mean
 # to see how it affects our result, when using using reduction='mean'
 # set normalization to False, without normalization we wont learn 
 # anything meaningful! (reduction='sum' doesnt use normalization)
@@ -2942,9 +2943,10 @@ def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28
             f'\tLoss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().detach().view(-1, *img_shape)
+            reconstructeds = preds.cpu().view(-1, *img_shape)
             # grab the first few images and their reconstructions
-            imgs = imgs[:sample_count].cpu().detach().numpy()
+            # sidenote: when we use no_grad, theres no gradients, so no need for .detach()!
+            imgs = imgs[:sample_count].cpu().numpy()
             recons = reconstructeds[:sample_count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
@@ -3118,17 +3120,6 @@ plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2, img_shape=img_shape)
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=img_shape)
 #%%%
-
-# incorporate these into the following text 
-# in mafhoom prior/posterior distribution inja bayad khob montaghel beshe
-#
-# khosasan aval posterior collapse ro tozih bedim chie ya inke posterior = prior shode
-# yanee chi bad baghie ezafe beshe.
-# kheily kholase posterior collapse yanee, data vorodi ignore mishe! encoder ke vazifash
-# peyda kardan etelaad distribution baraye har input data hast, mire ye distribution normal (0,1)
-# ro yad migier ke (in prior has ke ma moshakas kardim), be jaye inke bere N(mu(x),sigma(x)) ro
-# yad begire. baraye hamin yanee kolan noise normal yadmigire! na chizi marbod be data vorodi
-# 
  
 # now if we try to play with parameters, we'll see its really hard to get it working!
 # and our results look either blury! too similar/generic. 
@@ -3472,19 +3463,29 @@ class VAE(nn.Module):
                                      conv(64,96,stride=2),#7x7
                                      conv(96,128,stride=2),#3x3
                                      conv(128,256,stride=2),#2x2
-                                     conv(256,self.embedding_size,stride=2,padding=1),#1x1
+                                     # set stride to 1 so the final output dim is 2x2
+                                     # it helps for more complex datasets, but for mnist
+                                     # a simple network would work, even a single fc layer!
+                                     # so I decided to add a few more convs so we can experiment
+                                     # with cifar as well
+                                     conv(256,self.embedding_size,stride=1,padding=1),#1x1
                                     )
-        bottleneck_size = self.embedding_size*1*1
+        # retaining some spatial dimensions such as 2x2/4x4 helps
+        # when the dataset is more complex.
+        bottleneck_size = self.embedding_size*2*2
         self.fc_mu = nn.Linear(bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(bottleneck_size, self.embedding_size)
         
         decoder_in_dim = self.embedding_size + bottleneck_size if self.use_skip_con else self.embedding_size
+        # we use the followng formula to determine the output size here
         # ((h-1)*stride)+(kernel_size-2)*padding
+        # h is the height for encoders output dim (here 1x1)
+        # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
-        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*1*1),
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*2*2),
                                      nn.ReLU(),
-                                     nn.Unflatten(1,(256,1,1)),
-                                     deconv(256,256,kernel_size=4),#2
+                                     nn.Unflatten(1,(256,2,2)),
+                                     deconv(256,256,kernel_size=2),#4,2
                                      deconv(256,128,kernel_size=4),#4
                                      deconv(128,64,kernel_size=4),#8
                                      deconv(64,32,kernel_size=2),#14
@@ -3552,7 +3553,7 @@ class VAE(nn.Module):
             # or we can only sum over the dimensions only and average that!?(which one?)
             kl_loss = torch.clamp(kl_per_dim, min=min_kl).sum(dim=-1).mean()
             # scale reconstructions?
-            # scaler = h*w*c if normalize else 1
+            scaler = h*w*c if normalize else 1
         else:
             if reduction == 'sum':
                 # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
@@ -3596,7 +3597,7 @@ print(f'{img_re.shape=}')
 #%%
 # lets train our model again
 # but this time, lets make things a bit tiddier!
-
+# todo make this for epochs I guess thats better
 def plot_training_metrics(mu_list, std_list, kl_losses, losses):
     epochs = range(len(mu_list))
     lists = (mu_list,std_list,kl_losses,losses)
@@ -3607,16 +3608,14 @@ def plot_training_metrics(mu_list, std_list, kl_losses, losses):
         ax = fig.add_subplot(2, 2, i+1,)
         ax.plot(epochs, lst, color=colors[i], label=label)
         ax.set_title(f'{label} Over Time')
-        ax.set_xlabel('Epochs')
+        ax.set_xlabel('Iterations')
         ax.set_ylabel(label)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, reduction, normalize, interval, kl_anealing, use_freebits, min_kl=0):
+def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, beta, reduction, normalize, use_mse, interval, kl_anealing, use_freebits, min_kl=0):
 
-    optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
     # a clear sign of posterior collapse is an extremely low kl term.
     # so if kl loss is close to zero, its a sign of collapse.  
     # so we keep track of it
@@ -3651,7 +3650,7 @@ def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, r
                                                              mu, logvar,
                                                              beta=beta, 
                                                              reduction=reduction,
-                                                             use_mse=False,
+                                                             use_mse=use_mse,
                                                              use_freebits=use_freebits,
                                                              min_kl=min_kl,
                                                              normalize=normalize
@@ -3681,7 +3680,7 @@ def train(model:VAE, dataloader_train, lr, weight_decay, device, epochs, beta, r
             loss.backward()
             optimizer.step() 
             if i% interval ==0:
-                print(f'Epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
+                print(f'Epoch {e}/{epochs} [{i}/{len(dataloader_train)}]'
                     f' | Loss: {np.mean(losses):.4f}'
                     f' | KL-Loss: {np.mean(kl_losses):.4f}'
                     f' | (μ,σ): ({np.mean(mu_list):.4f} , {np.mean(std_list):.4f})'
@@ -3749,6 +3748,44 @@ def check_laten_representation_interpolation(model:VAE, dataloader, interpolatio
     plt.title("Latent Space Interpolation")
     plt.axis("off")
     plt.show()
+
+@torch.no_grad()
+def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), beta=1, reduction='mean', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
+    test_set_size = len(dataloader_test.dataset)
+    img_pairs = []
+    losses = []
+    interval = 10
+    model.eval()
+
+    for i, (imgs, labels) in enumerate(dataloader_test):
+        imgs = imgs.to(device)
+        preds, mu, logvar = model(imgs)
+        loss,*_ = model.calculate_loss(preds, imgs, mu, logvar, beta, reduction, use_mse,use_freebits,min_kl,normalize)
+        losses.append({'val_loss':loss.item()})
+        
+        print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
+            f'\tLoss: {(loss).item():.4f}')
+
+        if i%interval==0:
+            reconstructeds = preds.cpu().view(-1, *img_shape)
+            # grab the first few images and their reconstructions
+            # sidenote: when we use no_grad, theres no gradients, so no need for .detach()!
+            imgs = imgs[:sample_count].cpu().numpy()
+            recons = reconstructeds[:sample_count].numpy()
+            pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
+            img_pairs.append(pairs)
+
+    # plot the losses using pandas! 
+    # this actually is very neat and comes handy very often!
+    # we can have a list of dictionaries, where each value is 
+    # attributed by a key. this way, our keys will be used as
+    # legends and we have a simple plot with minimum hassle
+    import pandas as pd
+    ax= pd.DataFrame(losses).plot()
+    ax.set_title('testset loss')
+    plt.show()
+    
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
 #%%
 # before we start our training lets have a quick review:
 # if kl loss is too small we can use kl annealing or Free Bits  
@@ -3770,35 +3807,65 @@ batch_size = 128
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
 dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
 
-epochs = 50#100
+epochs = 50#50,100
 interval = 2000
-lr = 0.01
-weight_decay = 1e-4
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
-embedding_size = 2#2,10,20
+# 50 seems a fair choice for cifar example, 
+# larger values need more regularization though
+# but for mnist, 2 would work, try different 
+# embedding sizes here and see for yourself
+embedding_size = 2#2,10,20,50
 # beta>1 forces the model to
 # use latent space more efficiently
-#
-beta=4 #1,2,4,1e-4
-reduction='sum'
+# but for our quick tests, especially in cifar, we set it to 1
+beta=1 #1,2,4,1e-4
+# reduction mean works much better for both mnist and cifar, 
+# its much more stable!
+reduction='mean'
+# mse seems to work better for cifar
+use_mse=False
 normalize = True # for reduction='mean'
 kl_anealing=False
+# very effecive when training cifar for example(without klanealing) 
+# (especially if encoding has spatial dims>1 like 2s2 or 4x4)
 use_skipconnection=False
 add_extra_noise=False
 use_freebits=False
 min_kl=0.1
+
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
-train(model, dataloader_train, lr=lr,
-      weight_decay=weight_decay,
+# note high loss like the ones in the thousands(when using sum e.g.), will be compounded by large lr
+# (it will cause the model to make too large of updates causing it to never learn)
+# this may not show itself that much in mnist, but when switching to other more 
+# complex datasets it will definitely show, so one must use a much much lower lr!
+# 
+# remember too of a large lr will make the network diverge, 
+# it will show itself as mean going toward 0 and std to 1,
+# the kl loss will also be around 0, all showing 100% collapse.
+# so if our training goes properly, and we see loss decrease properly we're fine!
+# this shows itself in more complex datasets such as cifar. we talked about
+# the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
+# other proper techniques in training!
+# 
+lr =0.01
+weight_decay = 1e-4
+scheduler_steps = [20,35,45,49]#[20,45,65,85] # [20,35,45,49]
+optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
+
+train(model, dataloader_train, optimizer=optimizer, 
+      scheduler=scheduler,
       device=device,
       epochs=epochs, 
       beta=beta,
       reduction=reduction,
       normalize=normalize,
+      use_mse=use_mse,
       interval=interval,
       kl_anealing=kl_anealing,
       use_freebits=use_freebits,
@@ -3806,17 +3873,23 @@ train(model, dataloader_train, lr=lr,
 #%%
 img_shape=(1,28,28)
 check_latent_representation_diversity(model, dataloader_train)
-check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-generate_random_images(model, count=32,img_shape=img_shape)
-evaluate_on_testset(model, dataloader_test,img_shape=img_shape)
+# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+# generate_random_images(model, count=32,img_shape=img_shape)
+#todo use a kwargs for easier manipulation!
+evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
 plot_latent_space_encodings(model)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# wont work with skipconnection=True, todo: fix it
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape)
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape)
 #%%
-#! edit get cifar10 to work?
-# test with embd=2, 20, with larger epoch and lower epoch 
+# ok, now we got both mnist and cifar to work, for getting sharper outputs we need
+# a better model/training regime, but for our case it suffices
+# thankfully, we could replicate all scanrios and see how each issue could be solved
+# some issues wouldnt happen in simple datasets such as mnist, but when we used cifar10
+# we could clearly see the output and their effectiveness.
+# we can test with different embeddingsizes with larger epoch and lower epoch 
 # (with anealing and without, so the effect of epoch shows itself
 # (basically gradual decrease shows its potential when properly used not in small epochs (we could also use batches!))
 # withskipconnection and without
@@ -4039,6 +4112,7 @@ plt.show()
 #%% 
 # Conditional VAE 
 # in vanilla VAE, the image generation is a random process and we have no control over it
+# (we can have control but, and its not that easy!)
 # in this version, we are going to create a conditional variation, so that we can create
 # images for a specific class/creteria.
 # Conditional Variational Autoencoder (CVAE) is an extension of Variational Autoencoder (VAE), a generative model that we have studied in the last post. We’ve seen that by formulating the problem of data generation as a bayesian model, we could optimize its variational lower bound to learn the model.
