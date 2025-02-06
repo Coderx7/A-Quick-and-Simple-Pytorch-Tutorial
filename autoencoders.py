@@ -3443,20 +3443,44 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # and ensure the model learns meaningful latent representations.
 
 
-
+class Print(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self, outputs):
+        print(f'{outputs.shape=}')
+        return outputs
+    
 class VAE(nn.Module):
-    def __init__(self, embedding_size=100, input_channel=1, skip_connection=False, add_extra_noise=False, noise_weight=0.1):
+    def __init__(self, embedding_size=100, input_channel=1, skip_connection=False, add_extra_noise=False, noise_weight=0.1, ema_decay=0.99):
         super().__init__()
         
         self.embedding_size = embedding_size
         self.input_channel = input_channel
         # whether to use skip connection from encoder to decoder
         self.use_skip_con = skip_connection
+        # if we use skip connections between encoder and decoder
+        # we will not be able to generate images using simple sampling
+        # because we would need encoder outputs to concat with latent vectorz
+        # and since there will be no image at first(cuz we are trying to generate some!
+        # ourselevs from latent vector z!) we will face issue.
+        # one way would be to use a image and use its encoderoutputs with our
+        # latent varibles, but this is not desired!, the other way would be
+        # to use the mean of our dataset! or a large batch and use that instead
+        # of any random image! this is not really desired either or 
+        # the third way, to have a running average of our encodersoutput
+        # during training, and use this, when theres no images. 
+        # this might give us a btter output. lets try this (I dont know if it works! im just trying!)
+        # we define self.ema_skipcon at the end, when we defined our network and 
+        # all sizes are determined!
+        self.ema_decay = ema_decay        
+        
         # whether to use extra noise in latent vector z
         # to make images more diverse(in fact prevent them from posterior collapse)
         self.add_extra_noise = add_extra_noise
         # a simple weight to control the amount of noise applied on our z
         self.noise_weight = noise_weight
+        
         
         self.encoder = nn.Sequential(conv(self.input_channel,32),#28x28
                                      conv(32,64,stride=2),#14x14
@@ -3472,18 +3496,20 @@ class VAE(nn.Module):
                                     )
         # retaining some spatial dimensions such as 2x2/4x4 helps
         # when the dataset is more complex.
-        bottleneck_size = self.embedding_size*2*2
-        self.fc_mu = nn.Linear(bottleneck_size, self.embedding_size) 
-        self.fc_logvar = nn.Linear(bottleneck_size, self.embedding_size)
+        self.bottleneck_size = self.embedding_size*2*2
+        self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
+        self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
         
-        decoder_in_dim = self.embedding_size + bottleneck_size if self.use_skip_con else self.embedding_size
+        decoder_in_dim = self.embedding_size + self.bottleneck_size if self.use_skip_con else self.embedding_size
         # we use the followng formula to determine the output size here
         # ((h-1)*stride)+(kernel_size-2)*padding
         # h is the height for encoders output dim (here 1x1)
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
         self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*2*2),
+                                     nn.BatchNorm1d(256*2*2),
                                      nn.ReLU(),
+                                     nn.Dropout(0.1),
                                      nn.Unflatten(1,(256,2,2)),
                                      deconv(256,256,kernel_size=2),#4,2
                                      deconv(256,128,kernel_size=4),#4
@@ -3491,7 +3517,14 @@ class VAE(nn.Module):
                                      deconv(64,32,kernel_size=2),#14
                                      deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
                                     )
-    
+
+        # now lets define our ema_skipcon 
+        if self.use_skip_con:
+            # we use self.register_buffer so ema_skipcon is saved when we save our model
+            # and also its not included in computational graph
+            self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
+
+        
     def reparamtrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
         eps = torch.randn_like(std)
@@ -3508,15 +3541,42 @@ class VAE(nn.Module):
             z += self.noise_weight*torch.randn_like(z)
         return z
     
+    def calculate_ema(self, encoder_outputs):
+        # take the average of the whole batch
+        outputs_mean = encoder_outputs.mean(dim=0)
+        # this is standard ema calculation and works well, but 
+        # since we use 0s at first, it has a bias towards zero
+        # and it takes time to get it to accurate result
+        # self.ema_skipcon = (self.ema_decay * self.ema_skipcon) + ((1-self.ema_decay)*outputs_mean)
+        # by the way since we are using buffer, we cant use direct assignment 
+        # so instead we use copy_ to have inplace operation to retain the buffer nature
+        # of ema_skipcon, otheriwse it will be replaced by a tensor!
+        # we could also use inplace ops like mul_,add_, etc as well but I guess copy_ is easier
+        # the formula is readable and we get the job done!)
+        self.ema_skipcon.copy_(self.ema_decay * self.ema_skipcon + (1 - self.ema_decay) * outputs_mean)
+    
     def encode(self, input):
         output = self.encoder(input).view(input.size(0),-1)
         mu = self.fc_mu(output)
         log_var = self.fc_logvar(output)
         z = self.reparamtrization_trick(mu, log_var)
+        # if we use skip connection, lets update the moving average
+        if self.use_skip_con:
+            self.calculate_ema(output)
         return z, output, mu, log_var
 
     def decode(self, z, encoder_output):
         if self.use_skip_con:
+            # use a moving average if theres no image/encoder-output
+            if encoder_output is None:
+                # since ema_skipcon is one vector, we need to repeat it
+                # for the whole batch, so we can concat each row!
+                # using repeat() function we can specify the repetition factor
+                # for each dimension positionally, since in our case we have
+                # a 2d vector, we use z.size(0) for the first dim as the batch dim
+                # and use 1 for the second dim meaning we dont want to touch it!
+                # leave it be as is!
+                encoder_output = self.ema_skipcon.repeat(z.size(0),1)
             z = torch.cat([z, encoder_output], dim=-1)
         reconstructed_img = self.decoder(z)
         return reconstructed_img
@@ -3786,6 +3846,87 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
     plt.show()
     
     display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
+
+
+@torch.no_grad()
+def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28),dataloader=None):
+    # lets see if the transition in our latent space is smooth
+    # that is we should be able to smoothly transition from one
+    # class to the other, at least this is what we are tryting 
+    # to see.
+    # we create a vector of equally spaced values, and try to
+    # visualize these vectors, (they act as our latent vector z)
+    # since they are equally spaced, we can see how they change
+    # gradually, ideally we want them to have a smooth transition
+    # from one class to another. 
+    # so lets see how our interpolation turns out
+    # n means we want a figure with nxn digits (note we assume our latent vector dim is 2)
+    model.eval()
+    # we are basically creating a z vector, with n, equally spaced value
+    # starting from lowerbound, up until upperbound (e.g from -2 to 2)
+    # we create 2 such vectors, so we can create a grid of numbers
+    # treating one z for xaxis and another for the yaxis. 
+    z1 = torch.linspace(lower_bound, upper_bound, n)
+    z2 = torch.linspace(lower_bound, upper_bound, n)
+    # using np.meshgrid, we create our grid, meshgrid, simply 
+    # expands z1 and z2 into 2D grids, by first repeating z1 values in
+    # x-axis (rows) and then repeating the z2 values in y-axis(columns),
+    # we finally using np.dstack, combined them and the result 
+    # will be a 3dgrid where each xy is made up of z1 and z2 values.
+    # (test with a small example like linspace(-2,2,5), and see how it goes
+    # visualizing it gives you a pretty good idea whats happening here)
+    z_grid = np.dstack(np.meshgrid(z1, z2))
+    z_grid = torch.from_numpy(z_grid).to(device)
+    # print(f'{z_grid.shape=}')# nxnx2
+    z_grid = z_grid.reshape(-1, model.embedding_size)
+    print(f'{z_grid.shape=}')#(nxn, embdsize) 
+    # todo think about skipconnection visualization im not sure if this is the right  way!
+    # needs testing!
+    # edit or remove the excessive portions here
+    # we cant simply use zeros for fake encoder output, 
+    # because decoder is codnitioned on it
+    # and it must have valid values, because it relies 
+    # upon some extra information present in it, 
+    # so one way is to maintain a running_mean/average 
+    # of all encoder outputs during training and use that mean
+    # during testing for generating purposes.
+    # the other way is to use an actual image, do a forward pass,
+    # get its output and use that instead.
+    # another way is to use several images, a batch of images,
+    # take their mean, feed this to the encoder and use its outputs with our generation!
+    # imgs,_ = next(iter(dataloader))
+    # imgs = imgs.to(device)
+    # img_mean = imgs.mean(0)
+    # print(f'{img_mean.shape=}')
+    # z,output,*_ = model.encode(imgs[0].unsqueeze(0))
+    # print(f'{z_grid.shape=} {output.shape=} ')
+    # how to concat? z_grid is 10x10x2, ours is 1x8 (we need to repeat ours 10x10 times!
+    # so they have the same batch dim and then concat them)
+    # zgrid_2 = torch.cat([z_grid, output.repeat(z_grid.size(0),1)],dim=1)
+    # we need to reshape zgrid to have -1,embeddingsize
+    # by default since our embdsize=2, it aligns prefectly
+    # with the default 10x10x2 which is 100x2, but when embdsz
+    # is bigger than 2, it falls apart. 
+    # when we have more, we have to align them properly as z1z2z3etc form. 
+    # so if we want square, we need to take sqroot of embdsize
+    # I guess (that wouldnt be possible though, because a grid is by nature 2d, xy and yx
+    # anything larger than that doesnt make sense, because we cant have xyz, xzy, zxy,yzx, etc)
+    # you get the idea, unless we create separate 2d grids for each combo which is nuts!
+    # leaving us to use an embd size that when reshaped, aligns prefectly, ie. 
+    if model.use_skip_con:
+        print(f'{model.ema_skipcon.shape=}')
+    # ema_skipcon = model.ema_skipcon.expand(z_grid.shape[0], -1)
+    x_pred_grid = model.decode(z_grid,None)
+    x_pred_grid= x_pred_grid.cpu().view(-1, *img_shape)
+    x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
+    plt.figure(figsize=(20, 20))
+    plt.xlabel('Z_1')
+    plt.ylabel('Z_2')
+    plt.imshow(x)
+    plt.title(f'latent space grid of numbers({n}x{n})')
+    plt.show()
+
+
 #%%
 # before we start our training lets have a quick review:
 # if kl loss is too small we can use kl annealing or Free Bits  
@@ -3793,6 +3934,14 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
 # if the decoder is too strong we need to reduce decoder capacity(large dropout,fewer layers etc)
 # if all outputs look the same, we can add noise to z to fix that
 # now lets start training!
+
+# whenever you face CUDA error we try to debug it using this
+# if we are using jupyter notebook, otherwise we can simply execute our script
+# in terminal like this: 
+# CUDA_LAUNCH_BLOCKING=1 python ourscript.py 
+# but since we are in jupyternotebook environment, we do this in code:
+# import os
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
 dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
@@ -3818,20 +3967,33 @@ input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 # larger values need more regularization though
 # but for mnist, 2 would work, try different 
 # embedding sizes here and see for yourself
+# choose something even, it makes visualization easier(especially 
+# for generate_latent_space_grid function since we use 10x10/20x20 
+# if you plan on changing this(use this accordingly
+# so the size matches ortherwise youll get an error!))
+# embd=50 works fine for cifar10 with small beta and skipcon
 embedding_size = 2#2,10,20,50
 # beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests, especially in cifar, we set it to 1
 beta=1 #1,2,4,1e-4
-# reduction mean works much better for both mnist and cifar, 
+# reduction mean works much better for both mnist and cifar,
 # its much more stable!
 reduction='mean'
 # mse seems to work better for cifar
-use_mse=False
+use_mse=True
 normalize = True # for reduction='mean'
 kl_anealing=False
 # very effecive when training cifar for example(without klanealing) 
 # (especially if encoding has spatial dims>1 like 2s2 or 4x4)
+# the problem with skipconnection is, it prevents us from easily
+# create generations, because we dont use any encoders, and thus
+# theres no encoder output to incorporate into latentvector z!
+# note that, using skipconnection with mnist can result in extreme posterior collapse!
+# I had to completely turn off kl to get somewhat working output! (its expected if you
+# think about it, using skipcon the decoder can ignore the z completely, and
+# reconstruct the input, therefore when we try to generate something using sampling
+# it will be garbage! cuz they were not trained properly to have meaningful values)
 use_skipconnection=False
 add_extra_noise=False
 use_freebits=False
@@ -3877,13 +4039,16 @@ check_latent_representation_diversity(model, dataloader_train)
 # generate_random_images(model, count=32,img_shape=img_shape)
 #todo use a kwargs for easier manipulation!
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
 plot_latent_space_encodings(model)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # wont work with skipconnection=True, todo: fix it
-generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape)
-generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape)
+
 #%%
+#! make two segments, one for mnist test
+#! and another for cifar10, so both results can be seen one after another
 # ok, now we got both mnist and cifar to work, for getting sharper outputs we need
 # a better model/training regime, but for our case it suffices
 # thankfully, we could replicate all scanrios and see how each issue could be solved
