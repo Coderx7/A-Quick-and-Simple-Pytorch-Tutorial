@@ -3515,6 +3515,10 @@ class VAE(nn.Module):
                                      deconv(256,128,kernel_size=4),#4
                                      deconv(128,64,kernel_size=4),#8
                                      deconv(64,32,kernel_size=2),#14
+                                     # while we use sigmoid here with bce, for more complex dataset
+                                     # using tanh with mse seems to give better result, but
+                                     # note that, the input needs to be normalized as well (to -1,1)
+                                     # for our case we go with sigmoid anyway
                                      deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
                                     )
 
@@ -3981,7 +3985,7 @@ beta=1 #1,2,4,1e-4
 # its much more stable!
 reduction='mean'
 # mse seems to work better for cifar
-use_mse=True
+use_mse=False
 normalize = True # for reduction='mean'
 kl_anealing=False
 # very effecive when training cifar for example(without klanealing) 
