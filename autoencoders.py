@@ -4039,8 +4039,9 @@ train(model, dataloader_train, optimizer=optimizer,
 #%%
 img_shape=(1,28,28)
 check_latent_representation_diversity(model, dataloader_train)
-# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-# generate_random_images(model, count=32,img_shape=img_shape)
+# fix these two for skipcon version
+check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+generate_random_images(model, count=32,img_shape=img_shape)
 #todo use a kwargs for easier manipulation!
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
@@ -4280,32 +4281,32 @@ plt.show()
 
 #%% 
 # Conditional VAE 
-# in vanilla VAE, the image generation is a random process and we have no control over it
-# (we can have control but, and its not that easy!)
-# in this version, we are going to create a conditional variation, so that we can create
-# images for a specific class/creteria.
-# Conditional Variational Autoencoder (CVAE) is an extension of Variational Autoencoder (VAE), a generative model that we have studied in the last post. We’ve seen that by formulating the problem of data generation as a bayesian model, we could optimize its variational lower bound to learn the model.
-# However, we have no control on the data generation process on VAE. 
-# This could be problematic if we want to generate some specific data. 
-# As an example, suppose we want to convert a unicode character to handwriting. 
-# In vanilla VAE, there is no way to generate the handwriting based on the character 
-# that the user inputted. Concretely, suppose the user inputted character ‘2’, how 
-# do we generate handwriting image that is a character ‘2’? We couldn’t.
-# Hence, CVAE [1] was developed. Whereas VAE essentially models latent variables and 
-# data directly, CVAE models lantent variables and data, both conditioned to some 
-# random variables. 
-# for this we use the labels as our conditional factor. lets see how it is done. 
+# in a vanilla VAE, the generation process is stochastic, we sample from a latent distribution 
+# (usually Gaussian), which means the output images are generated randomly without explicit 
+# control although we could try to steer the generation (for example, by manipulating the 
+# learned mu and std for each class, this approach is indirect and as we also saw is not precise.
+# in this version, we are going to implement a Conditional Variational Autoencoder (CVAE),
+# which allows us to generate images for a specific class or concept.
+# The key advantage of a CVAE is that it allows us to incorporates conditional information 
+# (like e.g. class labels) into both the encoder and the decoder, which enables more targeted 
+# and controlled generation.
+# usually labels are used as the conditional factor, but we're not limited to just that. 
+# for example, we can use textual descriptions (e.g. "a red sports car") to generate images
+# that match the detailed description, or we could even use another image as a condition to
+# guide the style or content of the generated output. Other types of data/attributes 
+# (such as color, texture, or any domain-specific features) can also be employed.
+# the implementation is very simple, for our case, all we need to do is to encode the label
+# and feed it to the encoder and decoder in the form of one_hot encoded array. this allows
+# both of them to be conditioned on the specific label, and later on, generate data based on
+# a given class.
+# unlike the previous implementation lets keep this simple
+# we now have a pretty good idea how to extend this if we want, 
+# so theres no need to extra details for now. 
+# lets see how its done
 class VAE_Conditional(nn.Module):
     def __init__(self, embedding_size=2, num_classes = 10):
         super().__init__()
         self.embedding_size = embedding_size
-        # we use this as our conditional factor
-        # note however that The conditional variable c could be anything. 
-        # We could assume it comes from a categorical distribution expressing
-        # the label of our data, gaussian expressing some regression target,
-        # or even the same distribution as the data 
-        # (e.g. for image inpainting: conditioning the model to incomplete image).
-        # here we are using class labels 
         self.num_classes = num_classes
         # encoder 
         self.fc1 = nn.Linear(28*28 + num_classes, 512)
@@ -4314,18 +4315,18 @@ class VAE_Conditional(nn.Module):
         self.fc_logvar = nn.Linear(512, embedding_size)
         
         # decoder 
-        # our decoder will utilize our conditional factor along side our embedding
-        # so unlike vanilla vae, the decoder has embedding_size + condition
-        # dims and differs with the last layer of the encoder output dim
+        # our decoder also uses our conditional factor along side the embedding
+        # so it has embedding_size + condition dims and differs with the last 
+        # layer of the encoder output dim
         self.decoder = nn.Sequential(nn.Linear(embedding_size + num_classes, 512),
                                     nn.ReLU(), 
                                     nn.Linear(512 , 28*28),
                                     nn.Sigmoid())
 
     def encode(self, x, y):
-        # accepts input image, and outputs z using reparametrization 
         x = x.view(x.size(0), -1)
-        # y is a one hot encoded vector which we fuse(add) with our input
+        # y is a one hot encoded vector which we concat with our input
+        # y is used as the conditioning factor!
         inputs = torch.cat((x,y),dim=1)
         output = F.relu(self.fc1(inputs))
         mu = self.fc_mu(output) 
@@ -4340,12 +4341,8 @@ class VAE_Conditional(nn.Module):
         return output
 
     def reparametrization_trick(self, mu, logvar):
-        # convert into std
         std = torch.exp(logvar * 0.5)
-        # sample from a normal distribution N(0,1)
         eps = torch.randn_like(std)
-        # produce z using mu and logvar
-        # shift it by mu and scale it by std 
         return mu + eps * std
 
     def forward(self, input, y):
@@ -4354,30 +4351,30 @@ class VAE_Conditional(nn.Module):
         return output, mu, logvar
 
 def one_hot(input, num_classes=10):
-    result = torch.zeros(size=(input.size(0), num_classes))
-    result[range(0,input.size(0)), input[:]] = 1
-    return result
+    # previously in earlier versions of pytorch we had to do this
+    #result = torch.zeros(size=(input.size(0), num_classes))
+    #result[range(0,input.size(0)), input[:]] = 1
+    # but in modern pytorch we can simply use pytorchs builtin one_hot
+    # just note that we have to return float for labels
+    return F.one_hot(input, num_classes).float()
 
 # z = torch.randint(0,9, size=(5,))
 # print(z)
 # print(one_hot(z))
 def loss_function(outputs, imgs, mu, logvar, reduction='mean', use_mse=False):
-    # this loss has two parts, a construction loss and a KL divergence loss which
-    # shows how much distance exists between two given distrubutions. 
+    b,h,w,c=imgs.shape
     if reduction=='mean':
-        if use_mse:
-            criterion = nn.MSELoss()
-        else:
-            criterion = nn.BCELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
         recons_loss = criterion(outputs, imgs)
         # normalize the reconstruction loss
-        recons_loss *= 28*28
+        recons_loss *= h*w*c
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
         # -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        # when using mean, we always sum over the last dim
+        # when using mean, we always sum over the last dim 
+        # so we get a batch so we ultimately average the batch!
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        return torch.mean(recons_loss + kl)
+        return recons_loss + kl.mean()
     else:
         criterion = nn.BCELoss(reduction='sum')
         recons_loss = criterion(outputs, imgs)
@@ -4421,49 +4418,57 @@ for i,(imgs, labels) in enumerate(dataloader_test):
         loss = loss_function(outputs, imgs, mu, logvar )
         if i % interval:
             print(f'iter: {i}/{len(dataloader_test)} loss: {loss.item():.4f}')
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
+            reconstructeds = outputs.cpu().view(-1, 1, 28, 28)
             count = 20 if imgs.size(0)>20 else imgs.size(0)
-            imgs = imgs[:count].cpu().detach().numpy()
+            imgs = imgs[:count].cpu().numpy()
             recons = reconstructeds[:count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
 
 #%%
 # create a 2d manifold for z1 
-# for this we feed our models encoder our test data or whatever data we want to visualize its z 
-# latent space distrubution. then we use plt.scatter to plot the points
-batch_size = 10000
-dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size = batch_size,
-                                               num_workers = num_workers,
-                                               pin_memory=True)
-imgs, labels = next(iter(dataloader_test2))
-imgs = imgs.to(device)
-labels = labels.to(device)
-one_hot_labels = one_hot(labels).to(device)
-z, _,_ = model.encode(imgs, one_hot_labels)
+@torch.no_grad()
+def plot_latent_space_with_labels(dataset_test):
+    # for this we feed our models encoder our test data 
+    # or whatever data we want to visualize its z 
+    # latent space distrubution. 
+    # then we use plt.scatter to plot the points
+    batch_size = 10000
+    dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
+                                                batch_size = batch_size,
+                                                num_workers = num_workers,
+                                                pin_memory=True)
+    imgs, labels = next(iter(dataloader_test2))
+    imgs = imgs.to(device)
+    labels = labels.to(device)
+    one_hot_labels = one_hot(labels).to(device)
+    z, _,_ = model.encode(imgs, one_hot_labels)
 
-z_= z.cpu().detach().numpy()        
-plt.scatter(x=z_[:,0], y=z_[:,1], c=labels.cpu().numpy(), alpha=.4,
-            s=3**2,cmap='viridis')
-plt.colorbar()
-plt.xlabel('Z[0]')
-plt.ylabel('Z[1]')
-plt.show()
+    z_= z.cpu().numpy()        
+    plt.scatter(x=z_[:,0], y=z_[:,1], c=labels.cpu().numpy(), alpha=.4,
+                s=3**2,cmap='viridis')
+    plt.colorbar()
+    plt.xlabel('Z[0]')
+    plt.ylabel('Z[1]')
+    plt.show()
+
+plot_latent_space_with_labels(dataset_test)
 # as you can see the shape this time looks really messy compared to the original
 # VAE. its becasue we are really modelig P(z|c) which c==y . 
 # https://wiseodd.github.io/techblog/2016/12/17/conditional-vae/
 # http://ijdykeman.github.io/ml/2016/12/21/cvae.html
 # To generate an image of a particular number, just feed that number into the decoder
-# along with a random point in the latent space sampled from a standard normal distribution. 
+# along with a random point in the latent space sampled from a gaussian distribution. 
 # Even if the same point is fed in to produce two different numbers, the process will work 
 # correctly, since the system no longer relies on the latent space to encode what number
 # you are dealing with. Instead, the latent space encodes other information, like stroke 
 # width or the angle at which the number is written.
 #%%
 # lets create new samples
-z = torch.randn(size=(3, model.embedding_size)).to(device)
-labels = torch.tensor([[1],[2],[1]])
+z = torch.randn(size=(8, model.embedding_size)).to(device)
+# labels = torch.randint(0,10,size=(8,))
+labels = torch.tensor([1,2,1,3,7,9,4,5])
+print(f'{labels.shape=}')
 labels = one_hot(labels).to(device)
 preds = model.decode(z, labels).detach().cpu()
 img = make_grid(preds)
@@ -4474,27 +4479,31 @@ import os
 def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
     img_cnt = len(img_pairs)
     print(img_cnt)
-    fig = plt.figure(figsize=(28, 28))
+    fig = plt.figure(figsize=(32,24))
     for i in range(img_cnt):
         grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
                             nrow=nrows,
                             normalize=True)
         ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
         ax.imshow(grid_imgs.numpy().transpose(1,2,0))
-        ax.set_title(f'testset reconstruction-{i}')
+        ax.set_title(f'cvae testset reconstruction-{i}')
         
         if not os.path.exists('results'):
             os.makedirs('results')
-        save_image(grid_imgs, f'results/imgs_{i}.jpg')
+        save_image(grid_imgs, f'results/cvae_imgs_{i}.jpg')
+
+# image reconstruction 
+display_imgs_recons(img_pairs,nrows=10,rows=23,cols=4)
 
 # now lets see the digits 2d manifold
-
-# the normal interpolation that we used for vanila va wont work here
-# as we dont want to blend each class to each other, this simply wont happen
-# as each latent space is also conditioned on a class. by this class we are 
-# explicitly asking the network to create digits like it. so there is no point
-# in alterations like this. smaller alterations this way will distort the digit
-# you can uncomment this section and see it for your self. 
+# we cant have the interpolation we used for vanila vae, because for one
+# we dont want to blend a class into another since each latent space is 
+# conditioned on a class now. by this conditioning we are basically 
+# explicitly asking the network to create digits like it. 
+# so there is no point in interpolations like in vae.
+# if go ahead and try that, we see smaller changes this way
+# will distort the output
+@torch.no_grad()
 def vanila_vae_digits_manifold(n=10):
     z1 = torch.linspace(start=-9,end=9, steps=n)
     z2 = torch.linspace(start=-9, end=9, steps=n)
@@ -4503,11 +4512,11 @@ def vanila_vae_digits_manifold(n=10):
     grid = np.dstack(np.meshgrid(z1, z2))
     grid = torch.from_numpy(grid).to(device)
     grid = grid.view(-1, model.embedding_size)
-    labels = torch.randint(0,9,size=(grid.size(0),1))
+    labels = torch.randint(0,9,size=(grid.size(0),))
     # remmember labels must be in one_hot encoded form!
     labels_one_hot = one_hot(labels).to(device)
-    print(grid.shape)
-    print(labels)
+    print(f'{grid.shape=}')
+    print(f'{labels=}')
     print()
     preds = model.decode(grid, labels_one_hot).cpu().detach()
     img = make_grid(preds,nrow=n)
@@ -4515,29 +4524,30 @@ def vanila_vae_digits_manifold(n=10):
     ax = fig.add_subplot(111)
     ax.imshow(img.numpy().transpose(1,2,0))
 
-# image reconstruction 
-display_imgs_recons(img_pairs,nrows=10,rows=86,cols=1)
+vanila_vae_digits_manifold()
 
+def generate_samples(n=10, num_classes=10):
+    # number of digits 
+    # n = 10 
+    # num_classes = 10
+    z = torch.randn(size=(n*num_classes, model.embedding_size)).to(device)
+    print(z.shape)
 
-# number of digits 
-n = 10 
-num_classes = 10
-z = torch.randn(size=(n*num_classes, model.embedding_size)).to(device)
-print(z.shape)
+    labels_grid = torch.tensor([[i] * n for i in range(num_classes)])
+    print(labels_grid.flatten())
 
-labels_grid = torch.tensor([[i] * n for i in range(num_classes)])
-print(labels_grid.flatten())
+    labels_one_hot = one_hot(labels_grid.flatten()).to(device)
+    print(f'z: {z.shape} labels: {labels_one_hot.shape}')
 
-labels_one_hot = one_hot(labels_grid.flatten()).to(device)
-print(f'z: {z.shape} labels: {labels_one_hot.shape}')
+    preds = model.decode(z, labels_one_hot).cpu().detach()
+    img = make_grid(preds, nrow=n)
 
-preds = model.decode(z, labels_one_hot).cpu().detach()
-img = make_grid(preds, nrow=n)
+    fig = plt.figure(figsize=(n,n))
+    plt.title(f'Generate {n} samples for each class({num_classes})')
+    ax = fig.add_subplot(111)
+    ax.imshow(img.numpy().transpose(1,2,0))
 
-fig = plt.figure(figsize=(n,n))
-ax = fig.add_subplot(111)
-ax.imshow(img.numpy().transpose(1,2,0))
-
+generate_samples()
 #%%
 # Disentagled Variational Autoencoders or (β-VAE)
 # good reads : https://towardsdatascience.com/disentanglement-with-variational-autoencoder-a-review-653a891b69bd 
