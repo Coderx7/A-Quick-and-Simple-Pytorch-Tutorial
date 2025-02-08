@@ -3691,6 +3691,23 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
     mu_list = []
     std_list = []
     
+    print(f'Date:            {datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")}')
+    print(f'Dataset:         {"CIFAR10" if model.input_channel==3 else "MNIST"}')
+    print(f'Epochs:          {epochs}')
+    print(f'embedding_size:  {model.embedding_size}')
+    print(f'use_skip_con:    {model.use_skip_con}')
+    print(f'add_extra_noise: {model.add_extra_noise}')
+    print(f'beta:            {beta}')
+    print(f'reduction:       {reduction}')
+    print(f'normalize:       {normalize}')
+    print(f'use_mse:         {use_mse}')
+    print(f'kl_anealing:     {kl_anealing}')
+    print(f'use_freebits:    {use_freebits}')
+    print(f'min_kl:          {min_kl}')
+    print(f'optimizer:       {optimizer}')
+    print(f'scheduler:       {scheduler.milestones}')
+    print(f'interval:        {interval}')
+    
     for e in range(epochs):
         for i, (imgs, labels) in enumerate(dataloader_train):
             imgs = imgs.to(device)
@@ -3984,7 +4001,7 @@ embedding_size = 50#2,10,20,50
 # to get around this make sure to lower the lr (0.001 seems ok)
 # so if we use bn forlast layer of encoder this wont happen, 
 # but we'd get blury output, cuz bn affects the mean/var)
-beta=0.001 #0.01, 1,2,4,
+beta=1 #0.01, 1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable!
 reduction='mean'
@@ -4012,6 +4029,21 @@ add_extra_noise=False
 # to lower beta ever more to not face nans!
 use_freebits=False
 min_kl=0.5
+
+# note
+# for cifar10 these are the best settings so far
+# we might face nans a few times, but try running
+# and it will hopefully converge!
+# embedding_size = 50
+# beta=0.001
+# reduction='mean'
+# use_mse=True
+# normalize = True # for reduction='mean'
+# kl_anealing=True
+# use_skipconnection=True
+# lr =0.002
+# weight_decay = 1e-3
+# scheduler_steps = [35,45,49]
 
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
@@ -4052,6 +4084,30 @@ train(model, dataloader_train, optimizer=optimizer,
       use_freebits=use_freebits,
       min_kl=min_kl)
 #%%
+# save the model
+timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+torch.save({"states": model.state_dict(),
+            "epochs": epochs,
+            "embedding_size":model.embedding_size,
+            "use_skipconnection":use_skipconnection,
+            "beta":beta,
+            "kl_anealing":kl_anealing,
+            "use_freebits":use_freebits,
+            "min_kl":min_kl,
+            "reduction":reduction,
+            "normalize":normalize,
+            "use_mse":reduction,
+            "optimizer":optimizer.state_dict(),
+            "scheduler":scheduler.state_dict()},
+            modelname)
+print('model saved!')
+#%%
+# load the model 
+states = torch.load(modelname)
+model.load_state_dict(state_dict=states['states'])
+print('weights loaded')
+
 img_shape=(3,28,28)
 check_latent_representation_diversity(model, dataloader_train)
 # fix these two for skipcon version
@@ -4065,6 +4121,62 @@ plot_latent_space_encodings(model)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # wont work with skipconnection=True, todo: fix it
+
+# cifar10 loss
+# Files already downloaded and verified
+# Files already downloaded and verified
+# /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:595: UserWarning: To get the last learning rate computed by the scheduler, please use `get_last_lr()`.
+#   _warn_get_lr_called_within_step(self)
+# Epoch 0/50 [0/391] | Loss: 184.5490 | KL-Loss: 0.8683 | (μ,σ): (-0.0083 , 1.0089) | lr: 0.002
+# Epoch 1/50 [0/391] | Loss: 40.9613 | KL-Loss: 204011.2034 | (μ,σ): (-0.0371 , 0.3840) | lr: 0.002
+# Epoch 2/50 [0/391] | Loss: 29.9132 | KL-Loss: 102138.5479 | (μ,σ): (-0.0187 , 0.6691) | lr: 0.002
+# Epoch 3/50 [0/391] | Loss: 24.3710 | KL-Loss: 68121.7055 | (μ,σ): (-0.0124 , 0.7752) | lr: 0.002
+# Epoch 4/50 [0/391] | Loss: 21.0461 | KL-Loss: 51102.3349 | (μ,σ): (-0.0093 , 0.8291) | lr: 0.002
+# Epoch 5/50 [0/391] | Loss: 18.7888 | KL-Loss: 40887.2121 | (μ,σ): (-0.0075 , 0.8616) | lr: 0.002
+# Epoch 6/50 [0/391] | Loss: 17.1099 | KL-Loss: 34075.6589 | (μ,σ): (-0.0062 , 0.8834) | lr: 0.002
+# Epoch 7/50 [0/391] | Loss: 15.8068 | KL-Loss: 29209.5451 | (μ,σ): (-0.0053 , 0.8991) | lr: 0.002
+# Epoch 8/50 [0/391] | Loss: 14.7745 | KL-Loss: 25559.5630 | (μ,σ): (-0.0047 , 0.9109) | lr: 0.002
+# Epoch 9/50 [0/391] | Loss: 13.9137 | KL-Loss: 22720.4489 | (μ,σ): (-0.0041 , 0.9201) | lr: 0.002
+# Epoch 10/50 [0/391] | Loss: 13.1943 | KL-Loss: 20449.0104 | (μ,σ): (-0.0037 , 0.9275) | lr: 0.002
+# Epoch 11/50 [0/391] | Loss: 12.5820 | KL-Loss: 18590.4608 | (μ,σ): (-0.0034 , 0.9335) | lr: 0.002
+# Epoch 12/50 [0/391] | Loss: 12.0396 | KL-Loss: 17041.6004 | (μ,σ): (-0.0031 , 0.9386) | lr: 0.002
+# Epoch 13/50 [0/391] | Loss: 11.5645 | KL-Loss: 15730.9778 | (μ,σ): (-0.0029 , 0.9429) | lr: 0.002
+# Epoch 14/50 [0/391] | Loss: 11.1496 | KL-Loss: 14607.5519 | (μ,σ): (-0.0026 , 0.9466) | lr: 0.002
+# Epoch 15/50 [0/391] | Loss: 10.7787 | KL-Loss: 13633.8897 | (μ,σ): (-0.0025 , 0.9498) | lr: 0.002
+# Epoch 16/50 [0/391] | Loss: 10.4428 | KL-Loss: 12781.9149 | (μ,σ): (-0.0023 , 0.9527) | lr: 0.002
+# Epoch 17/50 [0/391] | Loss: 10.1431 | KL-Loss: 12030.1571 | (μ,σ): (-0.0022 , 0.9552) | lr: 0.002
+# Epoch 18/50 [0/391] | Loss: 9.8668 | KL-Loss: 11361.9151 | (μ,σ): (-0.0021 , 0.9574) | lr: 0.002
+# Epoch 19/50 [0/391] | Loss: 9.6149 | KL-Loss: 10764.0049 | (μ,σ): (-0.0020 , 0.9594) | lr: 0.002
+# Epoch 20/50 [0/391] | Loss: 9.3812 | KL-Loss: 10225.8779 | (μ,σ): (-0.0019 , 0.9612) | lr: 0.002
+# Epoch 21/50 [0/391] | Loss: 9.1647 | KL-Loss: 9738.9945 | (μ,σ): (-0.0018 , 0.9629) | lr: 0.002
+# Epoch 22/50 [0/391] | Loss: 8.9642 | KL-Loss: 9296.3680 | (μ,σ): (-0.0017 , 0.9644) | lr: 0.002
+# Epoch 23/50 [0/391] | Loss: 8.7771 | KL-Loss: 8892.2263 | (μ,σ): (-0.0016 , 0.9658) | lr: 0.002
+# Epoch 24/50 [0/391] | Loss: 8.6025 | KL-Loss: 8521.7593 | (μ,σ): (-0.0015 , 0.9671) | lr: 0.002
+# Epoch 25/50 [0/391] | Loss: 8.4350 | KL-Loss: 8180.9266 | (μ,σ): (-0.0015 , 0.9683) | lr: 0.002
+# Epoch 26/50 [0/391] | Loss: 8.2772 | KL-Loss: 7866.3089 | (μ,σ): (-0.0014 , 0.9694) | lr: 0.002
+# Epoch 27/50 [0/391] | Loss: 8.1297 | KL-Loss: 7574.9941 | (μ,σ): (-0.0014 , 0.9704) | lr: 0.002
+# Epoch 28/50 [0/391] | Loss: 7.9890 | KL-Loss: 7304.4855 | (μ,σ): (-0.0013 , 0.9713) | lr: 0.002
+# Epoch 29/50 [0/391] | Loss: 7.8568 | KL-Loss: 7052.6310 | (μ,σ): (-0.0013 , 0.9722) | lr: 0.002
+# Epoch 30/50 [0/391] | Loss: 7.7313 | KL-Loss: 6817.5652 | (μ,σ): (-0.0012 , 0.9731) | lr: 0.002
+# Epoch 31/50 [0/391] | Loss: 7.6110 | KL-Loss: 6597.6635 | (μ,σ): (-0.0012 , 0.9739) | lr: 0.002
+# Epoch 32/50 [0/391] | Loss: 7.4974 | KL-Loss: 6391.5048 | (μ,σ): (-0.0012 , 0.9746) | lr: 0.002
+# Epoch 33/50 [0/391] | Loss: 7.3901 | KL-Loss: 6197.8396 | (μ,σ): (-0.0011 , 0.9753) | lr: 0.002
+# Epoch 34/50 [0/391] | Loss: 7.2883 | KL-Loss: 6015.5654 | (μ,σ): (-0.0011 , 0.9759) | lr: 0.002
+# Epoch 35/50 [0/391] | Loss: 7.1926 | KL-Loss: 5843.7062 | (μ,σ): (-0.0011 , 0.9766) | lr: 2.000000000000001e-07
+# Epoch 36/50 [0/391] | Loss: 7.0823 | KL-Loss: 5681.3929 | (μ,σ): (-0.0010 , 0.9772) | lr: 2.0000000000000005e-05
+# Epoch 37/50 [0/391] | Loss: 6.9702 | KL-Loss: 5527.8524 | (μ,σ): (-0.0010 , 0.9777) | lr: 2.0000000000000005e-05
+# Epoch 38/50 [0/391] | Loss: 6.8617 | KL-Loss: 5382.3924 | (μ,σ): (-0.0010 , 0.9783) | lr: 2.0000000000000005e-05
+# Epoch 39/50 [0/391] | Loss: 6.7569 | KL-Loss: 5244.3914 | (μ,σ): (-0.0010 , 0.9788) | lr: 2.0000000000000005e-05
+# Epoch 40/50 [0/391] | Loss: 6.6563 | KL-Loss: 5113.2900 | (μ,σ): (-0.0009 , 0.9794) | lr: 2.0000000000000005e-05
+# Epoch 41/50 [0/391] | Loss: 6.5594 | KL-Loss: 4988.5834 | (μ,σ): (-0.0009 , 0.9798) | lr: 2.0000000000000005e-05
+# Epoch 42/50 [0/391] | Loss: 6.4661 | KL-Loss: 4869.8148 | (μ,σ): (-0.0009 , 0.9803) | lr: 2.0000000000000005e-05
+# Epoch 43/50 [0/391] | Loss: 6.3772 | KL-Loss: 4756.5701 | (μ,σ): (-0.0009 , 0.9808) | lr: 2.0000000000000005e-05
+# Epoch 44/50 [0/391] | Loss: 6.2916 | KL-Loss: 4648.4725 | (μ,σ): (-0.0008 , 0.9812) | lr: 2.0000000000000005e-05
+# Epoch 45/50 [0/391] | Loss: 6.2087 | KL-Loss: 4545.1790 | (μ,σ): (-0.0008 , 0.9816) | lr: 2.000000000000001e-07
+# Epoch 46/50 [0/391] | Loss: 6.1300 | KL-Loss: 4446.3762 | (μ,σ): (-0.0008 , 0.9820) | lr: 2.0000000000000008e-06
+# Epoch 47/50 [0/391] | Loss: 6.0542 | KL-Loss: 4351.7776 | (μ,σ): (-0.0008 , 0.9824) | lr: 2.0000000000000008e-06
+# Epoch 48/50 [0/391] | Loss: 5.9814 | KL-Loss: 4261.1204 | (μ,σ): (-0.0008 , 0.9827) | lr: 2.0000000000000008e-06
+# Epoch 49/50 [0/391] | Loss: 5.9114 | KL-Loss: 4174.1633 | (μ,σ): (-0.0008 , 0.9831) | lr: 2.000000000000001e-08
 
 #%%
 #! make two segments, one for mnist test
