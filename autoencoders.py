@@ -3996,12 +3996,13 @@ embedding_size = 50#2,10,20,50
 # beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests, especially in cifar,
-# we set it to 0.01 (anything smaller will make loss unstable
-# even when using this, sometimes it goes towards nans!
+# we set it to 0.001 this causes the loss to nans!
 # to get around this make sure to lower the lr (0.001 seems ok)
-# so if we use bn forlast layer of encoder this wont happen, 
+# or use freebits. but I usually try a few times and it trains just fine
+# this way the results are sharp and clearer than others so far.
+# if we use bn forlast layer of encoder this wont happen, 
 # but we'd get blury output, cuz bn affects the mean/var)
-beta=1 #0.01, 1,2,4,
+beta=0.001 #0.01, 1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable!
 reduction='mean'
@@ -4011,35 +4012,48 @@ normalize = True # for reduction='mean'
 # when we remove batchnorm from layers,
 # especially the last layer of encoder
 # the loss can become really unstable
-kl_anealing=True
+kl_anealing=False
 # very effecive when training cifar for example(without klanealing) 
 # (especially if encoding has spatial dims>1 like 2s2 or 4x4)
 # the problem with skipconnection is, it prevents us from easily
-# create generations, because we dont use any encoders, and thus
+# creating generations, because we dont use any encoders, and thus
 # theres no encoder output to incorporate into latentvector z!
 # note that, using skipconnection with mnist can result in extreme posterior collapse!
 # I had to completely turn off kl to get somewhat working output! (its expected if you
 # think about it, using skipcon the decoder can ignore the z completely, and
 # reconstruct the input, therefore when we try to generate something using sampling
 # it will be garbage! cuz they were not trained properly to have meaningful values)
+# 
+# skipcon is necessary for getting sharp/clear images, 
+# without it we will get very blury images
+# also the training will be more unstable. so for 
+# more stable training and sharper reconstructions we enable skipcon
 use_skipconnection=True
 add_extra_noise=False
-# with betas larger than 0.01, using freebits 
-# make training more stable, otherwise we need 
-# to lower beta ever more to not face nans!
-use_freebits=False
+# with betas larger than 0.01(like 1), using freebits 
+# make training more stable, it makes images somewhat
+# better, but not much. I still prefer beta=0.001 without
+# freebits.
+use_freebits=True
 min_kl=0.5
 
 # note
 # for cifar10 these are the best settings so far
 # we might face nans a few times, but try running
 # and it will hopefully converge!
+# the curcial things is to have larger featuremaps at the
+# end of the encoder (4x4 in our case) and not using bn for
+# last layer of encoder and first layer of decoder. 
+# it took me several days of training to figure this out alhamdolellah
+# I was going to give up! 
+# !check with bn now!
+#! check without skipcon
 # embedding_size = 50
-# beta=0.001
+# beta=0.001 # beta=1 works, but the result is a bit blurier and less detailed. beta 0.001 gives the best details so far
 # reduction='mean'
 # use_mse=True
 # normalize = True # for reduction='mean'
-# kl_anealing=True
+# kl_anealing=True # # it seems disabling klanealing makes training more stable with our current settings!
 # use_skipconnection=True
 # lr =0.002
 # weight_decay = 1e-3
