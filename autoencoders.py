@@ -3486,17 +3486,17 @@ class VAE(nn.Module):
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
                                      conv(96,128,stride=2),#3x3
-                                     conv(128,256,stride=2),#2x2
+                                     conv(128,256,stride=1),#2x2
                                      # set stride to 1 so the final output dim is 2x2
                                      # it helps for more complex datasets, but for mnist
                                      # a simple network would work, even a single fc layer!
                                      # so I decided to add a few more convs so we can experiment
                                      # with cifar as well
-                                     conv(256,self.embedding_size,stride=1,padding=1),#1x1
+                                     conv(256,self.embedding_size,stride=1,padding=1,batch_norm=False),#1x1
                                     )
         # retaining some spatial dimensions such as 2x2/4x4 helps
         # when the dataset is more complex.
-        self.bottleneck_size = self.embedding_size*2*2
+        self.bottleneck_size = self.embedding_size*4*4
         self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
         
@@ -3506,20 +3506,20 @@ class VAE(nn.Module):
         # h is the height for encoders output dim (here 1x1)
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
-        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*2*2),
-                                     nn.BatchNorm1d(256*2*2),
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+                                    #  nn.BatchNorm1d(256*2*2),
                                      nn.ReLU(),
                                      nn.Dropout(0.1),
-                                     nn.Unflatten(1,(256,2,2)),
-                                     deconv(256,256,kernel_size=2),#4,2
-                                     deconv(256,128,kernel_size=4),#4
-                                     deconv(128,64,kernel_size=4),#8
-                                     deconv(64,32,kernel_size=2),#14
+                                     nn.Unflatten(1,(256,4,4)),
+                                     deconv(256,256,kernel_size=2,stride=2),#4,2
+                                     deconv(256,128,kernel_size=4,stride=1),#4
+                                     deconv(128,64,kernel_size=4,stride=2),#8
+                                     deconv(64,32,kernel_size=2,stride=1),#14
                                      # while we use sigmoid here with bce, for more complex dataset
                                      # using tanh with mse seems to give better result, but
                                      # note that, the input needs to be normalized as well (to -1,1)
                                      # for our case we go with sigmoid anyway
-                                     deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                     deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28
                                     )
 
         # now lets define our ema_skipcon 
@@ -3527,8 +3527,7 @@ class VAE(nn.Module):
             # we use self.register_buffer so ema_skipcon is saved when we save our model
             # and also its not included in computational graph
             self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
-
-        
+            
     def reparamtrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
         eps = torch.randn_like(std)
@@ -3591,7 +3590,7 @@ class VAE(nn.Module):
         return reconstructed_img, mu, logvar
 
     def calculate_loss(self, outputs, inputs, mu, logvar, beta, reduction='sum', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
-        _,h,w,c = inputs.shape
+        b,h,w,c = inputs.shape
         outputs = outputs.view(*inputs.shape)
         criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
         reconstruction_loss = criterion(outputs, inputs)
@@ -3646,7 +3645,7 @@ class VAE(nn.Module):
                 # reconstruction_loss *= scaler
                 # note since we sumed over the latent dimension, we will have batchsize of losses
                 # which we need to average to get a single loss value
-                kl_loss = kl_loss.mean()
+                kl_loss = kl_loss.mean(dim=0)
 
         # having a large weight for kl term (i.e. beta>1) can encourage a
         # structured and more meaningful latent space, but we need careful tuning
@@ -3952,9 +3951,9 @@ dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=tran
 dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
 
 # for cifar10 a better architecture and training regime is required
-# transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
-# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
-# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
+dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
 
 batch_size = 128
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
@@ -3976,18 +3975,26 @@ input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
 # if you plan on changing this(use this accordingly
 # so the size matches ortherwise youll get an error!))
 # embd=50 works fine for cifar10 with small beta and skipcon
-embedding_size = 2#2,10,20,50
+embedding_size = 50#2,10,20,50
 # beta>1 forces the model to
 # use latent space more efficiently
-# but for our quick tests, especially in cifar, we set it to 1
-beta=1 #1,2,4,1e-4
+# but for our quick tests, especially in cifar,
+# we set it to 0.01 (anything smaller will make loss unstable
+# even when using this, sometimes it goes towards nans!
+# to get around this make sure to lower the lr (0.001 seems ok)
+# so if we use bn forlast layer of encoder this wont happen, 
+# but we'd get blury output, cuz bn affects the mean/var)
+beta=0.001 #0.01, 1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable!
 reduction='mean'
 # mse seems to work better for cifar
-use_mse=False
+use_mse=True
 normalize = True # for reduction='mean'
-kl_anealing=False
+# when we remove batchnorm from layers,
+# especially the last layer of encoder
+# the loss can become really unstable
+kl_anealing=True
 # very effecive when training cifar for example(without klanealing) 
 # (especially if encoding has spatial dims>1 like 2s2 or 4x4)
 # the problem with skipconnection is, it prevents us from easily
@@ -3998,10 +4005,13 @@ kl_anealing=False
 # think about it, using skipcon the decoder can ignore the z completely, and
 # reconstruct the input, therefore when we try to generate something using sampling
 # it will be garbage! cuz they were not trained properly to have meaningful values)
-use_skipconnection=False
+use_skipconnection=True
 add_extra_noise=False
+# with betas larger than 0.01, using freebits 
+# make training more stable, otherwise we need 
+# to lower beta ever more to not face nans!
 use_freebits=False
-min_kl=0.1
+min_kl=0.5
 
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
@@ -4018,9 +4028,14 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
 # other proper techniques in training!
 # 
-lr =0.01
-weight_decay = 1e-4
-scheduler_steps = [20,35,45,49]#[20,45,65,85] # [20,35,45,49]
+#0.01 when bn is used, 0.001/0.002 
+# when bn is not used. 
+# also using large betas (betas>1)
+# will also make training unstable 
+# and you need to lower lr further!
+lr =0.002
+weight_decay = 1e-3
+scheduler_steps = [35,35,45,49]#[20,45,65,85] # [20,35,45,49]
 optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
 
@@ -4037,11 +4052,11 @@ train(model, dataloader_train, optimizer=optimizer,
       use_freebits=use_freebits,
       min_kl=min_kl)
 #%%
-img_shape=(1,28,28)
+img_shape=(3,28,28)
 check_latent_representation_diversity(model, dataloader_train)
 # fix these two for skipcon version
-check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-generate_random_images(model, count=32,img_shape=img_shape)
+# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+# generate_random_images(model, count=32,img_shape=img_shape)
 #todo use a kwargs for easier manipulation!
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
@@ -4426,7 +4441,7 @@ for i,(imgs, labels) in enumerate(dataloader_test):
             img_pairs.append(pairs)
 
 #%%
-# create a 2d manifold for z1 
+# create a 2d manifold for z1
 @torch.no_grad()
 def plot_latent_space_with_labels(dataset_test):
     # for this we feed our models encoder our test data 
@@ -4463,6 +4478,7 @@ plot_latent_space_with_labels(dataset_test)
 # correctly, since the system no longer relies on the latent space to encode what number
 # you are dealing with. Instead, the latent space encodes other information, like stroke 
 # width or the angle at which the number is written.
+
 #%%
 # lets create new samples
 z = torch.randn(size=(8, model.embedding_size)).to(device)
@@ -4507,17 +4523,17 @@ display_imgs_recons(img_pairs,nrows=10,rows=23,cols=4)
 def vanila_vae_digits_manifold(n=10):
     z1 = torch.linspace(start=-9,end=9, steps=n)
     z2 = torch.linspace(start=-9, end=9, steps=n)
-    # lets create a grid out of these two variables 
-    # we use np.meshgrid and we stack them using dstack
+    
     grid = np.dstack(np.meshgrid(z1, z2))
     grid = torch.from_numpy(grid).to(device)
     grid = grid.view(-1, model.embedding_size)
     labels = torch.randint(0,9,size=(grid.size(0),))
+    
     # remmember labels must be in one_hot encoded form!
     labels_one_hot = one_hot(labels).to(device)
     print(f'{grid.shape=}')
     print(f'{labels=}')
-    print()
+    
     preds = model.decode(grid, labels_one_hot).cpu().detach()
     img = make_grid(preds,nrow=n)
     fig = plt.figure(figsize=(n,n))
@@ -4548,6 +4564,7 @@ def generate_samples(n=10, num_classes=10):
     ax.imshow(img.numpy().transpose(1,2,0))
 
 generate_samples()
+
 #%%
 # Disentagled Variational Autoencoders or (β-VAE)
 # good reads : https://towardsdatascience.com/disentanglement-with-variational-autoencoder-a-review-653a891b69bd 
@@ -4556,15 +4573,19 @@ generate_samples()
 # https://arxiv.org/pdf/1901.09415.pdf
 # https://arxiv.org/abs/1606.05579
 
-# The basic idea in disentagled vae is that, we want different neurons in our latent distribution
-# to be uncorollated, they all try to learn something different about the input data. In order to implement 
-# this, the only thing that needs to be added to the vanilla VAE, is a β term.
+# now here it is, the disentangled vae! we already talked about it in our vanilla vae section
+# we saw that the only difference was we added a factor/beta to the kl loss and that was it!
+# but whats the idea behind it?
+# The basic idea in disentagled vae is that, we want different neurons in our latent 
+# distribution to be uncorollated, they all try to learn something different about 
+# the input data. In order to implement this, the only thing that needs to be added
+# to the vanilla VAE, is a β term.
 # previously for the vanilla VAE we had : 
 #     L = E_q(z|X)[log_p(X|z)] - D_KL[q(z|X)||p(z))]
 # Now for the disentagled version (β-VAE) we just add the β like this : 
 #     L = E_q(z|X)[log_p(X|z)] - βD_KL[q(z|X)||p(z))]
-# so to put it simply, in a disentagled vae (B-Vae) the autoencoder will only use a varable if it 
-# its important 
+# so to put it simply, in a disentagled vae (B-Vae) the autoencoder will only 
+# use a varable if it its important 
 
 def fc_batchnorm_act(in_, out_, use_bn=True, act=nn.ReLU()):
     return nn.Sequential(nn.Linear(in_,out_),
@@ -4595,17 +4616,12 @@ class B_VAE(nn.Module):
         #                             nn.Sigmoid())
 
     def reparameterization_trick(self, mu, logvar):
-        # divide by two, since we want positive deviation only
         std = torch.exp(logvar * 0.5)
-        # sample epslion from N(0,1) 
         eps = torch.randn_like(std)
-        # sampling now can be done by shifting the eps by (adding) the mean 
-        # and scaling it by the variance. 
         return mu + eps * std
 
     def encode(self, imgs):
         imgs = imgs.view(imgs.size(0), -1)
-        # output = F.relu(self.fc1(imgs))
         output = self.encoder_entry(imgs)
         # remember we dont use nonlinearities for mu and logvar!
         mu = self.fc_mu(output)
@@ -4696,8 +4712,8 @@ with torch.no_grad():
             f'\tloss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
-            imgs = imgs[:20].cpu().detach().numpy()
+            reconstructeds = preds.cpu().view(-1, 1, 28, 28)
+            imgs = imgs[:20].cpu().numpy()
             recons = reconstructeds[:20].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
@@ -4706,43 +4722,53 @@ with torch.no_grad():
 # pd.DataFrame(losses).plot()
 model.eval()
 # create sample image
-z = torch.randn(size=(3, model.embedding_size)).to(device)
-preds = model.decode(z).cpu().detach()
-img = make_grid(preds)
+z = torch.randn(size=(8, model.embedding_size)).to(device)
+reconstructed_imgs = model.decode(z).cpu().detach()
+img = make_grid(reconstructed_imgs)
 plt.imshow(img.numpy().transpose(1,2,0))
+plt.title('random generation')
 #%%
-# visualize latent space
-n = 1 
-z = torch.randn(size=(n,model.embedding_size)).to(device)
-print(z.shape)
+# n = 1
+# z = torch.randn(size=(n,model.embedding_size)).to(device)
+# print(f'{z.shape=}')
+# fig = plt.figure()
+# ax = fig.add_subplot(111)
+# preds = model.decode(z).cpu().detach()
+# img_latent_space = make_grid(preds,nrow=5).numpy().transpose(1,2,0)
+# ax.imshow(img_latent_space)
 #%%
-fig = plt.figure()
-ax = fig.add_subplot(111)
-preds = model.decode(z).cpu().detach()
-img_latent_space = make_grid(preds,nrow=5).numpy().transpose(1,2,0)
-ax.imshow(img_latent_space)
-#%%
-def change_latentvariable(z, n=3, count = 3, dim=0):
-    z_new = torch.zeros(size=(n, count, z.size(-1)))
-    for i in range(count):
-        z_new[:,i,:] = z[:, :]
-        z_new[:,i, dim]=  z_new[:,i, dim] - (0.2*i)
+def change_latentvariable(z, n=3, steps=3, scaler=0.2, dim=0):
+    z_new = torch.zeros(size=(n, steps, z.size(-1)))
+    #! edit fix this!  
+    for i in range(steps):
+        # we are basically creating a n(series) x steps x z tensor and in each
+        # step, we fill one row of this tensor until all of them are filled
+        # we use the same initial z, but each time we ever so slightly change it
+        # so each row is different from the previous one, basically we are tryng
+        # to have smooth interpolation between these by introducing fixed steps
+        # into the latent vector.
+        z_new[:,i,:] = z
+        print(f'{z_new=}')
+        print(f'{z_new.shape=}')
+        # scale the latent vector by small amount
+        # so they are different in each step
+        z_new[:,i, dim] = z_new[:,i, dim] - (scaler*i)
     return z_new
 
-def show_manifold(z, n, count, dim , device):
+def show_manifold(z, n, steps, dim , device):
     fig = plt.figure(figsize=(5,5))
     ax = fig.add_subplot(111)
-    latent_space_manifold = change_latentvariable(z, n, count, dim).to(device)
-    print(latent_space_manifold.shape)
-    preds = model.decode(latent_space_manifold.view(-1,model.embedding_size)).cpu().detach()
-    img_latent_space_man = make_grid(preds,nrow=count).numpy().transpose(1,2,0)
+    latent_vectors = change_latentvariable(z, n, steps, dim).to(device)
+    print(latent_vectors.shape)
+    preds = model.decode(latent_vectors.view(-1,model.embedding_size)).cpu().detach()
+    img_latent_space_man = make_grid(preds,nrow=steps).numpy().transpose(1,2,0)
     ax.imshow(img_latent_space_man)
-
-show_manifold(z, n=n, count=5, dim=3, device=device)
-show_manifold(z, n=n,  count=5, dim=1, device=device)
-show_manifold(z, n=n,  count=5, dim=2, device=device)
-show_manifold(z, n=n,  count=5, dim=3, device=device)
-show_manifold(z, n=n,  count=5, dim=4, device=device)
+n=1
+show_manifold(z, n=n, steps=5, dim=3, device=device)
+show_manifold(z, n=n,  steps=5, dim=1, device=device)
+show_manifold(z, n=n,  steps=5, dim=2, device=device)
+show_manifold(z, n=n,  steps=5, dim=3, device=device)
+show_manifold(z, n=n,  steps=5, dim=4, device=device)
 # visualize the 2d manifold 
 #%%
 # variations over the latent variable :
@@ -4752,7 +4778,7 @@ mu_mean = torch.zeros((z_dim))
 
 # Save generated variable images :
 nbr_steps = 8
-gen_images = torch.ones( (nbr_steps, 1, 28, 28) )
+gen_images = torch.ones(size=(nbr_steps,1,28,28) )
 
 for latent in range(z_dim) :
     #var_z0 = torch.stack( [mu_mean]*nbr_steps, dim=0)
@@ -4764,23 +4790,29 @@ for latent in range(z_dim) :
         var_z0[i] = mu_mean
         var_z0[i][latent] = val
         val += step
-
     var_z0 = var_z0.to(device)
-
-
     gen_images_latent = model.decode(var_z0)
     gen_images_latent = gen_images_latent.cpu().detach()
     gen_images = torch.cat( [gen_images, gen_images_latent], dim=0)
-
 img = make_grid(gen_images)
 plt.imshow(img.cpu().numpy().transpose(1,2,0))
 #%%
-def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
+#! remove these visualizations, dont need them really I guess
+# here we create a grid of images where each row corresponds to one latent dimension. 
+# Within each row, the latent dimension is varied across a range of values (from -3 to 3), 
+# while the rest of the latent vector is kept constant. 
+# One column in each row shows the output when the latent value is near its original value
+# (highlighted with a green border), and the other columns show how shifting that latent
+# dimension affects the generated image. 
+# This provides an intuitive way to understand and visualize the influence of each latent 
+# dimension in the model.
+@torch.no_grad()
+def latent_space_walk(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
     fig = plt.figure(figsize=(figure_width, image_height * num_rows))
     
     for i in range(num_rows):
         z_i_values = np.linspace(-3.0, 3.0, num_cols)
-        z_i = z[0][i].detach().cpu().numpy()
+        z_i = z[0][i].cpu().numpy()
         z_diffs = np.abs((z_i_values - z_i))
         j_min = np.argmin(z_diffs)
         for j in range(num_cols):
@@ -4790,7 +4822,7 @@ def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
             else:
                 z[0][i] = float(z_i)
                 
-            x = model.decode(z).detach().cpu().numpy()
+            x = model.decode(z).cpu().numpy()
             
             ax = fig.add_subplot(num_rows, num_cols, i * num_cols + j + 1)
             ax.imshow(x[0][0], cmap='gray')
@@ -4812,22 +4844,25 @@ def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
         
     plt.tight_layout()
     fig.subplots_adjust(wspace=0.04)
+    
 num_rows = z.shape[-1]
-plot_latentspace(num_rows)
+latent_space_walk(num_rows)
 #%% 
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf
 # ref1: https://wiseodd.github.io/techblog/2016/12/05/contractive-autoencoder/
 # ref2: https://www.youtube.com/watch?v=BW7P1fvnAWk
-# So we have seen many different flavors of a Autoencoders. However, there is one more autoencoding method on top of them, dubbed 
+# 
+# So we have seen several different flavors of a autoencoders so far(the classic ones of course there are many newer variants!). 
+# However, there is one more autoencoding method on top of them, known as 
 # Contractive Autoencoder (Rifai et al., 2011).
 # The contractive autoencoder is categorized as a regularizier autoencoder. in other words
-# This autoencoder specifically prevents an overcomplete autoencoder from learning identity
+# This autoencoder specifically prevents an overcomplete autoencoder from learning the identity function
 # which basically means, it prevents it from copying/memorizing the input as apposed to learning
 # benificial features to reconstruct the input that matters for us. 
 # using the regularization term that we will get to shortly, this can also be used on undercomlete
 # encoders as well. 
-# It will achieve this , by adding a new term to the weight matrix. which is as follows: 
+# It will achieve this, by adding a new term to the weight matrix. which is as follows: 
 #                  2 
 # Ω(Ø) =  ‖ Jx(h) ‖p 
 # lets expand this and see what this term actually is. 
@@ -4835,13 +4870,14 @@ plot_latentspace(num_rows)
 # ‖  ‖p  is called a norm. a Frobenius Norm. Frobenius Norm is like L2 norm (Eculidean norm)
 # and is used on matrix and is calculated as the square root of the sum of the absolute squares of its elements
 # which means, we simply sum all the elements in a mxn matrix and then take the square root of it.
-# Now what is it applied on? it is applied on Jx(h). what is Jx(h) you may ask? Its the Jacobian
-# Matrix. what is a Jacobian matrix. it simply a matrix of partial derivatives of all elements 
-# with respect to all inputs. if you closely you can see that we have Jx(h), J, x and h . 
+# Now what is it applied on? it is applied on Jx(h). 
+# what is Jx(h) you may ask? Its the Jacobian Matrix. what is a Jacobian matrix?
+# it simply a matrix of partial derivatives of all elements with respect to all inputs.
+# if you look closely you can see that we have Jx(h), J, x and h.
 # x is our input, h is our parameters. Jx(h) means, a matrix of partial derivitives of all parameters
-# with respect to x. How does it look like ? this is roughly how it looks like : 
+# with respect to x. How does it look like ? this is roughly how it looks like: 
 # suppose, input has n dimensions and our hidden layer has h dimensions. 
-# our resulting jabobian matrix will have n+k dimensions 
+# our resulting jabobian matrix will have n+k dimensions
 #         | dh1/dx1, dh1/dx2, dh1/dx3, ..., dh1/dxn|
 # Jx(h) = | dh2/dx1, dh2/dx2, dh2/dx3, ..., dh2/dxn|
 #         | dh3/dx1, dh3/dx2, dh3/dx3, ..., dh3/dxn|
@@ -4853,15 +4889,16 @@ plot_latentspace(num_rows)
 # derivative for all neurons in our hidden layer with respect to the second input and so on.
 # So basically when we are taking the derivative of a vector with respect to another vector
 # we get a matrix that you see above.  we can say each row belongs to one neuron and each col
-# represents an the respective neurons gradient with respect to all inputs.
+# represents all neurons gradient with respect to a single input.
 # So, what does all of this mean? what does each entry in the Jacobian matrix mean for us? 
-# what can we infer from lets say element (i,l) of this matrix? 
-# Thie (i,l)th element simply tells us, howmuch the h(l) changes with a change in x(i) 
+# what can we infer from lets say element (i,l) of this matrix(i being inputs index as in 
+# x_i and l being neurons index, being n_l)? 
+# The (i,l)th element simply tells us, howmuch the h(l) changes with a change in x(i) 
 # basically each entry in the jacobian matrix captures the variation in the output of
-# the lth neuron with a small variation in the jth input. 
+# the lth neuron with a small variation in the ith input.
 # OK, now what does the Frobenious norm capture here? 
-# what do we get by adding all the lements absolute values and squaring them? 
-# This basically shows, howmuch each of these lements vary with respect to the input 
+# what do we get by adding all the elments absolute values and squaring them? 
+# This basically shows, howmuch each of these elements vary with respect to the input 
 # and we are taking the square of that (to make it more prounounced)
 # So this whole term is added to the loss function and the loss gets minimized. 
 # This means, we want our Frobenious norm to get minimized as well, which means we want
@@ -4872,9 +4909,9 @@ plot_latentspace(num_rows)
 # Lets get a better intuition on how this works : 
 # imagine, for example, dh1/dx1 goes actually to zero(dh1/dx1=0). what would that mean? 
 # It means, h1 is not sensitive to variations in x1!  
-#  but what does the original concept mandates here? what did we want to capture? 
+#  but what does the original concept mandate here? what did we want to capture? 
 # we wanted the neurons to capture these important characteristics (variations in input)
-# so if x1 changes, we want h1 to change as well .
+# so if x1 changes, we want h1 to change as well.
 # So we wanted to capture the important characteristics in the input by each neuron, but 
 # now, we have added a contradictory condition that we dont want to capture these kinds of 
 # variations! So what is happening here? 
@@ -4887,7 +4924,7 @@ plot_latentspace(num_rows)
 # h_i is not sensitive to variations in input. while clearly we said we want to capture such
 # variations (using the L(Ø) part in our loss)! 
 # Thats the catch here, we have two contradictory terms in our loss, one tries to capture 
-# the important features, while the other one tries just the opposite. 
+# the all features, while the other one tries just the opposite. 
 # L(Ø) says, capture the variations in the data while
 # Ω(Ø) says, do not capture the variations in teh data!
 # Whats the tradoff here? capture only the important variations in the data and 
@@ -4913,6 +4950,7 @@ plot_latentspace(num_rows)
 #      . . . . .@888: . . .    . .  . . .  . . . . .
 #   . X@@X@@@X@X888@@@X@@@X@@@@@@X@@@@@@X@@@@@@X@.;;
 #              .:.                                X;
+# shape: "./contractive_autoencoder_u1_u2_axis_plot.png"
 # 
 # So This is how it goes, we have 2 dimensions u1 and u2 , of which u1 is more important
 # as the data variation along the u1 dimension is something that we should care about
@@ -4925,7 +4963,8 @@ plot_latentspace(num_rows)
 # dimension which is U2 . 
 # So by doing so we balance the two conditions. one condition tries to capture all the
 # important variations and says do this, but do it only for dimensions that only their features
-# (variations) are important . the other condition says, dont capture information , it says
+# (variations) are important. 
+# the other condition says, dont capture information, it says
 # do this, but only for the dimensions that are not important.
 # This is like PCA  (unbder certain conditions, vanilla autoencoder is equivalent to PCA)
 # the passage from "Representation Learning: A Review and New Perspectives" by Bengio,
@@ -4978,7 +5017,6 @@ plot_latentspace(num_rows)
 # -=- Olivier
 
 # Autoencoders with tied weights have some important advantages :
-
 #     It's easier to learn.
 #     In linear case it's equvialent to PCA - this may lead to more geometrically adequate coding.
 #     Tied weights are sort of regularisation.
@@ -4995,7 +5033,7 @@ plot_latentspace(num_rows)
 #  are explaining the most of the variance in data (exatly like PCAs do). This is why such 
 # representation might be pretty useful in further phase of learning.
 
-# https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932
+# https://agustinus.kristia.de/blog/contractive-autoencoder/
 
 
 
