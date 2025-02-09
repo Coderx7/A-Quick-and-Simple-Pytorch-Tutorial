@@ -4062,7 +4062,9 @@ def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, row
     plt.legend()
     
     plt.subplot(2,3,4)
-    plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
+    imgs_combined = imgs_combined.squeeze().cpu().numpy()
+    imgs_combined = imgs_combined if c ==1 else imgs_combined.transpose(1,2,0)
+    plt.imshow(imgs_combined, cmap="gray")
     plt.title("Input image")
     plt.axis("off")
         
@@ -4089,7 +4091,8 @@ def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, f
         # so it changes faster. the more farther away from mean, the more different
         # it becomes from that image
         imgs = model.decoder(z*(i*0.02)+0.02)
-        imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
+        b,c,h,w = imgs.shape
+        imgs2 = imgs.view(imgs.size(0), c, h, w)#1x28x28 or 3x28x28
         new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
         ax.clear()
         ax.imshow(new_img)
@@ -4458,17 +4461,16 @@ kwargs = {"img_shape":img_shape,
           "use_mse":reduction,
           "use_freebits":use_freebits,
           "min_kl":min_kl,
-          "kl_anealing":kl_anealing,          
+          "kl_anealing":kl_anealing,
           "normalize":normalize}
 check_latent_representation_diversity(model, dataloader_train)
 plot_latent_space_encodings(model)
 evaluate_on_testset(model, dataloader_test, **kwargs)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
-
 # fix these two for skipcon version
 if not model.use_skip_con:
-    check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+    # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
     generate_random_images(model, count=32,img_shape=img_shape)
     imgs,labels = next(iter(dataloader_train))
     view_images(imgs,labels,rows=12,cols=11)
