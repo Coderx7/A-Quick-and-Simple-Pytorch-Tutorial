@@ -211,7 +211,8 @@ def view_images(imgs, labels, rows = 12, cols =11):
     # also note the figsize row,cols, if you use the wrong size
     # there might not be enough space to display the labels at the top!
     # (try (6,4) and see the result!)
-    fig = plt.figure(figsize=(4,6),dpi=100)
+    fig = plt.figure(figsize=(6,8),dpi=100)
+    # plt.title('View Images') 
     
     max_plots = rows*cols
     # make sure we don't face an error for trying to
@@ -3492,7 +3493,17 @@ class VAE(nn.Module):
                                      # a simple network would work, even a single fc layer!
                                      # so I decided to add a few more convs so we can experiment
                                      # with cifar as well
-                                     conv(256,self.embedding_size,stride=1,padding=1,batch_norm=False),#1x1
+                                     # Initially I would get blury outputs, so I removed batchnorm
+                                     # form the last layer of encoder and first layer of decoder
+                                     # and could finally train and get sharp reconstructions
+                                     # however, I also used larger spatial dms in encoders last layer
+                                     # I just used the batchnorm again and noticed I got good results
+                                     # I guess it was my choice of hypaerparameters as well.
+                                     # so my verdict is, if things dont work, after you tried everything
+                                     # try disabling batchnorm and see if it fixes the issue.
+                                     # using batchnorm for other layers is ok, but for this layer
+                                     # and encoders first layer might pose an issue (i'll edit this when my results are finalized)
+                                     conv(256,self.embedding_size,stride=1,padding=1,batch_norm=True),#1x1
                                     )
         # retaining some spatial dimensions such as 2x2/4x4 helps
         # when the dataset is more complex.
@@ -3507,7 +3518,7 @@ class VAE(nn.Module):
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
         self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
-                                    #  nn.BatchNorm1d(256*2*2),
+                                     nn.BatchNorm1d(256*4*4),
                                      nn.ReLU(),
                                      nn.Dropout(0.1),
                                      nn.Unflatten(1,(256,4,4)),
@@ -3769,6 +3780,21 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
     # plot mu/std, klloss and see how they behaved
     plot_training_metrics(mu_list, std_list, kl_losses, losses)    
 
+def save_model(modelname, kwargs):
+    try:
+        torch.save(kwargs, modelname)
+        print(f"{modelname} saved!")
+    except Exception as ex:
+        print(f'An Exception has occured: {str(ex)}')
+
+def load_model(model, modelname, key='states'):
+    # load the model 
+    states = torch.load(modelname)
+    model.load_state_dict(state_dict=states[key])
+    print(f"{modelname}'s {key} loaded")
+    # no need to return it, but do it in case we assign it
+    return model
+
 #! edit merge these two together? since we can display the diff
 # next to plots as well!?
 # some introspection functions to see if our model has collapsed!
@@ -3830,7 +3856,7 @@ def check_laten_representation_interpolation(model:VAE, dataloader, interpolatio
     plt.show()
 
 @torch.no_grad()
-def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), beta=1, reduction='mean', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
+def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), **kwargs):#beta=1, reduction='mean', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
     test_set_size = len(dataloader_test.dataset)
     img_pairs = []
     losses = []
@@ -3866,7 +3892,6 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
     plt.show()
     
     display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
-
 
 @torch.no_grad()
 def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28),dataloader=None):
@@ -3946,6 +3971,118 @@ def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, im
     plt.title(f'latent space grid of numbers({n}x{n})')
     plt.show()
 
+# lets see what each classes mean/std looks like
+# each have their own different mean,
+# the mean is drastically different than other classes
+# though otherwise it shows the model has not been trained properly
+# we can use this to generate as many images we want for each class
+# we can create as many 0s, 1s or any classes we want! using their mean/std
+# (as you will see in a moment the variation needs some work but overall
+# lets see how they look!)
+# ! edit make samples more varied by altering std a bit
+@torch.no_grad()
+def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
+    
+    if len(input_img.shape) == 3:
+        input_img = input_img.unsqueeze(0)
+
+    # grab the device from our model parameters
+    device = next(model.parameters()).device
+    model.eval()
+
+    input_img = input_img.to(device)
+    # grab the mu/logvar for the image class
+    z0, enc_outputs, mu, logvar = model.encode(input_img)
+    # convert the logvariance to std
+    std = torch.exp(0.5*logvar)
+    # create latent vectorz by sampling using the mu/std
+    # using random noise(epsillon) to create randomness in output
+    epsillon = torch.randn_like(std)
+    z_random = mu + epsillon * std
+    # how mu+std sample looks like
+    z_plain = mu + std
+    # instead of a single epsilon, we can create as many as
+    # we like, and therefore generate as many images. just
+    # make sure the size matches
+    epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
+    # by changing the std, we can generate slightly different variatations
+    # a higher std introduces more randomness, leading to more diverse outputs,
+    # a lower value generates outputs closer to the mean(mu) which means less variation
+    # we can change this in steps and create a morphing effect
+    # from one image into another. (we will be implementing this in a moment)
+    # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
+    # print(f'{scaler=}')
+    # epsillons *= scaler
+    # print(f'{epsillons=}')
+    z_batch = mu + epsillons * std
+
+    z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
+    # generate images for each latent vector
+    img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
+    # reshape the decoder outputs to the proper image dims
+    img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
+    # combine the images as one so we can display them as one big image
+    # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
+    imgs_combined = torch.dstack([input_img,img_random,img_plain])
+    # combine all images as one so we can better visualize and inspect them
+    img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
+    
+    mu = mu.cpu().numpy().flatten()
+    std = std.cpu().numpy().flatten()
+
+    plt.figure(figsize=(8, 4))#(12,8)
+    
+    plt.subplot(2,3,1)
+    plt.plot(mu, label="Mean (μ)")
+    plt.title("Mean (μ)")
+    plt.xlabel("Latent dimension")
+    plt.ylabel("Value")
+    plt.legend()
+
+    plt.subplot(2,3,2)
+    plt.plot(std, label="Std (σ)", color="orange")
+    plt.title("Std (σ)")
+    plt.xlabel("Latent dimension")
+    plt.ylabel("Value")
+    plt.legend()
+    
+    plt.subplot(2,3,4)
+    plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
+    plt.title("Input image")
+    plt.axis("off")
+        
+    plt.subplot(2,3,5)
+    plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
+    plt.title("Similar images")
+    plt.axis("off")
+        
+    plt.tight_layout()
+    plt.show()
+
+# now lets generate new images by stepping through the latent space
+import matplotlib.animation as animation
+@torch.no_grad()
+def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, fps=30):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    z = torch.randn(size=(sample_count, model.embedding_size)).to(device)
+    model.eval()
+    def animate(i):
+        # change the latent vector at each step so we get different image
+        # and ultimately a cool animation showing each image morphing into another!
+        # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
+        # so it changes faster. the more farther away from mean, the more different
+        # it becomes from that image
+        imgs = model.decoder(z*(i*0.02)+0.02)
+        imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
+        new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+        ax.clear()
+        ax.imshow(new_img)
+
+    anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True, repeat_delay=1000)
+    # save the git using pillow
+    anim.save(f'{filename}.gif', writer="pillow", fps=fps)
+    plt.show()
 
 #%%
 # before we start our training lets have a quick review:
@@ -3963,18 +4100,34 @@ def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, im
 # import os
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+def select_dataset(dataset_name='mnist', batch_size=128):
+    if dataset_name.lower() == 'mnist':
+        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
+        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+    elif dataset_name.lower() in ['cifar','cifar10']:
+        # for cifar10 a better architecture and training regime is required
+        transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
+        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+        dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+    else:
+        raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
+    
+    dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
+    dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
 
-dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
-dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+    return dataset_train, dataset_test, dataloader_train, dataloader_test
 
-# for cifar10 a better architecture and training regime is required
-transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
-dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
-dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
-
+dataset = 'mnist'
+# dataset = 'cifar10'
 batch_size = 128
-dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
-dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
+
+#%%
+# mnist test 
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
 
 epochs = 50#50,100
 interval = 2000
@@ -3982,29 +4135,186 @@ interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # if its mnist use 1 if its cifar10 use 3 for input channel
-input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
-# 50 seems a fair choice for cifar example, 
-# larger values need more regularization though
-# but for mnist, 2 would work, try different 
-# embedding sizes here and see for yourself
+input_channel = 1 if dataset =='mnist' else 3
+# for mnist, 2 works(of course its not optimal, but works nonetheless), try different 
+# embedding sizes here and see their effects for yourself(learning rate also affects the results so its not just the embeddingsize its the whole package!!)
 # choose something even, it makes visualization easier(especially 
-# for generate_latent_space_grid function since we use 10x10/20x20 
-# if you plan on changing this(use this accordingly
-# so the size matches ortherwise youll get an error!))
-# embd=50 works fine for cifar10 with small beta and skipcon
-embedding_size = 50#2,10,20,50
-# beta>1 forces the model to
+# for generate_latent_space_grid function since we use 10x10/20x20
+# by default, but you can use larger or smaller grids as well, just 
+# make sure the dims match up with embeddingsize so visualization 
+# works well.(ultimately 10x10 is 100 and for visualization we do (-1, embdsize)
+# and this specifies the number of samples, when ebdsize=2, it gives us 10x10 grid
+# but when embdsize is larger, as you can see, the number of samples and grid follow
+# our reshape (-1,embdsize) you get the idea) 
+embedding_size = 2#,10,20,50
+# in theory beta>1 forces the model to
+# use latent space more efficiently, but larger beta 
+# may make the image blurrier! so we use small beta here
+beta=0.001 #0.001,1,2,4,
+# reduction mean works much better than sum, 
+# its batch invariant and is much more stable
+reduction='mean'
+use_mse=True
+normalize = True # for reduction='mean'
+kl_anealing=False
+use_skipconnection=False
+add_extra_noise=False
+use_freebits=False
+min_kl=0.5
+
+model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
+
+# note high loss like the ones in the thousands(when using sum e.g.),
+# will be compounded by large lr (it will cause the model to make 
+# too large of updates causing it to never learn)
+# this may not show itself that much in mnist, but when switching to other more 
+# complex datasets it will definitely show, so one must use a much much lower lr!
+# 
+# remember too of a large lr will make the network diverge, 
+# it will show itself as mean going toward 0 and std to 1,
+# the kl loss will also be around 0, all showing 100% collapse.
+# so if our training goes properly, and we see loss decrease properly we're fine!
+# this shows itself in more complex datasets such as cifar. we talked about
+# the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
+# other proper techniques in training!
+# 
+lr =0.01
+weight_decay = 1e-3
+scheduler_steps = [20,30,40,45]#[20,45,65,85] # [20,35,45,49]
+optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
+
+train(model, dataloader_train, optimizer=optimizer, 
+      scheduler=scheduler,
+      device=device,
+      epochs=epochs, 
+      beta=beta,
+      reduction=reduction,
+      normalize=normalize,
+      use_mse=use_mse,
+      interval=interval,
+      kl_anealing=kl_anealing,
+      use_freebits=use_freebits,
+      min_kl=min_kl)
+
+kwargs = {"states": model.state_dict(),
+          "epochs": epochs,
+          "embedding_size":model.embedding_size,
+          "use_skipconnection":use_skipconnection,
+          "beta":beta,
+          "kl_anealing":kl_anealing,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "reduction":reduction,
+          "normalize":normalize,
+          "use_mse":reduction,
+          "optimizer":optimizer.state_dict(),
+          "scheduler":scheduler.state_dict()}
+
+timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+save_model(modelname=modelname, kwargs=kwargs)
+#%%
+# load the model to make sure we are dealing with the right model!
+load_model(model, modelname=modelname)
+kwargs = {"img_shape":(input_channel,28,28),
+          "beta":beta,
+          "reduction":reduction,
+          "use_mse":reduction,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "kl_anealing":kl_anealing,          
+          "normalize":normalize}
+check_latent_representation_diversity(model, dataloader_train)
+# fix these two for skipcon version
+check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+generate_random_images(model, count=32,img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, **kwargs)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+plot_latent_space_encodings(model)
+plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# lets view some images and generate
+# some only for a specific class
+# note that our current approach only
+# gives us little control over this kind of
+# generation, in order to get diverse output
+# even for the same class, we need to put an effort!
+imgs,labels = next(iter(dataloader_test))
+view_images(imgs,labels)
+# mu/std slightly changes for different instance of a class
+# but overall they are roughly the same, they
+# however change dirastically from class to class
+generate_similar_images(model, imgs[3])#0
+generate_similar_images(model, imgs[13])
+generate_similar_images(model, imgs[25])
+generate_similar_images(model, imgs[2])#1
+generate_similar_images(model, imgs[5])
+generate_similar_images(model, imgs[14])
+generate_similar_images(model, imgs[1])#2
+generate_similar_images(model, imgs[32])#3
+generate_similar_images(model, imgs[4])#4
+generate_similar_images(model, imgs[15])#5
+generate_similar_images(model, imgs[11])#6
+generate_similar_images(model, imgs[0])#7
+generate_similar_images(model, imgs[8])#8
+generate_similar_images(model, imgs[7])#9
+# the animation maynot work inside jupyternotebook, but the gif file works
+create_interpolation_animation(model, filename=f'mnist_{timestamp}')
+
+#%%
+# cifar10 test
+dataset = 'cifar10'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
+epochs = 50#50,100
+interval = 2000
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_channel = 1 if dataset =='mnist' else 3
+
+# 50 seems a fair choice for cifar10 example, 
+# larger values need more regularization though
+embedding_size = 50 #2,10,20,50,100,200
+# in theory beta>1 forces the model to
 # use latent space more efficiently
-# but for our quick tests, especially in cifar,
-# we set it to 0.001 this causes the loss to nans!
-# to get around this make sure to lower the lr (0.001 seems ok)
-# or use freebits. but I usually try a few times and it trains just fine
+# but for our quick tests here, especially in cifar10,
+# we set it to 0.001 this is what works for us
+# at least in my experiments so far this has been the case.
+# larger beta values result in blurier output (try beta=1 vs 0.001)
+# when you experiment with hyperparameters, only change one parameter at a time
+# otherwise you wont beable to know what each parameters effects are on your model
+# 
+# sidenote:
+# Initially I tested no batchnorm for the
+# last layer of encoder and first layer of decoder, because
+# I couldnt get sharp reconstrcutions, if we dont use batchnorm
+# for the last layer of encoder and first layer of decoder 
+# we will get nans, and to get around this issue, 
+# we need to make sure to lower the lr (0.001 seems ok)
+# or use freebits. 
+# However, I usually try a few times before I decide its too much 
+# this is especially the case when no bn is used
+# because when bn is used the training is stable,
+# so as a rule of thumb I retry a few times, and 
+# only if it doesnt work I lower the lr again.
+# usually it works on the 3rd or 4th attempt and 
+# it starts conveging without spitting out any nans!(or huge kl values!) 
 # this way the results are sharp and clearer than others so far.
-# if we use bn forlast layer of encoder this wont happen, 
-# but we'd get blury output, cuz bn affects the mean/var)
-beta=0.001 #0.01, 1,2,4,
+# 
+# However, after many more experiments I noticed I 
+# didnt have to remove bn for those layers, 
+# I had to do some other modifications
+# which I'll be pointout in a moment)
+# if we use bn for last layer of encoder this wont happen, 
+# but beta still has effect on the output and makes it blurrier. 
+beta=0.001 #0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
-# its much more stable!
+# its much more stable! especially for cifar10
 reduction='mean'
 # mse seems to work better for cifar
 use_mse=True
@@ -4012,42 +4322,56 @@ normalize = True # for reduction='mean'
 # when we remove batchnorm from layers,
 # especially the last layer of encoder
 # the loss can become really unstable
+# kl annealing can help, but it depends
+# on other parameters as well(lr formost,
+# then skipcon and beta value)
 kl_anealing=False
-# very effecive when training cifar for example(without klanealing) 
-# (especially if encoding has spatial dims>1 like 2s2 or 4x4)
+# skipcon is especially effecive when training 
+# cifar10 for example(without kl-annealing)
+# (especially if encoding has spatial dims>1 like 2x2 or 4x4
+# infact we dont get very blury reconstructions if we use 1x1
+# using 2x2 dims for the encoder outupt improved the result,
+# but it was 4x4 that made it for me, gave me the sharpest reconstructions)
 # the problem with skipconnection is, it prevents us from easily
 # creating generations, because we dont use any encoders, and thus
 # theres no encoder output to incorporate into latentvector z!
-# note that, using skipconnection with mnist can result in extreme posterior collapse!
-# I had to completely turn off kl to get somewhat working output! (its expected if you
-# think about it, using skipcon the decoder can ignore the z completely, and
-# reconstruct the input, therefore when we try to generate something using sampling
-# it will be garbage! cuz they were not trained properly to have meaningful values)
+# 
+# sidenote that, using skipconnection with mnist can result in extreme
+# posterior collapse! I had to completely turn off kl to get 
+# somewhat working output! (its expected if you think about it, 
+# using skipcon the decoder can ignore the z completely, and
+# reconstruct the input, therefore when we try to generate 
+# something using sampling it will be garbage! cuz they were
+# not trained properly to have meaningful values)
 # 
 # skipcon is necessary for getting sharp/clear images, 
 # without it we will get very blury images
 # also the training will be more unstable. so for 
-# more stable training and sharper reconstructions we enable skipcon
+# more stable training and sharper reconstructions we 
+# enable skipcon
 use_skipconnection=True
+# adding extra noise didnt do much for me, at least
+# in my experiments, I had the most luck with other 
+# techniques though
 add_extra_noise=False
-# with betas larger than 0.01(like 1), using freebits 
+# with beta values larger than 0.01(like 1), using freebits 
 # make training more stable, it makes images somewhat
-# better, but not much. I still prefer beta=0.001 without
-# freebits.
+# better, but not that much by itself only. 
+# I still prefer beta=0.001 without freebits.
+# and I need to enable skipcon regardless of this option
 use_freebits=True
 min_kl=0.5
 
-# note
+# sidenote from past (before bn)
 # for cifar10 these are the best settings so far
-# we might face nans a few times, but try running
-# and it will hopefully converge!
+# we might face nans a few times(if we dont use bn),
+# but try running and it will hopefully converge!
 # the curcial things is to have larger featuremaps at the
 # end of the encoder (4x4 in our case) and not using bn for
 # last layer of encoder and first layer of decoder. 
-# it took me several days of training to figure this out alhamdolellah
-# I was going to give up! 
-# !check with bn now!
-#! check without skipcon
+# forget it, bn was not the issue, infact using bn 
+# makes training more stable, and theres no issues
+# in using it!
 # embedding_size = 50
 # beta=0.001 # beta=1 works, but the result is a bit blurier and less detailed. beta 0.001 gives the best details so far
 # reduction='mean'
@@ -4061,24 +4385,11 @@ min_kl=0.5
 
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
-# note high loss like the ones in the thousands(when using sum e.g.), will be compounded by large lr
-# (it will cause the model to make too large of updates causing it to never learn)
-# this may not show itself that much in mnist, but when switching to other more 
-# complex datasets it will definitely show, so one must use a much much lower lr!
-# 
-# remember too of a large lr will make the network diverge, 
-# it will show itself as mean going toward 0 and std to 1,
-# the kl loss will also be around 0, all showing 100% collapse.
-# so if our training goes properly, and we see loss decrease properly we're fine!
-# this shows itself in more complex datasets such as cifar. we talked about
-# the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
-# other proper techniques in training!
-# 
 #0.01 when bn is used, 0.001/0.002 
-# when bn is not used. 
+# when bn is not used. (it works when bn is used as well)
 # also using large betas (betas>1)
 # will also make training unstable 
-# and you need to lower lr further!
+# and you need to lower lr further!(if no bn is used!)
 lr =0.002
 weight_decay = 1e-3
 scheduler_steps = [35,35,45,49]#[20,45,65,85] # [20,35,45,49]
@@ -4097,32 +4408,98 @@ train(model, dataloader_train, optimizer=optimizer,
       kl_anealing=kl_anealing,
       use_freebits=use_freebits,
       min_kl=min_kl)
+
+kwargs = {"states": model.state_dict(),
+          "epochs": epochs,
+          "embedding_size":model.embedding_size,
+          "use_skipconnection":use_skipconnection,
+          "beta":beta,
+          "kl_anealing":kl_anealing,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "reduction":reduction,
+          "normalize":normalize,
+          "use_mse":reduction,
+          "optimizer":optimizer.state_dict(),
+          "scheduler":scheduler.state_dict()}
+
+timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+save_model(modelname=modelname, kwargs=kwargs)
+#%%
+# load the model to make sure we are dealing with the right model!
+load_model(model, modelname=modelname)
+kwargs = {"img_shape":(input_channel,28,28),
+          "beta":beta,
+          "reduction":reduction,
+          "use_mse":reduction,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "kl_anealing":kl_anealing,          
+          "normalize":normalize}
+check_latent_representation_diversity(model, dataloader_train)
+# fix these two for skipcon version
+# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+# generate_random_images(model, count=32,img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, **kwargs)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+plot_latent_space_encodings(model)
+plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# lets view some images and generate
+# some only for a specific class
+# note that our current approach only
+# gives us little control over this kind of
+# generation, in order to get diverse output
+# even for the same class, we need to put an effort!
+imgs,labels = next(iter(dataloader_test))
+view_images(imgs,labels)
+# mu/std slightly changes for different instance of a class
+# but overall they are roughly the same, they
+# however change dirastically from class to class
+generate_similar_images(model, imgs[3])#0
+generate_similar_images(model, imgs[13])
+generate_similar_images(model, imgs[25])
+generate_similar_images(model, imgs[2])#1
+generate_similar_images(model, imgs[5])
+generate_similar_images(model, imgs[14])
+generate_similar_images(model, imgs[1])#2
+generate_similar_images(model, imgs[32])#3
+generate_similar_images(model, imgs[4])#4
+generate_similar_images(model, imgs[15])#5
+generate_similar_images(model, imgs[11])#6
+generate_similar_images(model, imgs[0])#7
+generate_similar_images(model, imgs[8])#8
+generate_similar_images(model, imgs[7])#9
+# the animation maynot work inside jupyternotebook, but the gif file works
+create_interpolation_animation(model, filename=f'mnist_{timestamp}')
 #%%
 # save the model
-timestamp = datetime.datetime.now().strftime("%H_%M_%S")
-modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
-torch.save({"states": model.state_dict(),
-            "epochs": epochs,
-            "embedding_size":model.embedding_size,
-            "use_skipconnection":use_skipconnection,
-            "beta":beta,
-            "kl_anealing":kl_anealing,
-            "use_freebits":use_freebits,
-            "min_kl":min_kl,
-            "reduction":reduction,
-            "normalize":normalize,
-            "use_mse":reduction,
-            "optimizer":optimizer.state_dict(),
-            "scheduler":scheduler.state_dict()},
-            modelname)
-print('model saved!')
+# timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+# modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+# torch.save({"states": model.state_dict(),
+#             "epochs": epochs,
+#             "embedding_size":model.embedding_size,
+#             "use_skipconnection":use_skipconnection,
+#             "beta":beta,
+#             "kl_anealing":kl_anealing,
+#             "use_freebits":use_freebits,
+#             "min_kl":min_kl,
+#             "reduction":reduction,
+#             "normalize":normalize,
+#             "use_mse":reduction,
+#             "optimizer":optimizer.state_dict(),
+#             "scheduler":scheduler.state_dict()},
+#             modelname)
+# print('model saved!')
 #%%
 # load the model 
-states = torch.load(modelname)
-model.load_state_dict(state_dict=states['states'])
-print('weights loaded')
+# states = torch.load(modelname)
+# model.load_state_dict(state_dict=states['states'])
+# print('weights loaded')
 
-img_shape=(3,28,28)
+img_shape=(input_channel,28,28)
 check_latent_representation_diversity(model, dataloader_train)
 # fix these two for skipcon version
 # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
