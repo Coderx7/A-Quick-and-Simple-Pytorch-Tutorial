@@ -3460,6 +3460,10 @@ class VAE(nn.Module):
         self.input_channel = input_channel
         # whether to use skip connection from encoder to decoder
         self.use_skip_con = skip_connection
+        # update: ok this moving average thing didnt work! Im not sure
+        # If I implemented this incorrectly or what! I leave it be
+        # for reference though, ill get back to it later
+        # 
         # if we use skip connections between encoder and decoder
         # we will not be able to generate images using simple sampling
         # because we would need encoder outputs to concat with latent vectorz
@@ -3894,7 +3898,7 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
     display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
 
 @torch.no_grad()
-def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28),dataloader=None):
+def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28), img:torch.Tensor=None):
     # lets see if the transition in our latent space is smooth
     # that is we should be able to smoothly transition from one
     # class to the other, at least this is what we are tryting 
@@ -3925,46 +3929,57 @@ def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, im
     # print(f'{z_grid.shape=}')# nxnx2
     z_grid = z_grid.reshape(-1, model.embedding_size)
     print(f'{z_grid.shape=}')#(nxn, embdsize) 
-    # todo think about skipconnection visualization im not sure if this is the right  way!
-    # needs testing!
-    # edit or remove the excessive portions here
+    # 
+    # todo think about skipconnection visualization
     # we cant simply use zeros for fake encoder output, 
     # because decoder is codnitioned on it
     # and it must have valid values, because it relies 
     # upon some extra information present in it, 
     # so one way is to maintain a running_mean/average 
     # of all encoder outputs during training and use that mean
-    # during testing for generating purposes.
-    # the other way is to use an actual image, do a forward pass,
-    # get its output and use that instead.
-    # another way is to use several images, a batch of images,
-    # take their mean, feed this to the encoder and use its outputs with our generation!
+    # during testing for generating purposes, I tested it
+    # and it doesnt work! we get nonsense (the code is 
+    # commented out in our model for future references (maybe im doing it wrong here!))
+    # the other way that came to my mind was to use an 
+    # actual image, get its encoders output and use that instead.
+    # this gives us the image, but theres no variation happeing!
+    # another way that came to mind was to use several images,
+    # a batch of images to be precise! that is take a batch of images,
+    # their mean, feed this to the encoder and use its outputs
+    # with our generation! this doesnt work either!
+    # 
     # imgs,_ = next(iter(dataloader))
     # imgs = imgs.to(device)
     # img_mean = imgs.mean(0)
-    # print(f'{img_mean.shape=}')
     # z,output,*_ = model.encode(imgs[0].unsqueeze(0))
     # print(f'{z_grid.shape=} {output.shape=} ')
-    # how to concat? z_grid is 10x10x2, ours is 1x8 (we need to repeat ours 10x10 times!
+    # how to concat? z_grid is 10x10x2, ours is 1xd (we need to repeat ours 10x10 times!
     # so they have the same batch dim and then concat them)
-    # zgrid_2 = torch.cat([z_grid, output.repeat(z_grid.size(0),1)],dim=1)
-    # we need to reshape zgrid to have -1,embeddingsize
+    # we need to reshape zgrid to have (-1,embdsize)
     # by default since our embdsize=2, it aligns prefectly
     # with the default 10x10x2 which is 100x2, but when embdsz
     # is bigger than 2, it falls apart. 
-    # when we have more, we have to align them properly as z1z2z3etc form. 
+    # when we have more, we have to align them properly as z1,z2,z3,etc form. 
     # so if we want square, we need to take sqroot of embdsize
     # I guess (that wouldnt be possible though, because a grid is by nature 2d, xy and yx
     # anything larger than that doesnt make sense, because we cant have xyz, xzy, zxy,yzx, etc)
     # you get the idea, unless we create separate 2d grids for each combo which is nuts!
     # leaving us to use an embd size that when reshaped, aligns prefectly, ie. 
+    # imgs,_ = next(iter(dataloader))
+    # imgs = imgs.to(device)
+    # z,output,*_ = model.encode(imgs[0].unsqueeze(0))
+    # img_mean = imgs.mean(0)
+    # z,output,*_ = model.encode(img_mean.unsqueeze(0))
+    output=None
     if model.use_skip_con:
-        print(f'{model.ema_skipcon.shape=}')
+        z,output,*_ = model.encode(img)
+        output = output.repeat(z_grid.size(0),1)
+        # print(f'{z_grid.shape=} {output.shape=} ')
     # ema_skipcon = model.ema_skipcon.expand(z_grid.shape[0], -1)
-    x_pred_grid = model.decode(z_grid,None)
+    x_pred_grid = model.decode(z_grid,output)
     x_pred_grid= x_pred_grid.cpu().view(-1, *img_shape)
     x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
-    plt.figure(figsize=(20, 20))
+    plt.figure(figsize=(32, 24))
     plt.xlabel('Z_1')
     plt.ylabel('Z_2')
     plt.imshow(x)
@@ -3982,7 +3997,7 @@ def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, im
 # ! edit make samples more varied by altering std a bit
 @torch.no_grad()
 def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
-    
+    c,h,w=input_img.shape
     if len(input_img.shape) == 3:
         input_img = input_img.unsqueeze(0)
 
@@ -4020,7 +4035,7 @@ def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, row
     # generate images for each latent vector
     img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
     # reshape the decoder outputs to the proper image dims
-    img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
+    img_random, img_plain, img_batch = (img.view(-1,c,28,28) for img in (img_random, img_plain, img_batch))
     # combine the images as one so we can display them as one big image
     # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
     imgs_combined = torch.dstack([input_img,img_random,img_plain])
@@ -4217,7 +4232,8 @@ save_model(modelname=modelname, kwargs=kwargs)
 #%%
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
-kwargs = {"img_shape":(input_channel,28,28),
+img_shape=(input_channel,28,28)
+kwargs = {"img_shape":img_shape,
           "beta":beta,
           "reduction":reduction,
           "use_mse":reduction,
@@ -4230,8 +4246,12 @@ check_latent_representation_diversity(model, dataloader_train)
 check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
 generate_random_images(model, count=32,img_shape=img_shape)
 evaluate_on_testset(model, dataloader_test, **kwargs)
-generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
-generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+# this generation is broken for skipcon for now,
+# we can send an input img, for the sake of running it 
+# without errors, but the output doesnt work as we expect it
+# I need to fix it!
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
 plot_latent_space_encodings(model)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
@@ -4315,17 +4335,17 @@ embedding_size = 50 #2,10,20,50,100,200
 beta=0.001 #0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
-reduction='mean'
+reduction='mean' #mean
 # mse seems to work better for cifar
-use_mse=True
-normalize = True # for reduction='mean'
+use_mse=True #True
+normalize = True # True for reduction='mean'
 # when we remove batchnorm from layers,
 # especially the last layer of encoder
 # the loss can become really unstable
 # kl annealing can help, but it depends
 # on other parameters as well(lr formost,
 # then skipcon and beta value)
-kl_anealing=False
+kl_anealing=False #False
 # skipcon is especially effecive when training 
 # cifar10 for example(without kl-annealing)
 # (especially if encoding has spatial dims>1 like 2x2 or 4x4
@@ -4349,18 +4369,20 @@ kl_anealing=False
 # also the training will be more unstable. so for 
 # more stable training and sharper reconstructions we 
 # enable skipcon
-use_skipconnection=True
+use_skipconnection=True #True
 # adding extra noise didnt do much for me, at least
 # in my experiments, I had the most luck with other 
 # techniques though
-add_extra_noise=False
+add_extra_noise=False #False
 # with beta values larger than 0.01(like 1), using freebits 
 # make training more stable, it makes images somewhat
 # better, but not that much by itself only. 
 # I still prefer beta=0.001 without freebits.
 # and I need to enable skipcon regardless of this option
-use_freebits=True
-min_kl=0.5
+# when enabled using freebits, makes images a bit blurier
+# especially with high min_kl values
+use_freebits=False #False
+min_kl=0.5 #0.5
 
 # sidenote from past (before bn)
 # for cifar10 these are the best settings so far
@@ -4429,7 +4451,8 @@ save_model(modelname=modelname, kwargs=kwargs)
 #%%
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
-kwargs = {"img_shape":(input_channel,28,28),
+img_shape=(input_channel,28,28)
+kwargs = {"img_shape":img_shape,
           "beta":beta,
           "reduction":reduction,
           "use_mse":reduction,
@@ -4438,42 +4461,50 @@ kwargs = {"img_shape":(input_channel,28,28),
           "kl_anealing":kl_anealing,          
           "normalize":normalize}
 check_latent_representation_diversity(model, dataloader_train)
-# fix these two for skipcon version
-# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-# generate_random_images(model, count=32,img_shape=img_shape)
-evaluate_on_testset(model, dataloader_test, **kwargs)
-generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
-generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
 plot_latent_space_encodings(model)
+evaluate_on_testset(model, dataloader_test, **kwargs)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
-# lets view some images and generate
-# some only for a specific class
-# note that our current approach only
-# gives us little control over this kind of
-# generation, in order to get diverse output
-# even for the same class, we need to put an effort!
-imgs,labels = next(iter(dataloader_test))
-view_images(imgs,labels)
-# mu/std slightly changes for different instance of a class
-# but overall they are roughly the same, they
-# however change dirastically from class to class
-generate_similar_images(model, imgs[3])#0
-generate_similar_images(model, imgs[13])
-generate_similar_images(model, imgs[25])
-generate_similar_images(model, imgs[2])#1
-generate_similar_images(model, imgs[5])
-generate_similar_images(model, imgs[14])
-generate_similar_images(model, imgs[1])#2
-generate_similar_images(model, imgs[32])#3
-generate_similar_images(model, imgs[4])#4
-generate_similar_images(model, imgs[15])#5
-generate_similar_images(model, imgs[11])#6
-generate_similar_images(model, imgs[0])#7
-generate_similar_images(model, imgs[8])#8
-generate_similar_images(model, imgs[7])#9
-# the animation maynot work inside jupyternotebook, but the gif file works
-create_interpolation_animation(model, filename=f'mnist_{timestamp}')
+
+# fix these two for skipcon version
+if not model.use_skip_con:
+    check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+    generate_random_images(model, count=32,img_shape=img_shape)
+    imgs,labels = next(iter(dataloader_train))
+    view_images(imgs,labels,rows=12,cols=11)
+    imgs = imgs.to(device)
+    img_t = imgs[0].unsqueeze(0)
+    generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=img_t)
+    generate_latent_space_grid(model,n=20,lower_bound=-20,upper_bound=20,img_shape=img_shape,img=img_t)
+
+    # lets view some images and generate
+    # some only for a specific class
+    # note that our current approach only
+    # gives us little control over this kind of
+    # generation, in order to get diverse output
+    # even for the same class, we need to put an effort!
+    imgs,labels = next(iter(dataloader_test))
+    view_images(imgs,labels)
+    # mu/std slightly changes for different instance of a class
+    # but overall they are roughly the same, they
+    # however change dirastically from class to class
+    generate_similar_images(model, imgs[3])#0
+    generate_similar_images(model, imgs[13])
+    generate_similar_images(model, imgs[25])
+    generate_similar_images(model, imgs[2])#1
+    generate_similar_images(model, imgs[5])
+    generate_similar_images(model, imgs[14])
+    generate_similar_images(model, imgs[1])#2
+    generate_similar_images(model, imgs[32])#3
+    generate_similar_images(model, imgs[4])#4
+    generate_similar_images(model, imgs[15])#5
+    generate_similar_images(model, imgs[11])#6
+    generate_similar_images(model, imgs[0])#7
+    generate_similar_images(model, imgs[8])#8
+    generate_similar_images(model, imgs[7])#9
+
+    # the animation maynot work inside jupyternotebook, but the gif file works
+    create_interpolation_animation(model, filename=f'cifar10_{timestamp}')
 #%%
 # save the model
 # timestamp = datetime.datetime.now().strftime("%H_%M_%S")
@@ -4499,18 +4530,18 @@ create_interpolation_animation(model, filename=f'mnist_{timestamp}')
 # model.load_state_dict(state_dict=states['states'])
 # print('weights loaded')
 
-img_shape=(input_channel,28,28)
-check_latent_representation_diversity(model, dataloader_train)
-# fix these two for skipcon version
-# check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
-# generate_random_images(model, count=32,img_shape=img_shape)
-#todo use a kwargs for easier manipulation!
-evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
-generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
-generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
-plot_latent_space_encodings(model)
-plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
-plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# img_shape=(input_channel,28,28)
+# check_latent_representation_diversity(model, dataloader_train)
+# # fix these two for skipcon version
+# # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+# # generate_random_images(model, count=32,img_shape=img_shape)
+# #todo use a kwargs for easier manipulation!
+# evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
+# generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+# generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+# plot_latent_space_encodings(model)
+# plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+# plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # wont work with skipconnection=True, todo: fix it
 
 # cifar10 loss
@@ -4667,130 +4698,130 @@ plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',
 # the model has not been trained properly
 # we can use this to generate as many images we want for each class
 # we can create as many 0s, 1s or any classes we want! using their mean/std
-#! edit make samples more varied by altering std a bit
-@torch.no_grad()
-def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
+# #! edit make samples more varied by altering std a bit
+# @torch.no_grad()
+# def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
     
-    if len(input_img.shape) == 3:
-        input_img = input_img.unsqueeze(0)
+#     if len(input_img.shape) == 3:
+#         input_img = input_img.unsqueeze(0)
 
-    # grab the device from our model parameters
-    device = next(model.parameters()).device
-    model.eval()
+#     # grab the device from our model parameters
+#     device = next(model.parameters()).device
+#     model.eval()
 
-    input_img = input_img.to(device)
-    # grab the mu/logvar for the image class
-    z0, enc_outputs, mu, logvar = model.encode(input_img)
-    # convert the logvariance to std
-    std = torch.exp(0.5*logvar)
-    # create latent vectorz by sampling using the mu/std
-    # using random noise(epsillon) to create randomness in output
-    epsillon = torch.randn_like(std)
-    z_random = mu + epsillon * std
-    # how mu+std sample looks like
-    z_plain = mu + std
-    # instead of a single epsilon, we can create as many as
-    # we like, and therefore generate as many images. just
-    # make sure the size matches
-    epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
-    # by changing the std, we can generate slightly different variatations
-    # a higher std introduces more randomness, leading to more diverse outputs,
-    # a lower value generates outputs closer to the mean(mu) which means less variation
-    # we can change this in steps and create a morphing effect
-    # from one image into another. (we will be implementing this in a moment)
-    # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
-    # print(f'{scaler=}')
-    # epsillons *= scaler
-    # print(f'{epsillons=}')
-    z_batch = mu + epsillons * std
+#     input_img = input_img.to(device)
+#     # grab the mu/logvar for the image class
+#     z0, enc_outputs, mu, logvar = model.encode(input_img)
+#     # convert the logvariance to std
+#     std = torch.exp(0.5*logvar)
+#     # create latent vectorz by sampling using the mu/std
+#     # using random noise(epsillon) to create randomness in output
+#     epsillon = torch.randn_like(std)
+#     z_random = mu + epsillon * std
+#     # how mu+std sample looks like
+#     z_plain = mu + std
+#     # instead of a single epsilon, we can create as many as
+#     # we like, and therefore generate as many images. just
+#     # make sure the size matches
+#     epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
+#     # by changing the std, we can generate slightly different variatations
+#     # a higher std introduces more randomness, leading to more diverse outputs,
+#     # a lower value generates outputs closer to the mean(mu) which means less variation
+#     # we can change this in steps and create a morphing effect
+#     # from one image into another. (we will be implementing this in a moment)
+#     # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
+#     # print(f'{scaler=}')
+#     # epsillons *= scaler
+#     # print(f'{epsillons=}')
+#     z_batch = mu + epsillons * std
 
-    z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
-    # generate images for each latent vector
-    img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
-    # reshape the decoder outputs to the proper image dims
-    img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
-    # combine the images as one so we can display them as one big image
-    # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
-    imgs_combined = torch.dstack([input_img,img_random,img_plain])
-    # combine all images as one so we can better visualize and inspect them
-    img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
+#     z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
+#     # generate images for each latent vector
+#     img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
+#     # reshape the decoder outputs to the proper image dims
+#     img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
+#     # combine the images as one so we can display them as one big image
+#     # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
+#     imgs_combined = torch.dstack([input_img,img_random,img_plain])
+#     # combine all images as one so we can better visualize and inspect them
+#     img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
     
-    mu = mu.cpu().numpy().flatten()
-    std = std.cpu().numpy().flatten()
+#     mu = mu.cpu().numpy().flatten()
+#     std = std.cpu().numpy().flatten()
 
-    plt.figure(figsize=(8, 4))#(12,8)
+#     plt.figure(figsize=(8, 4))#(12,8)
     
-    plt.subplot(2,3,1)
-    plt.plot(mu, label="Mean (μ)")
-    plt.title("Mean (μ)")
-    plt.xlabel("Latent dimension")
-    plt.ylabel("Value")
-    plt.legend()
+#     plt.subplot(2,3,1)
+#     plt.plot(mu, label="Mean (μ)")
+#     plt.title("Mean (μ)")
+#     plt.xlabel("Latent dimension")
+#     plt.ylabel("Value")
+#     plt.legend()
 
-    plt.subplot(2,3,2)
-    plt.plot(std, label="Std (σ)", color="orange")
-    plt.title("Std (σ)")
-    plt.xlabel("Latent dimension")
-    plt.ylabel("Value")
-    plt.legend()
+#     plt.subplot(2,3,2)
+#     plt.plot(std, label="Std (σ)", color="orange")
+#     plt.title("Std (σ)")
+#     plt.xlabel("Latent dimension")
+#     plt.ylabel("Value")
+#     plt.legend()
     
-    plt.subplot(2,3,4)
-    plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
-    plt.title("Input image")
-    plt.axis("off")
+#     plt.subplot(2,3,4)
+#     plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
+#     plt.title("Input image")
+#     plt.axis("off")
         
-    plt.subplot(2,3,5)
-    plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
-    plt.title("Similar images")
-    plt.axis("off")
+#     plt.subplot(2,3,5)
+#     plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
+#     plt.title("Similar images")
+#     plt.axis("off")
         
-    plt.tight_layout()
-    plt.show()
+#     plt.tight_layout()
+#     plt.show()
     
-imgs,labels = next(iter(dataloader_test))
-view_images(imgs,labels)
-# mu/std slightly changes for different instance of a class
-# but overall they are roughly the same, they
-# however change dirastically from class to class
-generate_similar_images(model, imgs[3])#0
-generate_similar_images(model, imgs[13])
-generate_similar_images(model, imgs[25])
-generate_similar_images(model, imgs[2])#1
-generate_similar_images(model, imgs[5])
-generate_similar_images(model, imgs[14])
-generate_similar_images(model, imgs[1])#2
-generate_similar_images(model, imgs[32])#3
-generate_similar_images(model, imgs[4])#4
-generate_similar_images(model, imgs[15])#5
-generate_similar_images(model, imgs[11])#6
-generate_similar_images(model, imgs[0])#7
-generate_similar_images(model, imgs[8])#8
-generate_similar_images(model, imgs[7])#9
+# imgs,labels = next(iter(dataloader_test))
+# view_images(imgs,labels)
+# # mu/std slightly changes for different instance of a class
+# # but overall they are roughly the same, they
+# # however change dirastically from class to class
+# generate_similar_images(model, imgs[3])#0
+# generate_similar_images(model, imgs[13])
+# generate_similar_images(model, imgs[25])
+# generate_similar_images(model, imgs[2])#1
+# generate_similar_images(model, imgs[5])
+# generate_similar_images(model, imgs[14])
+# generate_similar_images(model, imgs[1])#2
+# generate_similar_images(model, imgs[32])#3
+# generate_similar_images(model, imgs[4])#4
+# generate_similar_images(model, imgs[15])#5
+# generate_similar_images(model, imgs[11])#6
+# generate_similar_images(model, imgs[0])#7
+# generate_similar_images(model, imgs[8])#8
+# generate_similar_images(model, imgs[7])#9
 
 #%%
-# now lets generate new images by stepping through the latent space
-import matplotlib.animation as animation
+# # now lets generate new images by stepping through the latent space
+# import matplotlib.animation as animation
 
-fig = plt.figure()
-ax = fig.add_subplot(111)
-z = torch.randn(size = (30, model.embedding_size)).to(device)
-model.eval()
-def animate(i):
-    # change the latent vector at each step so we get different image
-    # and ultimately a cool animation showing each image morphing into another!
-    # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
-    # so it changes faster. the more farther away from mean, the more different
-    # it becomes from that image
-    imgs = model.decoder(z*(i*0.02)+0.02)
-    imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
-    new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
-    ax.clear()
-    ax.imshow(new_img)
+# fig = plt.figure()
+# ax = fig.add_subplot(111)
+# z = torch.randn(size = (30, model.embedding_size)).to(device)
+# model.eval()
+# def animate(i):
+#     # change the latent vector at each step so we get different image
+#     # and ultimately a cool animation showing each image morphing into another!
+#     # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
+#     # so it changes faster. the more farther away from mean, the more different
+#     # it becomes from that image
+#     imgs = model.decoder(z*(i*0.02)+0.02)
+#     imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
+#     new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+#     ax.clear()
+#     ax.imshow(new_img)
 
-anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
-# save the git using pillow
-anim.save('vis.gif', writer="pillow", fps=30)
-plt.show()
+# anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
+# # save the git using pillow
+# anim.save('vis.gif', writer="pillow", fps=30)
+# plt.show()
 #%%
 
 
