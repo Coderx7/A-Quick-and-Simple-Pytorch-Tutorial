@@ -3551,20 +3551,20 @@ class VAE(nn.Module):
         # h is the height for encoders output dim (here 1x1)
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
-        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*1*1),
-                                     nn.BatchNorm1d(256*1*1),
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+                                     nn.BatchNorm1d(256*4*4),
                                      nn.ReLU(),
                                      nn.Dropout(0.1),
-                                     nn.Unflatten(1,(256,1,1)),
-                                     deconv(256,128,kernel_size=4,stride=2),#4,2 #for 4x4: 2,2  #for 1x1:4,2
-                                     deconv(128,96,kernel_size=4,stride=2),#4   #for 4x4: 4,1  #for 1x1:4,2
+                                     nn.Unflatten(1,(256,4,4)),
+                                     deconv(256,128,kernel_size=2,stride=2),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+                                     deconv(128,96,kernel_size=4,stride=1),#4   #for 4x4: 4,1  #for 1x1:4,2
                                      deconv(96,64,kernel_size=4,stride=2),#8    #for 4x4: 4,2  #for 1x1:4,2
-                                     deconv(64,32,kernel_size=2,stride=2),#14    #for 4x4: 2,1  #for 1x1:2,2
+                                     deconv(64,32,kernel_size=2,stride=1),#14    #for 4x4: 2,1  #for 1x1:2,2
                                      # while we use sigmoid here with bce, for more complex dataset
                                      # using tanh with mse seems to give better result, but
                                      # note that, the input needs to be normalized as well (to -1,1)
                                      # for our case we go with sigmoid anyway
-                                     deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+                                     deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
                                     )
 
         # now lets define our ema_skipcon 
@@ -3605,7 +3605,9 @@ class VAE(nn.Module):
         self.ema_skipcon.copy_(self.ema_decay * self.ema_skipcon + (1 - self.ema_decay) * outputs_mean)
     
     def encode(self, input):
-        output = self.encoder(input).view(input.size(0),-1)
+        output = self.encoder(input)
+        # print(f'{output.shape=}')
+        output = output.view(input.size(0),-1)
         mu = self.fc_mu(output)
         mu=self.drp(mu)
         log_var = self.fc_logvar(output)
@@ -4327,8 +4329,10 @@ create_interpolation_animation(model, filename=f'mnist_{timestamp}')
 torch.autograd.set_detect_anomaly(False)
 # cifar10 test
 dataset = 'cifar10'
-batch_size = 64
-dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+batch_size = 32
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                                                batch_size=batch_size,
+                                                                                )
 
 epochs = 50#50,100
 interval = 2000
@@ -4392,12 +4396,13 @@ embedding_size = 50 #2,10,20,50,100,200
 # 
 
 # 
-beta=0.1 #0.001,1,2,4,
+beta=0.0001 #0.0001, 0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
 reduction='mean' #mean
-# mse seems to work better for cifar
-use_mse=True #True
+# mse seems to work better for cifar if skipcon isused
+# but during our tests, bce gives sharper images!
+use_mse=False #True
 normalize = True # True for reduction='mean'
 # when we remove batchnorm from layers,
 # especially the last layer of encoder
@@ -4405,7 +4410,8 @@ normalize = True # True for reduction='mean'
 # kl annealing can help, but it depends
 # on other parameters as well(lr formost,
 # then skipcon and beta value)
-kl_anealing=True #False
+# using bce, it doesnt help,
+kl_anealing=False #False
 # skipcon is especially effecive when training 
 # cifar10 for example(without kl-annealing)
 # (especially if encoding has spatial dims>1 like 2x2 or 4x4
@@ -4431,7 +4437,7 @@ kl_anealing=True #False
 # also the training will be more unstable. so for 
 # more stable training and sharper reconstructions we 
 # enable skipcon
-use_skipconnection=True #True
+use_skipconnection=False #True
 # adding extra noise didnt do much for me, at least
 # in my experiments, I had the most luck with other 
 # techniques though
@@ -4444,6 +4450,8 @@ add_extra_noise=False #False
 # when enabled using freebits, makes images a bit blurier
 # especially with high min_kl values
 use_freebits=True #False
+# by using bce, and activiating freebits
+# we get sharper image(0.4 initially seems sharper than 0.5)
 min_kl=0.4 #0.5
 
 # sidenote from past (before bn)
@@ -4467,6 +4475,8 @@ min_kl=0.4 #0.5
 # weight_decay = 1e-3
 # scheduler_steps = [35,45,49]
 #!use more embeddings withou skipcon?
+# using bce gives us sharper images compared to mse!
+# 
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
 #0.01 when bn is used, 0.001/0.002 
@@ -4474,7 +4484,23 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # also using large betas (betas>1)
 # will also make training unstable 
 # and you need to lower lr further!(if no bn is used!)
-lr =0.01
+
+# lastnote:
+# using bce,lr=0.001,beta=0.0001, no skipcon, and
+# no kl-annealing and spatial dim=4x4 we got much better
+# result than mse. also our latent vectors are being used
+# previously it was horrible, it wont use anything and mean/std was always 0-1
+# with current settings we are learning but we still need improvement
+# both in scheduler, embdsize and proper architecture. I noticed in my
+# previous test, by mistake decoder was using 256x1x1, instead of 256x4x4
+# which constrained the network. after fixing it we got good improvements
+# next test can be using larger fmaps in decoder (instead of 4x4 lets go 8x8)
+# (without changing encoders output dim!)
+# then try using larger inputs, like 32/38/42/64 instead of 28! and see how that affects it
+# then try using larger embeddings,
+# or use -1/1 with mse and see if that helps
+# or now use skipcon with bce and see if that works ths time with moving average trick!
+lr =0.001#0.001 0.002
 weight_decay = 1e-3
 scheduler_steps = [30,35,45,49]#[20,45,65,85] # [20,35,45,49]
 optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
