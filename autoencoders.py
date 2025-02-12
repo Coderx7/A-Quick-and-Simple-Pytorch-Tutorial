@@ -1883,143 +1883,156 @@ for e in range(epochs):
 # When talking about VAEs, we come accross two view points.
 # (there are two common themes when you search for vae explantions)
 # one that involves the underlying differences between VAEs and other types of autoencoders, 
-# and the other, a somewhat higher level view point which is more involved 
+# and the other, a somewhat higher level prespective which is more involved 
 # in terms of how it works from distribution point of view. 
 # I'll be explaining these two common view points, and hopefully at the end
 # we will have an in-depth and rigiours understanding of VAE fundamentals and their inner workings
 # this should give us a much better understanding that should come in handy later in 
 # our researches. 
 # 
-# TLDR:
-# vae is different with conventional autoencoders in that, the encoder does not create
-# a single latent vector representation, instead, it creates two vectors. one for mean
-# and another for standard deviation. the decoder creates the latent vector z from these
-# two vectors, by sampling using them. and then uses this vector to reconstruct the input
-# simply put, the encoder creates different mean/stds for each class by which we can generate
-# samples similar to said classes. moreimportantly, because of the way VAE is built, its
+# TLDR-brief introduction:
+# The Variational Auto Encoders(VAE) are different with conventional autoencoders in that,
+# the encoder does not create a single latent vector representation, instead, it creates
+# two! 
+# one for mean and another for standard deviation. these are in fact parameters that are 
+# used to sample from a normal/gaussian distribution from which we get a latent vector which
+# the decoder accepts as input and tries to reconstructs the input from.
+# The encoder creates different mean/stds for each class by which we can generate
+# samples similar to said classes. more importantly, because of the way VAE is built, its
 # possible to go from one class to another in a gradual manner, which means we can actually
 # have new variations in input that does not exist in the dataset explicitly.
-# 
-# now having this said, lets elaborate on this in depth. 
+# with this overal and coarse introduction of the VAE out of the way, lets get to the finer
+# details!
 # 
 # In depth explanation: 
 # VAEs, clustering of latent representation/spaces? 
-# initially we wanted to create random images just like the ones in our datasets
-# this was usually to create synthetic data for training purposes, 
-# or extracting somewhat meaningful features or pretraining our model before doing
-# the actual training (back in the day most of the time as training was very hard 
+# Where does a VAE concept comes from? 
+# from an application point of view, initially we wanted to create 
+# random images just like the ones in our datasets this was usually to create 
+# synthetic data for training purposes, or extracting somewhat meaningful features
+# or pretraining our model before doing the actual training 
+# (back in the day most of the time as training was very hard 
 # due to vanishing/exploding gradient issues at the time, its still the ccase as 
 # well especially in llm domain! though)
 # a bit later we found that, creating random data(images mostly at first) isnt 
 # really that attractive, and we can actually do much more and much better, 
-# for one, people started experimenting with controling the generation process 
-# and attemping to create all sorts of things!
+# for one, what about experimenting with controling the generation process 
+# and attemping to create all sorts of things?!
 # this becomes especially useful/important if we can change or alter the data we 
-# already have!
-# for example, imagine adding beard to your image, retouch it, see how you look with
-# glasses on, etc all sorts of things, as you can imagine, this is a lot more useful,
-# and has a lot of real-world applications.
-# VAEs and the likes (conditional VAEs, other types of generative models) have 
-# come for this goal!(sort of!)
+# already have! for example, imagine adding beard to your image, retouch it, see how
+# you look with glasses on, etc all sorts of things, as you can imagine, this is a 
+# lot more useful, and has a lot of real-world applications.
+# VAEs and the likes (conditional VAEs, other types of generative models for that matter)
+# have come for this goal!(sort of!)
 
-#!EDIT  
+#!EDIT
 # what does make VAE especial you may ask? 
-# so far we have implemented and trained different types of autoencoders, regardless of their
+# So far we have implemented and trained different types of autoencoders, regardless of their
 # main differences, (sparse/denoising/etc) one thing that they had in common was that
 # when we look closer at their latent representations, we notice the encoder latent representation
 # (encodings) formed distinctly clustered subspaces for each class. 
 # if you think about it, this makes prefect sense, as distinct encodings for each image 
-# type(or any data really) makes it much easier for the decoder to decode them.
+# type(or any data really) makes it much easier for the decoder to decode it
 # and it also aligns very well with our goal of replicating the same images.
 # However, when we decide to build a generative model, where we want to create
-# different variations of the same image class or data, we dont just want to generate
+# different 'variations' of the same image class or data, we dont just want to generate
 # the same image we find in our dataset. 
-# 
-# 
-# we want to be able to generate variations on an input image, variations from the whole 
-# dataset, that does not explicitly show up in one image! 
+# to this end, we would want to be able to generate variations on an input image, variations
+# from the whole dataset, that does not explicitly show up in one image, 
 # it would be great if we could, combine different features from different classes, 
-# and still have a pretty realistic outcome. this means from a technical prespective,
-# to be able to move smoothly in the latent space, and be able to sample from anypart of it. 
-# sampling like this means, we could generate completely novel images that
-# dont exist explicitly in our dataset, depending on where we sample from in our latent
-# space, between which clusters.
-# 
+# and still have a pretty realistic outcome. 
+# this means from a technical prespective, to be able to move smoothly in the latent space,
+# and be able to sample from anypart of it. 
+# sampling like this means, we could generate completely novel images that dont exist explicitly
+# in our dataset, depending on where we sample from in our latent space, between which clusters.
+#   
 # our latent space therefore needs to be continuous otherwise, if it has
 # gaps between clusters or in other words, discontinuities, and we try to generate a 
 # variation from there part, the decoder will simply generate an unrealistic output, 
-# because it does not have any idea how to deal with that region of the latent space. 
-# during training, it never saw encoded vectors coming from that region of latent space.
+# because it does not know how to deal with that region of the latent space 
+# since during training, it never saw encoded vectors coming from that region of latent space.
 # this is why having a 'continuous' latent space is crucial here. 
-# in fact this is what that differntiates VAEs from conventional autoencoders
-# (basically any generative model for that matter).
-
-# To address this issue, VAEs offer an intersting solution, instead of mapping inputs to
-# fixed points in the latent space (like traditional autoencoders),
-# they map inputs to probability distributions! specifically, a Gaussian/Normal distribution.
-# This way they ensure the latent space is continuous and smooth, without any gaps or discontinuities.
-# As a result, when we randomly sample from the latent space, the decoder can generate 
-# realistic outputs, even for points it has not explicitly seen during training. 
-# This is because the decoder has learned to generalize across the entire latent space, 
-# rather than just memorizing specific points.
+# This is what that differntiates VAEs from conventional autoencoders (basically any generative 
+# model for that matter). this is the core idea behind a VAE.
+# 
+# VAEs offer an intersting approach here, instead of mapping inputs to fixed points in
+# the latent space (like traditional autoencoders), they say lets map inputs to probability
+# distributions! specifically, a Gaussian/Normal distribution.
+# This way we ensure the latent space is continuous and smooth, without any gaps or discontinuities.
+# Therefore, when we randomly sample from the latent space, the decoder can generate 
+# realistic outputs, even for points it has not explicitly seen during training.
+# as the decoder has learned to generalize across the entire latent space, rather than just
+# memorizing specific points.
 #
-# The actual process is very simple for the most part, during training, the encoder 
-# doesnt just output a single latent vector, instead, it predicts two vectors, the 
-# mean(μ) and standard deviation(σ) of a Gaussian distribution for each input.
-# The latent representation vector z, is then sampled from this distribution.(in practice however we need 
-# to use a process called the reparameterization trick to get around a technical detail 
-# we will be getting into in a moment other than that this is pretty much it!).
+# That is the gist of the vae, the actual process is very simple for the most part, 
+# during training, the encoder doesnt just output a single latent vector, instead, 
+# it predicts two vectors, the mean(μ) and standard deviation(σ) of a Gaussian distribution
+# for each input(x_i).
+# The latent representation vector z_i, is then sampled from this distribution. 
+# (in practice however we need to use a process called the reparameterization trick 
+# to get around a technical detail we will be getting into in a moment other than that
+# this is pretty much it!).
 # This ensures that the latent space is smooth and continuous, as each point in the 
 # latent space corresponds to a valid potential data point.
 # 
 # sidenote: (edit)
-# This sampling process (also refered to as stochastic generation by some reasearchers)
+# The sampling process (also refered to as stochastic generation by some reasearchers)
 # means, the actual encoding will be different slightly at each forward pass,
 # even for the same input, with the same mean and standard deviation, hence the name!
 # we see the implication of this and why this is desirable for us in a moment)
 #  
-# this regulariziation allows VAEs to have meaningful interpolation
-# and sampling. for example, if we move smoothly between two points in the latent space,
-# the generated output transitions naturally between the two corresponding data points
+# what we do here, is in fact a form of regularization. this regulariziation allows VAEs
+# to have meaningful interpolation and sampling. for example, if we move smoothly between
+# two points in the latent space, the generated output transitions naturally between the
+# two corresponding data points.
 # also randomly sampling points from the latent space produces realistic variations,
 # as every region of the space has been trained during the models learning process 
 # (this works even if the combination of some attributes does not exist in our dataset
 # explicitly, infact this is the actual case here, this is what we were after all along!).
 # 
+# (sidenote: this happens if and only if the model is trained prefectly, we can see this 
+# in easy/simple datasets more easily, but for complex datasets it becomes very hard, we'll
+# see this in our experiments first hand!)
+#
 # This regularization effect is achieved using a KL divergence loss, which encourages the
 # learned latent distributions to remain close to a standard Gaussian prior (i.e., 
 # a standard normal distribution). (informally speaking, this means the latent variables 
 # cluster around the center of the space (around 0), resembling the properties of a 
-# standard normal distribution.)
+# standard normal distribution)
 # 
 # (why? see the explanation in implementation below)
-# This ensures latent space is wellorganized and nearby points in the latent space 
+# This ensures latent space is well organized and nearby points in the latent space 
 # correspond to similar outputs. This not only avoids gaps in the latent space but also
 # encourages the model to generalize better when generating new data.
 #
-# sidenote- second prespective ():
-# lets view this from another angle, why does this makes sense
+# sidenote- second prespective (application prespective/underthehood - explained more):
+# lets view this from another angle, why does this makes sense?
 # why would we want to have a distribution instead of fixed points, what do we get by doing it?
 # lets make this more tangible by an example.
 # remember we said earlier we want to be able to control variations in our input data? 
 # like we want to make for example a person smile, or we want to add a mustache to 
 # someones face. having a distribution instead of a fixed point allows us to 
 # have different smiles, different mustaches and not just a single one.
-# like mona lisa is also smiling, a kid is also smiling, they are clearly different smiles
-# so a distibution for smile, would allow us to sample different samples of smiles for the
-# lack of a better word and for our mustache example, we can specify different kinds of mustaches
-# small, big, fancy, etc and this applies to just everything and the great thing about it is, 
-# there does not have to be an explicit image in our dataset for it! imagine mona lisa with a mustache!
+# like mona lisa is also smiling, marlyn monroe(add her pic!) is also smiling, they are clearly 
+# different smiles so a distibution for smile, would allow us to sample different samples of smiles
+# for the lack of a better word and for our mustache example, we can specify different kinds of 
+# mustaches small, big, fancy, etc and this applies to just everything and the great thing about it is, 
+# there does not have to be an explicit image in our dataset for it! 
+# imagine mona lisa sporting a mustache!:))
 # the mustache is in the dataset, there are many images of men having mustaches of different kinds
-# but no mona lisa!(or women for that matter!) or imagine glasses, hats, beard, etc! you get the point. 
+# but no mona lisa!(or women for that matter hopefully!) or imagine glasses, hats, beard, etc! you get the point. 
 # this happens because, as we previously mentioned, the latent space is smooth and continuous and 
 # the decoder has also learned to generalize across the entire latent space, instead of just memorizing
 # specific points in said latent space. add these to the fact that each point in the 
 # latent space also corresponds to a valid potential data point, and you get the ability to roam that sapce
 # and sample from it! all forms of variations can be achieved using this, gradually moving from one thing
 # in one subspace toward another thing(subspace), and yet have a somewhat sensible output is what this gives us!
+# 
+# (sidenote: in practice however, this is extremely hard to achieve for anything mildly complex! we have much
+# better chocies than vae, but from theorectical point of view, this is what we expect given the
+# concept and whats involved. (the training can be notouuriously hard to get things working, lets not
+# ahead of ourselevs, and for now lets keep building intuition for now))
 # now back to the main point: 
-
 
 
 # I find jeremy's phenamonal writeup on vaes to be especially great: 
@@ -2027,9 +2040,9 @@ for e in range(epochs):
 #
 # so a second summary: 
 # our encoder recieves the input and produces two vectors
-# one for mean and another for std(in fact it creates log variance which we
+# one for mean and another for std(in fact our encoder creates log variance which we
 # then convert to standard deviation to then use for sampling, so technically
-# speaking it creates mu and logvar in the network).
+# speaking it creates mu and logvar in the network, but for doing its job it creates std!).
 # this is in contrast to how a traditional autoencoder works.
 # a traditional autoencoder creates a set of atttibutes 
 # in its final representation vector(e.g attributes or features describing
@@ -2115,8 +2128,7 @@ for e in range(epochs):
 #
 # aside from that/moreover, we'd also want overlap between samples that are not very similar aswell, 
 # in order to interpolate between classes.
-# !edit test this without kl and see if this is the case 
-#! edit check we should use std or variance 
+# 
 # However, since by default there is no limit/constraint enforcing mean(μ) and std(σ) vectors 
 # to have specific values, the encoder can learn to generate different means μ for different classes, 
 # clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
@@ -2130,7 +2142,7 @@ for e in range(epochs):
 # (differ) from each other.
 # !edit
 # Minimizing it means the probability distribution parameters (μ and σ) need to closely resemble
-# that of the target distribution(i.e. original input data).
+# that of the target distribution(i.e. our original input data).
 # that is they need to be as close as possible (basically resemeble/match? the original data)
 # 
 # from a visualization point of view, (if we try to visualize the encodings spaces we see) 
@@ -2171,7 +2183,9 @@ for e in range(epochs):
 # reconstructions.)
 # so MSE tends to work better for smooth images, while BCE works well when pixel values behave
 # like probabilities (high contrast regions, thresholded images, etc).
-#
+# !EDIT !EDIT !EDIT
+# (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
+# though it might be a g ood idea to follow and get good result, )
 #
 # this is the equilibrium/fine balance reached by the cluster-forming nature of the
 # reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
@@ -2187,7 +2201,7 @@ for e in range(epochs):
 ############################
     # recap of recap (more technical explanation):
     # our encoder(denoted as qθ(z∣x) (i.e. given this input data x, what is the
-    # probability distribution of the latent variable z (i.e. whats the mu,var)) 
+    # probability distribution of the latent variable z (i.e. whats the mu,var)(note its in log form!but anyway lets carry on(add this as footnote))) 
     # will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
     # using these two parameters, we sample our z representation vector(latent vector)
     # which will be used by the decoder to reconstruct the input.
@@ -2201,7 +2215,7 @@ for e in range(epochs):
     # our encoder doesnt directly output z it outputs the parameters of the probability
     # distribution qθ(z∣x) which we then use to sample from to produce the latent vector z 
     # hence the phrase stochastic, because sampling is involved and it changes each time
-    # (it changes each time even for the same input!)
+    # (it changes each time even for the same input because we use a random variable along side thme!)
     #
 
     # new edit:
@@ -2244,11 +2258,9 @@ for e in range(epochs):
     # in the same fashion, the lower values imply more information is lost during
     # the compression and reconstruction process.
     # 
-    # sidenote3:
+    #!edit sidenote3:(too excessive ?)
     # technically speaking, logpϕ(x∣z) measures how probable the original data x is under 
     # the distribution parameterized by the decoder, given z.
-    # Nats are the natural logarithmic unit of information content, 
-    # commonly used in probabilistic models to quantify log-likelihoods.
     # Higher log-likelihood means the decoder effectively captures the structure of 
     # x from z while lower values indicates greater reconstruction loss.
 
@@ -2256,7 +2268,7 @@ for e in range(epochs):
     # note that in this approach we assume the features in the latent space are independent, 
     # that is, each dimension of z(each feature) contributes independently to the decoded 
     # output. this way, we are effectively reducing our model complexity (i.e. the complexity
-    # of modeling the relationships between features) and no more need to model complex
+    # of the relationships between features) and no more need to model complex
     # relationships between each feature. this simplifies the whole process of sampling 
     # and reconstruction as we will see in a moment)
     # 
@@ -2266,28 +2278,30 @@ for e in range(epochs):
     # without this we have to face a huge computation burden and a complex sampling process. 
     # 
     # why do we need this simplification? 
-    # lets see what happens if we do not use this simplification.
-    # Technically speaking, what we are doing here, is assuming a diagonal covariance 
-    # matrix in a multivariate Gaussian distribution(that is features are independent of each other hence diagonal values and everything else is 0)
+    # if we do not use this simplification we have to undertake heavy calculations and overhead!
+    # technically speaking, what we are doing here, is assuming a diagonal covariance matrix in
+    # a multivariate Gaussian distribution(that is features are independent of each other hence
+    # diagonal values and everything else is 0)
     # 
-    # This assumption impacts both the computational costs involved and how sampling is done in 2 ways:
-    # First a full covariance matrix in an n-dimensional multivariate Gaussian distribution 
+    # This assumption impacts both the computational costs involved and how sampling is done in 
+    # 2 major ways:
+    # First of all a full covariance matrix in an n-dimensional multivariate Gaussian distribution 
     # has n^2 elements, because it includes both variances (n diagonal elements) and covariances 
     # (n(n-1)/2 off-diagonal elements). 
     # without the simplification, the encoder would need to estimate all n^2 parameters
     # of the covariance matrix, which includes variances and covariances.
     # however, with the simplification, only n parameters (the variances) need to be learned 
     # because covariances are assumbed to be zeros.
-    # this dramatically reduces the number of parameters the model has to 
-    # estimate, especially for high dimensional data (take our MNIST example e.g. with
-    # latent dimensions n=50 vs n^2=2500 parameters).
+    # this dramatically reduces the number of parameters the model has to estimate, especially 
+    # for high dimensional data (take our simple MNIST example e.g. with latent dimensions n=50 vs n^2=2500 parameters and imagine
+    # what would be the cost for larger/more complex datasets).
     # 
     # moreover, the multivariate Gaussian's log-likelihood involves the inverse of the covariance matrix(i.e.the term 1/Sigma).
     # computing the inverse of a `nxn` covariance matrix has a computational complexity 
     # of O(n^3) while for our simplifed case (a diagonal covariance matrix), it is trivial,
     # its just O(n) (we just need to take the reciprocal of each diagonal element).
     # 
-    # second, and more importantly, sampling from a general multivariate Gaussian requires decomposing 
+    # second of all, and more importantly, sampling from a general multivariate Gaussian requires decomposing 
     # the covariance matrix to generate correlated samples. this decomposition operation is also O(n^3).
     # for our simplified case however, no decomposition is needed, as the features(dimensions) are independent. 
     # sampling is also as simple as generating univariate Gaussian samples for each dimension,
@@ -2313,7 +2327,7 @@ for e in range(epochs):
     # and easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector)
     # from it, derived from diagonal variances) and sampling from N(mu, sigma) is done directly.
     # 
-    #  
+    # 
     # sidenote:
     # reminder univariate vs multivariate gaussian distribution 
     # "multivariate" in multivariate gaussian distribution means the distribution
@@ -2404,17 +2418,15 @@ for e in range(epochs):
     # instead of the full training set as one batch, which each of them(mini batches) give an estimate
     # of the actual gradients, so if the estimate of these mini batches are not close, as we continue,
     # we get further away from the actual direction of the changes and fail to converge.
-    # kingma argues that, this is why this change, makes the model to have the right estimate
+    # kingma argues in paper that, this is why this change, makes the model to have the right estimate
     # for mu/variances (more on this later)
 
 ##############################
 
-# edit I should split them in separate parts because its got too large!
+# !edit I should split them in separate parts because its got too large!
 # 
 
 
-#!edit
-# use manifold for \visualization stuff' in the explanation(see my pytorch example pr link)
 # 
 #! edit add note to use BCE for reconstruction loss instead of MSE as it has better performance
 # especially for larger datasets
@@ -2432,10 +2444,9 @@ for e in range(epochs):
 # leverage VAEs in that domain as well. for now lets see how we can implement this
 # for vision domain. i.e. on mnist dataset
 
-# note: (from jeremyjordans blog:)
-# For variational autoencoders, the encoder model is sometimes referred to as
-# the 'recognition model' whereas the decoder model is sometimes referred to as 
-# the 'generative model'.
+# note: 
+# in variational autoencoders, the encoder part is sometimes referred to as
+# the recognition part while the decoder part is referred to as the generative part/model.
 
 # if you havent read the links I gave you, go read them all. each single one of them
 # will help you grasp one aspect very good!
@@ -3122,9 +3133,10 @@ generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2, img_shape=im
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=img_shape)
 #%%%
  
-# now if we try to play with parameters, we'll see its really hard to get it working!
-# and our results look either blury! too similar/generic. 
-# so lets talk about the issues we are facing and try to address them 
+# now if you try to play with parameters, you'll see its really 
+# hard to get it working! and our results can quickly get either blury
+# or too similar/generic. so lets talk about the issues we are facing 
+# and try to address them and hopefully get them fixed!
 #
 # During training we may face something called posterior collapse,
 # it can happen for several reasons, but the primarily, it happens
@@ -3148,7 +3160,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # (it uses the patterns it learns from the prior distribution))
 # #! edit, this needs more refining,
 # sidenote:
-# to refresh our memory heres a little sidenote:
+# to refresh our memory :
 # the posterior distribution (q(z|x)) represents the distribution 
 # of the latent variable(vector) (z) conditioned on the data (x).
 # in other words, it means given this input data x, what is the
@@ -3451,7 +3463,7 @@ class Print(nn.Module):
     def forward(self, outputs):
         print(f'{outputs.shape=}')
         return outputs
-    
+
 class VAE(nn.Module):
     def __init__(self, embedding_size=100, input_channel=1, skip_connection=False, add_extra_noise=False, noise_weight=0.1, ema_decay=0.99):
         super().__init__()
@@ -3491,7 +3503,7 @@ class VAE(nn.Module):
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
                                      conv(96,128,stride=2),#3x3
-                                     conv(128,256,stride=1),#2x2
+                                     conv(128,256,stride=1),#2x2 # for 4x4: 1
                                      # set stride to 1 so the final output dim is 2x2
                                      # it helps for more complex datasets, but for mnist
                                      # a simple network would work, even a single fc layer!
@@ -3507,13 +3519,31 @@ class VAE(nn.Module):
                                      # try disabling batchnorm and see if it fixes the issue.
                                      # using batchnorm for other layers is ok, but for this layer
                                      # and encoders first layer might pose an issue (i'll edit this when my results are finalized)
-                                     conv(256,self.embedding_size,stride=1,padding=1,batch_norm=True),#1x1
+                                     # ok bn can sometimes introduce weirdness into logvar! so if we get
+                                     # huge values for mean/logvar (causes our kl loss to go nan!)
+                                     # bn could be at fault (we need to start initilizing them properly
+                                     # and see if it goes away if not disable bn and test again! see notes for logvar below)
+                                     conv(256, self.embedding_size,stride=1,padding=1,batch_norm=True),#1x1 #for 4x4:1 # for 2x2:1 #for 1x1:2
                                     )
         # retaining some spatial dimensions such as 2x2/4x4 helps
         # when the dataset is more complex.
         self.bottleneck_size = self.embedding_size*4*4
         self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
+        self.drp = nn.Dropout(0.1)
+        # update:
+        # ok during training with certain choices of hyperparameters
+        # I noticed my kl loss goes to nan! 
+        # looking closer I found out the logvar value was extremely high (like 1198352117964.0283!),
+        # this happens because the slightest divergance
+        # from proper range in logvar shoots us in the foot by exp!
+        # so a common practice is to initialize the bias of the layer 
+        # that produces logvar to a small negative value (for example,-1 or-2 or 
+        # any small negative value we want for that matter)
+        # so that initially exp(0.5xlogvar) is close to 1. 
+        # for example using -1 forces the logvar to be std=exp(0.5x(−1))≈exp(−0.5)≈0.6065) 
+        # self.fc_logvar.bias.data.fill_(-1)
+        # ok this wasnt the issue! im clueless at this point! im removing bn now
         
         decoder_in_dim = self.embedding_size + self.bottleneck_size if self.use_skip_con else self.embedding_size
         # we use the followng formula to determine the output size here
@@ -3521,20 +3551,20 @@ class VAE(nn.Module):
         # h is the height for encoders output dim (here 1x1)
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
-        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
-                                     nn.BatchNorm1d(256*4*4),
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*1*1),
+                                     nn.BatchNorm1d(256*1*1),
                                      nn.ReLU(),
                                      nn.Dropout(0.1),
-                                     nn.Unflatten(1,(256,4,4)),
-                                     deconv(256,256,kernel_size=2,stride=2),#4,2
-                                     deconv(256,128,kernel_size=4,stride=1),#4
-                                     deconv(128,64,kernel_size=4,stride=2),#8
-                                     deconv(64,32,kernel_size=2,stride=1),#14
+                                     nn.Unflatten(1,(256,1,1)),
+                                     deconv(256,128,kernel_size=4,stride=2),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+                                     deconv(128,96,kernel_size=4,stride=2),#4   #for 4x4: 4,1  #for 1x1:4,2
+                                     deconv(96,64,kernel_size=4,stride=2),#8    #for 4x4: 4,2  #for 1x1:4,2
+                                     deconv(64,32,kernel_size=2,stride=2),#14    #for 4x4: 2,1  #for 1x1:2,2
                                      # while we use sigmoid here with bce, for more complex dataset
                                      # using tanh with mse seems to give better result, but
                                      # note that, the input needs to be normalized as well (to -1,1)
                                      # for our case we go with sigmoid anyway
-                                     deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28
+                                     deconv(32,self.input_channel,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
                                     )
 
         # now lets define our ema_skipcon 
@@ -3542,6 +3572,7 @@ class VAE(nn.Module):
             # we use self.register_buffer so ema_skipcon is saved when we save our model
             # and also its not included in computational graph
             self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
+        
             
     def reparamtrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -3576,7 +3607,9 @@ class VAE(nn.Module):
     def encode(self, input):
         output = self.encoder(input).view(input.size(0),-1)
         mu = self.fc_mu(output)
+        mu=self.drp(mu)
         log_var = self.fc_logvar(output)
+        log_var=self.drp(log_var)
         z = self.reparamtrization_trick(mu, log_var)
         # if we use skip connection, lets update the moving average
         if self.use_skip_con:
@@ -3720,7 +3753,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
     print(f'use_freebits:    {use_freebits}')
     print(f'min_kl:          {min_kl}')
     print(f'optimizer:       {optimizer}')
-    print(f'scheduler:       {scheduler.milestones}')
+    print(f'scheduler:       {scheduler.state_dict()}')
     print(f'interval:        {interval}')
     
     for e in range(epochs):
@@ -3779,7 +3812,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
                     f' | Loss: {np.mean(losses):.4f}'
                     f' | KL-Loss: {np.mean(kl_losses):.4f}'
                     f' | (μ,σ): ({np.mean(mu_list):.4f} , {np.mean(std_list):.4f})'
-                    f' | lr: {scheduler.get_lr()[-1]}')
+                    f' | lr: {scheduler.get_last_lr()}')
         scheduler.step()
     # plot mu/std, klloss and see how they behaved
     plot_training_metrics(mu_list, std_list, kl_losses, losses)    
@@ -4135,10 +4168,10 @@ def select_dataset(dataset_name='mnist', batch_size=128):
 
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
-dataset = 'mnist'
-# dataset = 'cifar10'
-batch_size = 128
-dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+# dataset = 'mnist'
+# # dataset = 'cifar10'
+# batch_size = 128
+# dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
 
 
 #%%
@@ -4166,9 +4199,13 @@ input_channel = 1 if dataset =='mnist' else 3
 # our reshape (-1,embdsize) you get the idea) 
 embedding_size = 2#,10,20,50
 # in theory beta>1 forces the model to
-# use latent space more efficiently, but larger beta 
-# may make the image blurrier! so we use small beta here
-beta=0.001 #0.001,1,2,4,
+# use latent space more efficiently,
+# but larger beta may make the image 
+# blurrier! so we use smaller beta
+# try different betas and see their effect on
+# both interpolation quality and latent space formation
+# (the choice of beta becomes challanging with more complex datasets i.e. cifar10!)
+beta=1 #0.001,1,2,4,
 # reduction mean works much better than sum, 
 # its batch invariant and is much more stable
 reduction='mean'
@@ -4287,9 +4324,10 @@ generate_similar_images(model, imgs[7])#9
 create_interpolation_animation(model, filename=f'mnist_{timestamp}')
 
 #%%
+torch.autograd.set_detect_anomaly(False)
 # cifar10 test
 dataset = 'cifar10'
-batch_size = 128
+batch_size = 64
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
 
 epochs = 50#50,100
@@ -4306,11 +4344,21 @@ embedding_size = 50 #2,10,20,50,100,200
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
-# we set it to 0.001 this is what works for us
+# we set it to 0.001 for this to work for us (otherwrise
+# using higher values would give us blurrier images which
+# again signals us we need to work more on the hyperparameters!)
 # at least in my experiments so far this has been the case.
+# note:
+# that tiny beta is actually cumbersome, it doesnt allow us
+# to have proper generation/interpolation. we need to
+# have a healthy amount of beta, cuz that small amount 
+# means the kl term is effectively nonexistant! or very weak
+# 
 # larger beta values result in blurier output (try beta=1 vs 0.001)
 # when you experiment with hyperparameters, only change one parameter at a time
 # otherwise you wont beable to know what each parameters effects are on your model
+# 
+# if images are blury then we need to increase the embeddingsize
 # 
 # sidenote:
 # Initially I tested no batchnorm for the
@@ -4335,7 +4383,16 @@ embedding_size = 50 #2,10,20,50,100,200
 # which I'll be pointout in a moment)
 # if we use bn for last layer of encoder this wont happen, 
 # but beta still has effect on the output and makes it blurrier. 
-beta=0.001 #0.001,1,2,4,
+# this tiny value causes the latent space to be squashed around 0(center)
+# as a tiny mass,all encodings squashed together 
+# (see model vae_cifar10_100_mean_normalized_mse_09_40_42_2025_02_10.pth
+# load it and visualize the latentspace to see what im talking about)
+# and compare it with vae_cifar10_100_mean_normalized_mse_09_49_53_2025_02_10.pth
+# where beta=1 is used, see how the latentspace is more expanded!
+# 
+
+# 
+beta=0.1 #0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
 reduction='mean' #mean
@@ -4348,7 +4405,7 @@ normalize = True # True for reduction='mean'
 # kl annealing can help, but it depends
 # on other parameters as well(lr formost,
 # then skipcon and beta value)
-kl_anealing=False #False
+kl_anealing=True #False
 # skipcon is especially effecive when training 
 # cifar10 for example(without kl-annealing)
 # (especially if encoding has spatial dims>1 like 2x2 or 4x4
@@ -4358,10 +4415,12 @@ kl_anealing=False #False
 # the problem with skipconnection is, it prevents us from easily
 # creating generations, because we dont use any encoders, and thus
 # theres no encoder output to incorporate into latentvector z!
-# 
-# sidenote that, using skipconnection with mnist can result in extreme
-# posterior collapse! I had to completely turn off kl to get 
-# somewhat working output! (its expected if you think about it, 
+# also it can make the network ignore latent vector!
+# we can easily see that using skipconnection with mnist can 
+# result in extreme posterior collapse! 
+# I had to completely turn off kl to get somewhat working output!
+# we couldnt reconstruct properly
+# (its expected if you think about it, 
 # using skipcon the decoder can ignore the z completely, and
 # reconstruct the input, therefore when we try to generate 
 # something using sampling it will be garbage! cuz they were
@@ -4384,8 +4443,8 @@ add_extra_noise=False #False
 # and I need to enable skipcon regardless of this option
 # when enabled using freebits, makes images a bit blurier
 # especially with high min_kl values
-use_freebits=False #False
-min_kl=0.5 #0.5
+use_freebits=True #False
+min_kl=0.4 #0.5
 
 # sidenote from past (before bn)
 # for cifar10 these are the best settings so far
@@ -4407,7 +4466,7 @@ min_kl=0.5 #0.5
 # lr =0.002
 # weight_decay = 1e-3
 # scheduler_steps = [35,45,49]
-
+#!use more embeddings withou skipcon?
 model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
 
 #0.01 when bn is used, 0.001/0.002 
@@ -4415,9 +4474,9 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # also using large betas (betas>1)
 # will also make training unstable 
 # and you need to lower lr further!(if no bn is used!)
-lr =0.002
+lr =0.01
 weight_decay = 1e-3
-scheduler_steps = [35,35,45,49]#[20,45,65,85] # [20,35,45,49]
+scheduler_steps = [30,35,45,49]#[20,45,65,85] # [20,35,45,49]
 optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
 
@@ -4450,10 +4509,10 @@ kwargs = {"states": model.state_dict(),
 
 timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
 modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
-save_model(modelname=modelname, kwargs=kwargs)
+# save_model(modelname=modelname, kwargs=kwargs)
 #%%
 # load the model to make sure we are dealing with the right model!
-load_model(model, modelname=modelname)
+# load_model(model, modelname=modelname)
 img_shape=(input_channel,28,28)
 kwargs = {"img_shape":img_shape,
           "beta":beta,
@@ -4549,59 +4608,87 @@ if not model.use_skip_con:
 # cifar10 loss
 # Files already downloaded and verified
 # Files already downloaded and verified
+# Date:            09:28:27 - 2025/02/10
+# Dataset:         CIFAR10
+# Epochs:          50
+# embedding_size:  50
+# use_skip_con:    True
+# add_extra_noise: False
+# beta:            0.001
+# reduction:       mean
+# normalize:       True
+# use_mse:         True
+# kl_anealing:     False
+# use_freebits:    False
+# min_kl:          0.4
+# optimizer:       Adam (
+# Parameter Group 0
+#     amsgrad: False
+#     betas: (0.9, 0.999)
+#     capturable: False
+#     differentiable: False
+#     eps: 1e-08
+#     foreach: None
+#     fused: None
+#     initial_lr: 0.002
+#     lr: 0.002
+#     maximize: False
+#     weight_decay: 0.001
+# )
+# scheduler:       Counter({15: 1, 25: 1, 35: 1, 45: 1})
+# interval:        2000
+# Epoch 0/50 [0/391] | Loss: 184.5746 | KL-Loss: 6.4882 | (μ,σ): (0.0427 , 1.0200) | lr: 0.002
 # /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:595: UserWarning: To get the last learning rate computed by the scheduler, please use `get_last_lr()`.
 #   _warn_get_lr_called_within_step(self)
-# Epoch 0/50 [0/391] | Loss: 184.5490 | KL-Loss: 0.8683 | (μ,σ): (-0.0083 , 1.0089) | lr: 0.002
-# Epoch 1/50 [0/391] | Loss: 40.9613 | KL-Loss: 204011.2034 | (μ,σ): (-0.0371 , 0.3840) | lr: 0.002
-# Epoch 2/50 [0/391] | Loss: 29.9132 | KL-Loss: 102138.5479 | (μ,σ): (-0.0187 , 0.6691) | lr: 0.002
-# Epoch 3/50 [0/391] | Loss: 24.3710 | KL-Loss: 68121.7055 | (μ,σ): (-0.0124 , 0.7752) | lr: 0.002
-# Epoch 4/50 [0/391] | Loss: 21.0461 | KL-Loss: 51102.3349 | (μ,σ): (-0.0093 , 0.8291) | lr: 0.002
-# Epoch 5/50 [0/391] | Loss: 18.7888 | KL-Loss: 40887.2121 | (μ,σ): (-0.0075 , 0.8616) | lr: 0.002
-# Epoch 6/50 [0/391] | Loss: 17.1099 | KL-Loss: 34075.6589 | (μ,σ): (-0.0062 , 0.8834) | lr: 0.002
-# Epoch 7/50 [0/391] | Loss: 15.8068 | KL-Loss: 29209.5451 | (μ,σ): (-0.0053 , 0.8991) | lr: 0.002
-# Epoch 8/50 [0/391] | Loss: 14.7745 | KL-Loss: 25559.5630 | (μ,σ): (-0.0047 , 0.9109) | lr: 0.002
-# Epoch 9/50 [0/391] | Loss: 13.9137 | KL-Loss: 22720.4489 | (μ,σ): (-0.0041 , 0.9201) | lr: 0.002
-# Epoch 10/50 [0/391] | Loss: 13.1943 | KL-Loss: 20449.0104 | (μ,σ): (-0.0037 , 0.9275) | lr: 0.002
-# Epoch 11/50 [0/391] | Loss: 12.5820 | KL-Loss: 18590.4608 | (μ,σ): (-0.0034 , 0.9335) | lr: 0.002
-# Epoch 12/50 [0/391] | Loss: 12.0396 | KL-Loss: 17041.6004 | (μ,σ): (-0.0031 , 0.9386) | lr: 0.002
-# Epoch 13/50 [0/391] | Loss: 11.5645 | KL-Loss: 15730.9778 | (μ,σ): (-0.0029 , 0.9429) | lr: 0.002
-# Epoch 14/50 [0/391] | Loss: 11.1496 | KL-Loss: 14607.5519 | (μ,σ): (-0.0026 , 0.9466) | lr: 0.002
-# Epoch 15/50 [0/391] | Loss: 10.7787 | KL-Loss: 13633.8897 | (μ,σ): (-0.0025 , 0.9498) | lr: 0.002
-# Epoch 16/50 [0/391] | Loss: 10.4428 | KL-Loss: 12781.9149 | (μ,σ): (-0.0023 , 0.9527) | lr: 0.002
-# Epoch 17/50 [0/391] | Loss: 10.1431 | KL-Loss: 12030.1571 | (μ,σ): (-0.0022 , 0.9552) | lr: 0.002
-# Epoch 18/50 [0/391] | Loss: 9.8668 | KL-Loss: 11361.9151 | (μ,σ): (-0.0021 , 0.9574) | lr: 0.002
-# Epoch 19/50 [0/391] | Loss: 9.6149 | KL-Loss: 10764.0049 | (μ,σ): (-0.0020 , 0.9594) | lr: 0.002
-# Epoch 20/50 [0/391] | Loss: 9.3812 | KL-Loss: 10225.8779 | (μ,σ): (-0.0019 , 0.9612) | lr: 0.002
-# Epoch 21/50 [0/391] | Loss: 9.1647 | KL-Loss: 9738.9945 | (μ,σ): (-0.0018 , 0.9629) | lr: 0.002
-# Epoch 22/50 [0/391] | Loss: 8.9642 | KL-Loss: 9296.3680 | (μ,σ): (-0.0017 , 0.9644) | lr: 0.002
-# Epoch 23/50 [0/391] | Loss: 8.7771 | KL-Loss: 8892.2263 | (μ,σ): (-0.0016 , 0.9658) | lr: 0.002
-# Epoch 24/50 [0/391] | Loss: 8.6025 | KL-Loss: 8521.7593 | (μ,σ): (-0.0015 , 0.9671) | lr: 0.002
-# Epoch 25/50 [0/391] | Loss: 8.4350 | KL-Loss: 8180.9266 | (μ,σ): (-0.0015 , 0.9683) | lr: 0.002
-# Epoch 26/50 [0/391] | Loss: 8.2772 | KL-Loss: 7866.3089 | (μ,σ): (-0.0014 , 0.9694) | lr: 0.002
-# Epoch 27/50 [0/391] | Loss: 8.1297 | KL-Loss: 7574.9941 | (μ,σ): (-0.0014 , 0.9704) | lr: 0.002
-# Epoch 28/50 [0/391] | Loss: 7.9890 | KL-Loss: 7304.4855 | (μ,σ): (-0.0013 , 0.9713) | lr: 0.002
-# Epoch 29/50 [0/391] | Loss: 7.8568 | KL-Loss: 7052.6310 | (μ,σ): (-0.0013 , 0.9722) | lr: 0.002
-# Epoch 30/50 [0/391] | Loss: 7.7313 | KL-Loss: 6817.5652 | (μ,σ): (-0.0012 , 0.9731) | lr: 0.002
-# Epoch 31/50 [0/391] | Loss: 7.6110 | KL-Loss: 6597.6635 | (μ,σ): (-0.0012 , 0.9739) | lr: 0.002
-# Epoch 32/50 [0/391] | Loss: 7.4974 | KL-Loss: 6391.5048 | (μ,σ): (-0.0012 , 0.9746) | lr: 0.002
-# Epoch 33/50 [0/391] | Loss: 7.3901 | KL-Loss: 6197.8396 | (μ,σ): (-0.0011 , 0.9753) | lr: 0.002
-# Epoch 34/50 [0/391] | Loss: 7.2883 | KL-Loss: 6015.5654 | (μ,σ): (-0.0011 , 0.9759) | lr: 0.002
-# Epoch 35/50 [0/391] | Loss: 7.1926 | KL-Loss: 5843.7062 | (μ,σ): (-0.0011 , 0.9766) | lr: 2.000000000000001e-07
-# Epoch 36/50 [0/391] | Loss: 7.0823 | KL-Loss: 5681.3929 | (μ,σ): (-0.0010 , 0.9772) | lr: 2.0000000000000005e-05
-# Epoch 37/50 [0/391] | Loss: 6.9702 | KL-Loss: 5527.8524 | (μ,σ): (-0.0010 , 0.9777) | lr: 2.0000000000000005e-05
-# Epoch 38/50 [0/391] | Loss: 6.8617 | KL-Loss: 5382.3924 | (μ,σ): (-0.0010 , 0.9783) | lr: 2.0000000000000005e-05
-# Epoch 39/50 [0/391] | Loss: 6.7569 | KL-Loss: 5244.3914 | (μ,σ): (-0.0010 , 0.9788) | lr: 2.0000000000000005e-05
-# Epoch 40/50 [0/391] | Loss: 6.6563 | KL-Loss: 5113.2900 | (μ,σ): (-0.0009 , 0.9794) | lr: 2.0000000000000005e-05
-# Epoch 41/50 [0/391] | Loss: 6.5594 | KL-Loss: 4988.5834 | (μ,σ): (-0.0009 , 0.9798) | lr: 2.0000000000000005e-05
-# Epoch 42/50 [0/391] | Loss: 6.4661 | KL-Loss: 4869.8148 | (μ,σ): (-0.0009 , 0.9803) | lr: 2.0000000000000005e-05
-# Epoch 43/50 [0/391] | Loss: 6.3772 | KL-Loss: 4756.5701 | (μ,σ): (-0.0009 , 0.9808) | lr: 2.0000000000000005e-05
-# Epoch 44/50 [0/391] | Loss: 6.2916 | KL-Loss: 4648.4725 | (μ,σ): (-0.0008 , 0.9812) | lr: 2.0000000000000005e-05
-# Epoch 45/50 [0/391] | Loss: 6.2087 | KL-Loss: 4545.1790 | (μ,σ): (-0.0008 , 0.9816) | lr: 2.000000000000001e-07
-# Epoch 46/50 [0/391] | Loss: 6.1300 | KL-Loss: 4446.3762 | (μ,σ): (-0.0008 , 0.9820) | lr: 2.0000000000000008e-06
-# Epoch 47/50 [0/391] | Loss: 6.0542 | KL-Loss: 4351.7776 | (μ,σ): (-0.0008 , 0.9824) | lr: 2.0000000000000008e-06
-# Epoch 48/50 [0/391] | Loss: 5.9814 | KL-Loss: 4261.1204 | (μ,σ): (-0.0008 , 0.9827) | lr: 2.0000000000000008e-06
-# Epoch 49/50 [0/391] | Loss: 5.9114 | KL-Loss: 4174.1633 | (μ,σ): (-0.0008 , 0.9831) | lr: 2.000000000000001e-08
-
+# Epoch 1/50 [0/391] | Loss: 40.8017 | KL-Loss: 276.7021 | (μ,σ): (-0.0077 , 0.4125) | lr: 0.002
+# Epoch 2/50 [0/391] | Loss: 29.7259 | KL-Loss: 157.6318 | (μ,σ): (-0.0066 , 0.3913) | lr: 0.002
+# Epoch 3/50 [0/391] | Loss: 24.4113 | KL-Loss: 116.6159 | (μ,σ): (-0.0056 , 0.3828) | lr: 0.002
+# Epoch 4/50 [0/391] | Loss: 21.1453 | KL-Loss: 96.5729 | (μ,σ): (-0.0042 , 0.3716) | lr: 0.002
+# Epoch 5/50 [0/391] | Loss: 18.8720 | KL-Loss: 85.3616 | (μ,σ): (-0.0030 , 0.3576) | lr: 0.002
+# Epoch 6/50 [0/391] | Loss: 17.2047 | KL-Loss: 78.9367 | (μ,σ): (-0.0024 , 0.3417) | lr: 0.002
+# Epoch 7/50 [0/391] | Loss: 15.9369 | KL-Loss: 75.1898 | (μ,σ): (-0.0019 , 0.3260) | lr: 0.002
+# Epoch 8/50 [0/391] | Loss: 14.9096 | KL-Loss: 72.9856 | (μ,σ): (-0.0018 , 0.3114) | lr: 0.002
+# Epoch 9/50 [0/391] | Loss: 14.0579 | KL-Loss: 71.6381 | (μ,σ): (-0.0015 , 0.2984) | lr: 0.002
+# Epoch 10/50 [0/391] | Loss: 13.3564 | KL-Loss: 70.9018 | (μ,σ): (-0.0013 , 0.2866) | lr: 0.002
+# Epoch 11/50 [0/391] | Loss: 12.7576 | KL-Loss: 70.5410 | (μ,σ): (-0.0012 , 0.2761) | lr: 0.002
+# Epoch 12/50 [0/391] | Loss: 12.2373 | KL-Loss: 70.3561 | (μ,σ): (-0.0012 , 0.2670) | lr: 0.002
+# Epoch 13/50 [0/391] | Loss: 11.7811 | KL-Loss: 70.2461 | (μ,σ): (-0.0011 , 0.2591) | lr: 0.002
+# Epoch 14/50 [0/391] | Loss: 11.3775 | KL-Loss: 70.1804 | (μ,σ): (-0.0010 , 0.2521) | lr: 0.002
+# Epoch 15/50 [0/391] | Loss: 11.0276 | KL-Loss: 70.2354 | (μ,σ): (-0.0009 , 0.2458) | lr: 2e-05
+# Epoch 16/50 [0/391] | Loss: 10.6327 | KL-Loss: 68.8279 | (μ,σ): (-0.0008 , 0.2460) | lr: 0.0002
+# Epoch 17/50 [0/391] | Loss: 10.2681 | KL-Loss: 66.5190 | (μ,σ): (-0.0008 , 0.2529) | lr: 0.0002
+# Epoch 18/50 [0/391] | Loss: 9.9409 | KL-Loss: 64.2191 | (μ,σ): (-0.0007 , 0.2611) | lr: 0.0002
+# Epoch 19/50 [0/391] | Loss: 9.6455 | KL-Loss: 62.0366 | (μ,σ): (-0.0007 , 0.2697) | lr: 0.0002
+# Epoch 20/50 [0/391] | Loss: 9.3726 | KL-Loss: 59.9974 | (μ,σ): (-0.0006 , 0.2782) | lr: 0.0002
+# Epoch 21/50 [0/391] | Loss: 9.1224 | KL-Loss: 58.1055 | (μ,σ): (-0.0006 , 0.2864) | lr: 0.0002
+# Epoch 22/50 [0/391] | Loss: 8.8944 | KL-Loss: 56.3752 | (μ,σ): (-0.0006 , 0.2940) | lr: 0.0002
+# Epoch 23/50 [0/391] | Loss: 8.6854 | KL-Loss: 54.7983 | (μ,σ): (-0.0005 , 0.3009) | lr: 0.0002
+# Epoch 24/50 [0/391] | Loss: 8.4898 | KL-Loss: 53.3354 | (μ,σ): (-0.0005 , 0.3074) | lr: 0.0002
+# Epoch 25/50 [0/391] | Loss: 8.3102 | KL-Loss: 51.9912 | (μ,σ): (-0.0005 , 0.3133) | lr: 2.0000000000000003e-06
+# Epoch 26/50 [0/391] | Loss: 8.1346 | KL-Loss: 50.6132 | (μ,σ): (-0.0005 , 0.3205) | lr: 2e-05
+# Epoch 27/50 [0/391] | Loss: 7.9700 | KL-Loss: 49.1474 | (μ,σ): (-0.0005 , 0.3299) | lr: 2e-05
+# Epoch 28/50 [0/391] | Loss: 7.8157 | KL-Loss: 47.7302 | (μ,σ): (-0.0004 , 0.3397) | lr: 2e-05
+# Epoch 29/50 [0/391] | Loss: 7.6717 | KL-Loss: 46.3787 | (μ,σ): (-0.0004 , 0.3494) | lr: 2e-05
+# Epoch 30/50 [0/391] | Loss: 7.5377 | KL-Loss: 45.0928 | (μ,σ): (-0.0004 , 0.3590) | lr: 2e-05
+# Epoch 31/50 [0/391] | Loss: 7.4114 | KL-Loss: 43.8685 | (μ,σ): (-0.0004 , 0.3684) | lr: 2e-05
+# Epoch 32/50 [0/391] | Loss: 7.2929 | KL-Loss: 42.7034 | (μ,σ): (-0.0004 , 0.3777) | lr: 2e-05
+# Epoch 33/50 [0/391] | Loss: 7.1814 | KL-Loss: 41.5948 | (μ,σ): (-0.0004 , 0.3867) | lr: 2e-05
+# Epoch 34/50 [0/391] | Loss: 7.0755 | KL-Loss: 40.5385 | (μ,σ): (-0.0004 , 0.3955) | lr: 2e-05
+# Epoch 35/50 [0/391] | Loss: 6.9756 | KL-Loss: 39.5326 | (μ,σ): (-0.0004 , 0.4040) | lr: 2.0000000000000004e-07
+# Epoch 36/50 [0/391] | Loss: 6.8801 | KL-Loss: 38.5736 | (μ,σ): (-0.0003 , 0.4124) | lr: 2.0000000000000003e-06
+# Epoch 37/50 [0/391] | Loss: 6.7904 | KL-Loss: 37.6644 | (μ,σ): (-0.0003 , 0.4203) | lr: 2.0000000000000003e-06
+# Epoch 38/50 [0/391] | Loss: 6.7048 | KL-Loss: 36.7987 | (μ,σ): (-0.0003 , 0.4279) | lr: 2.0000000000000003e-06
+# Epoch 39/50 [0/391] | Loss: 6.6244 | KL-Loss: 35.9735 | (μ,σ): (-0.0003 , 0.4353) | lr: 2.0000000000000003e-06
+# Epoch 40/50 [0/391] | Loss: 6.5475 | KL-Loss: 35.1865 | (μ,σ): (-0.0003 , 0.4423) | lr: 2.0000000000000003e-06
+# Epoch 41/50 [0/391] | Loss: 6.4740 | KL-Loss: 34.4351 | (μ,σ): (-0.0003 , 0.4491) | lr: 2.0000000000000003e-06
+# Epoch 42/50 [0/391] | Loss: 6.4047 | KL-Loss: 33.7182 | (μ,σ): (-0.0003 , 0.4557) | lr: 2.0000000000000003e-06
+# Epoch 43/50 [0/391] | Loss: 6.3379 | KL-Loss: 33.0329 | (μ,σ): (-0.0003 , 0.4619) | lr: 2.0000000000000003e-06
+# Epoch 44/50 [0/391] | Loss: 6.2739 | KL-Loss: 32.3772 | (μ,σ): (-0.0003 , 0.4680) | lr: 2.0000000000000003e-06
+# Epoch 45/50 [0/391] | Loss: 6.2129 | KL-Loss: 31.7499 | (μ,σ): (-0.0003 , 0.4737) | lr: 2.0000000000000007e-08
+# Epoch 46/50 [0/391] | Loss: 6.1540 | KL-Loss: 31.1492 | (μ,σ): (-0.0003 , 0.4793) | lr: 2.0000000000000004e-07
+# Epoch 47/50 [0/391] | Loss: 6.0986 | KL-Loss: 30.5740 | (μ,σ): (-0.0003 , 0.4846) | lr: 2.0000000000000004e-07
+# Epoch 48/50 [0/391] | Loss: 6.0450 | KL-Loss: 30.0226 | (μ,σ): (-0.0003 , 0.4897) | lr: 2.0000000000000004e-07
+# Epoch 49/50 [0/391] | Loss: 5.9936 | KL-Loss: 29.4936 | (μ,σ): (-0.0003 , 0.4946) | lr: 2.0000000000000004e-07
 #%%
 #! make two segments, one for mnist test
 #! and another for cifar10, so both results can be seen one after another
