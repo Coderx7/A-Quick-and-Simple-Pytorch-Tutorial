@@ -2921,6 +2921,8 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,
 # to see the quality of reconstruction
 def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
     img_cnt = len(img_pairs)
+    rows = img_cnt//cols +1 if img_cnt>rows*cols else rows
+    
     fig = plt.figure(figsize=(28, 28))
     
     if save_result:
@@ -4335,7 +4337,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
                                                                                 batch_size=batch_size,
                                                                                 )
 
-epochs = 50#50,100
+epochs = 100#50,100
 interval = 2000
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -4345,7 +4347,7 @@ input_channel = 1 if dataset =='mnist' else 3
 
 # 50 seems a fair choice for cifar10 example, 
 # larger values need more regularization though
-embedding_size = 90 #2,10,20,50,70,90,100,200
+embedding_size = 384 #2,10,20,50,70,90,100,128,256,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4504,10 +4506,58 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # use larger batch instead of 32!
 # update increasing the embdsz from 50 to 70 decreased our loss from 1370 to 1361 
 # and images became sharper! embds=90 made it 1355 and images are more formed(and sharper)
-#
+# using embdsz=100, got us to 1353! but I decided to work on embds=90 and with change to 
+# epochs=100 and scheduler (30,35,55,75) it got down to 1353! with [30,35] 
+# its down to 1351, but I guess the ebmdssz=100 gives more detailed images (although with
+# the same loss, at least I guess so!) with [30,50] its 1351 as well(loss/klloss) are more smooth!
+# compared to [30,35]!
+# with embdsz=120 and [30,50] we get 1345. jumping to embdsz=256 the loss stayed at 1345 but
+# images now have much more details.
+# now we increase beta to 0.001 and see how that affects it (loss becomes 1393!) and makes it worse
+# so beta remains at 0.0001(0.0002 is also a bit worse, so increasing beta is no brainer at this point).
+# lowering it to 0.00001 is also not improving thins, it increases the loss initially to 3000 and then
+# gradually decreases, but diverges quickly, shooting the loss to 10000! and then trying to lower it down
+# basically it fluctuates badly and doesnt improve! ultimately the final loss is 13014! and the results
+# are blury as hell)
+# also disabling freebits ruins the results making them very blury
+# so freebits(0.4) is absolutely necessary (with beta 0.0001). 
+# freebits=0.8 lowers our loss to 1335! but I guess the image quality is so so, not very different
+# than the 0.4 version one! but I might be wrong. trying freebits=0.2 gives us 1335 as well!
+# the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
+# very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
+# freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
+# using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
+# and see if it improves further,(with increasing embds im seeing more diverging, loss shoots up at the
+# very begining , and I have to restart trainig so it starts from a good place (usually restarting training fixes it)
+# ok with new schedules, we got 1333 and results are abit blurry I think!
+# trying embdsz=384 we got 1334 the quality is a bit better( a second try its 1333)
+# at this point I guess its enough, more effort can be put and make the results improve
+# we covered the principles and main factors and saw their effects.
+# 
+# for future refrence, I first started with embdsz=50 and everythin set to False
+# except normalize, then tried with mse with basically every options, it only worked
+# with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
+# the latent space was smushed into a tiny little circle around 0, and I couldnt interpolate
+# or create meaningful reconstructions using sampling. one because we have to use something
+# to get encoding output for our decoder becasue of skipcon(the latent vector was conditioned on it)
+# I tried moving average of all encoders outputs to use duirng test time, it didnt work, if I used
+# any image and use its encodings in decoder with a random latent vector z, it would only create 
+# the said image, if I used a mean of a batch of images, I would get back the mean. basically the
+# encodings would dictate the outcome, skipcon, had made latent representation to be ignored completely
+# and hence it couldnt play any role. thats why I switched to bce this time. upon switching to bce
+# I got way more clearer images than mse. and from there continued and enabled freebits and noticed
+# the images got much better and clearer, playing with lr a bit and a bit of schedules, I got good results quickly
+# from there when improvements stopped, I increased the embdsz and got great results. noticed the loss
+#persay doesnt tell exactly if the output is good, it rouhghly saysso a loss of 1300 has a very good
+# reconstruction.  also increasing the spatial dim both in encoder and decoder (both start from 4x4)
+# positively affects the reconstruction and loss. I also made a mistake once, encoder output was 4x4
+# but decoder started at 256x1x1, it adversly affected the result, when i made it 256x4x4 (everything else intact)
+# it got good result, showing decoder starting with larger fmaps helps as well.
+# over all we can improve this a lot hopefully
+# but not by a lot
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
-scheduler_steps = [30,35,45,49]#[20,45,65,85] # [20,35,45,49]
+scheduler_steps = [30,50]#,55,75]#[20,45,65,85] # [20,35,45,49]
 optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
 
