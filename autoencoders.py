@@ -1,5 +1,6 @@
 #%%
 # in the name of God the most compassionate the most merciful
+#!edit add original papers for reference
 # in this part, we are going to learn about autoencoders and 
 # how we can implement them in Pytorch. 
 # Autoencoders are a kind of networks that map their input
@@ -21,21 +22,21 @@
 
 # !EDIT this - rewrite it 
 # sidenote: 
-# its like  a typical network we have already seen, a typical CNN,
+# its like a typical network we have already seen, a typical CNN,
 # it takes in an image (e.g. a 3d tensor of size(28,28,1)), 
-# and convert it to a much more compact and denser representation at the end
+# and converts it to a much more compact and denser representation at the end
 # (eg. 1d tensor of size 100). This dense representation is then
 # used by a classifier (can be a single fc layer, or multiple layers/ablock/etc)
 # to classify the image.
 # now the encoder does pretty much the same thing, 
 # it takes in an input and produces a much smaller representation (the encoding)), 
-# like in a cnn , this new dense representation needs to contain useful/necessary data
+# like in a cnn, this new dense representation needs to contain useful/necessary data
 # for the classifier to properly does it job.
 # the difference is that, instead of a classifer at the end, 
 # theres another network that does something else (in our case reconstructiong the input data
 # from that dense representation) so as you can see this is not something weird!
 # 
-
+# 
 # 
 # during this process of reconstructing the input data
 # from the compressed representation, the new representation is
@@ -4344,7 +4345,7 @@ input_channel = 1 if dataset =='mnist' else 3
 
 # 50 seems a fair choice for cifar10 example, 
 # larger values need more regularization though
-embedding_size = 50 #2,10,20,50,100,200
+embedding_size = 90 #2,10,20,50,70,90,100,200
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4500,6 +4501,10 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # then try using larger embeddings,
 # or use -1/1 with mse and see if that helps
 # or now use skipcon with bce and see if that works ths time with moving average trick!
+# use larger batch instead of 32!
+# update increasing the embdsz from 50 to 70 decreased our loss from 1370 to 1361 
+# and images became sharper! embds=90 made it 1355 and images are more formed(and sharper)
+#
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
 scheduler_steps = [30,35,45,49]#[20,45,65,85] # [20,35,45,49]
@@ -4535,10 +4540,11 @@ kwargs = {"states": model.state_dict(),
 
 timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
 modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
-# save_model(modelname=modelname, kwargs=kwargs)
+save_model(modelname=modelname, kwargs=kwargs)
 #%%
+# save_model(modelname=modelname, kwargs=kwargs)
 # load the model to make sure we are dealing with the right model!
-# load_model(model, modelname=modelname)
+load_model(model, modelname=modelname)
 img_shape=(input_channel,28,28)
 kwargs = {"img_shape":img_shape,
           "beta":beta,
