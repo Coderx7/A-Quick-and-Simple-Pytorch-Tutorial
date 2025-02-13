@@ -2922,7 +2922,9 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,
 def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
     img_cnt = len(img_pairs)
     rows = img_cnt//cols +1 if img_cnt>rows*cols else rows
-    
+    print(f'{rows=} {cols=}')
+    print(f'{img_cnt=}')
+    print(f'{rows=} {cols=}')
     fig = plt.figure(figsize=(28, 28))
     
     if save_result:
@@ -4347,7 +4349,7 @@ input_channel = 1 if dataset =='mnist' else 3
 
 # 50 seems a fair choice for cifar10 example, 
 # larger values need more regularization though
-embedding_size = 384 #2,10,20,50,70,90,100,128,256,512
+embedding_size = 200 #2,10,20,50,70,90,100,128,256,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4526,6 +4528,9 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
 # very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
 # freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
+# (using embdsz=200, we get 1339 by the way, images are sharp but not sharper than 256, but random
+# generation doesnt produce good images yet, but using mean/std we can replicate the samples!)
+# 
 # using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
 # and see if it improves further,(with increasing embds im seeing more diverging, loss shoots up at the
 # very begining , and I have to restart trainig so it starts from a good place (usually restarting training fixes it)
