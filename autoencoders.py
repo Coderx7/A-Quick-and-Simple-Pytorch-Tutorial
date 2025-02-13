@@ -3559,7 +3559,7 @@ class VAE(nn.Module):
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
         self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
-                                     nn.BatchNorm1d(256*4*4),
+                                    #  nn.BatchNorm1d(256*4*4),
                                      nn.ReLU(),
                                      nn.Dropout(0.1),
                                      nn.Unflatten(1,(256,4,4)),
@@ -4351,7 +4351,8 @@ input_channel = 1 if dataset =='mnist' else 3
 
 # 50 seems a fair choice for cifar10 example, 
 # larger values need more regularization though
-embedding_size = 384 #2,10,20,50,70,90,100,128,256,384,512
+# good choice is 384, but for visualization 200 is better for now
+embedding_size = 200 #2,10,20,50,70,90,100,128,256,384,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4530,7 +4531,8 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
 # very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
 # freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
-# (using embdsz=200, we get 1338/1339 by the way, images are sharp but not sharper than 256, 
+# (using embdsz=200, we get 1335/1338/1339 (3 runs*) by the way, images are sharp but not sharper than 256, 
+# * 1335 was achieved after disabling bn for first layer of decoder
 # 
 # but random generation doesnt produce good images yet (images are blurry and interpolation is not smooth yet),
 # but using mean/std we can replicate the samples!)
@@ -4565,7 +4567,8 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # also not using batchnorm in decoder might help. Iguess we first try no bn in decoder
 # and see if that works.
 # we can also try mse and skipcon at the very end as well
-#
+# ok I removed bn from first layer of decoder! with embdsz=200 and beta=0.0001 lets see 
+# how random generation and recnstruction looks
 #
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
