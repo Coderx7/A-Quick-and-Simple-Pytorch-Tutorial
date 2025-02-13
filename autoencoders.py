@@ -2902,6 +2902,7 @@ print('weights loaded')
 # generate random images by randomly sampling from a simple normal distribution!
 @torch.no_grad()
 def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,28)):
+    c = img_shape[0]
     # simply randomly sampling from a normal distribution will
     # give us random classes.
     sample = torch.randn(size=(count, model.embedding_size)).to(device)
@@ -2912,7 +2913,8 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,
     # print(f'{imgs.shape=}')
     imgs = imgs.view(-1, *img_shape)
     img = make_grid(imgs,nrow=rows,normalize=True).cpu().detach().numpy().transpose(1,2,0)
-    plt.imshow(img, cmap='Greys_r')
+    # only use cmap=Greys_r for grayscale images
+    plt.imshow(img, cmap='Greys_r' if c ==1 else None)
     plt.title('randomly sampled generation')
 
 # generate_random_images(model, count=32)
@@ -2922,10 +2924,10 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,
 def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
     img_cnt = len(img_pairs)
     rows = img_cnt//cols +1 if img_cnt>rows*cols else rows
-    print(f'{rows=} {cols=}')
-    print(f'{img_cnt=}')
-    print(f'{rows=} {cols=}')
-    fig = plt.figure(figsize=(28, 28))
+    # print(f'{rows=} {cols=}')
+    # print(f'{img_cnt=}')
+    # print(f'{rows=} {cols=}')
+    fig = plt.figure(figsize=(64, 32))
     
     if save_result:
         if not os.path.exists(save_dir):
@@ -4349,7 +4351,7 @@ input_channel = 1 if dataset =='mnist' else 3
 
 # 50 seems a fair choice for cifar10 example, 
 # larger values need more regularization though
-embedding_size = 200 #2,10,20,50,70,90,100,128,256,512
+embedding_size = 384 #2,10,20,50,70,90,100,128,256,384,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4515,7 +4517,7 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # compared to [30,35]!
 # with embdsz=120 and [30,50] we get 1345. jumping to embdsz=256 the loss stayed at 1345 but
 # images now have much more details.
-# now we increase beta to 0.001 and see how that affects it (loss becomes 1393!) and makes it worse
+# now we increase beta to 0.001 and see how that affects it (loss becomes 1393!) and makes it(reconstructions) worse
 # so beta remains at 0.0001(0.0002 is also a bit worse, so increasing beta is no brainer at this point).
 # lowering it to 0.00001 is also not improving thins, it increases the loss initially to 3000 and then
 # gradually decreases, but diverges quickly, shooting the loss to 10000! and then trying to lower it down
@@ -4528,17 +4530,43 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
 # very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
 # freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
-# (using embdsz=200, we get 1339 by the way, images are sharp but not sharper than 256, but random
-# generation doesnt produce good images yet, but using mean/std we can replicate the samples!)
+# (using embdsz=200, we get 1338/1339 by the way, images are sharp but not sharper than 256, 
 # 
+# but random generation doesnt produce good images yet (images are blurry and interpolation is not smooth yet),
+# but using mean/std we can replicate the samples!)
+# 
+# sidenote( I guess its because our kl weight is too small!
+# cuz when the reconstructions look okay on real data but random samples from the prior (that is normal distribution we sample from)
+# look blurry or nonsensical, it usually means the learned latent space is not well aligned with 
+# the standard normal distribution we sample from. In other words, the vae can reconstruct images 
+# by relying on learned posterior distributions for the training data, but unconditional generation
+# (using samples from N(0,I)) does not match how the models encoder actually encodes real images)
+# 
+#
 # using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
 # and see if it improves further,(with increasing embds im seeing more diverging, loss shoots up at the
 # very begining , and I have to restart trainig so it starts from a good place (usually restarting training fixes it)
 # ok with new schedules, we got 1333 and results are abit blurry I think!
 # trying embdsz=384 we got 1334 the quality is a bit better( a second try its 1333)
+# with beta=0.001 and we got 1335! the quality is not that different!(though its blurier! but still not bad! pretty legible!)
 # at this point I guess its enough, more effort can be put and make the results improve
 # we covered the principles and main factors and saw their effects.
+# the random generation is not ideal, but we can see images formed, although they are heavily
+# blured, and its as if we are looking into old, moldy image frames from 1800s! Iguess trainig
+# longer should fix this
 # 
+# before we finish lets talk about random generation issues
+# i noticed we get somewhat dark with visible checkerboard patterns
+# they are not visible in reconstructed image, just in randomly generated ones
+# it might be from the transposed conv (Deconv) because it introduces checkerboard patterns
+# because of the way different kernels/paddings/strides are used. to avoid it we can use
+# conv2d-upsample combo, or use pixelshuffle. 
+# test this as well: 
+# also not using batchnorm in decoder might help. Iguess we first try no bn in decoder
+# and see if that works.
+# we can also try mse and skipcon at the very end as well
+#
+#
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
 # with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
@@ -4559,7 +4587,8 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # but decoder started at 256x1x1, it adversly affected the result, when i made it 256x4x4 (everything else intact)
 # it got good result, showing decoder starting with larger fmaps helps as well.
 # over all we can improve this a lot hopefully
-# but not by a lot
+
+
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
 scheduler_steps = [30,50]#,55,75]#[20,45,65,85] # [20,35,45,49]
@@ -4597,6 +4626,8 @@ timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
 modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
 save_model(modelname=modelname, kwargs=kwargs)
 #%%
+timestamp2 = timestamp
+print(f'{timestamp2=}')
 # save_model(modelname=modelname, kwargs=kwargs)
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
@@ -4615,6 +4646,7 @@ evaluate_on_testset(model, dataloader_test, **kwargs)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # fix these two for skipcon version
+
 if not model.use_skip_con:
     # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
     generate_random_images(model, count=32,img_shape=img_shape)
@@ -4622,9 +4654,8 @@ if not model.use_skip_con:
     view_images(imgs,labels,rows=12,cols=11)
     imgs = imgs.to(device)
     img_t = imgs[0].unsqueeze(0)
-    generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=img_t)
-    generate_latent_space_grid(model,n=20,lower_bound=-20,upper_bound=20,img_shape=img_shape,img=img_t)
-
+    generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=20,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
     # lets view some images and generate
     # some only for a specific class
     # note that our current approach only
