@@ -3845,6 +3845,24 @@ def plot_training_metrics(mu_list, std_list, kl_losses, losses):
     plt.tight_layout()
     plt.show()
 
+import math
+# we use this schedule to gradually increase beta
+def beta_schedule(beta_max, epoch, total_epochs, k=15):
+    # scale epoch to [0,1]
+    progress = epoch / total_epochs  
+    # value goes from near 0 to near 1 around the midpoint.
+    # by subtracting 0.5, we're shifting the range so that when progress is 0.5 
+    # (i.e. halfway through training), the argument to the exponential is zero.
+    # at this point, the sigmoid function yields half of its maximum value 
+    # (when scaled by beta_max). this effectively means that the increase in 
+    # beta is centered around the middle of training, with a slow start, 
+    # a rapid increase around the halfway mark, and then a plateau as 
+    # training approaches the end.
+    current_beta = beta_max / (1 + math.exp(-k * (progress - 0.5)))
+    return current_beta
+# print(f'{[beta_schedule(0.5,i,100,k=10) for i in range(100)]}')
+# k=15 seems ok!
+# print(f'{[beta_schedule(0.5,i,100,k=15) for i in range(100)]}')
 def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, beta, reduction, normalize, use_mse, interval, kl_anealing, use_freebits, min_kl=0):
 
     # a clear sign of posterior collapse is an extremely low kl term.
@@ -3892,11 +3910,14 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
                 # each epoch this should allow our model to first learn reconstruction 
                 # and then gradually apply the kl term (which mind you is a regulariziation term)
                 # without it dominating the whole loss
-                beta = min(1,e/epochs)
-                
+                # linear one wasnt helping much, so I got a new one!
+                # beta = min(beta,e/epochs)
+                beta_current = beta_schedule(beta,e,epochs,k=15)
+            else:
+                beta_current = beta
             loss, recon_loss, kl_loss = model.calculate_loss(reconst_imgs, imgs, 
                                                              mu, logvar,
-                                                             beta=beta, 
+                                                             beta=beta_current, 
                                                              reduction=reduction,
                                                              use_mse=use_mse,
                                                              use_freebits=use_freebits,
