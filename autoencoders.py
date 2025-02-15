@@ -4554,7 +4554,7 @@ embedding_size = 400 #2,10,20,50,70,90,100,128,256,384,512
 # 
 
 # 
-beta=0.3#0.0001 #0.0001, 0.001,1,2,4,
+beta=0.2#0.0001 #0.0001, 0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
 reduction='mean' #mean
@@ -4798,23 +4798,28 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # still very blurry, with a tiny faint touch of images, its really faint, but if I look closely
 # I can see its an image, a heavily, blured, noisy image, still cant properly tell what they all
 # maybe a plane? its obviously somewhat more detailed than the previous beta(0.0001).
+# 
 # using beta=0.01 loss=1334(kl loss is now in 1300s),recons-images are considerably blurrier, no significant change in latent space
 # is visible,(i.e. no visible improvements in formation of subspaces) but random generations
 # now show more refined images/still heavily blurred with chekermarks, but its clear they 
 # are images, you can tell they are heavily noisy/distorted images.
+# 
 # using beta=0.1 ,loss=1368 (kl loss is now in 200s, its inversly related to beta value, smaller beta means larger kl loss!)
 # expectedly image recons are getting blurrier, but at the same time, random
 # generations are getting better, now I can see blurry but colorful, images, no checkermarks or
 # black bars in the images are visible. the images are very blurry though
+# 
 # using beta=1 (might be time to use klanealing so image recons is not affected that much!): loss
 # 1536(kl loss 166 nearly intact the wholetimme), it decreased from 1900s, but didnt go down 
 # much. the img recons are very very blurry!its very bad, some are not even formed properly.random generations
 # is got better as well, but images like recons are still blurry, but they are better formed,with
 # vibrant colors
+# 
 # trying beta=1, klanealing:  added new beta schedule instead of linear one which used too high
 # values! now with beta=1, klanealing loss is 1441 (klloss 443) and it seems we have over fitted
 # image recons is awful! expectly, many images are not even formed properly and the whole image is
 # is very blurry. random regeneation is not good either, cant say its better than previous case!
+# 
 # using beta=0.5, klannealing: loss is 1394 (kl loss is 618). we overfitted half way!
 # and mean got close to 0 and std close to 1 which is not good, it needs more regularization I guess
 # as for the outputs, the image reconsts is much better than previous test(beta=1), but as expected
@@ -4823,6 +4828,7 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # in latent space, not much, but its defnitely there).random generations are better than before
 # some images clearly show the objects, though very blurry but its like the img recons quality
 # while others are more jumbled!
+# 
 # using beta=0.5, kl anealing, usin midpoint=0.85 ineats of 0.5:loss is 1349(kl loss is5048)
 # the mean is close to 0, and we see sign of overfitting, the image recon is much better than
 # before, (before they looked like smudged abd blurry!) but this has structures, and details
@@ -4847,7 +4853,14 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # it seems we just need to play with hyperparameters at this point! which means Im fine 
 # ive already put a lot of effort into this, so we can do parameter tuning nexttiem
 # 
-# 
+# using beta=0.1 klannealing(midpoint=0.5,k=15):loss is 1347(klloss=1074),image recons is obviously
+# way better as we used a smaller beta, still blurry, but way better,random generation is a bit
+# chaotic, you can spot the object, like horse, car, but they are clutered blurry images
+# using beta=0.2 klannealing(midpoint=0.5,k=15):loss is 1361(klloss=823), image recons are a bit worse
+# than before, but id say acceptable given what we haveseen so far, the random generation 
+# is better than before, images are less clutered and can be spotted more easily (though still
+# blurry and need a long way to get better. but better than before). i stop here its good enugh!
+# vae dont create sharp images like that! we need to us emore powerful variants!
 # 
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
@@ -4935,11 +4948,11 @@ if not model.use_skip_con:
     # view_images(imgs,labels,rows=12,cols=11)
     # imgs = imgs.to(device)
     # img_t = imgs[0].unsqueeze(0)
-    #%%
+
     generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
     # shows a fade horse at the end,still blurry need to focus to spot it
     generate_latent_space_grid(model,n=80,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
-    #%%
+
     # lets view some images and generate
     # some only for a specific class
     # note that our current approach only
