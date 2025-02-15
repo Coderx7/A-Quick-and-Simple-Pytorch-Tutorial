@@ -2531,11 +2531,12 @@ class conv(nn.Module):
         return out
 
 class deconv(nn.Module):
-    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=False):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
         super().__init__()
         self.deconv_block = nn.Sequential(
             nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # nn.GroupNorm(1,out_dim) if batch_norm else nn.Identity(),
             act
         )
         # residual connection needs input and output dimensions to match
@@ -2545,6 +2546,49 @@ class deconv(nn.Module):
         out = self.deconv_block(x)
         if self.residual_connection:
             out += x  
+        return out
+
+# instead of deconv, for getting better result, it doesnt work for me! i keep getting cuda error
+# I guess its because of my choice of kernels! i need to get this to work!
+class PixelShuffleBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, upscale_factor=2, act=nn.LeakyReLU(0.2), batch_norm=True):
+        super().__init__()
+        self.block = nn.Sequential(
+            # for pixelshuffle to work, we multiply the outdim by upscalefactor
+            # and then feed the result to pixelshuffle with the upscalefactor
+            # it will rearange the channels,upsample the image with the original outdim
+            # so the networks outputdim stays the same
+            nn.Conv2d(in_dim, out_dim * (upscale_factor ** 2), kernel_size=3, padding=1),
+            # use PixelShuffle to rearrange channels into spatial upsampling.
+            nn.PixelShuffle(upscale_factor),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            act
+        )
+        self.residual_connection = (in_dim == out_dim)
+
+    def forward(self, x):
+        out = self.block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+#since I might disable batchnorm for decoder, I enable bias by default
+# otherwise id leave it at false!
+class upconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, scale_factor=2, padding=1, 
+                 act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
+        super().__init__()
+        self.block = nn.Sequential(nn.Upsample(scale_factor=scale_factor, mode='nearest'),
+                                   nn.Conv2d(in_dim, out_dim, kernel_size, stride=1, padding=padding, bias=bias),
+                                   nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                                   act)
+        # residual connection only makes sense when no spatial change is applied
+        self.residual_connection = (in_dim == out_dim and scale_factor == 1)
+
+    def forward(self, x):
+        out = self.block(x)
+        if self.residual_connection:
+            out += x
         return out
 
 #! check I used variance and standard deviation correctly here    
@@ -2896,6 +2940,8 @@ states = torch.load(f"vae_{model.embedding_size}_{reduction}_{'normalized' if no
 model.load_state_dict(state_dict=states['states'])
 print('weights loaded')
 #%%
+#
+#  
 # now lets write some functions for visualization 
 # and see how our model does
 # 
@@ -2927,7 +2973,7 @@ def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= 
     # print(f'{rows=} {cols=}')
     # print(f'{img_cnt=}')
     # print(f'{rows=} {cols=}')
-    fig = plt.figure(figsize=(64, 32))
+    fig = plt.figure(figsize=(64, 64))
     
     if save_result:
         if not os.path.exists(save_dir):
@@ -2943,6 +2989,7 @@ def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= 
 
         if save_result:
             save_image(grid_imgs, f'{save_dir}/imgs_{i}.jpg')
+    plt.show()
 
 @torch.no_grad()
 def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28,28)):
@@ -3537,6 +3584,9 @@ class VAE(nn.Module):
         self.bottleneck_size = self.embedding_size*4*4
         self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
+        # tem classifier to see if it can enhance the results 
+        # by further compartmentizing the latent subspaces
+        self.classifier = nn.Linear(self.bottleneck_size,10)
         self.drp = nn.Dropout(0.1)
         # update:
         # ok during training with certain choices of hyperparameters
@@ -3559,20 +3609,84 @@ class VAE(nn.Module):
         # k is kernel , s is stride and p is for padding
         # (h=1,k=4,s=2,p=1)
         self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
-                                    #  nn.BatchNorm1d(256*4*4),
+                                     # this bn seems crucial for stabalizing large embdsizes (like 400+)
+                                     # without it loss shootsup alot! and reconstructions will be blurry
+                                     # 
+                                     nn.BatchNorm1d(256*4*4),
+                                    #  nn.GroupNorm(1,256*4*4),
+                                    # using leakyrely early on makes the model more unstable!loss shoots us quickly!
+                                    # but other layers it seems ok to use leakyrelu
                                      nn.ReLU(),
-                                     nn.Dropout(0.1),
+                                    #  nn.Dropout(0.1),
                                      nn.Unflatten(1,(256,4,4)),
-                                     deconv(256,128,kernel_size=2,stride=2),#4,2 #for 4x4: 2,2  #for 1x1:4,2
-                                     deconv(128,96,kernel_size=4,stride=1),#4   #for 4x4: 4,1  #for 1x1:4,2
-                                     deconv(96,64,kernel_size=4,stride=2),#8    #for 4x4: 4,2  #for 1x1:4,2
-                                     deconv(64,32,kernel_size=2,stride=1),#14    #for 4x4: 2,1  #for 1x1:2,2
+                                     # in encoderpart, relu seems to work better
+                                     # but in decoder, leakyrelu works better it seems
+                                     # batchnorm is especially important for large embdsizes
+                                     # also except the last layer, the later layers having
+                                     # bn makes somewhat sharper generations
+                                     deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(128,128,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(128,96,kernel_size=4,stride=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(96,96,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(96,64,kernel_size=4,stride=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(64,64,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(64,32,kernel_size=2,stride=1,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+                                    #  Print(),
+                                    #  conv(32,32,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
                                      # while we use sigmoid here with bce, for more complex dataset
                                      # using tanh with mse seems to give better result, but
                                      # note that, the input needs to be normalized as well (to -1,1)
                                      # for our case we go with sigmoid anyway
                                      deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
                                     )
+        
+        # not that different from deconv when all bn is used, but upsample avoids checkermarks
+        # self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+        #                              nn.BatchNorm1d(256*4*4),
+        #                              nn.ReLU(),
+        #                              nn.Dropout(0.1),
+        #                              nn.Unflatten(1,(256,4,4)),
+        #                              # in encoderpart, relu seems to work better
+        #                              # but in decoder, leakyrelu works better it seems
+        #                              upconv(256,128,kernel_size=2,scale_factor=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+        #                              upconv(128,96,kernel_size=4,scale_factor=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+        #                              upconv(96,64,kernel_size=4,scale_factor=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+        #                              upconv(64,32,kernel_size=4,scale_factor=2,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+        #                              # while we use sigmoid here with bce, for more complex dataset
+        #                              # using tanh with mse seems to give better result, but
+        #                              # note that, the input needs to be normalized as well (to -1,1)
+        #                              # for our case we go with sigmoid anyway
+        #                              upconv(32,self.input_channel,kernel_size=4,scale_factor=1,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+        #                             )
+        
+        # self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+        #                              nn.BatchNorm1d(256*4*4),
+        #                              nn.ReLU(),
+        #                              nn.Dropout(0.1),
+        #                              nn.Unflatten(1,(256,4,4)),
+        #                              PixelShuffleBlock(256,128,upscale_factor=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(128,96,upscale_factor=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(96,64,upscale_factor=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(64,32,upscale_factor=2,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+        #                             #  Print(),
+        #                              # while we use sigmoid here with bce, for more complex dataset
+        #                              # using tanh with mse seems to give better result, but
+        #                              # note that, the input needs to be normalized as well (to -1,1)
+        #                              # for our case we go with sigmoid anyway
+        #                              nn.Conv2d(32, self.input_channel, kernel_size=7, padding=1),#28 #for 4x4:6 # for 1x1:4
+        #                             # Print(),
+        #                             )
+        
 
         # now lets define our ema_skipcon 
         if self.use_skip_con:
@@ -3580,7 +3694,7 @@ class VAE(nn.Module):
             # and also its not included in computational graph
             self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
         
-            
+
     def reparamtrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
         eps = torch.randn_like(std)
@@ -3616,13 +3730,15 @@ class VAE(nn.Module):
         # print(f'{output.shape=}')
         output = output.view(input.size(0),-1)
         mu = self.fc_mu(output)
-        mu=self.drp(mu)
+        # preds = self.classifier(output)
+        # mu=self.drp(mu)
         log_var = self.fc_logvar(output)
         log_var=self.drp(log_var)
         z = self.reparamtrization_trick(mu, log_var)
         # if we use skip connection, lets update the moving average
         if self.use_skip_con:
             self.calculate_ema(output)
+        
         return z, output, mu, log_var
 
     def decode(self, z, encoder_output):
@@ -3711,8 +3827,8 @@ class VAE(nn.Module):
 
 # test the vae and the output shape, making sure 
 input_channel=3
-model = VAE(embedding_size=100, input_channel=input_channel)
-img_re, _,_ = model(torch.randn(size=(5,input_channel,28,28)))
+test_model = VAE(embedding_size=100, input_channel=input_channel)
+img_re, _,_ = test_model(torch.randn(size=(5,input_channel,28,28)))
 print(f'{img_re.shape=}')
 #%%
 # lets train our model again
@@ -3926,7 +4042,8 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
             recons = reconstructeds[:sample_count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
-
+    
+    print(f'Testset Loss: {np.mean([entry["val_loss"] for entry in losses]):.4f}')
     # plot the losses using pandas! 
     # this actually is very neat and comes handy very often!
     # we can have a list of dictionaries, where each value is 
@@ -4166,8 +4283,18 @@ def select_dataset(dataset_name='mnist', batch_size=128):
         dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
     elif dataset_name.lower() in ['cifar','cifar10']:
         # for cifar10 a better architecture and training regime is required
-        transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
-        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+        transformations_tr = transforms.Compose([transforms.Resize(28),
+                                                 transforms.RandomHorizontalFlip(),
+                                                 transforms.ToTensor(),
+                                                #  transforms.Normalize((0.5, 0.5, 0.5),
+                                                #                       (0.5, 0.5, 0.5))
+                                              ])
+        transformations = transforms.Compose([transforms.Resize(28),
+                                              transforms.ToTensor(),
+                                            #   transforms.Normalize((0.5, 0.5, 0.5),
+                                            #                        (0.5, 0.5, 0.5))
+                                              ])
+        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
         dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
     else:
         raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
@@ -4333,7 +4460,10 @@ generate_similar_images(model, imgs[7])#9
 create_interpolation_animation(model, filename=f'mnist_{timestamp}')
 
 #%%
-torch.autograd.set_detect_anomaly(False)
+# torch.autograd.set_detect_anomaly(False)
+# import os
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+
 # cifar10 test
 dataset = 'cifar10'
 batch_size = 32
@@ -4349,10 +4479,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if dataset =='mnist' else 3
 
-# 50 seems a fair choice for cifar10 example, 
+# 50 seems a fair choice for cifar10 example,
 # larger values need more regularization though
 # good choice is 384, but for visualization 200 is better for now
-embedding_size = 200 #2,10,20,50,70,90,100,128,256,384,512
+embedding_size = 400 #2,10,20,50,70,90,100,128,256,384,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4531,24 +4661,29 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
 # very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
 # freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
-# (using embdsz=200, we get 1335/1338/1339 (3 runs*) by the way, images are sharp but not sharper than 256, 
+# (using embdsz=200, we get 1335/1338/1339 (*3 runs) by the way, images are sharp but not sharper than 256, 
 # * 1335 was achieved after disabling bn for first layer of decoder
 # 
-# but random generation doesnt produce good images yet (images are blurry and interpolation is not smooth yet),
-# but using mean/std we can replicate the samples!)
-# 
+# !edit move this part down
+# but random generation doesnt produce good images yet (images are blurry and 
+# interpolation is not smooth yet),but using mean/std we can replicate the samples!)
 # sidenote( I guess its because our kl weight is too small!
-# cuz when the reconstructions look okay on real data but random samples from the prior (that is normal distribution we sample from)
-# look blurry or nonsensical, it usually means the learned latent space is not well aligned with 
-# the standard normal distribution we sample from. In other words, the vae can reconstruct images 
-# by relying on learned posterior distributions for the training data, but unconditional generation
-# (using samples from N(0,I)) does not match how the models encoder actually encodes real images)
+# cuz the reconstructions look okay on real data but random samples from 
+# the prior (normal distribution we sample from) look blurry or nonsensical,
+# it usually means the learned latent space is not well aligned with 
+# the standard normal distribution we sample from. 
+# In other words, the vae can reconstruct images by relying on learned 
+# posterior distributions for the training data, but unconditional generation
+# (using samples from N(0,I)) does not match how the models encoder actually 
+# encodes real images)
 # 
 #
 # using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
 # and see if it improves further,(with increasing embds im seeing more diverging, loss shoots up at the
 # very begining , and I have to restart trainig so it starts from a good place (usually restarting training fixes it)
 # ok with new schedules, we got 1333 and results are abit blurry I think!
+# trying embds=400, we get a loss=1334, the results are like before. 
+# 
 # trying embdsz=384 we got 1334 the quality is a bit better( a second try its 1333)
 # with beta=0.001 and we got 1335! the quality is not that different!(though its blurier! but still not bad! pretty legible!)
 # at this point I guess its enough, more effort can be put and make the results improve
@@ -4564,11 +4699,80 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # because of the way different kernels/paddings/strides are used. to avoid it we can use
 # conv2d-upsample combo, or use pixelshuffle. 
 # test this as well: 
-# also not using batchnorm in decoder might help. Iguess we first try no bn in decoder
-# and see if that works.
+# also not using batchnorm in decoder might help. I guess we first try no bn in decoder
+# and see if that works.(ok it was bn for the decoders first layer! removing it we now only
+# get a green overlay on images! )
 # we can also try mse and skipcon at the very end as well
 # ok I removed bn from first layer of decoder! with embdsz=200 and beta=0.0001 lets see 
-# how random generation and recnstruction looks
+# how random generation and recnstruction looks- the loss decreased and the weird blackness
+# is also gone.but theres a green hue everywhere! maybe its the right track?
+# use embdsz=384 and try random generation for seeing if our changes work, thisway we make sure
+# recons are sharp, and network learns a good latent, instead of using already blurry 200embds 
+# version (user larger betas? check to make latent space well formed? separated)
+# !add classification loss to the bunch and see if that helps in separating things!?
+# ! also edit the above
+# !see info from chatgpt
+# starting with embdsz=384 and no bn in decoder: it made loss to shoot out to 400k!
+# the reconstructions are expectedly very blurry, the generated images however, look more
+# colorful, but very very rough, you can see the images, but they are heavily distorted with noise
+# and discoloration.
+# next im going to enbale some bns for middle layers in decoder 
+# to stabalize loss a bit: with the last three two layers (except the last layer) of decoder
+# with bn=true, the loss seems to be back to normal range we got 1340, larger than our previous
+# 1333, the reconstructions are better now, but not as good as all bn version obviously, the
+# generation is still not good, but seems much less crazy! but still not clear or legible
+# note for bigger embdsz like 400+ we need to bn for all layers (except the last layer)
+# otherwise, loss will shoot to 20K-200k+!
+# 
+# i noticed we have been using leakyrely with decoder, I changed to relu with all bns and see
+# how it does: we got 1338, so leaky relue seems better in decoder!(1333 vs 1338)
+# using conv-upsample: with all bns enabled, we got a loss=1331! (with beta=0.001 its 1333)
+# which is better than default deconv, but the reconstructions seem more blury than before (dconv version)
+# also the generation didnt change from before! still greenish, blury noisy images that i cant
+# make anything out of them really unless im paying a lot of attention to make out a shape!
+#
+# im using embds=400 instead of 384 from now on, because its close to 384 and also multiple of 200
+# which we can easily use with our visualizations. the generation with all bns are very blurry
+# and lots of black spots, but theres no green overlay! 
+# 
+# disabling bn for last 3 layers od decoder: this made reconstructions less detailed, more blurry
+# it also worsened the generation, I cant no longer identify anything, they are brown/blackish blurry
+# blobs now. I guess bn for later layers helps a lot lets enable them back!
+# 
+# disable only the second layer, all others except the last layer have bn=True: loss=1334, generation is aweful, checkermarks
+# are very apparent, details are illegible, its basically blurry blobs, its almost like tghe previous test, its as bad
+#  maybe a bit less, but with more checkermarks, and completely useless, so the first layers are
+# important!
+# using upconv again this time with all bns enabled except last layer: we got 1333, reconstruction
+# isnt any different than deconv, and the generation is brown blurry blobs(probably because batchnorm
+# steers/biased towards the average color/brightness in out dataset, hence the darker/brownish color I guess),
+# so we use deconv lets use pixelshuffle! it doesnt work, it crashes the cuda!
+# 
+# removing drp from first layer of decoder: embds=400,got loss=1331, more details in reconstructions
+# but random generations are still like before
+# 
+# use (-1,1) and tanh and horizontalflip : cudaerror! its getting ridiculous! torch 2.5 is buggy as hell!
+# use mse -skipped because of cuda-device-side-error (after a few kernel resets, it started working!)
+# use 0-1,sigmoid and horizontalflip: loss got 1331, but reconstruction is roughly the same
+# as without using horizionalflip.the random sampling is checkermarked and blurry blobs like before
+# using mse, doesnt change anything , the loss magnitude decreases, but the overall its the same
+# range(-1,1) mse and tanh: loss:34, everything else seems like before
+# 
+# adding more convs between deconvs didnt change anything loss:1332, and aside from that nothing
+# changed!
+# use groupnorm(1,outdim) insteadof batchnorm in deconvs: loss is 1332, reconstructions blurrier than when using bn
+# the random generation however, is now a colorful mess! there are lots of vibrant colored blobs
+# I cant detect any images, seems like pure blurry bloby mess to me!
+# use groupnorm(4,outdim) insteadof batchnorm in deconvs:1337 still the same,
+# use groupnorm(outdim,outdim) instead of batchnorm for all layers: loss doesnt decrease!
+#
+# revert back to deconv,sigmoid,(0-1),embds=400, now this time remove dropout
+# after mu in encoder: the loss is down to 1323! and the images are now much sharper!
+# silly me completey forgot about removing it! however, the generations are still blurry messes
+# they are too blurry infact!
+#
+#
+#
 #
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
@@ -4646,19 +4850,20 @@ kwargs = {"img_shape":img_shape,
 check_latent_representation_diversity(model, dataloader_train)
 plot_latent_space_encodings(model)
 evaluate_on_testset(model, dataloader_test, **kwargs)
-plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
-plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+# plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # fix these two for skipcon version
-
 if not model.use_skip_con:
     # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
     generate_random_images(model, count=32,img_shape=img_shape)
-    imgs,labels = next(iter(dataloader_train))
-    view_images(imgs,labels,rows=12,cols=11)
-    imgs = imgs.to(device)
-    img_t = imgs[0].unsqueeze(0)
-    generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
-    generate_latent_space_grid(model,n=20,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    # imgs,labels = next(iter(dataloader_train))
+    # view_images(imgs,labels,rows=12,cols=11)
+    # imgs = imgs.to(device)
+    # img_t = imgs[0].unsqueeze(0)
+    #%%
+    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    #%%
     # lets view some images and generate
     # some only for a specific class
     # note that our current approach only
