@@ -3847,22 +3847,25 @@ def plot_training_metrics(mu_list, std_list, kl_losses, losses):
 
 import math
 # we use this schedule to gradually increase beta
-def beta_schedule(beta_max, epoch, total_epochs, k=15):
+def beta_schedule(beta_max, epoch, total_epochs, midpoint=0.50, k=15):
     # scale epoch to [0,1]
     progress = epoch / total_epochs  
     # value goes from near 0 to near 1 around the midpoint.
-    # by subtracting 0.5, we're shifting the range so that when progress is 0.5 
+    # by subtracting midpoint(0.5), we're shifting the range so that when progress is 0.5 
     # (i.e. halfway through training), the argument to the exponential is zero.
     # at this point, the sigmoid function yields half of its maximum value 
     # (when scaled by beta_max). this effectively means that the increase in 
     # beta is centered around the middle of training, with a slow start, 
     # a rapid increase around the halfway mark, and then a plateau as 
     # training approaches the end.
-    current_beta = beta_max / (1 + math.exp(-k * (progress - 0.5)))
+    current_beta = beta_max / (1 + math.exp(-k * (progress - midpoint)))
     return current_beta
 # print(f'{[beta_schedule(0.5,i,100,k=10) for i in range(100)]}')
 # k=15 seems ok!
-# print(f'{[beta_schedule(0.5,i,100,k=15) for i in range(100)]}')
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.5, k=15)) for i in range(100)]}')
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.85, k=15)) for i in range(100)]}')
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.85, k=10)) for i in range(100)]}')
+
 def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, beta, reduction, normalize, use_mse, interval, kl_anealing, use_freebits, min_kl=0):
 
     # a clear sign of posterior collapse is an extremely low kl term.
@@ -4255,7 +4258,7 @@ def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, row
 # now lets generate new images by stepping through the latent space
 import matplotlib.animation as animation
 @torch.no_grad()
-def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, fps=30):
+def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, fps=30,mu=0.02,std=0.02):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     z = torch.randn(size=(sample_count, model.embedding_size)).to(device)
@@ -4266,7 +4269,7 @@ def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, f
         # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
         # so it changes faster. the more farther away from mean, the more different
         # it becomes from that image
-        imgs = model.decoder(z*(i*0.02)+0.02)
+        imgs = model.decoder(z*(i*std)+mu)
         b,c,h,w = imgs.shape
         imgs2 = imgs.view(imgs.size(0), c, h, w)#1x28x28 or 3x28x28
         new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
@@ -4551,7 +4554,7 @@ embedding_size = 400 #2,10,20,50,70,90,100,128,256,384,512
 # 
 
 # 
-beta=1#0.0001 #0.0001, 0.001,1,2,4,
+beta=0.3#0.0001 #0.0001, 0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
 reduction='mean' #mean
@@ -4808,9 +4811,44 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # much. the img recons are very very blurry!its very bad, some are not even formed properly.random generations
 # is got better as well, but images like recons are still blurry, but they are better formed,with
 # vibrant colors
-# trying beta=1, klanealing:  fix kl anealing
+# trying beta=1, klanealing:  added new beta schedule instead of linear one which used too high
+# values! now with beta=1, klanealing loss is 1441 (klloss 443) and it seems we have over fitted
+# image recons is awful! expectly, many images are not even formed properly and the whole image is
+# is very blurry. random regeneation is not good either, cant say its better than previous case!
+# using beta=0.5, klannealing: loss is 1394 (kl loss is 618). we overfitted half way!
+# and mean got close to 0 and std close to 1 which is not good, it needs more regularization I guess
+# as for the outputs, the image reconsts is much better than previous test(beta=1), but as expected
+# due to higher beta at the end of training, images are blurry and less detailed, but much detailed
+# and less blurry than previous case!(you get the idea) so slight segmentations can be noticed
+# in latent space, not much, but its defnitely there).random generations are better than before
+# some images clearly show the objects, though very blurry but its like the img recons quality
+# while others are more jumbled!
+# using beta=0.5, kl anealing, usin midpoint=0.85 ineats of 0.5:loss is 1349(kl loss is5048)
+# the mean is close to 0, and we see sign of overfitting, the image recon is much better than
+# before, (before they looked like smudged abd blurry!) but this has structures, and details
+# but obviously its very blurry, and images are not formed completely, and they lack details
+# but still better than before. the generation is not good either, cant say its better than before
+# it seems we need to hit a balance between kl and recon using
+# precise annealing to get a good output
+# using beta=0.5, kl anealing, usin midpoint=0.70:loss=1368(kl loss=1450), we got overfitted badly
+# mean is nearly 0 which is bad! image recons is bad as well, blurry, smudged, very rough, not detailed!
+# this is not good for us
 # 
+# using beta=0.3 no kl annealing: loss 1414 (klloss=192), imag recons are blurry, colors are not
+# accurate, and shapes are not formed properly, but is worse than previous one!random generation is also 
+# not good and very blurry!but some images seem well-formed, but very very blurry! (i can spot
+# a car, a dogs head, a cat, a horse, but its exretemely blurry!) ran again, its pretty much the same thing!
+# mean is near zero, and std is around 0.7, both of which show not ideal situation(nearning collapse).
 #
+# using beta=0.3, klannealing(midpoint=0.5,k=15): loss is 1373(klloss=677 ), mean=0.std=0.4
+# we have overfitted it seems again, the image recons though still very blurry, is better than
+# before, we still have not formed images,very blurry images, but compared to previous, its better
+# random generation is not that different from before. but i could see interpolations improved
+# it seems we just need to play with hyperparameters at this point! which means Im fine 
+# ive already put a lot of effort into this, so we can do parameter tuning nexttiem
+# 
+# 
+# 
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
 # with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
@@ -4898,8 +4936,9 @@ if not model.use_skip_con:
     # imgs = imgs.to(device)
     # img_t = imgs[0].unsqueeze(0)
     #%%
-    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
-    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    # shows a fade horse at the end,still blurry need to focus to spot it
+    generate_latent_space_grid(model,n=80,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
     #%%
     # lets view some images and generate
     # some only for a specific class
@@ -4913,22 +4952,22 @@ if not model.use_skip_con:
     # but overall they are roughly the same, they
     # however change dirastically from class to class
     generate_similar_images(model, imgs[3])#0
-    generate_similar_images(model, imgs[13])
-    generate_similar_images(model, imgs[25])
-    generate_similar_images(model, imgs[2])#1
-    generate_similar_images(model, imgs[5])
-    generate_similar_images(model, imgs[14])
-    generate_similar_images(model, imgs[1])#2
-    generate_similar_images(model, imgs[32])#3
-    generate_similar_images(model, imgs[4])#4
-    generate_similar_images(model, imgs[15])#5
-    generate_similar_images(model, imgs[11])#6
-    generate_similar_images(model, imgs[0])#7
-    generate_similar_images(model, imgs[8])#8
-    generate_similar_images(model, imgs[7])#9
+    generate_similar_images(model, imgs[10])#0
+    generate_similar_images(model, imgs[21])#0
+    generate_similar_images(model, imgs[6])#1
+    generate_similar_images(model, imgs[9])#1
+    # generate_similar_images(model, imgs[14])
+    generate_similar_images(model, imgs[25])#2
+    generate_similar_images(model, imgs[0])#3
+    generate_similar_images(model, imgs[22])#4
+    generate_similar_images(model, imgs[12])#5
+    generate_similar_images(model, imgs[4])#6
+    generate_similar_images(model, imgs[13])#7
+    generate_similar_images(model, imgs[1])#8
+    generate_similar_images(model, imgs[23])#9
 
     # the animation maynot work inside jupyternotebook, but the gif file works
-    create_interpolation_animation(model, filename=f'cifar10_{timestamp}')
+    create_interpolation_animation(model, filename=f'cifar10_{timestamp}',mu=0.2,std=0.01)
 #%%
 # save the model
 # timestamp = datetime.datetime.now().strftime("%H_%M_%S")
