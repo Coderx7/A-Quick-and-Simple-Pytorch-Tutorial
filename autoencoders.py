@@ -3584,9 +3584,6 @@ class VAE(nn.Module):
         self.bottleneck_size = self.embedding_size*4*4
         self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
-        # tem classifier to see if it can enhance the results 
-        # by further compartmentizing the latent subspaces
-        self.classifier = nn.Linear(self.bottleneck_size,10)
         self.drp = nn.Dropout(0.1)
         # update:
         # ok during training with certain choices of hyperparameters
@@ -3693,7 +3690,6 @@ class VAE(nn.Module):
             # we use self.register_buffer so ema_skipcon is saved when we save our model
             # and also its not included in computational graph
             self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
-        
 
     def reparamtrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -3730,7 +3726,6 @@ class VAE(nn.Module):
         # print(f'{output.shape=}')
         output = output.view(input.size(0),-1)
         mu = self.fc_mu(output)
-        # preds = self.classifier(output)
         # mu=self.drp(mu)
         log_var = self.fc_logvar(output)
         log_var=self.drp(log_var)
@@ -3828,7 +3823,7 @@ class VAE(nn.Module):
 # test the vae and the output shape, making sure 
 input_channel=3
 test_model = VAE(embedding_size=100, input_channel=input_channel)
-img_re, _,_ = test_model(torch.randn(size=(5,input_channel,28,28)))
+img_re, *_ = test_model(torch.randn(size=(5,input_channel,28,28)))
 print(f'{img_re.shape=}')
 #%%
 # lets train our model again
@@ -3884,7 +3879,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
     for e in range(epochs):
         for i, (imgs, labels) in enumerate(dataloader_train):
             imgs = imgs.to(device)
-            preds,mu, logvar = model(imgs)
+            reconst_imgs,mu, logvar = model(imgs)
             
             # kl annealing prevents kl loss from overwhelming early training,
             # so we increase its beta gradually
@@ -3899,7 +3894,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
                 # without it dominating the whole loss
                 beta = min(1,e/epochs)
                 
-            loss, recon_loss, kl_loss = model.calculate_loss(preds, imgs, 
+            loss, recon_loss, kl_loss = model.calculate_loss(reconst_imgs, imgs, 
                                                              mu, logvar,
                                                              beta=beta, 
                                                              reduction=reduction,
@@ -4027,15 +4022,16 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
 
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
-        preds, mu, logvar = model(imgs)
-        loss,*_ = model.calculate_loss(preds, imgs, mu, logvar, beta, reduction, use_mse,use_freebits,min_kl,normalize)
+        labels = labels.to(device)
+        reconst_imgs, mu, logvar = model(imgs)
+        loss,*_ = model.calculate_loss(reconst_imgs, imgs, mu, logvar, beta, reduction, use_mse,use_freebits,min_kl,normalize)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
             f'\tLoss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().view(-1, *img_shape)
+            reconstructeds = reconst_imgs.cpu().view(-1, *img_shape)
             # grab the first few images and their reconstructions
             # sidenote: when we use no_grad, theres no gradients, so no need for .detach()!
             imgs = imgs[:sample_count].cpu().numpy()
@@ -4534,7 +4530,7 @@ embedding_size = 400 #2,10,20,50,70,90,100,128,256,384,512
 # 
 
 # 
-beta=0.0001 #0.0001, 0.001,1,2,4,
+beta=1#0.0001 #0.0001, 0.001,1,2,4,
 # reduction mean works much better for both mnist and cifar,
 # its much more stable! especially for cifar10
 reduction='mean' #mean
@@ -4549,7 +4545,7 @@ normalize = True # True for reduction='mean'
 # on other parameters as well(lr formost,
 # then skipcon and beta value)
 # using bce, it doesnt help,
-kl_anealing=False #False
+kl_anealing=True #False
 # skipcon is especially effecive when training 
 # cifar10 for example(without kl-annealing)
 # (especially if encoding has spatial dims>1 like 2x2 or 4x4
@@ -4767,12 +4763,32 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # use groupnorm(outdim,outdim) instead of batchnorm for all layers: loss doesnt decrease!
 #
 # revert back to deconv,sigmoid,(0-1),embds=400, now this time remove dropout
-# after mu in encoder: the loss is down to 1323! and the images are now much sharper!
+# after mu in encoder: the loss is down to 1323! the images are now much sharper(nearly prefect I'd say?! details are visible unlike before)!
 # silly me completey forgot about removing it! however, the generations are still blurry messes
 # they are too blurry infact!
+# using crossentropy loss with other losses didnt change much, got 1325! it made reconst blurrier
+# so its not good.
 #
-#
-#
+# using beta=0.001 its roughly the same, the loss is 1326, the colors are a bit fader compared to 
+# beta=0.0001, the generation is now shows a lot more checkermarks, black checkermarks. 
+# still very blurry, with a tiny faint touch of images, its really faint, but if I look closely
+# I can see its an image, a heavily, blured, noisy image, still cant properly tell what they all
+# maybe a plane? its obviously somewhat more detailed than the previous beta(0.0001).
+# using beta=0.01 loss=1334(kl loss is now in 1300s),recons-images are considerably blurrier, no significant change in latent space
+# is visible,(i.e. no visible improvements in formation of subspaces) but random generations
+# now show more refined images/still heavily blurred with chekermarks, but its clear they 
+# are images, you can tell they are heavily noisy/distorted images.
+# using beta=0.1 ,loss=1368 (kl loss is now in 200s, its inversly related to beta value, smaller beta means larger kl loss!)
+# expectedly image recons are getting blurrier, but at the same time, random
+# generations are getting better, now I can see blurry but colorful, images, no checkermarks or
+# black bars in the images are visible. the images are very blurry though
+# using beta=1 (might be time to use klanealing so image recons is not affected that much!): loss
+# 1536(kl loss 166 nearly intact the wholetimme), it decreased from 1900s, but didnt go down 
+# much. the img recons are very very blurry!its very bad, some are not even formed properly.random generations
+# is got better as well, but images like recons are still blurry, but they are better formed,with
+# vibrant colors
+# trying beta=1, klanealing:  fix kl anealing
+# 
 #
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
@@ -4847,11 +4863,11 @@ kwargs = {"img_shape":img_shape,
           "min_kl":min_kl,
           "kl_anealing":kl_anealing,
           "normalize":normalize}
-check_latent_representation_diversity(model, dataloader_train)
+# check_latent_representation_diversity(model, dataloader_train)
 plot_latent_space_encodings(model)
 evaluate_on_testset(model, dataloader_test, **kwargs)
-# plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
-# plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # fix these two for skipcon version
 if not model.use_skip_con:
     # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
