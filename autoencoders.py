@@ -4079,6 +4079,7 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
 
 @torch.no_grad()
 def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28), img:torch.Tensor=None):
+    print(f'using {lower_bound=} and {upper_bound=}')
     # lets see if the transition in our latent space is smooth
     # that is we should be able to smoothly transition from one
     # class to the other, at least this is what we are tryting 
@@ -4503,7 +4504,7 @@ input_channel = 1 if dataset =='mnist' else 3
 # 50 seems a fair choice for cifar10 example,
 # larger values need more regularization though
 # good choice is 384, but for visualization 200 is better for now
-embedding_size = 400 #2,10,20,50,70,90,100,128,256,384,512
+embedding_size = 600 #2,10,20,50,70,90,100,128,256,384,512
 # in theory beta>1 forces the model to
 # use latent space more efficiently
 # but for our quick tests here, especially in cifar10,
@@ -4868,8 +4869,11 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # generations are much better now, still a long way to crisp images. however, the interpolation
 # and random generation youcan more easily see the object, for example in interpolation we can
 # see a car, morphing into another car, its blurry and rough but its there and its much 
-# clearer than before
-# 
+# clearer than before, using higher embdsz(like 600) can give betetr result, for exampe
+# with embds=600 the loss got 1364, but the generation and interpolation was good (like e.g. in -1,1 range)
+# i conclude this here, we can improve this using other techniques we talked about like heirarchical latent variables
+# but I dont want to spend too much time on it , as we can get much better results using other methods
+#  
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
 # with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
@@ -4957,11 +4961,17 @@ if not model.use_skip_con:
     # view_images(imgs,labels,rows=12,cols=11)
     # imgs = imgs.to(device)
     # img_t = imgs[0].unsqueeze(0)
-
-    generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+#%%
+# Use multiple of embdsz to get better output for exampe for embds=600 we can use 60/120etc
+# for 400 its 20,40,etc, play with range as well, higher number(-10/10) may make the output worse
+# use different ranges to inspect the output (-1,1,-2,2,-0.9,0.9 etc)
+    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
     # shows a fade horse at the end,still blurry need to focus to spot it
-    generate_latent_space_grid(model,n=80,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=40,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=120,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=120,lower_bound=-0.9,upper_bound=0.9,img_shape=img_shape,img=None)
 
+#%%
     # lets view some images and generate
     # some only for a specific class
     # note that our current approach only
