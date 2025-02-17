@@ -3552,7 +3552,6 @@ class VAE(nn.Module):
         # a simple weight to control the amount of noise applied on our z
         self.noise_weight = noise_weight
         
-        
         self.encoder = nn.Sequential(conv(self.input_channel,32),#28x28
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
@@ -3584,6 +3583,7 @@ class VAE(nn.Module):
         self.bottleneck_size = self.embedding_size*4*4
         self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
         self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
+        
         self.drp = nn.Dropout(0.1)
         # update:
         # ok during training with certain choices of hyperparameters
@@ -3722,13 +3722,14 @@ class VAE(nn.Module):
         self.ema_skipcon.copy_(self.ema_decay * self.ema_skipcon + (1 - self.ema_decay) * outputs_mean)
     
     def encode(self, input):
+        # todo: add heirarchical z
         output = self.encoder(input)
         # print(f'{output.shape=}')
         output = output.view(input.size(0),-1)
+        # dont use drpout on mu, it makes everything worse!
         mu = self.fc_mu(output)
-        # mu=self.drp(mu)
         log_var = self.fc_logvar(output)
-        log_var=self.drp(log_var)
+        # log_var=self.drp(log_var)
         z = self.reparamtrization_trick(mu, log_var)
         # if we use skip connection, lets update the moving average
         if self.use_skip_con:
@@ -4862,6 +4863,13 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # blurry and need a long way to get better. but better than before). i stop here its good enugh!
 # vae dont create sharp images like that! we need to us emore powerful variants!
 # 
+# try with embds=400, disabled drpout after logvar: (forgot to remove it when
+# I removed mu dropout!): loss:1356(kllos:677) img recons details are overall better imho
+# generations are much better now, still a long way to crisp images. however, the interpolation
+# and random generation youcan more easily see the object, for example in interpolation we can
+# see a car, morphing into another car, its blurry and rough but its there and its much 
+# clearer than before
+# 
 # for future refrence, I first started with embdsz=50 and everythin set to False
 # except normalize, then tried with mse with basically every options, it only worked
 # with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
@@ -4923,6 +4931,7 @@ save_model(modelname=modelname, kwargs=kwargs)
 #%%
 timestamp2 = timestamp
 print(f'{timestamp2=}')
+# modelname='vae_cifar10_400_mean_normalized_bce_11_53_36_2025_02_17.pth'
 # save_model(modelname=modelname, kwargs=kwargs)
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
@@ -4935,7 +4944,7 @@ kwargs = {"img_shape":img_shape,
           "min_kl":min_kl,
           "kl_anealing":kl_anealing,
           "normalize":normalize}
-# check_latent_representation_diversity(model, dataloader_train)
+check_latent_representation_diversity(model, dataloader_train)
 plot_latent_space_encodings(model)
 evaluate_on_testset(model, dataloader_test, **kwargs)
 plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
