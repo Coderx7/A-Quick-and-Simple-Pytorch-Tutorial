@@ -1896,8 +1896,8 @@ for e in range(epochs):
 # the encoder does not create a single latent vector representation, instead, it creates
 # two! 
 # one for mean and another for standard deviation. these are in fact parameters that are 
-# used to sample from a normal/gaussian distribution from which we get a latent vector which
-# the decoder accepts as input and tries to reconstructs the input from.
+# used to sample from a normal/gaussian distribution from which we get the latent vector from 
+# which the decoder accepts as input and tries to reconstructs the input from.
 # The encoder creates different mean/stds for each class by which we can generate
 # samples similar to said classes. more importantly, because of the way VAE is built, its
 # possible to go from one class to another in a gradual manner, which means we can actually
@@ -1913,8 +1913,9 @@ for e in range(epochs):
 # synthetic data for training purposes, or extracting somewhat meaningful features
 # or pretraining our model before doing the actual training 
 # (back in the day most of the time as training was very hard 
-# due to vanishing/exploding gradient issues at the time, its still the ccase as 
-# well especially in llm domain! though)
+# due to vanishing/exploding gradient issues at the time. its still used as 
+# well especially in llm domain! though not for the mentioned issues, but 
+# having a basic knowledge base for further manipulation)
 # a bit later we found that, creating random data(images mostly at first) isnt 
 # really that attractive, and we can actually do much more and much better, 
 # for one, what about experimenting with controling the generation process 
@@ -1934,18 +1935,18 @@ for e in range(epochs):
 # (encodings) formed distinctly clustered subspaces for each class. 
 # if you think about it, this makes prefect sense, as distinct encodings for each image 
 # type(or any data really) makes it much easier for the decoder to decode it
-# and it also aligns very well with our goal of replicating the same images.
+# it also aligns very well with our goal of replicating the same images.
 # However, when we decide to build a generative model, where we want to create
 # different 'variations' of the same image class or data, we dont just want to generate
 # the same image we find in our dataset. 
-# to this end, we would want to be able to generate variations on an input image, variations
+# to this end, we would like to be able to generate variations on an input image, variations
 # from the whole dataset, that does not explicitly show up in one image, 
 # it would be great if we could, combine different features from different classes, 
 # and still have a pretty realistic outcome. 
 # this means from a technical prespective, to be able to move smoothly in the latent space,
-# and be able to sample from anypart of it. 
+# and be able to sample from any part of it. 
 # sampling like this means, we could generate completely novel images that dont exist explicitly
-# in our dataset, depending on where we sample from in our latent space, between which clusters.
+# in our dataset, depending on where we sample from in our latent space, between which latent clusters.
 #   
 # our latent space therefore needs to be continuous otherwise, if it has
 # gaps between clusters or in other words, discontinuities, and we try to generate a 
@@ -2178,15 +2179,17 @@ for e in range(epochs):
 # which may lead to blurry reconstructions. for example if we had an image where a 
 # pixel was 0.9 and the predicted value was 0.8, BCE would penalize the small difference in
 # a way that maintains a sharp reconstruction however, MSE, might have lead to an average of
-# multiple possible outputs, causing blurry reconstructions.
-# having this said, MSE is used with color images, especially the ones that are not normalized in 0-1
-# (they are either unbounded, or are normalized [-1,1] it produces smoother but sometimes blurrier
-# reconstructions.)
+# multiple possible outputs, causing blurry reconstructions. (we see this in our trainig)
+# 
+# having this said, you can see MSE being used with color images(especially in GANs), especially the ones that
+# are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
+# it produces smoother but sometimes blurrier reconstructions.)
+# 
 # so MSE tends to work better for smooth images, while BCE works well when pixel values behave
 # like probabilities (high contrast regions, thresholded images, etc).
 # !EDIT !EDIT !EDIT
 # (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
-# though it might be a g ood idea to follow and get good result, )
+# though it might be a good idea to follow and get good result, )
 #
 # this is the equilibrium/fine balance reached by the cluster-forming nature of the
 # reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
@@ -2249,7 +2252,7 @@ for e in range(epochs):
     # lower-dimensional space (i.e the right choice for the amount of compression (size of vector z,
     # as too few parameters may very well be insufficient to yield the desired output)
     # 
-    # sidenote2:
+    #! sidenote2:!Edit - excessive remove
     # we can measure the quality of the reconstruction process and see how well
     # our model is doing by using the log-likelihood logpϕ(x∣z), which quantifies how well
     # the decoder has learned to map the latent representation z back to the original input x. (use latent vector z instead?)
@@ -2550,27 +2553,27 @@ class deconv(nn.Module):
 
 # instead of deconv, for getting better result, it doesnt work for me! i keep getting cuda error
 # I guess its because of my choice of kernels! i need to get this to work!
-class PixelShuffleBlock(nn.Module):
-    def __init__(self, in_dim, out_dim, upscale_factor=2, act=nn.LeakyReLU(0.2), batch_norm=True):
-        super().__init__()
-        self.block = nn.Sequential(
-            # for pixelshuffle to work, we multiply the outdim by upscalefactor
-            # and then feed the result to pixelshuffle with the upscalefactor
-            # it will rearange the channels,upsample the image with the original outdim
-            # so the networks outputdim stays the same
-            nn.Conv2d(in_dim, out_dim * (upscale_factor ** 2), kernel_size=3, padding=1),
-            # use PixelShuffle to rearrange channels into spatial upsampling.
-            nn.PixelShuffle(upscale_factor),
-            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-            act
-        )
-        self.residual_connection = (in_dim == out_dim)
+# class PixelShuffleBlock(nn.Module):
+#     def __init__(self, in_dim, out_dim, upscale_factor=2, act=nn.LeakyReLU(0.2), batch_norm=True):
+#         super().__init__()
+#         self.block = nn.Sequential(
+#             # for pixelshuffle to work, we multiply the outdim by upscalefactor
+#             # and then feed the result to pixelshuffle with the upscalefactor
+#             # it will rearange the channels,upsample the image with the original outdim
+#             # so the networks outputdim stays the same
+#             nn.Conv2d(in_dim, out_dim * (upscale_factor ** 2), kernel_size=3, padding=1),
+#             # use PixelShuffle to rearrange channels into spatial upsampling.
+#             nn.PixelShuffle(upscale_factor),
+#             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+#             act
+#         )
+#         self.residual_connection = (in_dim == out_dim)
 
-    def forward(self, x):
-        out = self.block(x)
-        if self.residual_connection:
-            out += x
-        return out
+#     def forward(self, x):
+#         out = self.block(x)
+#         if self.residual_connection:
+#             out += x
+#         return out
 
 #since I might disable batchnorm for decoder, I enable bias by default
 # otherwise id leave it at false!
@@ -2591,7 +2594,6 @@ class upconv(nn.Module):
             out += x
         return out
 
-#! check I used variance and standard deviation correctly here    
 # the overall structure of the VAE is roughly the same it consits of an encoder section 
 # and a decoder section. lets implement them, well explain each part when implementing them
 class VAE(nn.Module):
@@ -2612,7 +2614,11 @@ class VAE(nn.Module):
                                      conv(256,self.embedding_size,stride=2,padding=1),#1x1
                                      # nn.Linear(28*28, self.embedding_size)
                                     )
+        
         # 1x1 is the spatial dims of the output of the last encoder layer
+        # we can use an extra fc layer to get the flattened encoderoutput
+        # and use the 1d output of this extra fc layer and decouple them!
+        # but I simply didnt do that here!(i simply forgot when I was trying to get this to work initially!)
         bottleneck_size = self.embedding_size*1*1 
         # mean
         self.fc1_mu = nn.Linear(bottleneck_size, self.embedding_size) 
@@ -2627,10 +2633,12 @@ class VAE(nn.Module):
         # sidenote: 
         # if we start our decoder with a linear layer,
         # we need to note 2 things:
-        #1. preferably do not shrink too much in decoder, like at least retain some spatial dimension (like 4x4)
+        #1. preferably do not shrink too much in decoder, 
+        # like at least retain some spatial dimension (like 4x4)
         # if we didnt, then in the decoder start with a larger spatial dim
         # we add the desired spatial dim in form of multiplication 
-        # like (nn.Linear(self.embedding_size, 128*4*4)) 4*4 being the spatial dims (and is a good choice usually dont go smaller unless you know what youre doings)
+        # like (nn.Linear(self.embedding_size, 128*4*4)) 4*4 being the spatial dims
+        # (and is a good choice usually dont go smaller unless you know what youre doing)
         # next we need to reshape the output properly so the next deconv layers get the
         # proper input.
         # we can do this in several ways, but one way would be to do this in forwardpass in
@@ -2683,8 +2691,8 @@ class VAE(nn.Module):
                                     )
     
     # Note: 
-    # In order to deal with the fact that the network may learn negative values
-    # for σ, we'll typically have the network learn log(σ) and exponentiate(exp) it 
+    # In order to deal with the fact that the network will also learn negative values
+    # for σ, we'll have the network learn log(σ) and exponentiate(exp) it 
     # to get the latent distribution's variance.
     def reparamtrization_trick(self, mu, logvar):
         # !edit combine them in one paragraph, we have too many sidenotes that we can 
@@ -2799,11 +2807,9 @@ print(f'{img_re.shape=}')
 # or we can use reduce='mean'. 
 # if we want to use BCE with reduce='sum' we only calculate the kl
 # with sum. but when we want to use BCE with reduce='mean' or mse
-# we use sum(,-1) and then use torch.mean(loss_recons+kl)
+# we use sum(,-1) and then use loss_recons+torch.mean(kl)
 # we also need to normalize our reconstruction loss by the input dim
 # ension size. 
-# the original paper uses bce with sum and it gives the best result
-# the mse version doesnt work well everywhere
 #!edit lets not use beta here, and show how hard it can get, so after it we
 #! introduce beta and other techniques to fight the issues?
 def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False, normalize=True):
@@ -2839,8 +2845,8 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
         # our reconstruction loss which we do the same thing (take the mean of the whole batch (i.e. reduction=mean))
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
         # we also need to normalize the reconstruction/kl loss otherwise kl will overpower it!
-        # and we would get nonsens as output, (since the image is averaged pixelwise, but kl is summed for each sample
-        # its not balanced properly)
+        # and we would get nonsens as output, (since the image is averaged pixelwise, but
+        # kl is summed for each sample its not balanced properly)
         # we need to either divide kl loss by the image dimensions, 
         # or multiply reconstruction loss by the image dimensions to scale it up a bit
         # todo use input dims instead of hardcoded dims
