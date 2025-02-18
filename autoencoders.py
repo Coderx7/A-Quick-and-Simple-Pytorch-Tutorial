@@ -3195,21 +3195,31 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
  
 # now if you try to play with parameters, you'll see its really 
 # hard to get it working! and our results can quickly get either blury
-# or too similar/generic. so lets talk about the issues we are facing 
+# or too similar/generic. so lets talk about these issues we are facing 
 # and try to address them and hopefully get them fixed!
 #
 # During training we may face something called posterior collapse,
-# it can happen for several reasons, but the primarily, it happens
-# when the decoder is more powerful than the encoder and the latent
-# space stops encoding meaningful information and the decoder ignores
+# it can happen for several reasons, but primarily, it happens
+# when the decoder is more powerful than the encoder(or encoder is too weak!)
+# and the latent space stops encoding meaningful information and the decoder ignores
 # the latent features/variables during reconstruction.
-# in extreme cases, the decoder wont even rely on the encoded representation
+# in its extreme form, the decoder wont even rely on the encoded representation
 # and will only rely on the prior itself (i.e. the learned latent distribution
 # collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
 # as a result, the latent features/variables will contain little to no useful information,
-# leading to reconstructions that are too generic or blurry, 
-# and the vae behaves more like a standard autoencoder.
+# leading to reconstructions that are too generic or blurry.
 # 
+# its worth noting that sometimes, you get clear and near prefect reconstructions, at train
+# test time, but random generation is just nonsense. so it would be more accurate to say
+# we will have blurry, nonsensical (blobs of color!/random noise) randomly sampled outputs
+# because this is a sign of meaningless latent space! as we will see in our experiments shortly
+# we can get great reconstrutions(like by using skipcon) but absolutely awful generations!(vaes by nature can not 
+# produce crystal clear/sharp images when it comes to compelx datasets! so a blurry output
+# is what we can hope for as best, (the amount of blurryness can be improved but dont expect much!)) 
+# having said this, when the posterior collapse happens, both reconstructions and generations
+# suffer greatly! theoutput is just bad! details minimal or nonexistant, images are eaither not
+# formed, or are malformed(miss parts), etc. 
+#
 # (posterior collapse occurs when the encoder ignores the latent space,
 # in a way that the learned latent distribution becomes close to the prior
 # distribution (e.g. a standard normal distribution (N(0,I)), regardless 
@@ -3222,7 +3232,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # sidenote:
 # to refresh our memory :
 # the posterior distribution (q(z|x)) represents the distribution 
-# of the latent variable(vector) (z) conditioned on the data (x).
+# of the latent variable(vector) (z) conditioned on the input data (x).
 # in other words, it means given this input data x, what is the
 # probability distribution of the latent variable (z) (i.e. whats the (mu,sigma)?
 # the encoder  approximates this posterior (q(z|x)) using a
@@ -3240,9 +3250,9 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # 2. the latent space stays smooth and meaningful, making it easier to sample from.
 # 
 # Why is it bad if the Posterior becomes too close to the prior?
-# if the posterior q(z|x) gets too close to the prior distribution 
-# it means mu(x) ≈ 0 and sigma(x) ≈ I for all inputs, which is when
-# we say it collapses to exactly match the prior (p(z))
+# if it gets too close to the prior distribution it means mu(x) ≈ 0
+# and sigma(x) ≈ I for all inputs, which is when we say it collapses
+# to exactly match the prior (p(z)). 
 # basically it says the inputs (X) are ignored!(the whole point was to learn mu,sig for each x
 # and now, it treats as if they dont exist at all! it simply models N(0,I), i.e. noise!)
 # 
@@ -3251,33 +3261,34 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # on the input x. 
 # it means the encoder gives up on learning meaningful latent representations, 
 # and the decoder reconstructs the data purely from noise sampled from (p(z) = N(0,I)),
-# or directly learns shortcuts from the reconstruction loss.
+# or directly learns shortcuts from the reconstruction loss(this happens whne we us skip con forexample).
 # The vae essentially fails to use the latent space for encoding useful information
 # about the data.
 # 
-# now reason about collapse comes after
-# for example like this : 
-# This happens because the KL divergence is minimized too aggressively, 
-# overpowering the reconstruction loss.
-
-# note that in a good vae, the posterior q(z|x) should be "close enough"
-# to the prior p(z) for regularization, but not so close that it ignores x.
-# The reconstruction loss ensures that the posterior q(z|x) encodes meaningful information
-# about the input x, while the KL divergence ensures that the latent space remains smooth 
-# and aligned with the prior.(we dont want our posterior to deviate from the prior, because
+# !edit
+# This happens because the KL divergence is minimized too quickly and thus it
+# overpowers the reconstruction loss from the begining.
+# 
+# we want the posterior q(z|x) to be "close enough" to the prior p(z) for regularization,
+# but not so close that it practically makes the model ignore x.
+# The reconstruction loss job is to make sure the posterior q(z|x) encodes 
+# meaningful information about the input x, while the KL divergence's job is 
+# to make sure the latent space remains smooth and aligned with the prior.
+# (we dont want our posterior to deviate from the prior, because
 # we assumed given our prior we can regenerate the samples that look like our input)
-
+# 
 # now you know why we dont just minimize the KL loss alone cuz it would collapse q(z|x)
-# to p(z), causing
-# 1. No meaningful relationship between x and z (posterior collapse).
-# 2. The decoder reconstructs data from noise or directly minimizes reconstruction loss
-# without using the latent space.
+# to p(z), causing no meaningful relationship between x and z (posterior collapse)
+# and also it would cause the decoder to reconstruct data from noise or directly 
+# minimize reconstruction loss without using the latent space.
 #
 # so we use both losses together and balance reconstruction and KL loss:
 # loss = reconstruction_loss + beta . kl_loss(q(z|x) | p(z))
-# this ensures that: the latent space is regularized (via KL),
+# this ensures the latent space is regularized (via KL),
 # and the encoder learns meaningful encodings of the data (via reconstruction loss).
 # 
+# # !edit
+# recap
 # so for short: 
 # The prior distribution p(z) is fixed and simple (N(0, I)).
 # The posterior distribution q(z|x) is learned and depends on the data x using reconstruction loss in encoder.
@@ -3298,13 +3309,13 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # depends on the input x
 # learned by the vae during training.
 # 
-#
 # 
+# !edit
 # If the encoder is too simple (e.g. insufficient capacity, few layers, 
 # or too small latent dimensions), it may fail to encode meaningful 
-# representations of the input data.
-# This makes it easy for the latent space to drift toward the prior,
-# as the KL divergence loss (minimizing the distance between posterior and prior)
+# representations of the input. this makes it easy for the latent space
+# to drift toward the prior, as the KL divergence loss 
+# (minimizing the distance between posterior and prior)
 # dominates over reconstruction loss.
 # 
 # note that posterior collapse can happen for several reasons, a simple or underpowered 
@@ -3335,36 +3346,38 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # if you recall, the reparameterization trick job was to introduce 
 # randomness when sampling from (q(z|x)), if the model learns to 
 # reduce this randomness (e.g. by making standard deviation very small),
-# the latent space may become degenerate.
-# its worth noting that if the latent space is too small, it may also 
-# be forced to collapse.
+# the latent space may become degenerate. its worth noting that if the 
+# latent space is too small, it may also be forced to collapse.
 
 # so it could be several things that can contribute to this issue, altogether or alone. 
 # likewise, there are several solutions/techniques that can help mitigate this issue
 # and in a way they all do this by balancing the reconstruction quality and latent space 
 # learning properly. 
-# the first and most obvious one is to reduce the kl scaler/weighting, if its
+# 
+# the first and most obvious one is to reduce the kl scaler/weighting if its
 # set too high, if this is not the case, and we still face issues during training, 
 # then we can use a gradual approach, that is instead of a fixed scaler, 
 # gradually increase it over time (e.g. use a kl annealing schedule).
 # this should prevent the model from collapsing too early and should give meaningful
-# latent encodings(i.e. we start with beta=0 and increase it slowly to beta=1)
-# practically starting with no kl constraint, and gradually adding little bits by bits
+# latent encodings(i.e. we start with a very small beta (e.g like 0.0001) and increase it slowly to beta=1)
+# practically starting with no kl constraint, and gradually increasing it little by litlle
 # so we get to a good spot)
-# !edit check if my explanation is correct
+#
 # we can also instead of minimizing kl loss entirely, enforce a minimum kl value per
 # latent dimension (e.g. 0.1) this forces the model to use latent encodings
-# even when kl regularization is high.(we dont want our kl term to be 0 or near zero
-# so enforcing a minimum value of kl for each dimension essentially means, we are making
+# even when kl regularization is high. (we dont want our kl term to be 0 or near zero
+# so enforcing a minimum value of kl for each dimension essentially means we are making
 # that dimension to do somework and contribute a bit so cllectively, the latent space
 # gets to have at least some useful information for the decoder to utilize)
 # 
 # using a less powerful decoder is another obvious choice, since if its too powerful,
 # it may learn to ignore latent vector z altogether. this is straightforward
 # we just start using fewer layers or smaller networks or use a stronger bottleneck
-# constraint.
+# constraint.(this is only the case if we know for sure our encoder is working properly
+# and its not the simplistic one between the two, because obviously if its encoder that
+# needs more capacity, reducing decoders capacity wouldnt help!)
 # also increasing latent space size(if its too small) can also help distribute 
-# information across more dimensions and fix the issue.
+# information across more dimensions and fix the issue.(usually reduces the severity of the issue)
 # 
 # we can also add skip connections between the encoder and decoder so
 # that reconstruction does not fully rely on latent vector z.
@@ -3372,12 +3385,14 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # from the encoder to the decoder which reduces the decoder's 
 # reliance on a potentially collapsed z, encouraging meaningful latents)
 # the idea is if the decoder still gets useful low-level 
-#!edit)
-# features even if z is uninformative, we can prevent posterior collapse(is it correct?)
-# sidenote(the encoders output and the latent vector z need to be the same
-# size because we concatenate them together and work on that z' vector goin
-# forward! (well see this in a moment))
-
+# features even if z is uninformative, we can prevent posterior collapse!
+# however, most often than not, if we dont tune this properly, it will cause 
+# a posterior collapse itself! as it will make the decoder completely ignore the
+# latent variables, and therefore they would not get the chance to get properly 
+# tuned! it will result in getting near prefect reconstructions, but the random generation
+# would be terrible, a sign of garbage/uninformative/collapsed latent space!
+#
+# 
 # sidenote:
 # !EDIT include the paper names/urls/refs
 # this doesnt really belong here, because it belongs to heirarchial vaes
@@ -3399,19 +3414,22 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # features, while lower levels refine details.
 # !edit paper link
 # sidenote:
-# the idea for hierarchical priors comes from hierarchical vae paper,
-# which proposed instead of one latent vector z we use multiple latent vectors!
-# the latters depending on the previous ones.(assuimg we use 2 latent vectors, 
-# the second mu,logvar would use the first latent vector z to create the second
-# set of mu and logvar which we would then use to create latent vector z2 using 
-# reparameterization trick! and ultimately use this second z to reconstrcut the image)
+# the idea comes from hierarchical vae paper,which proposed instead of one 
+# latent vector z we use multiple latent vectors! the latters depending on the previous ones.
+# (assuimg we use 2 latent vectors, the second mu,logvar would use the first latent vector z 
+# to create the second set of mu and logvar which we would then use to create latent vector z2
+# using reparameterization trick! and ultimately use this second z to reconstrcut the image)
 # the idea was having multiple layers of latent variables with
 # dependencies between them would improve expressiveness of
 # the latent space, and help the network to model complex multimodal distributions
 # and more importanty reduce posterior collapse, as higher layers 
 # retain the global structure while lower layers capture 
 # the finer details(z1 learns higher level global features and z2 
-# learns lowerlevel fine-grained features)(we dont bother going this route though!)
+# learns lowerlevel fine-grained features ideally! in practice we can have multiple
+# and therefore this lowlevel/highlevel featres can get a bit nuisaunced! but you get the idea
+# multi-level of features/independent of others, practically trying to get arund the simplistic
+# assumption in our default vae imple,enttaion without introducing the overhead we discussed earlier!)
+# (we dont bother going this route though!)
 # !Edit add refs/papers- check papers/refs
 # ref https://arxiv.org/abs/1705.07120
 # a similar approach was introduced by VampPrior (Variational Mixture of Gaussians)
@@ -3424,7 +3442,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # so now lets rewrite our vae, this time with the enhancements
 #
 
-#!edit use this instead of the above? or merge
+#!edit use this instead of the above? or merge or use as recapt?
 # Posterior collapse can happen for several reasons, and yes, a simple 
 # or underpowered encoder is one of the possible causes. 
 # However, its often the result of an interplay of factors 
@@ -3465,8 +3483,8 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 
 # if the dataset is simple (e.g., small or low-dimensional), 
 # the decoder may easily reconstruct data without requiring meaningful latent codes.
-# this is often seen in tasks like MNIST digit reconstruction, where the decoder can 
-# perform well using only prior information.
+# this can be seen in datasets like MNIST where the decoder can perform well using 
+# only prior information.
 
 # Signs That the Encoder is Too Simple:
 # The kl term quickly drops to zero during training, even for complex data.
@@ -3481,31 +3499,28 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # use techniques like residual connections or
 # attention to make the encoder more expressive.
 
-# Regularize the Decoder:**
+# Regularize the Decoder:
 # reduce the decoder's capacity to prevent it from
 # "cheating" and relying on the prior.
 # add dropout or other regularization techniques to 
 # the decoder.
 
-# Use a KL Warm-Up Schedule:
+# KL Warm-Up Schedule:
 # gradually increase the weight of the kl term during 
 # training so that the encoder learns meaningful representations 
 # before being forced to match the prior.
 
-# Apply Free-Bits Regularization:
+# Free-Bits Regularization:
 # enforce a minimum KL loss for each latent dimension to ensure 
 # that the encoder uses the latent space effectively.
 
-# Tune (beta):
-# reduce (beta) as a high (beta) value can over-prioritize the kl term.
+# reduce beta as a high beta value can over amplify/over priortize the kl term.
 
 # Change the Prior Distribution:
 # use a more expressive prior (e.g., hierarchical or structured priors)
 # that better matches the data distribution, so the encoder doesnt
 # collapse to a simple normal distribution.
 
-
-# Final Thoughts:
 # A simple encoder can contribute to posterior collapse, but its not the sole reason.
 # The issue typically arises from a combination of:
 # an expressive decoder,
