@@ -1956,7 +1956,18 @@ for e in range(epochs):
 # this is why having a 'continuous' latent space is crucial here. 
 # This is what that differntiates VAEs from conventional autoencoders (basically any generative 
 # model for that matter). this is the core idea behind a VAE.
-# 
+#
+#! sidenote: edit this and add a plot to make it concrete
+# you can think of continuous in its raw form, imagine it and contrast it against the discrete!
+# like, imagine if we have a 2d plot, and we plot different samples, lets say dogs, in point a 
+# and point b, a cat in point c, a car in point e, etc when we say we want a continuouse space,
+# it means, all the points between point a and point b, should be valid points, and result in
+# dogs as well(thats interpolating gives us valid samples all the way from a to b)! in descrete mode, its dog a, nothing, and then suddenly dog b, likewise, from 
+# point b to c we should see inifint points from b up to c,which shows us dogs, all the way
+# to a cat (as we get close to c, dogs look more like cats, until ultimately its just our cat
+# we plotted in point c! sampling allows us to do this! does it now make sense?)
+#  
+#
 # VAEs offer an intersting approach here, instead of mapping inputs to fixed points in
 # the latent space (like traditional autoencoders), they say lets map inputs to probability
 # distributions! specifically, a Gaussian/Normal distribution.
@@ -2870,7 +2881,9 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
 # now lets train :
 # mnist dataset is a very simple dataset, and using embsize=2 we get good results right of the bat
 # but this is not the case all the time, if we use more complex datasets, we quickly see 
-# no matter how much we try dont get good results with this implementation, its expected, 
+# no matter how much we try we dont get good results with this implementation, its expected, 
+# (as the original vae came in 2013(https://arxiv.org/pdf/1312.6114) and was only used on two
+# datasets mnist and frey face dataset both of which are grayscale and very simple datasets.)
 # but for now, lets not get ahead of ourselves, and stick to mnist for now, just try 
 # different embeddingsize and hyperparamters to see how far you can get. even with mnist
 # we will be facing issues here, we'll be discussing the issues we face here shortly and fix them all
@@ -3435,9 +3448,27 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # a similar approach was introduced by VampPrior (Variational Mixture of Gaussians)
 # which said, instead of a single Gaussian prior, use a mixture of Gaussians.
 # this captures multi-modal distributions (e.g. different facial expressions in images)
-# we can also use VQ-VAE variant (Vector Quantized VAEs) which replaces 
-# the continuous latent space with discrete latent embeddings, making the
-# model less prone to collapse. (well cover this as well)
+# the abstract reads: 
+# Many different methods to train deep generative models have been introduced in the past. 
+# In this paper, we propose to extend the variational auto-encoder (VAE) framework with a
+# new type of prior which we call "Variational Mixture of Posteriors" prior, 
+# or VampPrior for short. The VampPrior consists of a mixture distribution 
+# (e.g., a mixture of Gaussians) with components given by variational posteriors 
+# conditioned on learnable pseudo-inputs. 
+# We further extend this prior to a two layer hierarchical model and show that this
+# architecture with a coupled prior and posterior, learns significantly better models.
+# The model also avoids the usual local optima issues related to useless latent dimensions 
+# that plague VAEs. 
+# We provide empirical studies on six datasets, namely, static and binary MNIST, OMNIGLOT, 
+# Caltech 101 Silhouettes, Frey Faces and Histopathology patches, and show that applying the
+# hierarchical VampPrior delivers state-of-the-art results on all datasets in the unsupervised
+# permutation invariant setting and the best results or comparable to SOTA methods for the 
+# approach with convolutional networks. 
+# 
+# we can also use VQ-VAE (Vector Quantized VAEs) which came to solve the vae issues (like posterior collapse)
+# it replaces the continuous latent space with discrete latent embeddings, making the
+# model less prone to collapse. and it works much much better than vaes, and has been
+# very influential well cover this after we are done with vae!
 
 # so now lets rewrite our vae, this time with the enhancements
 #
@@ -5663,7 +5694,7 @@ generate_samples()
 # Now for the disentagled version (β-VAE) we just add the β like this : 
 #     L = E_q(z|X)[log_p(X|z)] - βD_KL[q(z|X)||p(z))]
 # so to put it simply, in a disentagled vae (B-Vae) the autoencoder will only 
-# use a varable if it its important 
+# use a varable if it its important.
 
 def fc_batchnorm_act(in_, out_, use_bn=True, act=nn.ReLU()):
     return nn.Sequential(nn.Linear(in_,out_),
@@ -5926,6 +5957,236 @@ def latent_space_walk(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
 num_rows = z.shape[-1]
 latent_space_walk(num_rows)
 #%% 
+# VQ-VAE
+# ref : paper: Neural Discrete Representation Learning
+# there are two variants, the first paper came out in 2017 
+# and a followup work with some improvements came in 2019 
+# paper1?: https://arxiv.org/abs/1711.00937 2017
+# paper2: https://arxiv.org/abs/1906.00446 2019
+# pytorch implementation from Aäron van den Oord : 
+# https://colab.research.google.com/github/zalandoresearch/pytorch-vq-vae/blob/master/vq-vae.ipynb
+# a good video https://www.youtube.com/watch?v=VZFVUrYcig0
+#
+# as exciting as the idea behind VAEs are, they are prune to posterior collapse
+# and we saw that first hand, we tried different methods to improve upon our basic
+# vae, but the outcome left a lot to be desired really! we saw that the basic vae was
+# originally only used with simple datasets such as mnist and frey face dataset, and for
+# anything more complex it wouldnt work.(rememeber the simplification we did in vae, its one of 
+# the issues that prevent us from performing well on complex datastes)
+# we saw that to get around these issues, different variants were proposed, we used some 
+# of them in our work and got much better results. so there are other variants which improve upon it, 
+# we didnt cover all of them here, because there are many. so I try to only use the ones
+# that had substantially more novelties and improvements. the next variant we are going to
+# cover is the VQ-VAE, a very influential paper, that came to resolve vae issues
+# and was used in many high profile papers afterward (imagen, vqgan, etc)
+# VQ-VAE uses the same basic idea of the vae, however, it changes it in somewhat fundamental way
+# for one, it uses discrete latent representation instead of continuous one and argues 
+# that its a more natural appraoch toward modeling what we are dealing with in the real world
+# mostly because many important real-world objects are discrete. 
+# as an example, one can imagine classes like a Cat or a Car, and notice that it might not 
+# make sense to interpolate between these classes. on top of that, discrete representations are
+# also easier to model unlike their continous counterpart where we'd need to learn the
+# dependencies between the different variables which could be very complex.
+#! ADD introduction from paper, it says it good! 
+#
+# The abstract reads: 
+# Learning useful representations without supervision remains a key challenge in 
+# machine learning. In this paper, we propose a simple yet powerful generative model
+# that learns such discrete representations. 
+# Our model, the Vector Quantised-Variational AutoEncoder (VQ-VAE), differs from VAEs
+# in two key ways: the encoder network outputs discrete, rather than continuous, codes;
+# and the prior is learnt rather than static. 
+# In order to learn a discrete latent representation, we incorporate ideas from vector 
+# quantisation (VQ). Using the VQ method allows the model to circumvent issues of 
+# "posterior collapse" -- where the latents are ignored when they are paired with a 
+# powerful autoregressive decoder -- typically observed in the VAE framework. 
+# Pairing these representations with an autoregressive prior, the model can generate 
+# high quality images, videos, and speech as well as doing high quality speaker conversion
+# and unsupervised learning of phonemes, providing further evidence of the utility of the
+# learnt representations. 
+# 
+
+# how the model works?
+# we have 3 parts in a vq-vae architecture, an encoder, a quantizer and a decoder
+# the encoder gets an image and maps it to a sequence of discrete latent variables
+# the decoder takes these latent sequences and tries to reconstruct the input
+# now what about the quantizer part you may ask?
+# well to be more specific, our encoder gets an rgb image, and outputs some outputs ( lets call it E(x))
+# we also have an embedding layer where we make sure the encoder's ouput channels are the same 
+# as the dimentionality of this embedding layers.
+# to calculate the actual discrette latent variables, we need to use a trick, which is we 
+# instead of feeding the encoders output directly to decoder, we find the nearest embedding vector
+# and the encoders output, and grab its index.(grab the index of the embedding layer where its closes 
+# to our encoders outputs) we use this index, and grab the corrosponding
+# embedding vector from our embedings, and feed that to our decoder, and decoder uses it to 
+# reconstruct the input. 
+# since our comparsion here (the neigherst neighbor between our encoder and embeddings) doesnt
+# have a real gradient, we cant use backpropagation through it, (we cant have backward pass for that comparsion),
+# so instead we simply pass the gradients from the decoder to the encoder without changing them.
+# this is why we made our encoder output channels the same as embedding size, so we can compare with it
+# and use the decoders gradients for encoder.
+# the idea behind this is that since the encoders output representation and the input to decoder(which is the embeddings)
+# share the same channel dimensial space, the gradients contain useful information for how the 
+# encoder has to change its output to lower reconstruction error.
+# basically if the encoders output is close to embeddings, then we should be able to treat them
+# as the same and hence we can use embeddings gradients for the outputs as well. 
+# we do this in quantizer part beftween encoer and decoder
+
+class Quantizer(nn.Module):
+    def __init__(self, num_embd, embd_size, beta_weight):
+        super().__init__()
+        
+        self.num_embd = num_embd
+        self.embd_size = embd_size
+        self.beta_weight = beta_weight
+        
+        self.embeddings = nn.Embedding(self.num_embd, self.embd_size)
+        # lets normalize the weights uniformly
+        self.embeddings.weight.uniform_(-1/self.num_embd, 1/self.num_embd)
+        
+    def forward(self, encoder_outputs:torch.Tensor):
+        # we need to change our encoder_outputs shape from bchw to bhwc 
+        # basically moving the channel to the last dim, so that when we
+        # flatten the whole thing, we get each separate channels,
+        # so if our input shape is [16,64,32,32] we ultimately get
+        # [16*32*32, 64] or [16384,64] which means we are quantizing 
+        # each 16384 vectors independently, in otherwords, the channels
+        # are used as space in which it gets quantized (so it matches embedding size)
+        encoder_outputs = encoder_outputs.permute(dims=(0,2,3,1)).contiguous()
+        encoder_outputs_shape = encoder_outputs.shape
+        encoder_outputs_flatten = encoder_outputs.view(-1, self.embd_size)
+
+        # lets calculate the distance between them (squared euclidean distance)
+        # which is Σᵢ(zᵢ - eᵢ)² which if we expand it will be 
+        # d(z,e) = ∣∣z∣∣² + ∣∣e∣∣² − 2z⋅eᵀ
+        # that is taking the l2 norm of the encoders output and embeddings which are (B,D)
+        # B being our batchsize and D being the embedding size followed by a dotproduct
+        # between the two (equation 1 from paper)
+        distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
+                    torch.sum(self.embeddings.weight**2, dim=1,keepdim=True) -
+                    2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
+        # or we could use torch.cdist
+        # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
+
+        # now that we have the distances, lets grab the min indexes 
+        min_indexes = torch.argmin(distances, dim=1).unsqueeze(1)
+        # create a onehot encoded tensor for encodings
+        encodings = torch.zeros(size=(min_indexes.shape[0], self.num_embd), device=encoder_outputs.device))
+        # set each encoding to 1 where the indexes specify
+        encodings.scatter_(dim=1, index=min_indexes,value=1)
+        # now to get the actual embeddings, we simply multiply our encodings tensor
+        # which is a one hot encoded vector by the embeddings. where-ever we have 1,
+        # we will get the respective embeddings and the rest will be 0s. 
+        # this is basically a selection based on indexes now our quantized tensor will
+        # have embeddings at the specified indexes, and 0s everywhere else.
+        # this is zₑ(x)
+        quantized_z_ex = torch.matmul(encodings, self.embeddings.weight).view(encoder_outputs_shape)
+        
+        # now to calculate the loss which is equation 3, we need to calculate the last two terms
+        # as the paper says: 
+        # The decoder optimises the first loss term only, the encoder optimises 
+        # the first and the last loss terms, and the embeddings are optimised 
+        # by the middle loss term.
+        # we need quantized.detach() (stop_gradient operator in paper(written as sg[]))
+        e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
+        # this is z\_qx the 3rd term in equation 3, we stop gradient on encoders_output this time
+        q_loss = F.mse_loss(quantized_z_ex, encoder_outputs.detach())
+        # and finally we use the beta scaler for the second term
+        # we later add the reconstruction loss(log) from decoder to this 
+        loss = q_loss + self.beta_weight*e_loss
+        
+        # this is the Straight-Through Estimation (STE) part, which allows gradients to 
+        # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
+        # which is non-differentiable.
+        # basically using the detach trick here prevents the gradients from flowing through 
+        # (quantized_z_ex - encoder_outputs) so, during backpropagation the forward pass 
+        # uses quantized_z_ex, and the model sees the actual quantized values while the 
+        # backward pass behaves as if encoder_outputs were used, allowing the gradients
+        # to propagate through the encoder.
+        quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach()
+        # lets also calculate the average selection probablity. 
+        # this tells us how often an embedding vector is selected. 
+        # its important because it can tell us whether some vectors are rarely selected
+        # or not, if so then it might indicate embedding space/codebook collapse!
+        # its a common issue where only a few embeddings are used constantly and 
+        # therefore it results in wasted model capacity.
+        avg_probs = encodings.mean(dim=0)
+        # now using the average selection probablity, we can calculate the preplexity
+        # of the embedding space usage.
+        # the prepelxity measures how evenly the embedding vectors are being used.
+        # The formula is based on Shannon entropy H = − ∑pᵢ * logpᵢ 
+        # taking exp(H) gives us the perplexity, which ranges from 1 if only one embedding vector
+        # is used, meaning no diversity, to num_embds if all embedding vectors/codebook vectors
+        # are used equally.
+        # basically a higher perplexity means better embedding space/codebook utilization
+        # a low perplexity tells us that the model is underutilizing the embedding space, 
+        # which may lead to worse performance.
+        #
+        # sidenote:
+        # using a moving average should prevent low prepexlity!
+        # !edit add moving average!
+        # 
+        # sidenote: 
+        # in many implementations you may see people refering to embeddings(the whole embedding vectors/ditionary of embedding vectors!)
+        # as codebooks! 
+        # so embedding vectors and codebook vectors are the same thing! if you read the paper
+        # you'll see the authors always used embedding space/embedding vectors and the likes to
+        # address embedding vectors! but many people started calling it codebook because it kindaof
+        # looks like it (a ditionary of embedding vectors! thus a codebook!), 
+        # anyway I like the embeddings better so I keep using that
+        # but at the same time I add the codebook as well so you get familiar with t hat term as well
+        # its usually specific to vq-vae implementations.
+        #
+        #
+        prepelexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs+ 1e-10)))
+        
+        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity #, encodings
+
+# lets now add the main model 
+class VQVAE(nn.Module):
+    def __init__(self, input_channels, embd_num, embd_size, beta):
+        super().__init__()
+    
+        self.input_channels = input_channels
+        self.embd_num = embd_num
+        self.embd_size = embd_size
+        self.beta = beta
+        
+        # well use the same encoder/decoder from previous architectures
+        self.encoder = nn.Sequential(conv(self.input_channels,32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,128,stride=2),#3x3
+                                     conv(128,256,stride=1),#2x2 # for 4x4: 1
+                                     conv(256, self.embd_size, stride=1,padding=1,batch_norm=True),#1x1 #for 4x4:1 # for 2x2:1 #for 1x1:2
+                                    )
+        # retaining some spatial dimensions such as 2x2/4x4 helps
+        # when the dataset is more complex.
+        self.bottleneck_size = self.embd_size*4*4
+
+        self.drp = nn.Dropout(0.1)
+       
+        decoder_in_dim = self.embd_size
+        # we use the followng formula to determine the output size here
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # (h=1,k=4,s=2,p=1)
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+                                     nn.BatchNorm1d(256*4*4),
+                                     nn.ReLU(),
+                                     nn.Unflatten(1,(256,4,4)),
+                                     deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+                                     deconv(128,96,kernel_size=4,stride=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+                                     deconv(96,64,kernel_size=4,stride=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+                                     deconv(64,32,kernel_size=2,stride=1,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+                                     deconv(32,self.input_channels, kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+                                    )
+        
+        self.quantizer = Quantizer(self.embd_num, self.embd_size,beta_weight=self.beta)
+        
+        
+        
+        
+#%%
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf
 # ref1: https://wiseodd.github.io/techblog/2016/12/05/contractive-autoencoder/
