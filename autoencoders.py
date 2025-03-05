@@ -200,7 +200,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 12, cols =11):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
@@ -212,7 +212,7 @@ def view_images(imgs, labels, rows = 12, cols =11):
     # also note the figsize row,cols, if you use the wrong size
     # there might not be enough space to display the labels at the top!
     # (try (6,4) and see the result!)
-    fig = plt.figure(figsize=(6,8),dpi=100)
+    fig = plt.figure(figsize=figsize, dpi=dpi)
     # plt.title('View Images') 
     
     max_plots = rows*cols
@@ -228,7 +228,8 @@ def view_images(imgs, labels, rows = 12, cols =11):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
         # since mnist images are 1 channeled(i.e grayscale), matplotlib
         # only accepts these kinds of images without any channesl i.e 
-        # instead of the shape 28x28x1, it wants 28x28
+        # instead of the shape 28x28x1, it wants 28x28,for color images
+        # the squeeze and cmap will be ignored
         ax.imshow(imgs[i].squeeze(), cmap='Greys_r')
         ax.set_title(labels[i].item())
     
@@ -247,7 +248,8 @@ def view_images(imgs, labels, rows = 12, cols =11):
 # now lets view some 
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
-
+randns = torch.rand(size=(imgs.size(0),3,32,32))
+view_images(randns, labels,13,10)
 # good! we are ready for the actual implementation
 #%% 
 # The first autoencoder weare going to implement is the simplest one, 
@@ -474,7 +476,7 @@ def plot_embedding_clusters(model, dataloader_train, title='',use_pca=False):
     plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D{title}")
     plt.colorbar(scatter, label='Class Label')
     plt.show()
-
+#%%
 plot_embedding_clusters(model_mlp_ae, dataloader_train, use_pca=False)
 # 
 # if we used embedding_dim=2 in our previous examples, we would get a drastically different image
@@ -3950,6 +3952,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
     print(f'scheduler:       {scheduler.state_dict()}')
     print(f'interval:        {interval}')
     
+    model.train()
     for e in range(epochs):
         for i, (imgs, labels) in enumerate(dataloader_train):
             imgs = imgs.to(device)
@@ -4351,25 +4354,20 @@ def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, f
 # import os
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-def select_dataset(dataset_name='mnist', batch_size=128):
+def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     if dataset_name.lower() == 'mnist':
         dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
         dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+    
     elif dataset_name.lower() in ['cifar','cifar10']:
         # for cifar10 a better architecture and training regime is required
-        transformations_tr = transforms.Compose([transforms.Resize(28),
+        transformations_tr = transforms.Compose([transforms.Resize(size),
                                                  transforms.RandomHorizontalFlip(),
-                                                 transforms.ToTensor(),
-                                                #  transforms.Normalize((0.5, 0.5, 0.5),
-                                                #                       (0.5, 0.5, 0.5))
-                                              ])
-        transformations = transforms.Compose([transforms.Resize(28),
-                                              transforms.ToTensor(),
-                                            #   transforms.Normalize((0.5, 0.5, 0.5),
-                                            #                        (0.5, 0.5, 0.5))
-                                              ])
+                                                 transforms.ToTensor(),])
+        transformations = transforms.Compose([transforms.Resize(size), transforms.ToTensor(),])
         dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
         dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+   
     else:
         raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
     
@@ -4378,12 +4376,13 @@ def select_dataset(dataset_name='mnist', batch_size=128):
 
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
-# dataset = 'mnist'
+dataset = 'mnist'
 # # dataset = 'cifar10'
 # batch_size = 128
-# dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
-
-
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                   batch_size=batch_size)
+imgs,lbls=next(iter(dataloader_train))
+view_images(imgs,lbls)
 #%%
 # mnist test 
 dataset = 'mnist'
@@ -5962,10 +5961,11 @@ latent_space_walk(num_rows)
 # there are two variants, the first paper came out in 2017 
 # and a followup work with some improvements came in 2019 
 # paper1?: https://arxiv.org/abs/1711.00937 2017
-# paper2: https://arxiv.org/abs/1906.00446 2019
-# pytorch implementation from Aäron van den Oord : 
+# paper2 (pixelcnn, required for generation part-the conditional version) https://arxiv.org/abs/1606.05328
+# paper3(updated version): https://arxiv.org/abs/1906.00446 2019
+#! pytorch implementation from Aäron van den Oord (author of pixelcnn), but overall the vq-vae explanation part is ok!): 
 # https://colab.research.google.com/github/zalandoresearch/pytorch-vq-vae/blob/master/vq-vae.ipynb
-# a good video https://www.youtube.com/watch?v=VZFVUrYcig0
+# a good introductory video (doesnt get deep, doesnt cover all aspects of it(so reading the whole paper is a must), but overall is good for a brief introduction) https://www.youtube.com/watch?v=VZFVUrYcig0
 #
 # as exciting as the idea behind VAEs are, they are prune to posterior collapse
 # and we saw that first hand, we tried different methods to improve upon our basic
@@ -5980,14 +5980,21 @@ latent_space_walk(num_rows)
 # cover is the VQ-VAE, a very influential paper, that came to resolve vae issues
 # and was used in many high profile papers afterward (imagen, vqgan, etc)
 # VQ-VAE uses the same basic idea of the vae, however, it changes it in somewhat fundamental way
-# for one, it uses discrete latent representation instead of continuous one and argues 
+# for one, it uses discrete latent representation instead of continuous one and rightfully argues 
 # that its a more natural appraoch toward modeling what we are dealing with in the real world
-# mostly because many important real-world objects are discrete. 
-# as an example, one can imagine classes like a Cat or a Car, and notice that it might not 
-# make sense to interpolate between these classes. on top of that, discrete representations are
-# also easier to model unlike their continous counterpart where we'd need to learn the
-# dependencies between the different variables which could be very complex.
-#! ADD introduction from paper, it says it good! 
+# mostly because many important real world objects are discrete.
+# for example, we can imagine classes like a Cat or a Car, and notice that it really may not 
+# make sense to want to interpolate between these classes!(though we can find many other examples
+# that this makes prefect sense, I just wanted to also have some counter examples and see how that
+# helps us reach a new deduction) on top of that, discrete representations are
+# also easier to model unlike their continous counterparts where we'd need to learn the
+# dependencies between different variables which could be very complex(again there are defnitely
+# good cases/solutions to this like using hierarchical latents to address complex dependencies, and
+# the likes, but we cant hit everything with a hammer as not everything is a nail! we'll see this
+# shortly how this new understanding/assumpution allows us to get drastically better results).
+# !edit say vqvae is not generative itself, and it needs another model for pior? cite it from paper
+# directly or say it in our words?(use the following (at the end) explanations here?)
+# ! ADD introduction from paper, it says it good! 
 #
 # The abstract reads: 
 # Learning useful representations without supervision remains a key challenge in 
@@ -6007,7 +6014,8 @@ latent_space_walk(num_rows)
 # 
 
 # how the model works?
-# we have 3 parts in a vq-vae architecture, an encoder, a quantizer and a decoder
+# we have 3 parts in a vq-vae architecture(vqvae itself, we need more than just vqvae to generate images, more on this in a moment),
+# an encoder, a quantizer and a decoder.
 # the encoder gets an image and maps it to a sequence of discrete latent variables
 # the decoder takes these latent sequences and tries to reconstruct the input
 # now what about the quantizer part you may ask?
@@ -6021,7 +6029,7 @@ latent_space_walk(num_rows)
 # embedding vector from our embedings, and feed that to our decoder, and decoder uses it to 
 # reconstruct the input. 
 # since our comparsion here (the neigherst neighbor between our encoder and embeddings) doesnt
-# have a real gradient, we cant use backpropagation through it, (we cant have backward pass for that comparsion),
+# have a real gradient, we cant backprop through it, (we cant have backward pass for that comparsion),
 # so instead we simply pass the gradients from the decoder to the encoder without changing them.
 # this is why we made our encoder output channels the same as embedding size, so we can compare with it
 # and use the decoders gradients for encoder.
@@ -6032,19 +6040,139 @@ latent_space_walk(num_rows)
 # as the same and hence we can use embeddings gradients for the outputs as well. 
 # we do this in quantizer part beftween encoer and decoder
 
+# !edit
+# note that the vqvae by itself is not a generative model, we cant generate anything with it.
+# It's for learning useful "discrete" representations/ good embeddings if you will.
+# to generate new data(we are not bound to only images, we can generate all sorts of data, image, audio,etc),
+# as its stated in the paper, we need to pair it with an autoregressive 
+# model like PixelCNN which the paper used or a transformer that can model the prior 
+# distribution over the discrete latent codes. 
+# (in the paper they used a PixelCNN architecture over the discrete latents to 
+# generate new sequences of codes, which are then fed to the decoder to produce images.)
+# so to generate new images, we train the vqvae model to get a good embeddings and encoder-decoder.
+# if you remember vq-vae uses the vae framework, but so far we didnt specify any prior, or the likes
+# this is where the second model comes in, unlike the normal vae, where we specified a prior, 
+# here we learn it from data! so in our next step, we train a separate prior model (like PixelCNN) 
+# on the discrete latent codes. and finally for the actual generation process, we now simply sample 
+# from the prior model we just trained and get a sequence of codes which we then use to decode them 
+# into an image.
+# we can condition our generation the same way we did for normal vae, and generate images for certain class, 
+# to do this we'd need the prior model to be conditioned on the class label, that is we train the 
+# prior model to generate codes conditioned on the label, then decode those codes.() we can make it
+# more intersting by conditioning it on a piece of text, so by describing what we want, we get an image)
+# 
+#@
+# excessive?
+# as we said, the vqvae model itself doesnt include the prior model in its training. The prior 
+# is learned separately. So the vqvae focuses on reconstruction and learning the embedding(coodbook),
+# while the prior model handles the generation of the latent codes. 
+# This separation allows the vqvae to be used in different ways, depending on the prior model
+# used.
+# 
+# Another thing to consider is that since the latent space is discrete, it might be more efficient
+# for certain types of data, like speech or music, where discrete representations are more natural.
+# For images, though, using a discrete latent space with a powerful decoder can still lead to 
+# high-quality reconstructions and generations when paired with a good prior model.
+# 
+# Also, in terms of training, VQ-VAE uses a straight-through estimator to handle the non-differentiable 
+# quantization step during backpropagation. This allows the model to learn the codebook entries effectively.
+# The commitment loss(beta) also helps to ensure that the encoder commits to the codebook entries.
+# But coming back to generation: without a prior model, can VQ-VAE generate new images? Probably not,
+# because the encoder only maps inputs to discrete codes, and the decoder maps codes back to data. 
+# To generate new data, you need new codes that weren't derived from an input, which requires a 
+# prior model. 
+# 
+# the VQ-VAE alone isn't a generative model, but when combined with a prior model over the discrete 
+# latents, it can generate new samples.
+# In short, the use cases for VQ-VAE include learning discrete representations for data compression,
+# unsupervised learning of useful features, and enabling controllable generation when paired with 
+# an appropriate prior model. To generate new images, we need that prior model to sample plausible 
+# sequences of discrete codes, which the VQ-VAE decoder can then turn into images
+
+# a simplistic res module
+class conv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2)):
+        super().__init__()
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            act,
+            # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
+            # nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.conv_block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+class deconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
+        super().__init__()
+        self.deconv_block = nn.Sequential(
+            nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # nn.GroupNorm(1,out_dim) if batch_norm else nn.Identity(),
+            act,
+            # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
+            # nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.deconv_block(x)
+        if self.residual_connection:
+            out += x  
+        return out
+
 class Quantizer(nn.Module):
-    def __init__(self, num_embd, embd_size, beta_weight):
+    def __init__(self, num_embd, embd_size, beta_weight, use_ema=True, decay_rate=0.99, epsilon=1e-5):
         super().__init__()
         
         self.num_embd = num_embd
         self.embd_size = embd_size
         self.beta_weight = beta_weight
-        
+               
         self.embeddings = nn.Embedding(self.num_embd, self.embd_size)
         # lets normalize the weights uniformly
-        self.embeddings.weight.uniform_(-1/self.num_embd, 1/self.num_embd)
+        self.embeddings.weight.data.uniform_(-1/self.num_embd, 1/self.num_embd)
+                
+        # using exponential moving average to update the embedding
+        # vectors instead of an auxillary loss can seemingly improve
+        # the convergence a lot and prevents low preprelxity (more about this in a moment!)
+        # so we implement it as well and see how it works!
+        # from Aäron van den Oord implementation: 
+        #  using ema has the advantage that the embedding updates are
+        #  independent of the choice of optimizer for the encoder, 
+        #  decoder and other parts of the architecture. 
+        #  For most experiments the EMA version trains faster than the non-EMA version.
+        self.use_ema = use_ema
+        self.decay_rate = decay_rate
+        self.epsilon = epsilon
+        # as we briefly explained, in vq-vae each embedding is actually acting as a prototype 
+        # or a representative point in the latent space which during the quantization process, 
+        # we assign the encoder outputs to the nearest of such embeddings. if you think about it
+        # its just like how we assign data points to the closest centroid in a typical clustering algorithm 
+        # like k-means. 
+        # here we plan on keeping track of this process, basically how often each cluster is assigned,
+        # in other words, we are basically tracking how many times each embedding (or cluster center) 
+        # is chosen during the assignment process.(see more explanation a head)
+        # we use self.register_buffer so ema_cluster_size is saved when we save our model
+        # and also its not included in computational graph
+        # sidenote: instead of ema_cluster_size, ema_assignment_frequency, or ema_cluster_frequency could be better!
+        self.register_buffer('ema_cluster_size', torch.zeros(self.num_embd))
+        self.ema_w = nn.Parameter(torch.Tensor(self.num_embd, self.embd_size))
+        self.ema_w.data.normal_()
+
         
     def forward(self, encoder_outputs:torch.Tensor):
+        # print(f'{encoder_outputs.shape=}')
         # we need to change our encoder_outputs shape from bchw to bhwc 
         # basically moving the channel to the last dim, so that when we
         # flatten the whole thing, we get each separate channels,
@@ -6055,15 +6183,21 @@ class Quantizer(nn.Module):
         encoder_outputs = encoder_outputs.permute(dims=(0,2,3,1)).contiguous()
         encoder_outputs_shape = encoder_outputs.shape
         encoder_outputs_flatten = encoder_outputs.view(-1, self.embd_size)
-
+        
+        # print(f'{encoder_outputs_flatten.shape=}')
+        # print(f'{self.embeddings.weight.shape=}')
         # lets calculate the distance between them (squared euclidean distance)
         # which is Σᵢ(zᵢ - eᵢ)² which if we expand it will be 
         # d(z,e) = ∣∣z∣∣² + ∣∣e∣∣² − 2z⋅eᵀ
-        # that is taking the l2 norm of the encoders output and embeddings which are (B,D)
-        # B being our batchsize and D being the embedding size followed by a dotproduct
-        # between the two (equation 1 from paper)
+        # that is taking the l2 norm of the encoders output and embeddings which are (N,D)
+        # N being our sample count(note its not batchsize, as we flattened it) and D being 
+        # the embedding size followed by a dotproduct between the two (equation 1 from paper)
+        # note we want an (N,num_embds) to be our final tensor shape, so when summing
+        # we keepdim=True for encoderoutputs so it gives us a tensor of shape [N,1]
+        # so when we add it to sum of embeddings which will be [embd_num], its broadcast to
+        # the final shape of [N,embd_num] which simply says, we have embd_num for each sample!
         distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
-                    torch.sum(self.embeddings.weight**2, dim=1,keepdim=True) -
+                    torch.sum(self.embeddings.weight**2, dim=1) -
                     2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
         # or we could use torch.cdist
         # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
@@ -6071,7 +6205,7 @@ class Quantizer(nn.Module):
         # now that we have the distances, lets grab the min indexes 
         min_indexes = torch.argmin(distances, dim=1).unsqueeze(1)
         # create a onehot encoded tensor for encodings
-        encodings = torch.zeros(size=(min_indexes.shape[0], self.num_embd), device=encoder_outputs.device))
+        encodings = torch.zeros(size=(min_indexes.shape[0], self.num_embd), device=encoder_outputs.device)
         # set each encoding to 1 where the indexes specify
         encodings.scatter_(dim=1, index=min_indexes,value=1)
         # now to get the actual embeddings, we simply multiply our encodings tensor
@@ -6082,26 +6216,132 @@ class Quantizer(nn.Module):
         # this is zₑ(x)
         quantized_z_ex = torch.matmul(encodings, self.embeddings.weight).view(encoder_outputs_shape)
         
-        # now to calculate the loss which is equation 3, we need to calculate the last two terms
-        # as the paper says: 
-        # The decoder optimises the first loss term only, the encoder optimises 
-        # the first and the last loss terms, and the embeddings are optimised 
-        # by the middle loss term.
-        # we need quantized.detach() (stop_gradient operator in paper(written as sg[]))
-        e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
-        # this is z\_qx the 3rd term in equation 3, we stop gradient on encoders_output this time
-        q_loss = F.mse_loss(quantized_z_ex, encoder_outputs.detach())
-        # and finally we use the beta scaler for the second term
-        # we later add the reconstruction loss(log) from decoder to this 
-        loss = q_loss + self.beta_weight*e_loss
+        if not self.use_ema:
+            # now to calculate the loss which is equation 3, we need to calculate the last two terms
+            # as the paper says: 
+            # The decoder optimises the first loss term only, the encoder optimises 
+            # the first and the last loss terms, and the embeddings are optimised 
+            # by the middle loss term.
+            # we need quantized.detach() (stop_gradient operator in paper(written as sg[]))
+            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
+            # this is z\_qx the 3rd term in equation 3, we stop gradient on encoders_output this time
+            q_loss = F.mse_loss(quantized_z_ex, encoder_outputs.detach())
+            # and finally we use the beta scaler for the second term
+            # we later add the reconstruction loss(log) from decoder to this 
+            loss = q_loss + self.beta_weight*e_loss
         
-        # this is the Straight-Through Estimation (STE) part, which allows gradients to 
+        else:# Use EMA to update the embedding vectors
+            if self.training:
+                # note that we are only using ema during training to stabilize and
+                # update the embeddings and we dont need it during inference.
+                # the whole point of of this process is to make training more stable,
+                # by directly influencing the embeddings weight instead of using 
+                # a second loss term (q_loss) like the normal form
+                self.ema_cluster_size = self.ema_cluster_size * self.decay_rate\
+                                         + (1 - self.decay_rate) * torch.sum(encodings, 0)
+
+                # Laplace smoothing of the cluster size
+                # Laplace (or additive) smoothing simply means adding a
+                # small constant (i.e. epsilon) to each count so we dont face zero value! if 
+                # we dont do this, and an embedding (cluster) is never used (e.g. ema_cluster_size_i = 0
+                # we'll face division byzero in ema_w / ema_cluster_size)
+                # this means num_emb*epsilon, but as you see, we are doing more than that here!
+                # all this jazz is for normalizing the ema_cluster_size!
+                total_assignments = torch.sum(self.ema_cluster_size.data)
+                # we do this so that every cluster has a minimum nonzero value that 
+                # prevents division by zero issues when we update the embeddings.
+                # after we add the epsilon to all of the clusters we use total_assignments
+                # in the denominator to normalize it.at the end once again multiply the whole result
+                # by total_assignments again to scale it back to the original total.
+                # we do this so the laplace smoothing doesn't change the  total number of assignments,
+                # which is important for maintaining the scale when updating the embeddings. 
+                # so the division by (total + num_embds*epsilon) and multiplication by total at the end
+                # redistributes the added epsilon across the clusters while keeping the sum the same.
+                #
+                # (to have a better picture imagine we have only two clusters (num_embd=2), and epsilon=1. 
+                # now suppose our total_assignments=10 and ema_cluster_size = [3,7] before adding epsilon,
+                # then adding epsilon gives [4,8], sum is 12. Denominator is 10 + 2*1=12. 
+                # So (4/12, 8/12) *10 = (4*10/12, 8*10/12) = (3.333, 6.666). So the total is 
+                # preserved as 10, but the epsilon is distributed proportionally. 
+                # this way, the relative sizes are adjusted but the total remains the same as before
+                # adding the epsilon. (remember we dont want to change the total count, we just
+                # want to prevent any cluster from being zero).)
+                # 
+                # long story short!:
+                # we first add epsilon to each cluster (num_embd clusters total addition K*epsilon)
+                # then normalize by (total + K*epsilon) to get proportions.
+                # then multiply by original total to maintain the same total assignments but with smoothed counts.
+                # all of this to prevent any cluster from having zero count, thus avoiding division
+                # by zero when computing the average (ema_w / ema_cluster_size).
+                self.ema_cluster_size = ((self.ema_cluster_size + self.epsilon)/(total_assignments + self.num_embd * self.epsilon) * total_assignments)
+                # dw is the sum of encoder outputs assigned to each embedding, which is used 
+                # to update the embeddings.(when we transpose encodings and multiply it by 
+                # encoder_outputs_flatten, we're essentially summing the encoder outputs that
+                # correspond to each embedding entry, this becomes the new value for our embeddings)
+                dw = torch.matmul(encodings.t(), encoder_outputs_flatten)
+                # update for the embeddings vectors. we use ema_w is to stabilize training 
+                # by gradually updating the embeddings based on the recent assignments.
+                # decay_rate determines how much of the old average is kept versus the new data(dw)
+                # so here, ema_w is being updated by decaying the previous value and adding a 
+                # portion of the new dw.
+                # 
+                # !edit:
+                # ema_w controls how much historical data is retained vs. new contributions.
+                # This smooths the codebook updates over time, preventing abrupt changes and 
+                # stabilizing training.
+                # ema_w tracks the cumulative weighted sum of encoder outputs assigned to each
+                # codebook entry.
+                
+                self.ema_w = nn.Parameter(self.ema_w * self.decay_rate + (1 - self.decay_rate) * dw)
+                # and finally to normalize the EMA of the embeddings vectors we divide ema_w by the cluster size 
+                # as we saw the ema_cluster_size tracks how many times each embedding has been assigned, 
+                # so dividing by this would average the summed encoder outputs (dw) by the number of 
+                # assignments, effectively updating the embeddings to be the average of the encoder outputs
+                # assigned to them. (note the unsqueeze(1) which we use to make the dimensions match for broadcasting)
+                # 
+                # sidenote: 
+                # by using EMA twice for both the cluster sizes and the embedding vectors(ema_w), 
+                # we make sure we (i.e. the model) avoid relying only on the current batchs assignments, 
+                # which might be noisy. this should lead to a more stable training.
+                
+                # !edit: add relavent bits:
+                #sidenote:
+                # The `ema_cluster_size` was addressed earlier with Laplace smoothing to prevent division by zero. Now, combining that with `ema_w`, which is the EMA of the summed encoder outputs, and then normalizing by the smoothed cluster sizes gives the updated embeddings. This way, even if a cluster hasn't been assigned in the current batch, the EMA ensures it still gets updated based on historical data, smoothed by the epsilon.
+                # I need to check if the dimensions make sense. `encodings` is probably a matrix of shape [batch*latent_dim, num_embeddings], where each row is a one-hot vector indicating the chosen embedding. Transposing it would make [num_embeddings, batch*latent_dim], and multiplying by `encoder_outputs_flatten` (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim] matrix `dw`. Each row in `dw` is the sum of encoder outputs assigned to that embedding.
+                # Then `ema_w` is a [num_embeddings, embedding_dim] parameter that's updated with EMA. Dividing by `ema_cluster_size.unsqueeze(1)` (which is [num_embeddings, 1]) gives the average encoder output per embedding, scaled by their smoothed counts. This updates the codebook embeddings to be the moving average of the encoder outputs assigned to them.
+                # So, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time, which helps in training stability. The division by `ema_cluster_size` ensures that each embedding vector is the average of all encoder outputs that were assigned to it, adjusted for the smoothing to avoid division by zero and ensure all embeddings get updated even if rarely used.
+                # But why not just use the current batch's assignments directly? Because EMA reduces variance in the updates, making training more stable. Especially with discrete assignments, which can be noisy, using an EMA helps the codebook converge more smoothly.
+                # Also, since `encodings` might be soft assignments (like in the original VQ-VAE with straight-through estimator), the EMA would still work by accumulating the weighted contributions from each encoder output to each codebook entry. The Laplace smoothing on cluster sizes ensures that even rarely used embeddings have a non-zero count, so their EMA doesn't get stuck or cause numerical issues when updating.
+                # Putting it all together, these lines are responsible for updating the codebook embeddings in a stable, smoothed manner using EMA, which is crucial for effective training of VQ-VAEs by preventing codebook collapse and ensuring all embeddings are utilized.
+                # 
+                #Why These Steps?
+                # Stability via EMA:
+                #     Directly using per-batch assignments would cause noisy updates. EMA smooths these updates over time, critical for avoiding codebook collapse (where most embeddings go unused).
+                #     Example: If a codebook entry is rarely used, its ema_cluster_size remains small, but EMA ensures it still receives gradual updates from dw.
+                # Normalization by Cluster Size:
+                #     Dividing by ema_cluster_size converts the summed encoder outputs (ema_w) into an average of the encoder outputs assigned to each codebook entry.
+                #     Without this, embeddings would grow disproportionately large based on how frequently they’re used.
+                # Alignment with Laplace Smoothing:
+                #     The earlier Laplace smoothing of ema_cluster_size ensures no division by zero, even for unused codebook entries.
+                #     Smoothing also ensures rarely used embeddings still receive small updates (via epsilon), preventing them from becoming "dead" units.
+                #
+                # Key Takeaways
+                # EMA Smoothing: Stabilizes codebook updates by prioritizing historical consistency over noisy per-batch assignments.
+                # Normalization: Ensures embeddings represent the average of assigned encoder outputs, not their sum.
+                # Laplace Symbiosis: The earlier smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, even rarely used ones.
+                
+                self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+            
+            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
+            loss = self.beta_weight * e_loss
+        
+        # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
         # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
         # which is non-differentiable.
         # basically using the detach trick here prevents the gradients from flowing through 
-        # (quantized_z_ex - encoder_outputs) so, during backpropagation the forward pass 
-        # uses quantized_z_ex, and the model sees the actual quantized values while the 
-        # backward pass behaves as if encoder_outputs were used, allowing the gradients
+        # (quantized_z_ex - encoder_outputs) so, during backpropagation, in the forward pass we
+        # use the quantized_z_ex, the model sees the actual quantized values and the in 
+        # backward pass, its as if the encoder_outputs were used, which allows the gradients
         # to propagate through the encoder.
         quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach()
         # lets also calculate the average selection probablity. 
@@ -6112,7 +6352,7 @@ class Quantizer(nn.Module):
         # therefore it results in wasted model capacity.
         avg_probs = encodings.mean(dim=0)
         # now using the average selection probablity, we can calculate the preplexity
-        # of the embedding space usage.
+        # of the embedding space utilization.
         # the prepelxity measures how evenly the embedding vectors are being used.
         # The formula is based on Shannon entropy H = − ∑pᵢ * logpᵢ 
         # taking exp(H) gives us the perplexity, which ranges from 1 if only one embedding vector
@@ -6123,9 +6363,24 @@ class Quantizer(nn.Module):
         # which may lead to worse performance.
         #
         # sidenote:
-        # using a moving average should prevent low prepexlity!
+        # using a exponential moving average should prevent low prepexlity!
         # !edit add moving average!
         # 
+        # sidenote:
+        # !edit
+        # Perplexity is in fact a measure of uncertainty or diversity in a probability distribution.
+        # It is commonly used in language modeling, information theory, and in Vector Quantization 
+        # (VQ) to measure how well an embedding space (or a codebook as many call it) is being utilized.
+        # and as we said before it comes from Shannon entropy, which measures the amount of uncertainty
+        # in a probability distribution.
+        # The formula for entropy is:
+        #  H(p) = - Σp_i * log(p_i)
+        # where p_i represents the probability of selecting the i-th element from a distribution
+        # The perplexity is simply the exponentiation of entropy:
+        #  PPL = exp(H(p)) = e^(- Σ p_i * log(p_i))
+        #This measures how uncertain or diverse a probability distribution is. In VQ-VAE,
+        # it helps evaluate how well embedding space is being utilized.
+
         # sidenote: 
         # in many implementations you may see people refering to embeddings(the whole embedding vectors/ditionary of embedding vectors!)
         # as codebooks! 
@@ -6143,49 +6398,960 @@ class Quantizer(nn.Module):
         return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity #, encodings
 
 # lets now add the main model 
+#! make it conditional so we can create different types of images?!
 class VQVAE(nn.Module):
-    def __init__(self, input_channels, embd_num, embd_size, beta):
+    def __init__(self, input_channels, embd_num, embd_size, beta, use_ema):
         super().__init__()
     
         self.input_channels = input_channels
         self.embd_num = embd_num
         self.embd_size = embd_size
         self.beta = beta
+        self.use_ema = use_ema
         
         # well use the same encoder/decoder from previous architectures
         self.encoder = nn.Sequential(conv(self.input_channels,32),#28x28
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
-                                     conv(96,128,stride=2),#3x3
+                                     conv(96,96, kernel_size=3),
+                                     conv(96,128,stride=1),#3x3 #for 7x7, stride=1, otherwise set=2
+                                     conv(128,128, kernel_size=3),
                                      conv(128,256,stride=1),#2x2 # for 4x4: 1
+                                     conv(256,256, kernel_size=3),
                                      conv(256, self.embd_size, stride=1,padding=1,batch_norm=True),#1x1 #for 4x4:1 # for 2x2:1 #for 1x1:2
+                                    # Print(),
                                     )
-        # retaining some spatial dimensions such as 2x2/4x4 helps
-        # when the dataset is more complex.
-        self.bottleneck_size = self.embd_size*4*4
-
-        self.drp = nn.Dropout(0.1)
-       
-        decoder_in_dim = self.embd_size
+        # self.drp = nn.Dropout(0.1)
         # we use the followng formula to determine the output size here
         # ((h-1)*stride)+(kernel_size-2)*padding
         # (h=1,k=4,s=2,p=1)
-        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
-                                     nn.BatchNorm1d(256*4*4),
-                                     nn.ReLU(),
-                                     nn.Unflatten(1,(256,4,4)),
-                                     deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
-                                     deconv(128,96,kernel_size=4,stride=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
-                                     deconv(96,64,kernel_size=4,stride=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
-                                     deconv(64,32,kernel_size=2,stride=1,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
-                                     deconv(32,self.input_channels, kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+        # !if encoder output ix 7x7 -simply increasing dims to see if we get clearer images,
+        # !this is not ideal, we are just doing it for testing purposes, we get better result
+        # with sharper images, but the architecture is clearly weak. also larger fmaps may
+        # not result in good codebooks as we leardned in vae, (we need to test this with decoder(prior model)
+        # and see if this is the case here as well. (yeah I can confirm the larger fmaps defnitely
+        # result in cleared images,)
+        # next buff up the architecture)
+        # 07-1*2+2-2*1=12
+        # 12-1*1+4-2*1=13
+        # 13-1*2+4-2*1=26
+        # 26-1*1+4-2*1=27
+        # 27-1*1+4-2*1=28
+        # since we no longer dealing with flattened input, we simply use a conv layer!
+        self.decoder = nn.Sequential(conv(self.embd_size,256, kernel_size=3),
+                                    conv(256,256, kernel_size=3),
+                                    #  Print(),
+                                    deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#for 4x4: 2,2  #for 1x1:4,2  #for 7x7:2,2
+                                    conv(128,128, kernel_size=3),
+                                    #  Print(),
+                                    deconv(128,96,kernel_size=4,stride=1,batch_norm=True), #for 4x4: 4,1  #for 1x1:4,2  #for 7x7:4,1
+                                    conv(96,96, kernel_size=3),
+                                    #  Print(),
+                                    deconv(96,64,kernel_size=4,stride=2,batch_norm=True),  #for 4x4: 4,2  #for 1x1:4,2  #for 7x7:4,2
+                                    conv(64,64, kernel_size=3),
+                                    #  Print(),
+                                    deconv(64,32,kernel_size=4,stride=1,batch_norm=True),  #for 4x4: 2,1  #for 1x1:2,2  #for 7x7:4,1
+                                    conv(32,32, kernel_size=3),
+                                    conv(32,32, kernel_size=3),
+                                    #  Print(),
+                                    deconv(32,self.input_channels, kernel_size=4,stride=1,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6,2 # for 1x1:4 #for 7x7: 4,1
+                                    # Print(),
                                     )
         
-        self.quantizer = Quantizer(self.embd_num, self.embd_size,beta_weight=self.beta)
+        self.quantizer = Quantizer(self.embd_num, self.embd_size,beta_weight=self.beta, use_ema=self.use_ema)
+
+
+    def forward(self, inputs):
+        outputs = self.encoder(inputs)
+        # print(f'{outputs.shape=}')
+        loss, quantized, prepelexity = self.quantizer(outputs)
+        # print(f'{quantized.shape=}')
+        recons = self.decoder(quantized)
+        return loss, recons, prepelexity
+
+model_test = VQVAE(input_channels=3, embd_num=100, embd_size=64, beta=0.2, use_ema=True)
+x = torch.randn(size=(10,3,32,32)) # our model works with 28x28 and 32x32 just fine!
+vq_loss,rec,perp = model_test(x)
+print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=}')
+
+#%%
+
+def select_dataset(dataset_name='mnist', batch_size=128, size=28):
+    if dataset_name.lower() == 'mnist':
+        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
+        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+    
+    elif dataset_name.lower() in ['cifar','cifar10']:
+        # for cifar10 a better architecture and training regime is required
+        transformations_tr = transforms.Compose([transforms.Resize(size),
+                                                 transforms.RandomHorizontalFlip(),
+                                                 transforms.ToTensor(),])
+        transformations = transforms.Compose([transforms.Resize(size), transforms.ToTensor(),])
+        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
+        dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+    
+    elif dataset_name=='celeba':
+        transformations_tr = transforms.Compose([transforms.Resize(size),
+                                                 transforms.RandomHorizontalFlip(),
+                                                 transforms.ToTensor(),])
+        transformations = transforms.Compose([transforms.Resize(size),transforms.ToTensor(),])
+        dataset_train = torchvision.datasets.CelebA('./data/','train',download=True,transform=transformations_tr)
+        dataset_test = torchvision.datasets.CelebA('./data/','valid',download=True,transform=transformations)
+    
+    elif dataset_name=='anime':
+        dataset_train = datasets.ImageFolder('./data/anime_characters/raw_dirs/')
+        train_size = int(0.8 * len(dataset_train))
+        test_size = len(dataset_train) - train_size
+        # split the dataset
+        dataset_train, dataset_test = torch.utils.data.random_split(dataset_train, [train_size, test_size])
+        transformations_tr = transforms.Compose([transforms.Resize(size),
+                                                 transforms.RandomHorizontalFlip(),
+                                                 transforms.ToTensor(),])
+        transformations = transforms.Compose([transforms.Resize(size),transforms.ToTensor(),])
+        dataset_train.dataset.transform = transformations_tr
+        dataset_test.dataset.transform = transformations
+    else:
+        raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
+    
+    dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
+    dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
+
+    return dataset_train, dataset_test, dataloader_train, dataloader_test
+
+#train
+def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interval, device, img_size):
+    
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
+    model_checkpoint_name = f'vqvae_{dataset.upper()}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
+    dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, 
+                                                                                    batch_size=batch_size,
+                                                                                    size=img_size)
+    
+
+    # without this loss will decrease a lot but the result isnt as good as when
+    # we normalize the loss, and take the whole dataset into account!
+    #! whats really ahppening here? why do I need to take the whole dataset into account like this?
+    # what does this do?
+    min_v = dataloader_train.dataset.data.min()
+    max_v = dataloader_train.dataset.data.max()
+    print(f'{min_v=}')
+    print(f'{max_v=}')
+    
+    if isinstance(dataloader_train.dataset.data, np.ndarray):
+        data_variance = np.var(dataloader_train.dataset.data/max_v) 
+    else:
+        data_variance = torch.var(dataloader_train.dataset.data/ max_v).item()
+    
+    # pixel_values = []
+    # pixel_values = [img.numpy() for img,_ in dataset_train]
+    # pixel_values = np.concatenate([img.flatten() for img in pixel_values])
+    # data_variance = np.var(pixel_values)  
+
+    print(f'Experiment Date:  {timestamp}')
+    print(f'Checkpoint:       {model_checkpoint_name}')
+    print(f'Dataset:          {dataset.upper()}')
+    print(f'Epochs:           {epochs}')
+    print(f'BatchSize:        {batch_size}')
+    print(f'embeddings_num:   {model.embd_num}')
+    print(f'embedding_size:   {model.embd_size}')
+    print(f'use_ema:          {model.use_ema}')
+    print(f'beta/commmitment: {model.beta}')
+    print(f'optimizer:        {optimizer}')
+    print(f'scheduler:        {scheduler.state_dict()}')
+    print(f'interval:         {interval}')
+    print(f'Dataset variance: {data_variance:.4f}')
+    
+    total_reconstruction_errors = []
+    total_perplexities = []
+    total_losses=[]
+    best_loss = float("inf")
+    
+    model.train()
+    for epoch in range(epochs):
+        reconstruction_errors = []
+        perplexities = []
+        losses=[]
+        for i, (imgs, _) in enumerate(dataloader_train):
+            imgs = imgs.to(device)
+            vq_loss, imgs_rec, perplexity = model(imgs)
+            
+            #! normalzie the loss
+            reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance
+            loss = reconstruction_error + vq_loss
+            
+            losses.append(loss.item())
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            reconstruction_errors.append(reconstruction_error.item())
+            perplexities.append(perplexity.item())
+
+            if i%interval == 0:
+                print(f'Epoch: {epoch}/{epochs}'
+                      f' | Loss: {np.mean(losses):.4f}'
+                      f' | Recons-error: {np.mean(reconstruction_errors):.4f}'
+                      f' | Perplexity: {np.mean(perplexities):.4f}'
+                      f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
+    
+        scheduler.step()
+        # keep track of the stat for each epoch as well
+        mean_loss = np.mean(losses)
+        mean_reconstruction_errors = np.mean(reconstruction_errors)
+        mean_perplexity = np.mean(perplexities)
+        total_losses.append(mean_loss)
+        total_reconstruction_errors.append(mean_reconstruction_errors)
+        total_perplexities.append(mean_perplexity)
         
+        #! use a validation instead?
+        if mean_loss < best_loss:
+            best_loss = mean_loss
+            torch.save({'epoch': epoch,
+                        'state_dict': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler':scheduler.state_dict(),
+                        'best_loss': best_loss,
+                       }, model_checkpoint_name)
+            print(f'Best model with loss={best_loss:.4f} saved!')
         
+    return losses, total_reconstruction_errors, total_perplexities
+
+
+dataset = 'cifar10'
+# # dataset = 'cifar10'
+# batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                                                batch_size=batch_size)
+
+#%%
+# we first start with mnist to see if our implementation is ok 
+# (sidenote: I actually faced quit a lot of issues and switching to mnist helped a lot. 
+# I was initially using with cifar10 directly. after mnist, I used celeba, because its 
+# simpler than cifar10 and one can more easily identify patterns, and whether
+# you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
+# images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
+# very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
+dataset = 'cifar10' #anime # celeba #cifar10
+img_size=(32,32)
+input_channels = 1 if dataset=='mnist' else 3
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+batch_size=128
+epochs = 120
+interval = 1000
+lr=0.001
+milestones=[120]
+embd_num=512
+embd_size=128
+# commitment loss beta/weight
+beta=0.25
+# use ema for quantzier embeddings update
+use_ema=False
+
+#!edit 
+#!use_ema doesnt make any difference on quality of recons apparently when model is weak?
+
+model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
+model.to(device)
+optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
+scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
+
+train_losses, train_recons_errors, train_perplexities = train(model,
+                                                              dataset,
+                                                              optimizer, 
+                                                              scheduler,
+                                                              epochs, 
+                                                              batch_size,
+                                                              interval,
+                                                              device,
+                                                              img_size)
+#%%
+# load the model
+# ckpt_name = 'vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
+ckpt_name = 'vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
+ckpt_name = 'vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
+ckpt_name = 'vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
+ckpt_name = 'vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
+ckpt_name = 'vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
+checkpoint = torch.load(ckpt_name)
+model.load_state_dict(checkpoint['state_dict'])
+
+#%%
+import pandas as pd
+pd.DataFrame(train_recons_errors).plot()
+plt.show()
+pd.DataFrame(train_perplexities).plot()
+plt.show()
+
+# taken from Aäron van den Oord implementation (link given before)
+# use umap for latent space visualization, umap is better than tsne
+#! explain a bit more
+from umap.umap_ import UMAP # pip install umap-learn
+def view_results(model,train_dataloader, val_dataloader):
+    model.eval()
+    for name, dataloader in zip(['training data','validation data'],[train_dataloader, val_dataloader]):
+        print(f'Using {name}:')
+        (imgs, labels) = next(iter(dataloader))
+        imgs = imgs.to(device)
+        vq_encoder_output = model.encoder(imgs)
+        _, quantize, _ = model.quantizer(vq_encoder_output)
+        reconstructions = model.decoder(quantize)
+
+        view_images(reconstructions, labels)
+        view_images(imgs, labels)
+
+    proj = UMAP(n_neighbors=3,
+                min_dist=0.1,
+                metric='cosine').fit_transform(model.quantizer.embeddings.weight.data.cpu())
+
+_, _, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                             batch_size=batch_size,
+                                                             size=img_size)
+view_results(model, dataloader_train, dataloader_test)
+#%%
+# now to be able to generate images, as we stated before, we need a prior model
+# todo: explain 
+
+def get_latent_codes(model, dataloader):
+    model.eval()
+    all_indices = []
+    all_labels = []
+    with torch.no_grad():
+        for data, labels in dataloader:
+            data = data.to(device)
+            encoder_output = model.encoder(data)
+            
+            # Forward through quantizer to get indices
+            encoder_output = encoder_output.permute(0,2,3,1).contiguous()
+            encoder_flatten = encoder_output.view(-1, model.embd_size)
+            distances = torch.cdist(encoder_flatten, model.quantizer.embeddings.weight)
+            indices = torch.argmin(distances, dim=1)
+            
+            # Reshape to (batch_size, H, W)
+            indices = indices.view(data.shape[0], encoder_output.shape[1], encoder_output.shape[2])
+            all_indices.append(indices.cpu())
+            # for use in conditional generation
+            all_labels.append(labels)
+            
+    all_indices =  torch.cat(all_indices, dim=0)  # Shape: [num_samples, H, W]
+    all_labels = torch.cat(all_labels, dim=0)
+    return all_indices,all_labels
+
+# prior model i.e. pixelcnn (we can use a transformer based model as well, 
+# (we could also use gan for this!))
+#
+# heres our pixelcnn model (works very bad, see the next model!)
+class PixelCNN(nn.Module):
+    def __init__(self, num_codes, input_shape=(7, 7), emb_dim=128):
+        super().__init__()
+        self.num_codes = num_codes
+        self.H, self.W = input_shape
+        self.emb_dim = emb_dim
         
+        # Embedding layer: converts indices to dense vectors
+        self.embedding = nn.Embedding(num_codes, emb_dim)
         
+        # Masked convolutions now operate on embeddings
+        # the 3 layer version performs worse, when increased the layers
+        # it got better, so prior network design is also very critical
+        # on getting a good generation.
+        self.layers = nn.Sequential(
+            MaskedConv2d('A', emb_dim, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 256, 384, kernel_size=3, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU(),
+            # nn.Dropout(0.02),
+            MaskedConv2d('B', 384, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            # nn.Dropout(0.02),
+            nn.Conv2d(512, num_codes, kernel_size=1)  # Output logits over codebook indices
+        )
+
+    def forward(self, x):
+        # x: (batch_size, H, W) containing integer indices
+        x = self.embedding(x)  # (batch_size, H, W, emb_dim)
+        x = x.permute(0, 3, 1, 2)  # (batch_size, emb_dim, H, W)
+        logits = self.layers(x)  # (batch_size, num_codes, H, W)
+        return logits
+
+class MaskedConv2d(nn.Conv2d):
+    def __init__(self, mask_type, in_channels, out_channels, kernel_size=3, padding=1, dilation=1):
+        super().__init__(in_channels, out_channels, kernel_size, padding=padding, dilation=dilation)
+        
+        self.register_buffer('mask', torch.ones_like(self.weight))
+        
+        _, _, h, w = self.weight.size()
+        center_h, center_w = h // 2, w // 2
+        
+        # we need to create two masks, A, and B like the paper.
+        # the idea is, where are trying to create an autoregressive cnn layer
+        # where a pixel can not see its current value or future one, only the 
+        # previous values, and the current and future values are predicted using
+        # previous values (hence the name autoregressive)
+        # to do this on an image, we actually implement masks on the kernels themselevs
+        # so when we apply them, this logic is applied on all pixels in an image.
+        # back to our implementation, so for our first mask, we need to make sure 
+        # a pixel does not see itself so we zero out the current pixel and all the 
+        # future pixels (to the right and below).
+        # we must use this mask on the first layer only. for subseuqent layers we
+        # must use the second mask, the B mask.
+        # For the secodn mask, we need to allow access to the current pixel but 
+        # block future pixels. the difference from mask A is that the center pixel is allowed here.
+        # lets visualize it ,suppose this is our mask initially
+        # 1 1 1
+        # 1 1 1
+        # 1 1 1 
+        # now to make it work as Mask A, we must change it so current pixel
+        # and future pixels are disabled. in other words, they cant be used
+        # to calculate the value of current pixels (when we apply it on an image)
+        # so the center of our mask needs to be set to 0, so we would have
+        # mask is 3x3, so 3//2=1, 3//2=1 so row 1 and col1 and all future pixels in last
+        # row(i.e 2) are set to 0
+        # 1 1 1 
+        # 1 0 0 
+        # 0 0 0
+        # this leaves us with previous pixels only.
+        # now for MasK B, we want to have previous pixels plus the current pixel
+        # but still future pixels must be disabled. 
+        # if this is our initial mask state for Mask B: 
+        # 1 1 1
+        # 1 1 1
+        # 1 1 1 
+        # we want sth like this:
+        # 1 1 1
+        # 1 1 0
+        # 0 0 0
+        # which basically means we want to do just like Mask A, except that now
+        # we want to have current pixel as well. 
+        # so we disable all following rows so they dont affect current pixel
+        
+        # make sure the mask is all 1s, so we can selectively disable parts of it
+        self.mask.fill_(1)
+        #sidenote: note that our mask is 4D and not just 2D, as we need to apply this
+        # on a conv ouput which has input and output dims.
+        
+        if mask_type == 'A':
+            # zero out the current pixel (at position (center_h, center_w)) and all pixels
+            # to its right in the same row.
+            # basically prevent future pixels in the same row from influencing the current pixel
+            # (i.e. when predicting a pixel, the network cannot see the current pixel 
+            # or any pixel that comes after it)
+            self.mask[:, :, center_h, center_w:] = 0
+            # prevent pixels below from influencing the current pixel (zero out rows>=2 )
+            self.mask[:, :, center_h+1:, :] = 0
+        elif mask_type == 'B':
+            # zero out only the pixels to the right of the current pixel in the same row,
+            # keeping the current pixel itself active.(i.e. prevent future pixels in the 
+            # same row from influencing the current pixel)
+            self.mask[:, :, center_h, center_w+1:] = 0
+            # prevent pixels below from influencing the current pixel
+            self.mask[:, :, center_h+1:, :] = 0
+
+    def forward(self, x):
+        # apply the mask to weights during forward pass
+        return self._conv_forward(x, self.weight * self.mask, self.bias)
+        # this was wrong and caused in total failure of the model, i would get
+        # sold colors, like red, blue, whenever i wanted to decode and generate
+        # an image!
+        # self.weight.data *= self.mask  # Apply mask
+        # return super().forward(x)
+#sidenote: 
+# !edit,  it needs more work, its not complete yet!
+# see visualize_maskedcnn.py to see this in action
+
+# temp-test improved architecture: 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, mask_type='B'):
+        super().__init__()
+        self.block = nn.Sequential(MaskedConv2d(mask_type, in_channels, out_channels, kernel_size=3, padding=1),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(),
+                                   MaskedConv2d(mask_type, out_channels, out_channels, kernel_size=3, padding=1),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(),)
+        
+        #! lets test with no conv,bn on residuals. 
+        self.skip = nn.Sequential()
+        if in_channels != out_channels:
+            self.skip = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1),
+                                      # interestingly having bn lowers the loss pretty well!
+                                      # who would have thought!!!!
+                                      nn.BatchNorm2d(out_channels)
+                                      )
+        self.bn = nn.BatchNorm2d(out_channels)
+    
+    def forward(self, x):
+        residual = x
+        # x = F.relu(self.bn1(self.conv1(x)))
+        # x = self.bn2(self.conv2(x))
+        # output = x+self.skip(residual)
+        # output = F.relu(output)
+        # remove the bn from residual
+        # add the residual and block and then add a bn and a relu at the end!
+        output = self.block(x) + self.skip(residual)
+        #! OK the result s worse now, i dont know its beause of this change
+        # or because I change optimizer from Adamw to adam! 
+        # next test with the line below uncommented and if it fails
+        # then revert back to adamw! (check why adamw works better in that case)-adamw is better
+        output = F.relu(output)# using this, perforamnce is a bit better! not much though!
+        return output 
+
+class PixelCNN(nn.Module):
+    def __init__(self, num_embds, input_shape=(7, 7), embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        self.input_shape = input_shape
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        # the first layer/block must be type A, the rest are B
+        # basically mask A blocks the current pixel and all future pixels, 
+        # while mask B allows the current pixel but blocks future ones.
+        self.initial_conv = nn.Sequential(MaskedConv2d('A', self.conv_input_size, 128, kernel_size=7, padding=3),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate))
+        
+        # residual blocks with dilation for increased receptive field
+        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128),
+                                         ResidualBlock(128, 128),
+                                         ResidualBlock(128, 256),
+                                         ResidualBlock(256, 256),
+                                         ResidualBlock(256, 512),
+                                         ResidualBlock(512, 512)
+                                        ])
+        
+        # skip connections from all layers (feature pyramids)
+        self.skip_convs = nn.ModuleList([nn.Conv2d(128, 32, kernel_size=1),
+                                         nn.Conv2d(128, 32, kernel_size=1),
+                                         nn.Conv2d(256, 32, kernel_size=1),
+                                         nn.Conv2d(256, 32, kernel_size=1),
+                                         nn.Conv2d(512, 32, kernel_size=1),
+                                         nn.Conv2d(512, 32, kernel_size=1)
+                                        ])
+        
+        # last layers after concatenating skip connections
+        self.final_layers = nn.Sequential(nn.Conv2d(32*len(self.skip_convs), 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        output = self.initial_conv(input_indices)
+        skips = []
+        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
+            output = res_block(output)
+            skips.append(skip_conv(output))
+        
+        # combine skip connections into (batch, 192, 7, 7)
+        combined = torch.cat(skips, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
+
+# my initial training loop! works but needs more improvement
+# def train_prior(prior, latent_codes, epochs=50,batchsize=32, lr=1e-3):
+#     prior.train()
+#     dataloader = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
+#     optimizer = torch.optim.Adam(prior.parameters(), lr=lr)
+#     H, W = latent_codes.shape[1:]
+#     losses_epoch=[]
+    
+#     for epoch in range(epochs):
+#         losses=[]
+#         for batch in dataloader:
+#             batch = batch.to(device)
+#             targets = batch.long()
+#             logits = prior(batch)  
+#             loss = F.cross_entropy(logits, targets)
+#             # calculate bits per dimension:
+#             # bits per dimension(bpd) is used to evaluate generative models
+#             # n_dims = np.prod(targets.shape)
+#             # bpd = loss.item() * np.log2(np.e) / n_dims
+            
+#             optimizer.zero_grad()
+#             loss.backward()
+#             optimizer.step()
+            
+#             losses.append(loss.item())
+#         losses_epoch.append(np.mean(losses))
+#         print(f'Epoch: {epoch}/{epochs}  | Loss: {np.mean(losses):.4f}')
+    
+#     print('training prior model complete!')
+#     pd.DataFrame(losses_epoch).plot()
+#     plt.plot()
+
+def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50, batchsize=32, lr=1e-3):
+    
+    train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+    model_checkpoint_name = f'vqvae_{train_datetime}.ckpt'
+    device = next(prior.parameters()).device
+    # H,W = prior.input_size
+    # H, W = latent_codes.shape[1:]
+    
+    optimizer = torch.optim.Adam(prior.parameters(), lr=lr)    
+    # dataloader_train = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
+    # we can also split our latents into train/val and better keep track of our training
+    # but I noticed for our simple case, its really not needed
+    #! add the previous simple training that worked as a comment and then add this on top
+    
+    # combine latent codes and labels
+    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
+    
+    val_split = 0.1 
+    dataset_size = len(dataset)
+    val_size = int(val_split * dataset_size)
+    train_size = dataset_size - val_size
+    dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size])
+    
+    dataloader_train = torch.utils.data.DataLoader(dataset_train, 
+                                                   batch_size=batchsize, 
+                                                   shuffle=True, 
+                                                   pin_memory=True, 
+                                                   num_workers=8, 
+                                                   drop_last=True)
+    
+    dataloader_val = torch.utils.data.DataLoader(dataset_val, 
+                                                 batch_size=batchsize, 
+                                                 shuffle=False,
+                                                 pin_memory=True,
+                                                 num_workers=8,
+                                                 drop_last=True)
+    
+    #AdamW works much better than Adam! by a long shot! with adam we got loss=4.0, while
+    # with AdamW with the same architecture we got down to 2!
+    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=1e-2,)
+    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+                                                           factor=0.5, patience=5,
+                                                           min_lr=1e-6, verbose=True)
+    
+    losses_epoch=[]
+    losses_val_epoch=[]
+    BPD_epoch=[]
+    best_val_loss = float('inf')
+        
+    print(f'experiment date:  {train_datetime}')
+    print(f'checkpoint name:  {model_checkpoint_name}')
+    
+    for epoch in range(epochs):
+        losses=[]
+        bpds = []
+        prior.train()
+        for latents, labels in dataloader_train:
+            latents = latents.to(device)
+            labels = F.one_hot(labels,num_classes=num_classes).to(device) if num_classes else None
+            logits = prior(latents,labels)
+            # targets = latents.long()
+            loss = F.cross_entropy(logits, latents.long())
+            # calculate bits per dimension:
+            # bits per dimension(bpd) is used to evaluate generative models, 
+            # (especially those that work with images). for example , the original pixelcnn achieves bpd
+            # of 2.29 for cifar10. and everyone who trains or works in this section uses it. 
+            # because it makes comparing different models across different image sizes (or datasets) easier,
+            # its essentially measuring how well the model compresses the data. 
+            # the lower the value the better, it means the model is better at predicting the data distribution, 
+            # as it requires fewer bits per dimension (or per pixel in our case) to encode the image
+            # (since images are high-dimensional data, we normalize the negative log-likelihood by 
+            # the number of dimensions (pixels) in the image)
+            # the actual formula is BPD = (NLL) / (number of pixels * log(2))
+            # our model outputs probabilities for each pixel and each pixel is modeled as a discrete distribution
+            # (i.e. like 256 possible values for each color channel in an 8-bit image) 
+            # The loss is the negative log-likelihood of the true pixel values given the model's predicted distribution
+            # we sum the NLL over all pixels in the image, then average over the batch. This gives us the average
+            # NLL per image.
+            # we then divide this average NLL by the number of pixels per image (i.e. 32*32*3=3072) to get NLL per dimension (pixel).
+            # then convert from nats to bits by dividing by log(2). 
+            # note that since log base e (natural log) is used in the NLL calculation, if we divide by log(2) it converts it 
+            # to bits (since log2(x) = ln(x)/ln(2)).
+            # so, the formula would be:
+            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
+            # or :
+            # BPD = (NLL_total / (num_images * num_pixels)) / log(2)
+            # but since we used crossentropy here,  it's already averaged over the batch and the elements.
+            # so if the loss is computed as the average NLL per pixel, then we just need to convert that
+            # average to bits by dividing by log(2).
+            # But in practice, when training models, the loss is usually averaged over the batch and the 
+            # pixels. So if your loss function is set to reduction='mean' in PyTorch, then the loss 
+            # value you get is already (total NLL) / (batch_size * num_pixels). 
+            # So then to get BPD, you just take that value and divide by log(2).
+            n_dims = np.prod(latents.shape)
+            bpd = loss.item() * np.log2(np.e) / n_dims
+            
+            optimizer.zero_grad()
+            loss.backward()
+            # clip gradients to prevent exploding gradients
+            # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
+            optimizer.step()
+            
+            losses.append(loss.item())
+            bpds.append(bpd)
+                    
+        with torch.no_grad():
+            prior.eval()
+            losses_val=[]
+            for latents, labels in dataloader_val:
+                latents = latents.to(device)
+                labels = F.one_hot(labels,num_classes=num_classes).to(device) if num_classes else None
+                logits = prior(latents, labels)
+                # targets = latents.long()
+                loss = F.cross_entropy(logits, latents.long())
+                losses_val.append(loss.item())
+        
+        avg_loss = np.mean(losses)
+        avg_bpd = np.mean(bpds)
+        avg_val_loss = np.mean(losses_val)
+        
+        scheduler.step(avg_val_loss)
+        losses_epoch.append(avg_loss)
+        losses_val_epoch.append(avg_val_loss)
+        BPD_epoch.append(avg_bpd)
+        
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save({
+                'epoch': epoch,
+                'state_dict': prior.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler':scheduler.state_dict(),
+                'val_loss': best_val_loss,
+                'bpd': avg_bpd
+            }, model_checkpoint_name)
+            
+            print(f'best model saved with val-loss: {best_val_loss:.4f}')
+        
+        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.4f} | Val-Loss: {avg_val_loss:.4f} | BPD: {np.mean(bpds):.4f}')
+    
+    
+    plt.figure(figsize=(15, 5))
+    plt.subplot(1, 3, 1)
+    plt.plot(losses_epoch, label='Training Loss')
+    plt.plot(losses_val_epoch, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Training and Validation Loss')
+    
+    # Plot bits per dimension
+    plt.subplot(1, 3, 2)
+    plt.plot(BPD_epoch)
+    plt.xlabel('Epoch')
+    plt.ylabel('Bits per Dimension')
+    plt.title('Model Efficiency[BPD](Lower is Better)')
+    
+    # plt.subplot(1, 3, 3)
+    # plt.plot(history['lr'])
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Learning Rate')
+    # plt.title('Learning Rate Schedule')
+    # plt.yscale('log')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    print('training prior model complete!')
+    # pd.DataFrame(losses_epoch).plot()
+    # plt.plot()
+    return prior, model_checkpoint_name
+
+def generate(model, prior, labels, num_classes, batch_size=1, temperature=1.0, device="cuda"):
+    prior.eval()
+    # it must match our latent space shape from our vqvae model
+    H, W = prior.input_shape
+    
+    assert labels.size(0) == batch_size, 'classes count must batch batches!'
+    
+    # !edit explanation
+    # if we conditioned our images on 0s, first then we need to start with zeros
+    # but we didnt so we use randint
+    # codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
+    codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device)
+    labels = F.one_hot(labels,num_classes=num_classes).to(device)
+    # print(f'{labels.shape=}')
+    
+    with torch.no_grad():
+        for i in range(H):
+            for j in range(W):
+                # predict logits for the current latent position
+                # higher temps means more diversity in output!
+                # (i.e. it controls randomness in our output, lower temp=less randomness in ouput)
+                logits = prior(codes,labels)[:, :, i, j] / temperature
+                # convert to probability distribution
+                probs = F.softmax(logits, dim=-1)
+                # sample from the predicted distribution
+                sampled_codes = torch.multinomial(probs, 1).squeeze(-1)
+                # update the latent code map
+                codes[:, i, j] = sampled_codes  
+
+    # convert latent codes to embeddings and reshape for decoding
+    quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    quantized = quantized.permute(0, 3, 1, 2).contiguous()
+
+    # decode the quantized representations into images
+    return model.decoder(quantized)
+
+#!edit add more explanation
+# another way to generate images, instead of using prior model
+# we directly sample from code frequency, it shows if our model
+# has good features or not (whether the problem lies in prior model/its training
+# or vqvae features itself. the images may not look good! more explanation ahead)
+def generate_simple(model, latent_codes, num_samples=1):
+    # Compute code frequencies from training data
+    counts = torch.bincount(latent_codes.flatten())
+    probs = counts / counts.sum()
+    
+    # Sample indices from the frequency distribution
+    H, W = latent_codes.shape[1:] #7x7
+    indices = torch.multinomial(probs, num_samples * H * W, replacement=True)
+    indices = indices.view(num_samples, H, W).to(device)
+    
+    # Decode the indices
+    quantized = model.quantizer.embeddings(indices)  # (num_samples, H, W, embd_size)
+    quantized = quantized.permute(0, 3, 1, 2)  # (num_samples, embd_size, H, W)
+    generated = model.decoder(quantized)
+    return generated
+
+#%%
+# After training VQ-VAE:
+latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
+#%%
+# Train PixelCNN prior
+prior = PixelCNN(num_embds=model.embd_num, embedding_size=128,
+                 num_class=10,
+                 make_conditional=True,
+                 dropout_rate=0.1).to(device)
+
+prior, ckptname = train_prior(prior, 
+                              latent_codes,
+                              latent_labels,
+                              num_classes=10, 
+                              epochs=120,
+                              batchsize=64,
+                              lr=0.001)
+#%%
+ckpt = torch.load(ckptname)
+prior.load_state_dict(ckpt["state_dict"])
+#%%
+# Generate new image
+num_classes=10
+labels = torch.ones(size=(64,),dtype=torch.long)*4
+generated_image = generate(model, 
+                           prior, 
+                           labels=labels,
+                           num_classes=num_classes, 
+                           batch_size=64,
+                           temperature=1)
+view_images(generated_image,labels,rows=8,cols=8,figsize=(3,4))
+#%%
+generated_image1 = generate_simple(model, latent_codes,num_samples=64)
+print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8)
+
+#%%
+# check to see if our codebook has collapsed
+# if only a few codes are used here (e.g. 1-2 codes dominate), our VQ-VAE codebook has collapsed
+# despite the perplexity of 180 (which may be misleading if embd_num is large).
+counts = torch.bincount(latent_codes.flatten())
+print("Top 10 codes:", torch.topk(counts, 10).indices)
+print("Code usage ratio:", len(counts.nonzero()) / model.embd_num)
+
+#%%
+# to see if our decoder is faulty, we can bypass the prior and
+# manually set embeddings/codes to test the decoder.
+# if this outputs a solid color(like our initial tests which we got red and then blue),
+# it means our decoder is broken (though since our reconstructions was good this is unlikely).
+# if it outputs diverse patterns, the prior is faulty.
+#
+# create random codes (replace 0 with other indices to test, using all zeros we get blue pattens)
+# test_codes = torch.zeros((1, 32, 32), dtype=torch.long, device=device)
+# using random codes, we get different patterns which shows our initial assumption
+# that decoder is ok but prior has the issue is right!
+test_codes = torch.randint(0, model.embd_num, (3, 32, 32), device=device)
+
+quantized = model.quantizer.embeddings(test_codes)
+quantized = quantized.permute(0, 3, 1, 2).contiguous()
+generated_image = model.decoder(quantized)
+view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
+#%%
+# The most frequent code maps to a vector that decodes to blue.
+# the solution is to inspect the dominant codes embedding:
+# if this is blue, the decoder associates this code with blue. 
+# we need to retrain the VQ-VAE with a larger codebook (embd_num=512)
+# or lower the commitment cost (beta=0.25) or do Codebook reset strategy https://arxiv.org/abs/1711.00937.
+dominant_code = torch.argmax(counts).item()
+print("Dominant code embedding:", model.quantizer.embeddings.weight[dominant_code])
+# lets force decode this code:
+test_codes = torch.full((3, 32, 32), dominant_code, device=device)
+quantized = model.quantizer.embeddings(test_codes)
+generated_image = model.decoder(quantized.permute(0, 3, 1, 2))
+view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
+#%%
+# Case 2: the generate_simple() works but PixelCNN fails
+# issue is PixelCNN isnt learning the code distribution.
+# to solve this, we need to simplify the prior i.e. use a smaller PixelCNN or train longer.
+# add dropout to prevent overfitting and or check input normalization.
+# In PixelCNN.forward, ensure embeddings are normalized
+# x = self.embedding(x)
+# x = F.layer_norm(x, [self.emb_dim])  # Add this line
+#%%
+#side notes for debugging: 
+# make sure the final layer uses nn.Sigmoid() for [0, 1] images
+# verify quantized_z_ex includes gradients (quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach())
+#
+
 #%%
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf

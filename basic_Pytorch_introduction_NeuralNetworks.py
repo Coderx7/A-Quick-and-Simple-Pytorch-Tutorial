@@ -615,7 +615,6 @@ for epoch in range(epochs):
     class_correct_count = {k:0 for k in range(10)}
     total_class_samples = {k:0 for k in range(10)}
     incorrectly_predicted_images = []
-    sample_counts = torch.zeros(size=(10,), dtype=torch.int32)
     for i, (imgs, labels) in enumerate(dataloader_train, start=1):
         model.train()
         
@@ -678,7 +677,6 @@ for epoch in range(epochs):
                     incorrectly_predicted_images.append((imgs[i], indexes[i], labels[i]))
             
             # test vectorized 
-            sample_counts[labels.cpu()] +=1
                 
     print(f' -- Val-Loss: {val_loss/len(dataloader_val):.4f} | Val Acc: {val_accuracy/len(dataloader_val):.2f} | Val-Top5: {val_accuracy_top5/len(dataloader_val):.2f}')
     
@@ -1545,8 +1543,10 @@ print('save done!')
 #%%
 # now to load the settings 
 # we use  torch.load but thats not all! lets see how it works!
-# we first load the whole dictionary from our model! 
-model_settings_dict = torch.load('ourmodel.ckpt')
+# we first load the whole dictionary from our model!
+# note, its always a good idea to try to load the checkpoint in cpu mode first!
+# TODO: explain more
+model_settings_dict = torch.load('ourmodel.ckpt', map_location='cpu')
 # now that we have our dictionary of settings, lets load the values 
 # before we continue lets create the variables with garbage values so
 # we know for sure the loading is done successfully 
@@ -1956,7 +1956,10 @@ training_loop(model, dataloader_train, dataloader_test,
 # also note that we set the scheduler to decay twice, one at epoch 8 and the other
 # at 19. note that since we run the training twice, each for 10 epochs, but
 # the scheduler and model are the same, we get the same effect. 
-#  
+# sidenote 2: 
+# since pytorch 1.13 we have had torch.compile() which compiles our code and allows us
+# to achieve a good speedup in training e.g. it should work on most models as of (2.3.0)
+# we will cover this in more details in future chapters as well inshaallah
 #%%
 # Lets see couple of other architectures and how they can be finetuned! 
 # https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html is 
@@ -2340,29 +2343,19 @@ import torch
 # or load(..., trust_repo=True), which will assume that the prompt is to be 
 # answered with 'yes'. 
 # You can also use load(..., trust_repo='check') which will only prompt for confirmation if the repo is not already trusted. This will eventually be the default behaviour
-!wget 'https://raw.githubusercontent.com/Coderx7/SimpleNet_Pytorch/master/imagenet/simplenet.py'
+# !wget 'https://raw.githubusercontent.com/Coderx7/SimpleNet_Pytorch/master/imagenet/simplenet.py'
 #%%
-from simplenet import simplenet,\
-    simplenetv1_5m_m1,\
-    simplenetv1_5m_m2,\
-    simplenetv1_9m_m1,\
-    simplenetv1_9m_m2,\
-    simplenetv1_small_m1_05,\
-    simplenetv1_small_m1_075,\
-    simplenetv1_small_m2_05,\
-    simplenetv1_small_m2_075
-
-# model = torch.hub.load("coderx7/simplenet_pytorch", "simplenetv1_5m_m1", pretrained=True, trust_repo=True)
+model = torch.hub.load("coderx7/simplenet_pytorch", "simplenetv1_5m_m1", pretrained=True, trust_repo=True)
 # or any of these variants at the moment
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_5m_m2", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_9m_m1", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_9m_m2", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m1_05", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m2_05", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m1_075", pretrained=True)
-# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m2_075", pretrained=True)
-# model.eval()
-model = simplenetv1_5m_m1(False)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_5m_m2", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_9m_m1", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_9m_m2", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m1_05", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m2_05", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m1_075", pretrained=True, trust_repo=True)
+# model = torch.hub.load("coderx7/simplenet_pytorch:v1.0.0", "simplenetv1_small_m2_075", pretrained=True, trust_repo=True)
+model.eval()
+
 # Download an example image from the pytorch website
 import urllib
 url, filename = ("https://github.com/pytorch/hub/raw/master/images/dog.jpg", "dog.jpg")
@@ -2372,7 +2365,7 @@ except: urllib.request.urlretrieve(url, filename)
 # sample execution (requires torchvision)
 from PIL import Image
 from torchvision import transforms
-input_image = Image.open(filename)
+input_image = Image.open(filename).convert('RGB')
 preprocess = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -2385,28 +2378,28 @@ input_batch = input_tensor.unsqueeze(0) # create a mini-batch as expected by the
 
 # move the input and model to GPU for speed if available
 if torch.cuda.is_available():
-    input_batch = input_batch.to('cpu')
-    model.to('cpu')
+    input_batch = input_batch.to('cuda')
+    model.to('cuda')
 
 with torch.no_grad():
     output = model(input_batch)
 # Tensor of shape 1000, with confidence scores over Imagenet's 1000 classes
 # print(output[0])
 # The output has unnormalized scores. To get probabilities, you can run a softmax on it.
-probabilities = torch.nn.functional.softmax(output[0], dim=0)
+probabilities = output.softmax(dim=1)[0]
 # print(probabilities)
 
 # Download ImageNet labels
-!wget https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt
+# !wget https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt
+
 
 # Read the categories
 with open("imagenet_classes.txt", "r") as f:
     categories = [s.strip() for s in f.readlines()]
 # Show top categories per image
-top5_prob, top5_catid = torch.topk(probabilities, 5)
+top5_prob, top5_catid = probabilities.topk(5,dim=0)
 for i in range(top5_prob.size(0)):
-    print(categories[top5_catid[i]], top5_prob[i].item())
-
+    print(categories[top5_catid[i]], f'{top5_prob[i].item():.4f}')
 
 # Thats pretty much it! you now should have a basic idea of how major chores can be done in Pytorch.
 # there are more than what has been said here obviously, but for the start this should get you going
