@@ -200,11 +200,20 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5]):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
     imgs = imgs.detach().cpu().numpy().transpose(0,2,3,1)
+    
+    if normalized:
+        #unnormalized the image
+        #normalization is imgs-mean/std
+        #unnormalizing is imgs*std+mean
+        imgs = imgs * std + mean
+        # clip to [0-1]
+        imgs = imgs.clip(0,1) 
+    
     # sidenote: note that if we use a large figsize, with a high dpi
     # we may get an error complaining the image size is too big! it 
     # refers to the whole matplotlib figure on which we are drawing 
@@ -6408,7 +6417,8 @@ class VQVAE(nn.Module):
         self.embd_size = embd_size
         self.beta = beta
         self.use_ema = use_ema
-        
+        # indeces_shape which is fed to decoder (encoder output)
+        self.enc_output_shape = []
         # well use the same encoder/decoder from previous architectures
         self.encoder = nn.Sequential(conv(self.input_channels,32),#28x28
                                      conv(32,64,stride=2),#14x14
@@ -6460,10 +6470,16 @@ class VQVAE(nn.Module):
         
         self.quantizer = Quantizer(self.embd_num, self.embd_size,beta_weight=self.beta, use_ema=self.use_ema)
 
-
     def forward(self, inputs):
         outputs = self.encoder(inputs)
         # print(f'{outputs.shape=}')
+        # we can use this later on with our prior model 
+        # which we use for generating new imaegs, it comes handy
+        # when we change input image size, and it changes, we simply
+        # use this instead of remembering the encoder outputshape!
+        if not self.enc_output_shape:
+            self.enc_output_shape = outputs.shape[2:]
+        
         loss, quantized, prepelexity = self.quantizer(outputs)
         # print(f'{quantized.shape=}')
         recons = self.decoder(quantized)
@@ -6472,7 +6488,7 @@ class VQVAE(nn.Module):
 model_test = VQVAE(input_channels=3, embd_num=100, embd_size=64, beta=0.2, use_ema=True)
 x = torch.randn(size=(10,3,32,32)) # our model works with 28x28 and 32x32 just fine!
 vq_loss,rec,perp = model_test(x)
-print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=}')
+print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=} {model_test.enc_output_shape=}')
 
 #%%
 
@@ -6504,10 +6520,12 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
         test_size = len(dataset_train) - train_size
         # split the dataset
         dataset_train, dataset_test = torch.utils.data.random_split(dataset_train, [train_size, test_size])
+        
         transformations_tr = transforms.Compose([transforms.Resize(size),
                                                  transforms.RandomHorizontalFlip(),
                                                  transforms.ToTensor(),])
         transformations = transforms.Compose([transforms.Resize(size),transforms.ToTensor(),])
+        # subsets have dataset property, so we access it to assign transformations!
         dataset_train.dataset.transform = transformations_tr
         dataset_test.dataset.transform = transformations
     else:
@@ -6532,51 +6550,59 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
     # we normalize the loss, and take the whole dataset into account!
     #! whats really ahppening here? why do I need to take the whole dataset into account like this?
     # what does this do?
-    min_v = dataloader_train.dataset.data.min()
-    max_v = dataloader_train.dataset.data.max()
-    print(f'{min_v=}')
-    print(f'{max_v=}')
+    # min_v = dataloader_train.dataset.data.min()
+    # max_v = dataloader_train.dataset.data.max()
+    # print(f'{min_v=}')
+    # print(f'{max_v=}')
     
-    if isinstance(dataloader_train.dataset.data, np.ndarray):
-        data_variance = np.var(dataloader_train.dataset.data/max_v) 
-    else:
-        data_variance = torch.var(dataloader_train.dataset.data/ max_v).item()
+    # if isinstance(dataloader_train.dataset.data, np.ndarray):
+    #     data_variance_train,data_variance_val = [np.var(loader.dataset.data/max_v) for loader in [dataloader_train,dataloader_test]] 
+    # else:
+    #     data_variance_train,data_variance_val = [torch.var(loader.dataset.data/max_v).item() for loader in [dataloader_train,dataloader_test]]
+    
+    data_variance_train = data_variance_val =1
     
     # pixel_values = []
     # pixel_values = [img.numpy() for img,_ in dataset_train]
     # pixel_values = np.concatenate([img.flatten() for img in pixel_values])
     # data_variance = np.var(pixel_values)  
 
-    print(f'Experiment Date:  {timestamp}')
-    print(f'Checkpoint:       {model_checkpoint_name}')
-    print(f'Dataset:          {dataset.upper()}')
-    print(f'Epochs:           {epochs}')
-    print(f'BatchSize:        {batch_size}')
-    print(f'embeddings_num:   {model.embd_num}')
-    print(f'embedding_size:   {model.embd_size}')
-    print(f'use_ema:          {model.use_ema}')
-    print(f'beta/commmitment: {model.beta}')
-    print(f'optimizer:        {optimizer}')
-    print(f'scheduler:        {scheduler.state_dict()}')
-    print(f'interval:         {interval}')
-    print(f'Dataset variance: {data_variance:.4f}')
+    print(f'Experiment Date:     {timestamp}')
+    print(f'Checkpoint:          {model_checkpoint_name}')
+    print(f'Dataset:             {dataset.upper()}')
+    print(f'Epochs:              {epochs}')
+    print(f'BatchSize:           {batch_size}')
+    print(f'embeddings_num:      {model.embd_num}')
+    print(f'embedding_size:      {model.embd_size}')
+    print(f'use_ema:             {model.use_ema}')
+    print(f'beta/commmitment:    {model.beta}')
+    print(f'optimizer:           {optimizer}')
+    print(f'scheduler:           {scheduler.state_dict()}')
+    print(f'interval:            {interval}')
+    print(f'data variance[train]:{data_variance_train:.4f}')
+    print(f'data variance[val]:  {data_variance_val:.4f}')
     
     total_reconstruction_errors = []
+    total_vqlosses = []
     total_perplexities = []
     total_losses=[]
+    total_val_losses=[]
     best_loss = float("inf")
     
-    model.train()
     for epoch in range(epochs):
+        model.train()
         reconstruction_errors = []
+        vqlosses = []
         perplexities = []
         losses=[]
+        val_losses=[]
         for i, (imgs, _) in enumerate(dataloader_train):
             imgs = imgs.to(device)
             vq_loss, imgs_rec, perplexity = model(imgs)
             
             #! normalzie the loss
-            reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance
+            reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance_train
+            # reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_train
             loss = reconstruction_error + vq_loss
             
             losses.append(loss.item())
@@ -6586,36 +6612,63 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
             optimizer.step()
             
             reconstruction_errors.append(reconstruction_error.item())
+            vqlosses.append(vq_loss.item())
             perplexities.append(perplexity.item())
 
             if i%interval == 0:
                 print(f'Epoch: {epoch}/{epochs}'
                       f' | Loss: {np.mean(losses):.4f}'
-                      f' | Recons-error: {np.mean(reconstruction_errors):.4f}'
+                      f' | Recons-Error: {np.mean(reconstruction_errors):.4f}'
+                      f' | VQ-Loss: {np.mean(vqlosses):.4f}'
                       f' | Perplexity: {np.mean(perplexities):.4f}'
                       f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
     
         scheduler.step()
+       
+        with torch.no_grad():
+            model.eval()
+            for imgs, _ in dataloader_test:
+                imgs = imgs.to(device)
+                vq_loss, imgs_rec, perplexity = model(imgs)
+                val_reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance_val
+                # val_reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_val
+                val_loss = val_reconstruction_error + vq_loss
+                val_losses.append(val_loss.item())
+
         # keep track of the stat for each epoch as well
         mean_loss = np.mean(losses)
+        mean_val_loss = np.mean(val_losses)
         mean_reconstruction_errors = np.mean(reconstruction_errors)
+        mean_vqloss = np.mean(vqlosses)
         mean_perplexity = np.mean(perplexities)
-        total_losses.append(mean_loss)
-        total_reconstruction_errors.append(mean_reconstruction_errors)
-        total_perplexities.append(mean_perplexity)
         
+        total_losses.append(mean_loss)
+        total_val_losses.append(mean_val_loss)
+        total_reconstruction_errors.append(mean_reconstruction_errors)
+        total_vqlosses.append(mean_vqloss)
+        total_perplexities.append(mean_perplexity)
+
+        print(f'Epoch: {epoch}/{epochs}'
+              f' | Loss: {mean_loss:.4f}'
+              f' | Val-Loss: {mean_val_loss:.4f}'
+              f' | Recons-Error: {mean_reconstruction_errors:.4f}'
+              f' | VQ-Loss: {mean_vqloss:.4f}'#mean_loss-mean_reconstruction_errors
+              f' | Perplexity: {mean_perplexity:.4f}'
+              f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
+
         #! use a validation instead?
-        if mean_loss < best_loss:
-            best_loss = mean_loss
+        if mean_val_loss < best_loss:
+            best_loss = mean_val_loss
             torch.save({'epoch': epoch,
                         'state_dict': model.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'scheduler':scheduler.state_dict(),
-                        'best_loss': best_loss,
+                        'val_loss': best_loss,
+                        'train_loss': mean_loss,
                        }, model_checkpoint_name)
             print(f'Best model with loss={best_loss:.4f} saved!')
-        
-    return losses, total_reconstruction_errors, total_perplexities
+
+    return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
 
 
 dataset = 'cifar10'
@@ -6632,8 +6685,8 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'cifar10' #anime # celeba #cifar10
-img_size=(32,32)
+dataset = 'celeba' #anime # celeba #cifar10
+img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -6657,15 +6710,15 @@ model.to(device)
 optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
 scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
 
-train_losses, train_recons_errors, train_perplexities = train(model,
-                                                              dataset,
-                                                              optimizer, 
-                                                              scheduler,
-                                                              epochs, 
-                                                              batch_size,
-                                                              interval,
-                                                              device,
-                                                              img_size)
+train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
+                                                                        dataset,
+                                                                        optimizer, 
+                                                                        scheduler,
+                                                                        epochs, 
+                                                                        batch_size,
+                                                                        interval,
+                                                                        device,
+                                                                        img_size)
 #%%
 # load the model
 # ckpt_name = 'vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
@@ -6674,15 +6727,39 @@ ckpt_name = 'vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
 ckpt_name = 'vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
 ckpt_name = 'vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
 ckpt_name = 'vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
+ckpt_name = 'vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
+ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
+ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
+ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
+ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'
 checkpoint = torch.load(ckpt_name)
 model.load_state_dict(checkpoint['state_dict'])
-
+print(f'{model.enc_output_shape=}')
 #%%
 import pandas as pd
-pd.DataFrame(train_recons_errors).plot()
-plt.show()
-pd.DataFrame(train_perplexities).plot()
-plt.show()
+# for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
+#     pd.DataFrame(logs).plot()
+#     plt.show()
+# pd.DataFrame(train_recons_errors).plot()
+# plt.show()
+# pd.DataFrame(train_perplexities).plot()
+# plt.show()
+
+# print(f'{len(train_losses)=}')
+# print(f'{len(val_losses)=}')
+# print(f'{len(train_recons_errors)=}')
+# print(f'{len(train_perplexities)=}')
+def display_logs(train_losses, val_losses, train_recons_errors, train_perplexities):
+    for label, logs in zip(["Train Loss", "Val Loss", "Train Recon Error", "Train Perplexity"],
+                            [train_losses, val_losses, train_recons_errors, train_perplexities]):
+        df = pd.DataFrame(logs)
+        ax = df.plot()  # Create the plot and get the axis
+        ax.set_xlabel("Epochs")  # Label x-axis
+        ax.set_ylabel("Value")  # Label y-axis
+        ax.set_title(label)  # Set title
+        plt.show()
+
+# display_logs(train_losses, val_losses, train_recons_errors, train_perplexities)
 
 # taken from Aäron van den Oord implementation (link given before)
 # use umap for latent space visualization, umap is better than tsne
@@ -6697,13 +6774,16 @@ def view_results(model,train_dataloader, val_dataloader):
         vq_encoder_output = model.encoder(imgs)
         _, quantize, _ = model.quantizer(vq_encoder_output)
         reconstructions = model.decoder(quantize)
-
-        view_images(reconstructions, labels)
+        # print(f'{reconstructions.shape=}')
+        # print(f'{labels.shape=} {labels[0]}')
+        labels = labels if len(labels[0])==0 else torch.ones((imgs.size(0),1))
+        view_images(reconstructions, labels, normalized=False)
         view_images(imgs, labels)
 
     proj = UMAP(n_neighbors=3,
                 min_dist=0.1,
                 metric='cosine').fit_transform(model.quantizer.embeddings.weight.data.cpu())
+    plt.scatter(proj[:,0], proj[:,1], alpha=0.3)
 
 _, _, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                              batch_size=batch_size,
@@ -6722,13 +6802,12 @@ def get_latent_codes(model, dataloader):
             data = data.to(device)
             encoder_output = model.encoder(data)
             
-            # Forward through quantizer to get indices
             encoder_output = encoder_output.permute(0,2,3,1).contiguous()
             encoder_flatten = encoder_output.view(-1, model.embd_size)
             distances = torch.cdist(encoder_flatten, model.quantizer.embeddings.weight)
             indices = torch.argmin(distances, dim=1)
             
-            # Reshape to (batch_size, H, W)
+            # reshape to (batch_size, H, W)
             indices = indices.view(data.shape[0], encoder_output.shape[1], encoder_output.shape[2])
             all_indices.append(indices.cpu())
             # for use in conditional generation
@@ -6869,19 +6948,26 @@ class MaskedConv2d(nn.Conv2d):
         # self.weight.data *= self.mask  # Apply mask
         # return super().forward(x)
 #sidenote: 
+# a very good introduction on pixelcnn and maskedconvolutions:
+# https://github.com/pilipolio/learn-pytorch/blob/master/201708_ToyPixelCNN.ipynb
+# https://www.codeproject.com/Articles/5061271/PixelCNN-in-Autoregressive-Models
+# https://jrbtaylor.github.io/conditional-pixelcnn/
+# https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial12/Autoregressive_Image_Modeling.html
 # !edit,  it needs more work, its not complete yet!
 # see visualize_maskedcnn.py to see this in action
 
 # temp-test improved architecture: 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, mask_type='B'):
+    def __init__(self, in_channels, out_channels, dropout_rate=0, mask_type='B'):
         super().__init__()
         self.block = nn.Sequential(MaskedConv2d(mask_type, in_channels, out_channels, kernel_size=3, padding=1),
                                    nn.BatchNorm2d(out_channels),
                                    nn.ReLU(),
+                                   nn.Dropout2d(dropout_rate),
                                    MaskedConv2d(mask_type, out_channels, out_channels, kernel_size=3, padding=1),
                                    nn.BatchNorm2d(out_channels),
-                                   nn.ReLU(),)
+                                   nn.ReLU(),
+                                   nn.Dropout2d(dropout_rate))
         
         #! lets test with no conv,bn on residuals. 
         self.skip = nn.Sequential()
@@ -6910,10 +6996,11 @@ class ResidualBlock(nn.Module):
         return output 
 
 class PixelCNN(nn.Module):
-    def __init__(self, num_embds, input_shape=(7, 7), embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
         super().__init__()
         self.num_embds = num_embds
-        self.input_shape = input_shape
+        # initialize it from input so its set dynamically!
+        self.input_shape = []
         # self.H, self.W = input_shape
         self.embedding_size = embedding_size
         # number of classes, used to condition generation on the class
@@ -6933,15 +7020,16 @@ class PixelCNN(nn.Module):
         self.initial_conv = nn.Sequential(MaskedConv2d('A', self.conv_input_size, 128, kernel_size=7, padding=3),
                                           nn.BatchNorm2d(128),
                                           nn.ReLU(),
-                                          nn.Dropout2d(dropout_rate))
+                                         #nn.Dropout2d(dropout_rate)
+                                          )
         
         # residual blocks with dilation for increased receptive field
-        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128),
-                                         ResidualBlock(128, 128),
-                                         ResidualBlock(128, 256),
-                                         ResidualBlock(256, 256),
-                                         ResidualBlock(256, 512),
-                                         ResidualBlock(512, 512)
+        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128, dropout_rate=0.00),
+                                         ResidualBlock(128, 128, dropout_rate=0.00),
+                                         ResidualBlock(128, 256, dropout_rate=0.00),
+                                         ResidualBlock(256, 256, dropout_rate=0.00),
+                                         ResidualBlock(256, 512, dropout_rate=0.00),
+                                         ResidualBlock(512, 512, dropout_rate=0.00),
                                         ])
         
         # skip connections from all layers (feature pyramids)
@@ -6967,6 +7055,9 @@ class PixelCNN(nn.Module):
 
     def forward(self, input_indices, labels=None):
         # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
         input_indices = self.embedding(input_indices) # (batch, h,w,embd)
         # (batch, embd, h, w)
         input_indices = input_indices.permute(0, 3, 1, 2)
@@ -7001,38 +7092,6 @@ class PixelCNN(nn.Module):
         # for sampling in generation process
         logits = self.final_layers(combined)
         return logits
-
-# my initial training loop! works but needs more improvement
-# def train_prior(prior, latent_codes, epochs=50,batchsize=32, lr=1e-3):
-#     prior.train()
-#     dataloader = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
-#     optimizer = torch.optim.Adam(prior.parameters(), lr=lr)
-#     H, W = latent_codes.shape[1:]
-#     losses_epoch=[]
-    
-#     for epoch in range(epochs):
-#         losses=[]
-#         for batch in dataloader:
-#             batch = batch.to(device)
-#             targets = batch.long()
-#             logits = prior(batch)  
-#             loss = F.cross_entropy(logits, targets)
-#             # calculate bits per dimension:
-#             # bits per dimension(bpd) is used to evaluate generative models
-#             # n_dims = np.prod(targets.shape)
-#             # bpd = loss.item() * np.log2(np.e) / n_dims
-            
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-            
-#             losses.append(loss.item())
-#         losses_epoch.append(np.mean(losses))
-#         print(f'Epoch: {epoch}/{epochs}  | Loss: {np.mean(losses):.4f}')
-    
-#     print('training prior model complete!')
-#     pd.DataFrame(losses_epoch).plot()
-#     plt.plot()
 
 def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50, batchsize=32, lr=1e-3):
     
@@ -7139,7 +7198,7 @@ def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50,
             
             losses.append(loss.item())
             bpds.append(bpd)
-                    
+
         with torch.no_grad():
             prior.eval()
             losses_val=[]
@@ -7154,11 +7213,12 @@ def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50,
         avg_loss = np.mean(losses)
         avg_bpd = np.mean(bpds)
         avg_val_loss = np.mean(losses_val)
-        
-        scheduler.step(avg_val_loss)
+
         losses_epoch.append(avg_loss)
         losses_val_epoch.append(avg_val_loss)
         BPD_epoch.append(avg_bpd)
+        
+        scheduler.step(avg_val_loss)
         
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -7171,9 +7231,9 @@ def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50,
                 'bpd': avg_bpd
             }, model_checkpoint_name)
             
-            print(f'best model saved with val-loss: {best_val_loss:.4f}')
+            print(f'best model saved with val-loss: {best_val_loss:.6f}')
         
-        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.4f} | Val-Loss: {avg_val_loss:.4f} | BPD: {np.mean(bpds):.4f}')
+        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds):.6f}')
     
     
     plt.figure(figsize=(15, 5))
@@ -7207,11 +7267,12 @@ def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50,
     # plt.plot()
     return prior, model_checkpoint_name
 
-def generate(model, prior, labels, num_classes, batch_size=1, temperature=1.0, device="cuda"):
+def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda"):
     prior.eval()
     # it must match our latent space shape from our vqvae model
-    H, W = prior.input_shape
-    
+    print(f'{model.enc_output_shape=}')
+    H, W = model.enc_output_shape
+    print(f'{H=},{W=}')
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
     # !edit explanation
@@ -7236,12 +7297,16 @@ def generate(model, prior, labels, num_classes, batch_size=1, temperature=1.0, d
                 # update the latent code map
                 codes[:, i, j] = sampled_codes  
 
+    print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
     quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    print(f'{quantized.shape=}')
     quantized = quantized.permute(0, 3, 1, 2).contiguous()
-
+    print(f'{quantized.shape=}')
     # decode the quantized representations into images
-    return model.decoder(quantized)
+    generated = model.decoder(quantized)
+    print(f'{generated.shape=}')
+    return generated
 
 #!edit add more explanation
 # another way to generate images, instead of using prior model
@@ -7249,19 +7314,21 @@ def generate(model, prior, labels, num_classes, batch_size=1, temperature=1.0, d
 # has good features or not (whether the problem lies in prior model/its training
 # or vqvae features itself. the images may not look good! more explanation ahead)
 def generate_simple(model, latent_codes, num_samples=1):
-    # Compute code frequencies from training data
+    # compute code frequencies from training data
     counts = torch.bincount(latent_codes.flatten())
     probs = counts / counts.sum()
-    
-    # Sample indices from the frequency distribution
+    # sample indices from the frequency distribution
     H, W = latent_codes.shape[1:] #7x7
     indices = torch.multinomial(probs, num_samples * H * W, replacement=True)
     indices = indices.view(num_samples, H, W).to(device)
-    
-    # Decode the indices
+    # print(f'{indices.shape=}')
+    # decode the indices
     quantized = model.quantizer.embeddings(indices)  # (num_samples, H, W, embd_size)
+    # print(f'{quantized.shape=}')
     quantized = quantized.permute(0, 3, 1, 2)  # (num_samples, embd_size, H, W)
+    # print(f'{quantized.shape=}')
     generated = model.decoder(quantized)
+    # print(f'{generated.shape=}')
     return generated
 
 #%%
@@ -7271,33 +7338,42 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # Train PixelCNN prior
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=128,
                  num_class=10,
-                 make_conditional=True,
-                 dropout_rate=0.1).to(device)
+                 make_conditional=False,
+                 dropout_rate=0.001).to(device)
 
 prior, ckptname = train_prior(prior, 
                               latent_codes,
                               latent_labels,
                               num_classes=10, 
-                              epochs=120,
+                              epochs=20,
                               batchsize=64,
                               lr=0.001)
 #%%
+# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations!!! 
+ckptname='vqvae_18_28_36_2025_03_25.ckpt'
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
 #%%
 # Generate new image
+batch_size = 64
 num_classes=10
-labels = torch.ones(size=(64,),dtype=torch.long)*4
-generated_image = generate(model, 
-                           prior, 
+selected_label = 9
+labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+# due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+# I would get weird generations! when I icnreased the image size form 32 to 64 and
+# retired, the reconstructions got much better, but generation seemed cropped! looked
+# closer and noticed my bug and fixed it and now images are way better. they are very good
+# a bit deformed which is relaetd to overfitting , but overall it seems alright!
+generated_image = generate(model,
+                           prior,
                            labels=labels,
-                           num_classes=num_classes, 
-                           batch_size=64,
+                           num_classes=num_classes,
+                           batch_size=batch_size,
                            temperature=1)
 view_images(generated_image,labels,rows=8,cols=8,figsize=(3,4))
 #%%
 generated_image1 = generate_simple(model, latent_codes,num_samples=64)
-print(f'{generated_image1.shape=}')
+# print(f'{generated_image1.shape=}')
 view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8)
 
 #%%
