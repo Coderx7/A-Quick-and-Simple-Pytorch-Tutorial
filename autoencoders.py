@@ -7386,7 +7386,7 @@ prior.load_state_dict(ckpt["state_dict"])
 # Generate new image
 batch_size = 64
 num_classes=10
-selected_label = 9
+selected_label = 7
 labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
 # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
 # I would get weird generations! when I icnreased the image size form 32 to 64 and
@@ -7398,6 +7398,9 @@ generated_image = generate(model,
                            labels=labels,
                            num_classes=num_classes,
                            batch_size=batch_size,
+                           # when using conditional, using smaller values 
+                           # for temperature, give us weireder images/really 
+                           # simplestic images! like with way less details!
                            temperature=1)
 view_images(generated_image,labels,rows=8,cols=8,figsize=(3,4))
 #%%
