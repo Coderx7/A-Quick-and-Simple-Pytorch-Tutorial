@@ -6685,7 +6685,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'celeba' #anime # celeba #cifar10
+dataset = 'cifar10' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
 
@@ -6731,7 +6731,8 @@ ckpt_name = 'vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
 ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
 ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
 ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
-ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'
+ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
+ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16)
 checkpoint = torch.load(ckpt_name)
 model.load_state_dict(checkpoint['state_dict'])
 print(f'{model.enc_output_shape=}')
@@ -6765,6 +6766,7 @@ def display_logs(train_losses, val_losses, train_recons_errors, train_perplexiti
 # use umap for latent space visualization, umap is better than tsne
 #! explain a bit more
 from umap.umap_ import UMAP # pip install umap-learn
+@torch.no_grad()
 def view_results(model,train_dataloader, val_dataloader):
     model.eval()
     for name, dataloader in zip(['training data','validation data'],[train_dataloader, val_dataloader]):
@@ -6776,7 +6778,9 @@ def view_results(model,train_dataloader, val_dataloader):
         reconstructions = model.decoder(quantize)
         # print(f'{reconstructions.shape=}')
         # print(f'{labels.shape=} {labels[0]}')
-        labels = labels if len(labels[0])==0 else torch.ones((imgs.size(0),1))
+        # for celeba only
+        if isinstance(labels[0],list):
+            labels = torch.ones((imgs.size(0),1))
         view_images(reconstructions, labels, normalized=False)
         view_images(imgs, labels)
 
@@ -6789,6 +6793,18 @@ _, _, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                              batch_size=batch_size,
                                                              size=img_size)
 view_results(model, dataloader_train, dataloader_test)
+# now alhamdolelah finally we got pretty great reconstructions with 64x64
+# image dimensions. the actual reason behind this is the larger encoder output shape
+# that is in the encoder, if we use much larger featuremaps, the decoder can
+# much more easily reconstruct the image with much more details. initially
+# used 7x7 fmaps, and it gave us blurry images, no matter what we did, we couldnt
+# improve it, but when we simply increased the image size to 64x64, we got wayyy 
+# better result. this is in line with our previous observations in vanila vae, where
+# the larger fmaps would result in way better reconstructions (the issue there though was
+# that larger fmaps wouldnt allow the network to learn good features and generation
+# was very bad (we faced posterior collapse. but partly that was due to our simplistic 
+# architecture, I wonder if we see improvements by simply using this architecture here!
+# all in all, we know for a fact that larger fmaps in encoder is key to get sharp images!))
 #%%
 # now to be able to generate images, as we stated before, we need a prior model
 # todo: explain 
@@ -7000,6 +7016,12 @@ class PixelCNN(nn.Module):
         super().__init__()
         self.num_embds = num_embds
         # initialize it from input so its set dynamically!
+        #!i guess i'll be using the vqvae model instead of this
+        # because for generation we will be using vqvae model anyway
+        # moreover, for this to have meaningful values, our prior must
+        # do at least one forward pass, which again for generation
+        # we simply dont do, because we need H,W before that! so I guess
+        # I remove this alrogether?!
         self.input_shape = []
         # self.H, self.W = input_shape
         self.embedding_size = embedding_size
@@ -7297,15 +7319,15 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
                 # update the latent code map
                 codes[:, i, j] = sampled_codes  
 
-    print(f'{codes.shape=}')
+    # print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
     quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
-    print(f'{quantized.shape=}')
+    # print(f'{quantized.shape=}')
     quantized = quantized.permute(0, 3, 1, 2).contiguous()
-    print(f'{quantized.shape=}')
+    # print(f'{quantized.shape=}')
     # decode the quantized representations into images
     generated = model.decoder(quantized)
-    print(f'{generated.shape=}')
+    # print(f'{generated.shape=}')
     return generated
 
 #!edit add more explanation
