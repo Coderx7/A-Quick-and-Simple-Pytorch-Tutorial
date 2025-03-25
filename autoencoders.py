@@ -6732,7 +6732,7 @@ ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
 ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
 ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
 ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
-ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16)
+ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
 checkpoint = torch.load(ckpt_name)
 model.load_state_dict(checkpoint['state_dict'])
 print(f'{model.enc_output_shape=}')
@@ -7115,10 +7115,10 @@ class PixelCNN(nn.Module):
         logits = self.final_layers(combined)
         return logits
 
-def train_prior(prior, latent_codes, latent_labels, num_classes=None, epochs=50, batchsize=32, lr=1e-3):
+def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, epochs=50, batchsize=32, lr=1e-3):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
-    model_checkpoint_name = f'vqvae_{train_datetime}.ckpt'
+    model_checkpoint_name = f'vqvae_prior_{"Conditional_" if prior.make_conditional else ""}{train_datetime}.ckpt'
     device = next(prior.parameters()).device
     # H,W = prior.input_size
     # H, W = latent_codes.shape[1:]
@@ -7360,8 +7360,8 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # Train PixelCNN prior
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=128,
                  num_class=10,
-                 make_conditional=False,
-                 dropout_rate=0.001).to(device)
+                 make_conditional=True,
+                 dropout_rate=0.01).to(device)
 
 prior, ckptname = train_prior(prior, 
                               latent_codes,
@@ -7369,10 +7369,17 @@ prior, ckptname = train_prior(prior,
                               num_classes=10, 
                               epochs=20,
                               batchsize=64,
-                              lr=0.001)
+                              lr=0.01)
 #%%
-# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations!!! 
-ckptname='vqvae_18_28_36_2025_03_25.ckpt'
+# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
+# ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
+# instead of 32x32 and it would mess up the generation! see git log info)
+# when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
+# better than than before!(when we used 32x32 versions!)
+# ckptname='vqvae_18_28_36_2025_03_25.ckpt'
+# cifar10 unconditional
+# ckptname = 'vqvae_23_13_38_2025_03_25.ckpt'
+ckptname = 'vqvae_prior_Conditional_23_49_34_2025_03_25.ckpt'
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
 #%%
