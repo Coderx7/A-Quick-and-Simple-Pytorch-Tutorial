@@ -6540,7 +6540,7 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
 def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interval, device, img_size):
     
     timestamp = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
-    model_checkpoint_name = f'vqvae_{dataset.upper()}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
+    model_checkpoint_name = f'vqvae_{dataset.upper()}_{"x".join(map(str, img_size))}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
     dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, 
                                                                                     batch_size=batch_size,
                                                                                     size=img_size)
@@ -6559,7 +6559,7 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
     #     data_variance_train,data_variance_val = [np.var(loader.dataset.data/max_v) for loader in [dataloader_train,dataloader_test]] 
     # else:
     #     data_variance_train,data_variance_val = [torch.var(loader.dataset.data/max_v).item() for loader in [dataloader_train,dataloader_test]]
-    
+    # test of normalization efficacy!
     data_variance_train = data_variance_val =1
     
     # pixel_values = []
@@ -6686,7 +6686,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
 dataset = 'cifar10' #anime # celeba #cifar10
-img_size=(64,64)# larger image sizes, result in more detailed generations!
+img_size=(32,32)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -6733,6 +6733,23 @@ ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
 ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
 ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
 ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
+# codesize=8x8 - to see if codesize effects the latent variables
+# because previously when we trained with 32x32, the simple generation would create
+# somewhat meanigful outputs, like for celeba, the faces could be easily identified
+# though they were caricaturish!, while the normal prior based generation sucked (because
+# of our bug!) but when we used 64x64, the normal generation got decent but simple 
+# generation seemed just like pure noise! here im trying to see if the codebook size
+# has something to do with this, that is, by itself, codebook of 8x8 is trained/developed
+# much better than 16x16 codebook, consequently resulting in maningful generation
+# (non autoregressive), whereas for the 16x16 one, the codebook was low quality and
+# we needed a prior model to make it work! if this is the case, it proves our initial 
+# point we observed in vae before, that is, larger encoder output results in better
+# reconstructions, but may not be as developed (this is related to our architecture 
+# of course, as we dont have more layers working on certain featuremap sizes. 
+# probably if we use better architecture, use more layers for each featuremap size,
+# we wont see this issue for larger fmaps. but lets see how this goes!)
+ckpt_name = 'vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
+
 checkpoint = torch.load(ckpt_name)
 model.load_state_dict(checkpoint['state_dict'])
 print(f'{model.enc_output_shape=}')
@@ -6760,8 +6777,8 @@ def display_logs(train_losses, val_losses, train_recons_errors, train_perplexiti
         ax.set_title(label)  # Set title
         plt.show()
 
-# display_logs(train_losses, val_losses, train_recons_errors, train_perplexities)
-
+display_logs(train_losses, val_losses, train_recons_errors, train_perplexities)
+#%%
 # taken from Aäron van den Oord implementation (link given before)
 # use umap for latent space visualization, umap is better than tsne
 #! explain a bit more
@@ -7255,7 +7272,7 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
             
             print(f'best model saved with val-loss: {best_val_loss:.6f}')
         
-        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds):.6f}')
+        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds):.6f} LR:{scheduler.get_last_lr()[-1]:.6f}')
     
     
     plt.figure(figsize=(15, 5))
@@ -7358,7 +7375,9 @@ def generate_simple(model, latent_codes, num_samples=1):
 latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 #%%
 # Train PixelCNN prior
-prior = PixelCNN(num_embds=model.embd_num, embedding_size=128,
+# embdsize=256 results in a very decent generation compared to 128 even with 32x32 imgsize
+# 
+prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=10,
                  make_conditional=True,
                  dropout_rate=0.01).to(device)
@@ -7367,9 +7386,10 @@ prior, ckptname = train_prior(prior,
                               latent_codes,
                               latent_labels,
                               num_classes=10, 
-                              epochs=20,
+                              epochs=100,
                               batchsize=64,
-                              lr=0.01)
+                              lr=0.001)# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
+
 #%%
 # vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
 # ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
@@ -7380,13 +7400,17 @@ prior, ckptname = train_prior(prior,
 # cifar10 unconditional
 # ckptname = 'vqvae_23_13_38_2025_03_25.ckpt'
 ckptname = 'vqvae_prior_Conditional_23_49_34_2025_03_25.ckpt'
+ckptname = 'vqvae_prior_Conditional_13_03_14_2025_03_26.ckpt'#cifar 64x64
+ckptname = 'vqvae_prior_Conditional_21_00_37_2025_03_26.ckpt'#cifar 32x32 
+ckptname = 'vqvae_prior_Conditional_21_31_05_2025_03_26.ckpt'
+ckptname ='vqvae_prior_Conditional_21_38_09_2025_03_26.ckpt' # embd=256,32x32
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
 #%%
 # Generate new image
 batch_size = 64
 num_classes=10
-selected_label = 7
+selected_label = 1
 labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
 # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
 # I would get weird generations! when I icnreased the image size form 32 to 64 and
@@ -7427,7 +7451,7 @@ print("Code usage ratio:", len(counts.nonzero()) / model.embd_num)
 # test_codes = torch.zeros((1, 32, 32), dtype=torch.long, device=device)
 # using random codes, we get different patterns which shows our initial assumption
 # that decoder is ok but prior has the issue is right!
-test_codes = torch.randint(0, model.embd_num, (3, 32, 32), device=device)
+test_codes = torch.randint(0, model.embd_num, (3, 64, 64), device=device)
 
 quantized = model.quantizer.embeddings(test_codes)
 quantized = quantized.permute(0, 3, 1, 2).contiguous()
