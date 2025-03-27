@@ -6537,14 +6537,48 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
 #train
-def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interval, device, img_size):
+def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, interval, device, img_size):
     
     timestamp = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
-    model_checkpoint_name = f'vqvae_{dataset.upper()}_{"x".join(map(str, img_size))}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
-    dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, 
+    model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
+    dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
                                                                                     batch_size=batch_size,
                                                                                     size=img_size)
     
+
+    # Improved learning rate scheduler
+    warmup_epochs = 5
+    total_steps = len(dataloader_train) * epochs
+    warmup_steps = len(dataloader_train) * warmup_epochs
+    
+    # added later to see how much improvement we can get out of our curent model!
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
+    
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    
+    
+    if warmup_steps > 0:
+        # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
+        scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
+                                                             start_factor=1e-8,
+                                                             end_factor=1.0,
+                                                             total_iters=warmup_steps) 
+        # decay to 1% of peak LR
+        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                                      T_max=total_steps - warmup_steps,
+                                                                      eta_min=lr * 0.01)
+        # combine schedulers
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
+        print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
+    else:
+        # Only Cosine Annealing if no warmup
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
+        print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
+
+
 
     # without this loss will decrease a lot but the result isnt as good as when
     # we normalize the loss, and take the whole dataset into account!
@@ -6569,7 +6603,7 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
 
     print(f'Experiment Date:     {timestamp}')
     print(f'Checkpoint:          {model_checkpoint_name}')
-    print(f'Dataset:             {dataset.upper()}')
+    print(f'Dataset:             {dataset_name.upper()}')
     print(f'Epochs:              {epochs}')
     print(f'BatchSize:           {batch_size}')
     print(f'embeddings_num:      {model.embd_num}')
@@ -6610,7 +6644,8 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+            scheduler.step()
+              
             reconstruction_errors.append(reconstruction_error.item())
             vqlosses.append(vq_loss.item())
             perplexities.append(perplexity.item())
@@ -6623,7 +6658,7 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
                       f' | Perplexity: {np.mean(perplexities):.4f}'
                       f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
     
-        scheduler.step()
+        # scheduler.step()
        
         with torch.no_grad():
             model.eval()
@@ -6659,17 +6694,47 @@ def train(model:VQVAE, dataset, optimizer, scheduler, epochs,batch_size, interva
         #! use a validation instead?
         if mean_val_loss < best_loss:
             best_loss = mean_val_loss
-            torch.save({'epoch': epoch,
+            # TODO: remove checkpoint related info such as optimizer/scheduler state_dicts
+            # and save only the model weights, rename to .pt so it takes less space!
+            torch.save({'dataset':dataset_name,
+                        'batchsize':batch_size,
+                        'epoch': epoch,
                         'state_dict': model.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'scheduler':scheduler.state_dict(),
                         'val_loss': best_loss,
                         'train_loss': mean_loss,
-                       }, model_checkpoint_name)
+                        'enc_output_shape':model.enc_output_shape,
+                        'model_config':{
+                          'beta':model.beta,
+                          'use_ema':model.use_ema,
+                          'embd_num':model.embd_num,
+                          'embd_size':model.embd_size,
+                          'input_channels':model.input_channels,
+                          },
+                       }, model_checkpoint_name.replace('.ckpt','_best.ckpt'))
             print(f'Best model with loss={best_loss:.4f} saved!')
-
+        
+        # save the last model
+        torch.save({'dataset':dataset_name,
+                    'batchsize':batch_size,
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler':scheduler.state_dict(),
+                    'val_loss': best_loss,
+                    'train_loss': mean_loss,
+                    'enc_output_shape':model.enc_output_shape,
+                    'model_config':{
+                      'beta':model.beta,
+                      'use_ema':model.use_ema,
+                      'embd_num':model.embd_num,
+                      'embd_size':model.embd_size,
+                      'input_channels':model.input_channels,
+                      },
+                  }, model_checkpoint_name)
+        
     return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
-
 
 dataset = 'cifar10'
 # # dataset = 'cifar10'
@@ -6685,25 +6750,28 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'cifar10' #anime # celeba #cifar10
-img_size=(32,32)# larger image sizes, result in more detailed generations!
+dataset = 'mnist' #anime # celeba #cifar10
+#! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
+img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 batch_size=128
-epochs = 120
+epochs = 100#100
 interval = 1000
 lr=0.001
 milestones=[120]
 embd_num=512
 embd_size=128
 # commitment loss beta/weight
-beta=0.25
+# lower values result in worse loss and recons error! (I tried 0.2)
+beta=0.25 #0.25
 # use ema for quantzier embeddings update
 use_ema=False
 
 #!edit 
-#!use_ema doesnt make any difference on quality of recons apparently when model is weak?
+#!use_ema doesnt make any difference on quality of recons 
+# apparently when model is weak?!
 
 model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
 model.to(device)
@@ -6721,18 +6789,19 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
                                                                         img_size)
 #%%
 # load the model
+# TODO: remove the old models cuz they take up space!
 # ckpt_name = 'vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
-ckpt_name = 'vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
-ckpt_name = 'vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
-ckpt_name = 'vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
-ckpt_name = 'vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
-ckpt_name = 'vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
-ckpt_name = 'vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
-ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
-ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
-ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
-ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
-ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
+# ckpt_name = 'vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
+# ckpt_name = 'vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
+# ckpt_name = 'vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
+# ckpt_name = 'vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
+# ckpt_name = 'vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
+# ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
+# ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
+# ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
+# ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
+# ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
 # codesize=8x8 - to see if codesize effects the latent variables
 # because previously when we trained with 32x32, the simple generation would create
 # somewhat meanigful outputs, like for celeba, the faces could be easily identified
@@ -6748,11 +6817,46 @@ ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16
 # of course, as we dont have more layers working on certain featuremap sizes. 
 # probably if we use better architecture, use more layers for each featuremap size,
 # we wont see this issue for larger fmaps. but lets see how this goes!)
-ckpt_name = 'vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
+# ok it seems our estimate is correct. 32x32 gives somewhat identifiable non-autoregressive 
+# generations, not complete noise! trying with 64x64 to see how it goes again
+# 
+# ckpt_name = 'vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
 
-checkpoint = torch.load(ckpt_name)
+ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+
+checkpoint = torch.load(ckpt_name, weights_only=False)
+model_config = checkpoint['model_config']
+dataset = checkpoint['dataset']
+enc_output_shape = model_config.pop('enc_output_shape',None)
+device = 'cuda'
+model = VQVAE(**model_config)
+model.to(device)
+
 model.load_state_dict(checkpoint['state_dict'])
-print(f'{model.enc_output_shape=}')
+model.enc_output_shape = enc_output_shape
+
+print(f'Encoder output size: {tuple(model.enc_output_shape)}')
+print(f'dataset: {checkpoint['dataset'].upper()}')
+
+for k,v in checkpoint['model_config'].items():
+    print(f'{k:<10} : {v}')
+
+print(f'train_loss: {checkpoint['train_loss']:.6f}')
+print(f'val_loss:   {checkpoint['val_loss']:.6f}')
+
+
+# dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=checkpoint['dataset'],
+#                                                                                 batch_size=checkpoint['batchsize'])
+
+
 #%%
 import pandas as pd
 # for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
@@ -6854,22 +6958,22 @@ def get_latent_codes(model, dataloader):
 # (we could also use gan for this!))
 #
 # heres our pixelcnn model (works very bad, see the next model!)
-class PixelCNN(nn.Module):
-    def __init__(self, num_codes, input_shape=(7, 7), emb_dim=128):
+class PixelCNN_old(nn.Module):
+    def __init__(self, num_embds, embedding_size=128):
         super().__init__()
-        self.num_codes = num_codes
-        self.H, self.W = input_shape
-        self.emb_dim = emb_dim
+        self.num_embds = num_embds
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
         
         # Embedding layer: converts indices to dense vectors
-        self.embedding = nn.Embedding(num_codes, emb_dim)
+        self.embedding = nn.Embedding(num_embds, embedding_size)
         
         # Masked convolutions now operate on embeddings
         # the 3 layer version performs worse, when increased the layers
         # it got better, so prior network design is also very critical
         # on getting a good generation.
         self.layers = nn.Sequential(
-            MaskedConv2d('A', emb_dim, 64, kernel_size=3, padding=1),
+            MaskedConv2d('A', embedding_size, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             # nn.Dropout(0.01),
@@ -6889,14 +6993,14 @@ class PixelCNN(nn.Module):
             nn.BatchNorm2d(512),
             nn.ReLU(),
             # nn.Dropout(0.02),
-            nn.Conv2d(512, num_codes, kernel_size=1)  # Output logits over codebook indices
+            nn.Conv2d(512, self.num_embds, kernel_size=1)  # Output logits over codebook indices
         )
 
     def forward(self, x):
         # x: (batch_size, H, W) containing integer indices
-        x = self.embedding(x)  # (batch_size, H, W, emb_dim)
-        x = x.permute(0, 3, 1, 2)  # (batch_size, emb_dim, H, W)
-        logits = self.layers(x)  # (batch_size, num_codes, H, W)
+        x = self.embedding(x)  # (batch_size, H, W, embedding_size)
+        x = x.permute(0, 3, 1, 2)  # (batch_size, embedding_size, H, W)
+        logits = self.layers(x)  # (batch_size, num_embds, H, W)
         return logits
 
 class MaskedConv2d(nn.Conv2d):
@@ -6991,13 +7095,27 @@ class MaskedConv2d(nn.Conv2d):
 
 # temp-test improved architecture: 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout_rate=0, mask_type='B'):
+    def __init__(self, in_channels, out_channels, dropout_rate=0, mask_type='B',dilation=1):
         super().__init__()
         self.block = nn.Sequential(MaskedConv2d(mask_type, in_channels, out_channels, kernel_size=3, padding=1),
                                    nn.BatchNorm2d(out_channels),
                                    nn.ReLU(),
-                                   nn.Dropout2d(dropout_rate),
-                                   MaskedConv2d(mask_type, out_channels, out_channels, kernel_size=3, padding=1),
+                                  # nn.Dropout2d(dropout_rate),
+                                  # pad=2,dialation=2 should give us a larger receptive field (5x5)
+                                  # lets see if it helps! cuz theoretically a larger receptive field
+                                  # should help the model capture long-range dependencies across the
+                                  # image plane/spatial domain. the default is dialation=1.
+                                  # (my initial tests didnt show any changes, need more experiments!)
+                                  # !explain more why thats the case
+                                   MaskedConv2d(mask_type,
+                                                out_channels,
+                                                out_channels, 
+                                                kernel_size=3,
+                                                #!(since we only want pad=2 dilation=2,
+                                                #! I set padding to dilation because we only do dilation=2!in our tests)
+                                                padding=dilation, 
+                                                dilation=dilation),
+                                   
                                    nn.BatchNorm2d(out_channels),
                                    nn.ReLU(),
                                    nn.Dropout2d(dropout_rate))
@@ -7062,26 +7180,28 @@ class PixelCNN(nn.Module):
                                          #nn.Dropout2d(dropout_rate)
                                           )
         
-        # residual blocks with dilation for increased receptive field
-        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128, dropout_rate=0.00),
-                                         ResidualBlock(128, 128, dropout_rate=0.00),
-                                         ResidualBlock(128, 256, dropout_rate=0.00),
-                                         ResidualBlock(256, 256, dropout_rate=0.00),
-                                         ResidualBlock(256, 512, dropout_rate=0.00),
-                                         ResidualBlock(512, 512, dropout_rate=0.00),
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(128, 128, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(128, 256, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(256, 256, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(256, 512, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(512, 512, dropout_rate=0.00, dilation=1),
                                         ])
         
         # skip connections from all layers (feature pyramids)
-        self.skip_convs = nn.ModuleList([nn.Conv2d(128, 32, kernel_size=1),
-                                         nn.Conv2d(128, 32, kernel_size=1),
-                                         nn.Conv2d(256, 32, kernel_size=1),
-                                         nn.Conv2d(256, 32, kernel_size=1),
-                                         nn.Conv2d(512, 32, kernel_size=1),
-                                         nn.Conv2d(512, 32, kernel_size=1)
+        focount = 32
+        self.skip_convs = nn.ModuleList([nn.Conv2d(128, focount, kernel_size=1),
+                                         nn.Conv2d(128, focount, kernel_size=1),
+                                         nn.Conv2d(256, focount, kernel_size=1),
+                                         nn.Conv2d(256, focount, kernel_size=1),
+                                         nn.Conv2d(512, focount, kernel_size=1),
+                                         nn.Conv2d(512, focount, kernel_size=1)
                                         ])
         
         # last layers after concatenating skip connections
-        self.final_layers = nn.Sequential(nn.Conv2d(32*len(self.skip_convs), 512, kernel_size=1),
+        self.final_layers = nn.Sequential(nn.Conv2d(focount*len(self.skip_convs), 512, kernel_size=1),
                                           nn.BatchNorm2d(512),
                                           nn.ReLU(),
                                           nn.Dropout2d(dropout_rate),
@@ -7132,10 +7252,279 @@ class PixelCNN(nn.Module):
         logits = self.final_layers(combined)
         return logits
 
-def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, epochs=50, batchsize=32, lr=1e-3):
+
+############################
+
+# Gated activation as used in the original PixelCNN++
+class GatedActivation(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, x):
+        # Split the channels in half
+        a, b = torch.chunk(x, 2, dim=1)
+        # Apply gated activation: tanh(a) ⊙ sigmoid(b)
+        return torch.tanh(a) * torch.sigmoid(b)
+
+
+# Improved residual block with gated activation
+class GatedResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+        super().__init__()
+        
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        # Double the output channels for gated activation
+        gated_channels = out_channels * 2
+        
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, gated_channels, kernel_size=1),
+            nn.BatchNorm2d(gated_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate)
+        )
+        
+        self.conv2 = nn.Sequential(
+            MaskedConv2d('B', gated_channels, gated_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(gated_channels),
+            GatedActivation(),
+            nn.Dropout2d(dropout_rate)
+        )
+        
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(gated_channels // 2, out_channels, kernel_size=1),
+            nn.BatchNorm2d(out_channels)
+        )
+        
+        # Skip connection
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+        
+        self.activation = nn.ReLU()
+    
+    def forward(self, x):
+        residual = x
+        
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        
+        return self.activation(x + self.skip(residual))
+
+class Print(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self, outputs):
+        print(f'{outputs.shape=}')
+        return outputs
+
+
+class GatedConv2d(nn.Module):
+    """Gated Masked Convolution Layer"""
+    def __init__(self, mask_type, in_channels, out_channels, kernel_size, padding, dilation=1):
+        super().__init__()
+        self.conv_f = MaskedConv2d(mask_type, in_channels, out_channels, kernel_size, padding, dilation=dilation)
+        self.conv_g = MaskedConv2d(mask_type, in_channels, out_channels, kernel_size, padding, dilation=dilation)
+
+    def forward(self, x):
+        f = torch.tanh(self.conv_f(x))
+        g = torch.sigmoid(self.conv_g(x))
+        return f * g
+
+
+# this block ignores the autoregressive nature and causes the model to cheat
+# I kept getting extremely low validation loss with this, but generation was
+# awful, extremely bad! basically garbage! then I swapped it with simple conv2d
+# which I again got the same behavior cuz my dumbass forgot conv2d also breaks
+# the autoregressive nature of the process, and causes the network to be baleto
+# see the whole pixels! then I swapped it with normal resblock with maskedconv2d
+# and it basically performed just like the old architecture, I then changed the 
+# attention layer (see the next one ahead) to make it causal (basically the normal
+# attention used in transformers) and this time it behaved like our resblock with maskedconv2d
+# overall the changes in this architecture didnt do anything! so I guess the issue lies
+# somewhere else, possibly in the vqvae base model itself, maybe I need to add the
+# improvements in t he second paper to get good results or buff up the architetcure
+# even more!
+class AttentionBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.query = nn.Conv2d(channels, channels // 8, 1)
+        self.key = nn.Conv2d(channels, channels // 8, 1)
+        self.value = nn.Conv2d(channels, channels, 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        batch_size, C, H, W = x.size()
+        query = self.query(x).view(batch_size, -1, H * W).permute(0, 2, 1)
+        key = self.key(x).view(batch_size, -1, H * W)
+        value = self.value(x).view(batch_size, -1, H * W)
+        attn = torch.bmm(query, key)
+        attn = F.softmax(attn, dim=-1)
+        attn_out = torch.bmm(value, attn.permute(0, 2, 1))
+        attn_out = attn_out.view(batch_size, C, H, W)
+        return self.gamma * attn_out + x
+
+class MaskedAttentionBlock(nn.Module):
+    """Self-Attention with Causal Masking for Autoregressive Models"""
+    def __init__(self, channels, H, W): # Need spatial dims for mask
+        super().__init__()
+        self.channels = channels
+        self.H = H
+        self.W = W
+        # Use channels // 8 or some other factor, ensure it's not zero if channels < 8
+        self.head_dim = max(1, channels // 8)
+        self.query = nn.Conv2d(channels, self.head_dim, 1)
+        self.key = nn.Conv2d(channels, self.head_dim, 1)
+        self.value = nn.Conv2d(channels, channels, 1) # Value uses full channels
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+        # Create causal mask
+        mask = torch.tril(torch.ones(H * W, H * W)) # Shape (HW, HW)
+        # Register as buffer
+        self.register_buffer('causal_mask_base', mask) # Store the base mask
+
+
+    def forward(self, x):
+        batch_size, C, H, W = x.size()
+        assert H == self.H and W == self.W, \
+            f"Input spatial dims ({H},{W}) don't match block's expected dims ({self.H},{self.W})"
+
+        HW = H * W
+        query = self.query(x).view(batch_size, self.head_dim, HW).permute(0, 2, 1) # B, HW, C'
+        key = self.key(x).view(batch_size, self.head_dim, HW) # B, C', HW
+        value = self.value(x).view(batch_size, C, HW).permute(0, 2, 1) # B, HW, C
+
+        # Attention Scores: B, HW, HW
+        attn = torch.bmm(query, key) # Q * K^T
+        attn = attn / (self.head_dim ** 0.5) # Scale
+
+        # --- Apply the causal mask (Corrected) ---
+        # Get the base mask and select the relevant part
+        current_mask = self.causal_mask_base[:HW, :HW] # Shape (HW, HW)
+        # Create the boolean condition for masked_fill
+        mask_condition = (current_mask == 0) # Shape (HW, HW)
+        # Apply to attn (B, HW, HW) - broadcasts mask_condition correctly
+        masked_attn = attn.masked_fill(mask_condition, float('-inf'))
+        # --- End Correction ---
+
+        # Softmax over keys (last dimension)
+        # attn_softmax shape will now be (B, HW, HW)
+        attn_softmax = F.softmax(masked_attn, dim=-1)
+
+        # --- Dtype Correction ---
+        # Ensure dtypes match for bmm by casting value to attn_softmax's dtype
+        # this is for when we use autocast! explain!
+        value_casted = value.to(attn_softmax.dtype)
+        # --- End Correction ---
+
+        # print("attn_softmax shape:", attn_softmax.shape, "dtype:", attn_softmax.dtype)
+        # print("value_casted shape:", value_casted.shape, "dtype:", value_casted.dtype)
+
+        # Weighted sum of values: B, HW, C
+        attn_out = torch.bmm(attn_softmax, value_casted) # Attn * V (Corrected)
+
+        # Reshape back: B, C, H, W
+        attn_out = attn_out.permute(0, 2, 1).view(batch_size, C, H, W)
+
+        return self.gamma * attn_out + x
+
+class ResidualBlock(nn.Module):
+    """Gated Residual Block with Conditional BatchNorm"""
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
+            MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x):
+        return F.relu(self.block(x) + self.skip(x))
+
+class ImprovedPixelCNN(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
+        super().__init__()
+        self.num_embds = num_embds
+        self.embedding_size = embedding_size
+        self.num_class = num_class
+        self.make_conditional = make_conditional
+        # indecex dimensions required for attention
+        self.H = H
+        self.W = W
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
+        self.initial_conv = nn.Sequential(
+            MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+          )
+
+        # Define blocks with their respective output channel sizes:
+        self.res_blocks = nn.ModuleList([
+            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+            # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
+            ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
+            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+            # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
+            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+            ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
+        ])
+
+        # Corrected skip connections: one per block, matching output channels.
+        self.skip_convs = nn.ModuleList([
+            nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
+            nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
+            nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
+        ])
+
+        self.final_layers = nn.Sequential(
+            nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
+            nn.Conv2d(512, 256, kernel_size=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Conv2d(256, num_embds, kernel_size=1)
+        )
+
+    def forward(self, input_indices, labels=None):
+        # Embed and prepare conditional input.
+        input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
+        if self.make_conditional and labels is not None:
+            labels = self.fc_label_embedding(labels.float())
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            input_indices = torch.cat([input_indices, labels], dim=1)
+
+        # print(f'{input_indices.shape=}')
+        output = self.initial_conv(input_indices)
+        skips = []
+        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
+            output = res_block(output)
+            skips.append(skip_conv(output))
+        combined = torch.cat(skips, dim=1)
+        logits = self.final_layers(combined)
+        return logits
+
+
+
+#########################
+def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, num_classes=None, epochs=50, batchsize=32, lr=1e-3, weight_decay=1e-5):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
-    model_checkpoint_name = f'vqvae_prior_{"Conditional_" if prior.make_conditional else ""}{train_datetime}.ckpt'
+    is_conditional = "Conditional_" if prior.make_conditional else ""
+    model_checkpoint_name = f'vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{train_datetime}.ckpt'
     device = next(prior.parameters()).device
     # H,W = prior.input_size
     # H, W = latent_codes.shape[1:]
@@ -7171,23 +7560,64 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
     
     #AdamW works much better than Adam! by a long shot! with adam we got loss=4.0, while
     # with AdamW with the same architecture we got down to 2!
-    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=1e-2,)
+    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=weight_decay,)
     
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                           factor=0.5, patience=5,
-                                                           min_lr=1e-6, verbose=True)
+                                                           factor=0.5, patience=3,
+                                                           min_lr=1e-6)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=epochs)
+    
+    # new learning rate scheduler
+    warmup_epochs = 5
+    total_steps = len(dataloader_train) * epochs
+    warmup_steps = len(dataloader_train) * warmup_epochs
+    
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
+    
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    
+    
+    # if warmup_steps > 0:
+    #     # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
+    #     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
+    #                                                          start_factor=1e-8,
+    #                                                          end_factor=1.0,
+    #                                                          total_iters=warmup_steps) 
+    #     # decay to 1% of peak LR
+    #     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+    #                                                                   T_max=total_steps - warmup_steps,
+    #                                                                   eta_min=lr * 0.01)
+    #     # combine schedulers
+    #     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
+    #     print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
+    # else:
+    #     # Only Cosine Annealing if no warmup
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
+    #     print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
+
+    
     
     losses_epoch=[]
     losses_val_epoch=[]
     BPD_epoch=[]
+    BPD_epoch_val=[]
     best_val_loss = float('inf')
-        
-    print(f'experiment date:  {train_datetime}')
-    print(f'checkpoint name:  {model_checkpoint_name}')
+    
+    param_cnt = sum(p.numel() for p in prior.parameters())    
+    
+    print(f'Experiment Date:  {train_datetime}')
+    print(f'Dataset Name   :  {dataset_name.upper()}')
+    print(f'Embedding Size :  {prior.embedding_size}')
+    print(f'Parameter Count:  {param_cnt:,}')
+    print(f'Checkpoint Name:  {model_checkpoint_name}')
+
     
     for epoch in range(epochs):
         losses=[]
-        bpds = []
+        bpds_training = []
         prior.train()
         for latents, labels in dataloader_train:
             latents = latents.to(device)
@@ -7195,7 +7625,7 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
             logits = prior(latents,labels)
             # targets = latents.long()
             loss = F.cross_entropy(logits, latents.long())
-            # calculate bits per dimension:
+            #! calculate bits per dimension: needs excessive edits
             # bits per dimension(bpd) is used to evaluate generative models, 
             # (especially those that work with images). for example , the original pixelcnn achieves bpd
             # of 2.29 for cifar10. and everyone who trains or works in this section uses it. 
@@ -7221,43 +7651,74 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
             # BPD = (NLL_total / (num_images * num_pixels)) / log(2)
             # but since we used crossentropy here,  it's already averaged over the batch and the elements.
             # so if the loss is computed as the average NLL per pixel, then we just need to convert that
-            # average to bits by dividing by log(2).
-            # But in practice, when training models, the loss is usually averaged over the batch and the 
-            # pixels. So if your loss function is set to reduction='mean' in PyTorch, then the loss 
-            # value you get is already (total NLL) / (batch_size * num_pixels). 
-            # So then to get BPD, you just take that value and divide by log(2).
-            n_dims = np.prod(latents.shape)
-            bpd = loss.item() * np.log2(np.e) / n_dims
+            # average to bits by dividing by log(2) and dont need to divide it by n_dims here!
+            #  
+            
+            #correct explanation : (revised by google):
+            # Bits Per Dimension (BPD) is a standard metric used to evaluate the performance of generative models, particularly those modeling high-dimensional data like images (e.g., PixelCNN achieving ~2.92 BPD on CIFAR-10 is a common benchmark reference, though numbers vary slightly).
+            # Purpose: BPD quantifies how well a model predicts the data distribution. It essentially measures the average number of bits required to encode each dimension (e.g., each pixel value or sub-pixel value) of the data, assuming an ideal compression scheme based on the model's predicted probabilities. Lower BPD indicates a better model (better compression, closer fit to the true data distribution). It allows for standardized comparison across models and datasets, normalizing for dimensionality.
+            # Underlying Calculation: BPD is derived from the negative log-likelihood (NLL) of the data under the model. The NLL is typically calculated using the natural logarithm (base e), resulting in units of "nats".
+            # Formula: The fundamental definition is:
+            # BPD = Average NLL per Dimension (in nats) / ln(2)
+            # or equivalently:
+            # BPD = Average NLL per Dimension (in nats) * log2(e)
+            # where ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the base-2 logarithm of e (approx 1.443). The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
+            # Role of F.cross_entropy: When modeling discrete data (like pixel values 0-255), F.cross_entropy is commonly used as the loss function.
+            # It calculates the NLL for each individual element (pixel/sub-pixel) based on the model's predicted probabilities (logits) and the true target value (latents.long()).
+            # Crucially, with the default reduction='mean', F.cross_entropy averages these NLL values (in nats) over all elements across the entire batch.
+            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly gives you the Average NLL per Dimension (in nats).
+            # Calculating BPD from F.cross_entropy Loss: Since loss.item() already represents the average NLL per dimension in nats:
+            # # loss = F.cross_entropy(logits, latents.long()) # Assumes reduction='mean'
+            # nats_per_dim = loss.item()
+            # # Convert nats per dimension to bits per dimension
+            # # Using np.log(2) which is ln(2):
+            # bpd = nats_per_dim / np.log(2)
+            # # Or using np.log2(np.e):
+            # # bpd = nats_per_dim * np.log2(np.e)
+            # Use code with caution.
+            # Python
+            # You do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:])) again, because the cross-entropy loss with mean reduction has already performed that averaging.
+                
+            # n_dims = np.prod(latents.shape)
+            bpd = loss.item() * np.log2(np.e) #/ n_dims
             
             optimizer.zero_grad()
             loss.backward()
             # clip gradients to prevent exploding gradients
             # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
             optimizer.step()
+            # when using lambdalr/cosinelr
+            scheduler.step()
             
             losses.append(loss.item())
-            bpds.append(bpd)
+            bpds_training.append(bpd)
 
         with torch.no_grad():
             prior.eval()
             losses_val=[]
+            bpds_val=[]
             for latents, labels in dataloader_val:
                 latents = latents.to(device)
                 labels = F.one_hot(labels,num_classes=num_classes).to(device) if num_classes else None
                 logits = prior(latents, labels)
                 # targets = latents.long()
                 loss = F.cross_entropy(logits, latents.long())
+                bpd = loss.item() * np.log2(np.e)
+                # store them for plots
                 losses_val.append(loss.item())
-        
+                bpds_val.append(bpd)
+                
         avg_loss = np.mean(losses)
-        avg_bpd = np.mean(bpds)
+        avg_bpd = np.mean(bpds_training)
         avg_val_loss = np.mean(losses_val)
+        avg_val_bpd = np.mean(bpds_val)
 
         losses_epoch.append(avg_loss)
         losses_val_epoch.append(avg_val_loss)
         BPD_epoch.append(avg_bpd)
+        BPD_epoch_val.append(avg_val_bpd)
         
-        scheduler.step(avg_val_loss)
+        # scheduler.step(avg_val_loss)
         
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -7267,12 +7728,37 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
                 'optimizer': optimizer.state_dict(),
                 'scheduler':scheduler.state_dict(),
                 'val_loss': best_val_loss,
-                'bpd': avg_bpd
-            }, model_checkpoint_name)
+                'bpd': avg_bpd,
+                'bpd_val':avg_val_bpd,
+                'model_config': {
+                    'num_embds': prior.num_embds,
+                    'embedding_size': prior.embedding_size,
+                    'num_class': prior.num_class,
+                    'make_conditional': prior.make_conditional
+                }
+            }, model_checkpoint_name.replace('.ckpt','_best.ckpt'))
             
             print(f'best model saved with val-loss: {best_val_loss:.6f}')
         
-        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds):.6f} LR:{scheduler.get_last_lr()[-1]:.6f}')
+        # save the last epoch 
+        torch.save({
+                'epoch': epoch,
+                'state_dict': prior.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler':scheduler.state_dict(),
+                'loss': avg_loss,
+                'val_loss': avg_val_loss,
+                'bpd': avg_bpd,
+                'bpd_val':avg_val_bpd,
+                'model_config': {
+                    'num_embds': prior.num_embds,
+                    'embedding_size': prior.embedding_size,
+                    'num_class': prior.num_class,
+                    'make_conditional': prior.make_conditional
+                }
+            }, model_checkpoint_name)
+        
+        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds_training):.6f} |  BPD_VAL: {np.mean(bpds_val):.6f} | LR:{scheduler.get_last_lr()[-1]:.6f}')
     
     
     plt.figure(figsize=(15, 5))
@@ -7291,12 +7777,11 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
     plt.ylabel('Bits per Dimension')
     plt.title('Model Efficiency[BPD](Lower is Better)')
     
-    # plt.subplot(1, 3, 3)
-    # plt.plot(history['lr'])
-    # plt.xlabel('Epoch')
-    # plt.ylabel('Learning Rate')
-    # plt.title('Learning Rate Schedule')
-    # plt.yscale('log')
+    plt.subplot(1, 3, 3)
+    plt.plot(BPD_epoch_val)
+    plt.xlabel('Epoch')
+    plt.ylabel('Bits per Dimension')
+    plt.title('Model Efficiency[BPD-Val](Lower is Better)')
     
     plt.tight_layout()
     plt.show()
@@ -7306,12 +7791,340 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, num_classes=None, e
     # plt.plot()
     return prior, model_checkpoint_name
 
+
+
+from tqdm import tqdm
+
+def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_classes=None, 
+                        epochs=100, batchsize=64, lr=3e-4, weight_decay=1e-4):
+    
+    train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+    is_conditional = "Conditional_" if prior.make_conditional else ""
+    model_checkpoint_name = f'improved_vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{train_datetime}.ckpt'
+    device = next(prior.parameters()).device
+    
+    # Create dataset with latent codes and labels
+    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
+    
+    val_split= 0.1
+    dataset_size = len(dataset)
+    val_size = int(val_split * dataset_size)
+    train_size = dataset_size - val_size 
+    
+    generator = torch.Generator().manual_seed(42)
+    dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size],
+                                                                        generator=generator)
+    
+    # Create data loaders with proper augmentation
+    dataloader_train = torch.utils.data.DataLoader(dataset_train, 
+                                                   batch_size=batchsize, 
+                                                   shuffle=True, 
+                                                   pin_memory=True, 
+                                                   num_workers=8, 
+                                                   drop_last=True)
+    
+    dataloader_val = torch.utils.data.DataLoader(dataset_val, 
+                                                 batch_size=batchsize, 
+                                                 shuffle=False,
+                                                 pin_memory=True,
+                                                 num_workers=8,
+                                                 drop_last=False)
+    
+    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=weight_decay,)
+    
+    # Improved learning rate scheduler
+    warmup_epochs = 5
+    total_steps = len(dataloader_train) * epochs
+    warmup_steps = len(dataloader_train) * warmup_epochs
+    
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
+    
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    
+    
+    # if warmup_steps > 0:
+    #     # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
+    #     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
+    #                                                          start_factor=1e-8,
+    #                                                          end_factor=1.0,
+    #                                                          total_iters=warmup_steps) 
+    #     # decay to 1% of peak LR
+    #     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+    #                                                                   T_max=total_steps - warmup_steps,
+    #                                                                   eta_min=lr * 0.01)
+    #     # combine schedulers
+    #     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
+    #     print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
+    # else:
+    #     # Only Cosine Annealing if no warmup
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
+    #     print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
+
+    
+    # Evaluation metrics
+    losses_train = []
+    losses_val = []
+    bpd_train = []
+    bpd_val = []
+    lr_history = []
+    
+    # Early stopping parameters
+    best_val_loss = float('inf')
+    patience = 10
+    patience_counter = 0
+    
+    # Model info
+    param_cnt = sum(p.numel() for p in prior.parameters() if p.requires_grad)
+    
+    print(f'====== Training Details ======')
+    print(f'Experiment Date  : {train_datetime}')
+    print(f'Dataset          : {dataset_name.upper()}')
+    print(f'Embedding Size   : {prior.embedding_size}')
+    print(f'Parameter Count  : {param_cnt:,}')
+    print(f'Batch Size       : {batchsize}')
+    print(f'Learning Rate    : {lr}')
+    print(f'Weight Decay     : {weight_decay}')
+    print(f'Dataset Sizes    : Train {train_size}, Val {val_size}')
+    print(f'Checkpoint Name  : {model_checkpoint_name}')
+    print(f'===========================')
+    
+    # Add AMP for mixed precision training
+    scaler = torch.amp.GradScaler()
+    
+    for epoch in range(epochs):
+        # Training phase
+        prior.train()
+        train_loss = 0.0
+        train_bpd = 0.0
+        
+        progress_bar = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{epochs}')
+        
+        for latents, labels in progress_bar:
+            latents = latents.to(device)
+            labels = labels.to(device)
+            
+            # Convert labels to one-hot if needed and the model is conditional
+            if prior.make_conditional and num_classes:
+                if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
+                    labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
+                else:
+                    labels_onehot = labels.float()
+            else:
+                labels_onehot = None
+            
+            optimizer.zero_grad()
+            
+            # Use mixed precision training
+            with torch.amp.autocast(device_type="cuda"):
+                logits = prior(latents, labels_onehot)
+                loss = F.cross_entropy(logits, latents.long())
+            
+            # since we are using F.cross_entropy with the default reduction='mean' 
+            # it means it averages the loss over all the individual elements (dimensions) already
+            # and we dont need to divide it by n_dims again (normalize it again!)
+            # n_dims = np.prod(latents.shape)
+            bpd = loss.item() * np.log2(np.e)
+            
+            # Backward pass with gradient scaling
+            scaler.scale(loss).backward()
+            
+            # Gradient clipping
+            scaler.unscale_(optimizer)
+            # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
+            
+            # Update weights with gradient scaling
+            scaler.step(optimizer)
+            scaler.update()
+            
+            # Update learning rate
+            scheduler.step()
+            
+            # Update metrics
+            train_loss += loss.item()
+            train_bpd += bpd
+            
+            # Update progress bar
+            progress_bar.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'bpd': f'{bpd:.4f}',
+                'lr': f'{scheduler.get_last_lr()[0]:.6f}'
+            })
+        
+        # Calculate average metrics for the epoch
+        train_loss /= len(dataloader_train)
+        train_bpd /= len(dataloader_train)
+        
+        # Validation phase
+        prior.eval()
+        val_loss = 0.0
+        val_bpd = 0.0
+        
+        with torch.no_grad():
+            for latents, labels in dataloader_val:
+                latents = latents.to(device)
+                labels = labels.to(device)
+                
+                # Convert labels to one-hot if needed and the model is conditional
+                if prior.make_conditional and num_classes:
+                    if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
+                        labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
+                    else:
+                        labels_onehot = labels.float()
+                else:
+                    labels_onehot = None
+                
+                logits = prior(latents, labels_onehot)
+                loss = F.cross_entropy(logits, latents.long())
+                
+                # Calculate bits per dimension
+                # n_dims = np.prod(latents.shape)
+                bpd = loss.item() * np.log2(np.e)
+                
+                val_loss += loss.item()
+                val_bpd += bpd
+        
+        # Calculate average metrics for validation
+        val_loss /= len(dataloader_val)
+        val_bpd /= len(dataloader_val)
+        
+        # Store metrics
+        losses_train.append(train_loss)
+        losses_val.append(val_loss)
+        bpd_train.append(train_bpd)
+        bpd_val.append(val_bpd)
+        lr_history.append(scheduler.get_last_lr()[0])
+        
+        # Print epoch summary
+        print(f'Epoch: {epoch+1}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f} | Train BPD: {train_bpd:.6f} | Val BPD: {val_bpd:.6f} | LR: {scheduler.get_last_lr()[0]:.6f}')
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            
+            #! make it match the old training script
+            torch.save({'epoch': epoch,
+                        'state_dict': prior.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                        'val_loss': best_val_loss,
+                        'bpd':train_bpd,
+                        'bpd_val': val_bpd,
+                        'model_config': {
+                            'num_embds': prior.num_embds,
+                            'embedding_size': prior.embedding_size,
+                            'num_class': prior.num_class,
+                            'make_conditional': prior.make_conditional
+                        }
+            }, model_checkpoint_name.replace(".ckpt","_best.ckpt"))
+            
+            print(f'✅ Best model saved with val-loss: {best_val_loss:.6f}')
+        else:
+            patience_counter += 1
+            print(f'⚠️ Validation loss did not improve. Patience: {patience_counter}/{patience}')
+                
+        # save all the models
+        torch.save({'epoch': epoch,
+                    'state_dict': prior.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
+                    'val_loss': best_val_loss,
+                    'bpd':train_bpd,
+                    'bpd_val': val_bpd,
+                    'model_config': {
+                        'num_embds': prior.num_embds,
+                        'embedding_size': prior.embedding_size,
+                        'num_class': prior.num_class,
+                        'make_conditional': prior.make_conditional
+                        }
+        }, model_checkpoint_name.replace(".ckpt","_best.ckpt"))
+
+        # Early stopping
+        # if patience_counter >= patience:
+        #     print(f'⛔ Early stopping triggered after {epoch+1} epochs')
+        #     break
+    
+    # 
+    # prior.eval()
+    # test_loss = 0.0
+    # test_bpd = 0.0
+    
+    # with torch.no_grad():
+    #     for latents, labels in dataloader_test:
+    #         latents = latents.to(device)
+    #         labels = labels.to(device)
+            
+    #         if prior.make_conditional and num_classes:
+    #             if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
+    #                 labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
+    #             else:
+    #                 labels_onehot = labels.float()
+    #         else:
+    #             labels_onehot = None
+            
+    #         logits = prior(latents, labels_onehot)
+    #         loss = F.cross_entropy(logits, latents.long())
+            
+    #         # n_dims = np.prod(latents.shape)
+    #         bpd = loss.item() * np.log2(np.e)
+            
+    #         test_loss += loss.item()
+    #         test_bpd += bpd
+    
+    # test_loss /= len(dataloader_test)
+    # test_bpd /= len(dataloader_test)
+    
+    # print(f'📊 Test Results | Loss: {test_loss:.6f} | BPD: {test_bpd:.6f}')
+    
+    # Plot training history
+    plt.figure(figsize=(18, 6))
+    
+    # Loss plot
+    plt.subplot(1, 3, 1)
+    plt.plot(losses_train, label='Training Loss')
+    plt.plot(losses_val, label='Validation Loss')
+    # plt.axhline(y=test_loss, color='r', linestyle='--', label='Test Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Training and Validation Loss')
+    
+    # BPD plot
+    plt.subplot(1, 3, 2)
+    plt.plot(bpd_train, label='Training BPD')
+    plt.plot(bpd_val, label='Validation BPD')
+    # plt.axhline(y=test_bpd, color='r', linestyle='--', label='Test BPD')
+    plt.xlabel('Epoch')
+    plt.ylabel('Bits per Dimension')
+    plt.legend()
+    plt.title('Model Efficiency (Lower is Better)')
+    
+    # Learning rate plot
+    plt.subplot(1, 3, 3)
+    plt.plot(lr_history)
+    plt.xlabel('Epoch')
+    plt.ylabel('Learning Rate')
+    plt.title('Learning Rate Schedule')
+    plt.yscale('log')
+    
+    plt.tight_layout()
+    plt.savefig(f'training_history_{dataset_name.upper()}_{train_datetime}.png')
+    plt.show()
+    
+    print('✨ Training complete!')
+    
+    return prior, model_checkpoint_name
+
+
 def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda"):
     prior.eval()
     # it must match our latent space shape from our vqvae model
-    print(f'{model.enc_output_shape=}')
+    # print(f'{model.enc_output_shape=}')
     H, W = model.enc_output_shape
-    print(f'{H=},{W=}')
+    # print(f'{H=},{W=}')
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
     # !edit explanation
@@ -7370,47 +8183,209 @@ def generate_simple(model, latent_codes, num_samples=1):
     # print(f'{generated.shape=}')
     return generated
 
+def sample_from_prior(prior:PixelCNN, model:VQVAE, num_samples=16, temperature=1.0, class_label=None, 
+                      num_classes=10, shape=None, top_k=0, top_p=0.9, device='cuda'):
+    """
+    Generate samples from the trained prior model
+    
+    Args:
+        prior: Trained PixelCNN prior model
+        vqvae: Trained VQVAE model for decoding latent codes
+        num_samples: Number of samples to generate
+        temperature: Temperature for sampling (higher = more diverse, lower = more conservative)
+        class_label: Class label for conditional generation (None for unconditional)
+        num_classes: Number of classes in the dataset
+        shape: Shape of latent space (height, width)
+        top_k: If > 0, only sample from the top k most likely tokens
+        top_p: If < 1.0, only sample from the smallest set of tokens whose cumulative probability exceeds p
+        device: Device to generate samples on
+        
+    Returns:
+        Tensor of generated samples (batch_size, channels, height, width)
+    """
+    prior.eval()
+    model.eval()
+    
+    # Determine latent shape if not provided
+    if shape is None:
+        shape = prior.input_shape
+    
+    # Create empty latent codes
+    latent_shape = (num_samples, *shape)
+    latents = torch.zeros(latent_shape, dtype=torch.long, device=device)
+    
+    # Prepare conditional labels if needed
+    if prior.make_conditional and class_label is not None:
+        if isinstance(class_label, int):
+            # Single class for all samples
+            labels = torch.full((num_samples,), class_label, dtype=torch.long, device=device)
+            labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
+        else:
+            # Different class for each sample
+            labels = torch.tensor(class_label, dtype=torch.long, device=device)
+            labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
+    else:
+        labels_onehot = None
+    
+    # Auto-regressive generation
+    with torch.no_grad():
+        for h in tqdm(range(shape[0]), desc="Generating rows"):
+            for w in range(shape[1]):
+                # Get predictions for current pixel
+                logits = prior(latents, labels_onehot)
+                logits = logits[:, :, h, w]
+                
+                # Apply temperature
+                if temperature != 1.0:
+                    logits = logits / temperature
+                
+                # Convert to probabilities
+                probs = F.softmax(logits, dim=-1)
+                
+                # Apply top-k sampling if specified
+                if top_k > 0:
+                    # Zero out all values below the top-k values
+                    values, indices = torch.topk(probs, top_k, dim=-1)
+                    min_values = values[:, -1].unsqueeze(-1).expand_as(probs)
+                    probs = torch.where(probs < min_values, torch.zeros_like(probs), probs)
+                    # Renormalize probabilities
+                    probs = probs / probs.sum(dim=-1, keepdim=True)
+                
+                # Apply top-p (nucleus) sampling if specified
+                if top_p < 1.0:
+                    sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+                    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                    
+                    # Create a mask for probs that exceed the cumulative probability threshold
+                    mask = cumulative_probs <= top_p
+                    # Ensure at least one token is kept
+                    mask[:, 0] = True
+                    
+                    # Convert mask back to original indices
+                    batch_indices = torch.arange(num_samples).unsqueeze(-1).expand_as(sorted_indices)
+                    mask_indices = torch.zeros_like(probs, dtype=torch.bool)
+                    mask_indices.scatter_(-1, sorted_indices, mask)
+                    
+                    # Apply the mask and renormalize
+                    probs = torch.where(mask_indices, probs, torch.zeros_like(probs))
+                    probs = probs / probs.sum(dim=-1, keepdim=True)
+                
+                # Sample from the distribution
+                pixel_samples = torch.multinomial(probs, 1).squeeze(-1)
+                
+                # Update latent codes with sampled value
+                latents[:, h, w] = pixel_samples
+    
+    with torch.no_grad():
+        reconstructions = model.decoder(latents)
+    
+    return reconstructions, latents
+
+
+
 #%%
-# After training VQ-VAE:
+# After training vqvae, we need to grab the trainingset's encodings
+# and use these encodings to train our prior model
 latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
-#%%
-# Train PixelCNN prior
-# embdsize=256 results in a very decent generation compared to 128 even with 32x32 imgsize
+
+# train our PixelCNN prior
+# embdsize=256 results in a very decent generation 
+# compared to 128 even with 32x32 imgsize
 # 
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=10,
                  make_conditional=True,
-                 dropout_rate=0.01).to(device)
+                 dropout_rate=0.1,).to(device)
 
-prior, ckptname = train_prior(prior, 
+prior, ckptname = train_prior(prior,
                               latent_codes,
                               latent_labels,
+                              dataset_name=dataset,# for logging purposes only!
                               num_classes=10, 
-                              epochs=100,
+                              epochs=120,
                               batchsize=64,
-                              lr=0.001)# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
+                              lr=0.001,
+                              weight_decay=1e-2)
 
+# prior = ImprovedPixelCNN(num_embds=model.embd_num, 
+#                          embedding_size=256,
+#                          num_class=10,
+#                          make_conditional=True,
+#                          dropout_rate=0.1,).to(device)
+
+# prior, checkpoint_path = train_improved_prior(prior,
+#                                             latent_codes,
+#                                             latent_labels,
+#                                             dataset_name=dataset,
+#                                             num_classes=10,
+#                                             epochs=120,
+#                                             batchsize=64,
+#                                             lr=3e-4,
+#                                             weight_decay=1e-2)
+
+#sidenote: 
+# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
+# sidenote: starting with smaller lr=(1e-3) overfitted badly, but the generation was
+# waaaaay better. I increased embdsize for prior though, need to check 
+# it with higher lr and see if it gets better if it doesnt oevrfit badly!
+# note: when I changed the model from 32x32 to 64x64 in my second test, I didnt
+# rerun the get_latent_codes, I guess this is the reason why I kept getting weird
+# output all these times!
+# check if this is the case using a second round of tests!
 #%%
 # vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
 # ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
 # instead of 32x32 and it would mess up the generation! see git log info)
 # when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
 # better than than before!(when we used 32x32 versions!)
+
 # ckptname='vqvae_18_28_36_2025_03_25.ckpt'
 # cifar10 unconditional
 # ckptname = 'vqvae_23_13_38_2025_03_25.ckpt'
-ckptname = 'vqvae_prior_Conditional_23_49_34_2025_03_25.ckpt'
-ckptname = 'vqvae_prior_Conditional_13_03_14_2025_03_26.ckpt'#cifar 64x64
-ckptname = 'vqvae_prior_Conditional_21_00_37_2025_03_26.ckpt'#cifar 32x32 
-ckptname = 'vqvae_prior_Conditional_21_31_05_2025_03_26.ckpt'
-ckptname ='vqvae_prior_Conditional_21_38_09_2025_03_26.ckpt' # embd=256,32x32
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64
+# I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
+# better generation usually! so try both checkpoints (the last one and the best one) and 
+# compare the results
+
+ckptname = 'vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckp'#32
+# Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
+# get that in early epochs. the smalles training loss/bpd has a much better result
+# than the our best val/bpd values! makes me wonder if having a validation set even
+# matters!
+ckptname = 'vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
+ckptname = 'vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
+
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+
+# ckptname = 'improved_vqvae_prior_CIFAR10_embd256_Conditional_22_08_05_2025_04_03.ckpt'#64 #drp0.5
+# ckptname = 'improved_vqvae_prior_CIFAR10_embd256_Conditional_22_50_58_2025_04_03.ckpt' #drp0.1
+
+
+
+
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
+print(f'Epoch: {ckpt["epoch"]}')
+print(f'val_Loss: {ckpt['val_loss']:.4f}')
+print(f'val_BPD:  {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
+if 'cifar' in dataset:
+    class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+                   5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+
+elif dataset =='mnist':
+    class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
+                   5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
+else:
+    class_names = ['']
+    
 batch_size = 64
 num_classes=10
-selected_label = 1
+selected_label = 9
+print(f'Generating images of {class_names[selected_label]}')
 labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
 # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
 # I would get weird generations! when I icnreased the image size form 32 to 64 and
@@ -7426,12 +8401,20 @@ generated_image = generate(model,
                            # for temperature, give us weireder images/really 
                            # simplestic images! like with way less details!
                            temperature=1)
-view_images(generated_image,labels,rows=8,cols=8,figsize=(3,4))
+view_images(generated_image,labels,rows=9,cols=8,figsize=(3,4))
 #%%
 generated_image1 = generate_simple(model, latent_codes,num_samples=64)
 # print(f'{generated_image1.shape=}')
 view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8)
 
+#%%
+samples, latents = sample_from_prior(prior,
+                                    model,
+                                    num_samples=16,
+                                    temperature=0.8,
+                                    class_label=3,  # Optional: specific class to generate
+                                    top_p=0.9  # Use nucleus sampling
+                                )
 #%%
 # check to see if our codebook has collapsed
 # if only a few codes are used here (e.g. 1-2 codes dominate), our VQ-VAE codebook has collapsed
