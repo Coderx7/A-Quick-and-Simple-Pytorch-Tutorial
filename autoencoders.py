@@ -6825,9 +6825,9 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
 
-ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
@@ -6835,6 +6835,7 @@ ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
 dataset = checkpoint['dataset']
+img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
 enc_output_shape = model_config.pop('enc_output_shape',None)
 device = 'cuda'
 model = VQVAE(**model_config)
@@ -6845,6 +6846,7 @@ model.enc_output_shape = enc_output_shape
 
 print(f'Encoder output size: {tuple(model.enc_output_shape)}')
 print(f'dataset: {checkpoint['dataset'].upper()}')
+print(f'img_size: {img_size}')
 
 for k,v in checkpoint['model_config'].items():
     print(f'{k:<10} : {v}')
@@ -6900,7 +6902,7 @@ def view_results(model,train_dataloader, val_dataloader):
         # print(f'{reconstructions.shape=}')
         # print(f'{labels.shape=} {labels[0]}')
         # for celeba only
-        if isinstance(labels[0],list):
+        if labels[0].size(0)>1:
             labels = torch.ones((imgs.size(0),1))
         view_images(reconstructions, labels, normalized=False)
         view_images(imgs, labels)
@@ -8292,9 +8294,15 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # embdsize=256 results in a very decent generation 
 # compared to 128 even with 32x32 imgsize
 # 
+# for celeba use the nonconditional version because it comes with 40 attributes for
+# each individual image. we can choose to incorporate them or at least condition our
+# models on one of these attributes, but for now we just ignore them and chopse the
+# unconditional version 
+conditional = False if dataset=='celeba' else True
+
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=10,
-                 make_conditional=True,
+                 make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
 prior, ckptname = train_prior(prior,
@@ -8358,12 +8366,19 @@ ckptname = 'vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
 
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+# not good. I lowered the dropout ratio and it I believe it make it worse than before!
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
 
-# ckptname = 'improved_vqvae_prior_CIFAR10_embd256_Conditional_22_08_05_2025_04_03.ckpt'#64 #drp0.5
-# ckptname = 'improved_vqvae_prior_CIFAR10_embd256_Conditional_22_50_58_2025_04_03.ckpt' #drp0.1
+# for celeba because the dataset is much larger, we have far b etter generations!
+# obviously having a better vqvae and prior models with better training can yield
+# much better result. but for us this siffuces and shows given more data, with the
+# same architecture, we can achieve pretty good results.
+ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
-
-
+# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
+# clean and git push to privae repo first
 
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
@@ -8380,7 +8395,7 @@ elif dataset =='mnist':
     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
 else:
-    class_names = ['']
+    class_names = {i:str(i) for i in range(10)}
     
 batch_size = 64
 num_classes=10
