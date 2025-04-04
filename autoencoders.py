@@ -6750,7 +6750,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'mnist' #anime # celeba #cifar10
+dataset = 'cifar10' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
@@ -6762,7 +6762,7 @@ interval = 1000
 lr=0.001
 milestones=[120]
 embd_num=512
-embd_size=128
+embd_size=256#128
 # commitment loss beta/weight
 # lower values result in worse loss and recons error! (I tried 0.2)
 beta=0.25 #0.25
@@ -6826,8 +6826,14 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
 
 # ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03_best.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
-ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+# performs vert vert good ! increased embdsz actually results in way smaller loss
+# abd BPD!
+ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+# ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
+
+# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
@@ -6900,9 +6906,9 @@ def view_results(model,train_dataloader, val_dataloader):
         _, quantize, _ = model.quantizer(vq_encoder_output)
         reconstructions = model.decoder(quantize)
         # print(f'{reconstructions.shape=}')
-        # print(f'{labels.shape=} {labels[0]}')
+        # print(f'{labels.shape=} {labels.ndimension()=}')
         # for celeba only
-        if labels[0].size(0)>1:
+        if labels[0].ndimension()>0:
             labels = torch.ones((imgs.size(0),1))
         view_images(reconstructions, labels, normalized=False)
         view_images(imgs, labels)
@@ -8369,12 +8375,23 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckp
 # not good. I lowered the dropout ratio and it I believe it make it worse than before!
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# ok increasing the embedding for vqvae model resultted in way better generations!
+# both loss and BPD dropped from 5 to 1!! and the gap between training and val became
+# way less steep! so we learned the vqvae is crucial to getting great reconstructions
+# and simple reconstruction results in vqvae doesnt mean theres an issue in prior models
+# secotion if our loss doesnt decrease! it may very well be vqvae needs to be tuned (buffed)
+# more! in our case it was to simply use larger embedding dim (256)!
+# I need to train others with the new embd_size for vqvae to see how they perform :)
+# test these 3 models to see how they fair against each other
+ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
+# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 
 # for celeba because the dataset is much larger, we have far b etter generations!
 # obviously having a better vqvae and prior models with better training can yield
 # much better result. but for us this siffuces and shows given more data, with the
 # same architecture, we can achieve pretty good results.
-ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
 # train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
