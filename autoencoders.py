@@ -6700,11 +6700,12 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                         'batchsize':batch_size,
                         'epoch': epoch,
                         'state_dict': model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'scheduler':scheduler.state_dict(),
+                        # 'optimizer': optimizer.state_dict(),
+                        # 'scheduler':scheduler.state_dict(),
                         'val_loss': best_loss,
                         'train_loss': mean_loss,
                         'enc_output_shape':model.enc_output_shape,
+                        'img_size':img_size,
                         'model_config':{
                           'beta':model.beta,
                           'use_ema':model.use_ema,
@@ -6712,8 +6713,8 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                           'embd_size':model.embd_size,
                           'input_channels':model.input_channels,
                           },
-                       }, model_checkpoint_name.replace('.ckpt','_best.ckpt'))
-            print(f'Best model with loss={best_loss:.4f} saved!')
+                       }, model_checkpoint_name.replace('.ckpt','_best.pt'))
+            print(f'Best model with loss={best_loss:.4f} saved at epoch {epoch}!')
         
         # save the last model
         torch.save({'dataset':dataset_name,
@@ -6725,6 +6726,7 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                     'val_loss': best_loss,
                     'train_loss': mean_loss,
                     'enc_output_shape':model.enc_output_shape,
+                    'img_size':img_size,
                     'model_config':{
                       'beta':model.beta,
                       'use_ema':model.use_ema,
@@ -6750,7 +6752,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'cifar10' #anime # celeba #cifar10
+dataset = 'celeba' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
@@ -6824,19 +6826,23 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
-
 # ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03_best.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
+# ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+
 # performs vert vert good ! increased embdsz actually results in way smaller loss
 # abd BPD!
 ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
-# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+
+
+
+
 
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
