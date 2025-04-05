@@ -7747,8 +7747,8 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, n
             torch.save({
                 'epoch': epoch,
                 'state_dict': prior.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler':scheduler.state_dict(),
+                # 'optimizer': optimizer.state_dict(),
+                # 'scheduler':scheduler.state_dict(),
                 'val_loss': best_val_loss,
                 'bpd': avg_bpd,
                 'bpd_val':avg_val_bpd,
@@ -7758,7 +7758,7 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, n
                     'num_class': prior.num_class,
                     'make_conditional': prior.make_conditional
                 }
-            }, model_checkpoint_name.replace('.ckpt','_best.ckpt'))
+            }, model_checkpoint_name.replace('.ckpt','_best.pt'))
             
             print(f'best model saved with val-loss: {best_val_loss:.6f}')
         
@@ -8389,6 +8389,16 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckp
 # not good. I lowered the dropout ratio and it I believe it make it worse than before!
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# for celeba because the dataset is much larger, we have far b etter generations!
+# obviously having a better vqvae and prior models with better training can yield
+# much better result. but for us this siffuces and shows given more data, with the
+# same architecture, we can achieve pretty good results.
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
+
+# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
+# clean and git push to privae repo first
+
 # ok increasing the embedding for vqvae model resultted in way better generations!
 # both loss and BPD dropped from 5 to 1!! and the gap between training and val became
 # way less steep! so we learned the vqvae is crucial to getting great reconstructions
@@ -8401,15 +8411,9 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#em
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 
-# for celeba because the dataset is much larger, we have far b etter generations!
-# obviously having a better vqvae and prior models with better training can yield
-# much better result. but for us this siffuces and shows given more data, with the
-# same architecture, we can achieve pretty good results.
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
-# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
-# clean and git push to privae repo first
+ckptname = 'vqvae_prior_CELEBA_embd256_10_17_58_2025_04_05.ckpt' # ebmbd256/256 64x64
+ckptname = 'vqvae_prior_CELEBA_embd256_10_17_58_2025_04_05.ckpt' # ebmbd256/256 64x64
 
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
