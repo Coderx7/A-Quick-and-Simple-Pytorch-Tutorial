@@ -7658,7 +7658,17 @@ def train_prior(prior:PixelCNN,
         prior.train()
         for latents, labels in dataloader_train:
             latents = latents.to(device)
-            labels = F.one_hot(labels,num_classes=num_classes).to(device) if num_classes else None
+            
+            if num_classes:
+                if dataset_name.lower() =='celeba':
+                    # use labels as is, except we make sure we filter all -1s as 0s!
+                    labels = (labels == 1).float().to(device)
+                else:
+                    # otherwise convert to one_hot encoded
+                    labels = F.one_hot(labels,num_classes=num_classes).to(device)
+            else:
+                labels = None
+            
             logits = prior(latents,labels)
             # targets = latents.long()
             loss = F.cross_entropy(logits, latents.long())
@@ -8384,11 +8394,11 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # for celeba use the nonconditional version because it comes with 40 attributes for
 # each individual image. we can choose to incorporate them or at least condition our
 # models on one of these attributes, but for now we just ignore them and chopse the
-# unconditional version 
-conditional = False if dataset=='celeba' else True
+# unconditional version
+conditional = True #if dataset=='celeba' else True
 
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
-                 num_class=10,
+                 num_class=40,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
@@ -8488,7 +8498,7 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#em
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 #
 # like before with the increased embd, the generation is near prefect!
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 
