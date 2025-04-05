@@ -7542,7 +7542,23 @@ class ImprovedPixelCNN(nn.Module):
 
 
 #########################
-def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, num_classes=None, epochs=50, batchsize=32, lr=1e-3, weight_decay=1e-5):
+def train_prior(prior:PixelCNN, 
+                vqvae_model:VQVAE,
+                latent_codes, 
+                latent_labels,
+                dataset_name:str, 
+                num_classes=None,
+                epochs=50,
+                batchsize=32,
+                lr=1e-3,
+                weight_decay=1e-5,
+                selected_label=9,
+                sample_size=64,
+                temperature=1,
+                rows=9,
+                cols=8,
+                generation_device='cuda',
+                figsize=(3,4)):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
     is_conditional = "Conditional_" if prior.make_conditional else ""
@@ -7619,8 +7635,6 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, n
     #     # Only Cosine Annealing if no warmup
     #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
     #     print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
-
-    
     
     losses_epoch=[]
     losses_val_epoch=[]
@@ -7781,7 +7795,17 @@ def train_prior(prior:PixelCNN, latent_codes, latent_labels, dataset_name:str, n
             }, model_checkpoint_name)
         
         print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds_training):.6f} |  BPD_VAL: {np.mean(bpds_val):.6f} | LR:{scheduler.get_last_lr()[-1]:.6f}')
-    
+        display_generated_samples(vqvae_model=vqvae_model,
+                                  prior_model=prior,
+                                  dataset=dataset_name,
+                                  num_classes=num_classes,
+                                  selected_label=selected_label,
+                                  batch_size=sample_size,
+                                  temperature=temperature,
+                                  device=generation_device,
+                                  rows=rows,
+                                  cols=cols,
+                                  figsize=figsize)
     
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
@@ -8182,6 +8206,42 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     # print(f'{generated.shape=}')
     return generated
 
+
+def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
+                              dataset, num_classes=10, selected_label=9,
+                              batch_size=64, temperature=1, device='cuda', 
+                              rows=9, cols=8, figsize=(3,4)):
+
+    if 'cifar' in dataset:
+        class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+
+    elif dataset =='mnist':
+        class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
+                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
+    else:
+        class_names = {i:str(i) for i in range(10)}
+
+    print(f'Generating images of {class_names[selected_label]}')
+    labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+    # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+    # I would get weird generations! when I icnreased the image size form 32 to 64 and
+    # retired, the reconstructions got much better, but generation seemed cropped! looked
+    # closer and noticed my bug and fixed it and now images are way better. they are very good
+    # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+    generated_image = generate(vqvae_model,
+                               prior_model,
+                               labels=labels,
+                               num_classes=num_classes,
+                               batch_size=batch_size,
+                               # when using conditional, using smaller values 
+                               # for temperature, give us weireder images/really 
+                               # simplestic images! like with way less details!
+                               temperature=temperature,
+                               device=device)
+    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize) 
+
+
 #!edit add more explanation
 # another way to generate images, instead of using prior model
 # we directly sample from code frequency, it shows if our model
@@ -8410,16 +8470,17 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckp
 ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
-
-
-ckptname = 'vqvae_prior_CELEBA_embd256_10_17_58_2025_04_05.ckpt' # ebmbd256/256 64x64
-ckptname = 'vqvae_prior_CELEBA_embd256_10_17_58_2025_04_05.ckpt' # ebmbd256/256 64x64
+#
+# like before with the increased embd, the generation is near prefect!
+ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
-print(f'Epoch: {ckpt["epoch"]}')
-print(f'val_Loss: {ckpt['val_loss']:.4f}')
-print(f'val_BPD:  {ckpt['bpd_val']:.4f}')
+print(f'Epoch       : {ckpt["epoch"]}')
+# print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f}   | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
 if 'cifar' in dataset:
