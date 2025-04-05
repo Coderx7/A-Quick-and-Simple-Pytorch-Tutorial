@@ -7256,7 +7256,7 @@ class PixelCNN(nn.Module):
             # print(f'{labels.shape=}')
             labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
             labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
-
+            # print(f'{labels.shape=}')
             input_indices = torch.cat([input_indices,labels],dim=1)
         
         output = self.initial_conv(input_indices)
@@ -7273,7 +7273,6 @@ class PixelCNN(nn.Module):
         # for sampling in generation process
         logits = self.final_layers(combined)
         return logits
-
 
 ############################
 
@@ -7741,12 +7740,23 @@ def train_prior(prior:PixelCNN,
             bpds_training.append(bpd)
 
         with torch.no_grad():
+            print('validation...')
             prior.eval()
             losses_val=[]
             bpds_val=[]
             for latents, labels in dataloader_val:
                 latents = latents.to(device)
-                labels = F.one_hot(labels,num_classes=num_classes).to(device) if num_classes else None
+                
+                if num_classes:
+                    if dataset_name.lower() =='celeba':
+                        # use labels as is, except we make sure we filter all -1s as 0s!
+                        labels = (labels == 1).float().to(device)
+                    else:
+                        # otherwise convert to one_hot encoded
+                        labels = F.one_hot(labels,num_classes=num_classes).to(device)
+                else:
+                    labels = None
+                    
                 logits = prior(latents, labels)
                 # targets = latents.long()
                 loss = F.cross_entropy(logits, latents.long())
@@ -8395,10 +8405,20 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # each individual image. we can choose to incorporate them or at least condition our
 # models on one of these attributes, but for now we just ignore them and chopse the
 # unconditional version
-conditional = True #if dataset=='celeba' else True
+# unconditional generation works great, but when we start using the labels on celeba, 
+# it will make the trainig harder, and images start worse than the unconditional version
+# most probably because of the way we are incorporating the labels in our archiecture
+# since its a multilabel case, a much better fusion strategy is needed. there are many 
+# ways we can go about it, from fusing at multiple levels in our architecture so the
+# labels semantic are transfered properly throughout the features in the model, to simply
+# using several layers on embeddings to get better representation/or using summing/etc the
+# list goes on!
+
+conditional = True 
+num_classes = 40 if dataset=='celeba' else 10
 
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
-                 num_class=40,
+                 num_class=num_classes,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
@@ -8407,7 +8427,7 @@ prior, ckptname = train_prior(prior=prior,
                               latent_codes=latent_codes,
                               latent_labels=latent_labels,
                               dataset_name=dataset,# for logging purposes only!
-                              num_classes=10, 
+                              num_classes=num_classes, 
                               epochs=120,
                               batchsize=64,
                               lr=0.001,
