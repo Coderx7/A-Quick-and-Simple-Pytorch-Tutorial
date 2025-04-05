@@ -7558,7 +7558,8 @@ def train_prior(prior:PixelCNN,
                 rows=9,
                 cols=8,
                 generation_device='cuda',
-                figsize=(3,4)):
+                figsize=(3,4),
+                seed=66):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
     is_conditional = "Conditional_" if prior.make_conditional else ""
@@ -7763,6 +7764,7 @@ def train_prior(prior:PixelCNN,
                 'state_dict': prior.state_dict(),
                 # 'optimizer': optimizer.state_dict(),
                 # 'scheduler':scheduler.state_dict(),
+                'loss': avg_loss,
                 'val_loss': best_val_loss,
                 'bpd': avg_bpd,
                 'bpd_val':avg_val_bpd,
@@ -7805,7 +7807,8 @@ def train_prior(prior:PixelCNN,
                                   device=generation_device,
                                   rows=rows,
                                   cols=cols,
-                                  figsize=figsize)
+                                  figsize=figsize,
+                                  seed=seed)
     
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
@@ -8212,7 +8215,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
                               batch_size=64, temperature=1, device='cuda', 
-                              rows=9, cols=8, figsize=(3,4)):
+                              rows=9, cols=8, figsize=(3,4),seed=66):
 
     if 'cifar' in dataset:
         class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
@@ -8240,7 +8243,8 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
                                # for temperature, give us weireder images/really 
                                # simplestic images! like with way less details!
                                temperature=temperature,
-                               device=device)
+                               device=device,
+                               seed=seed)
     view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize) 
 
 
@@ -8368,6 +8372,7 @@ def sample_from_prior(prior:PixelCNN, model:VQVAE, num_samples=16, temperature=1
 
 
 #%%
+#todo move get_latent_codes inside training because they are tightly coupled!
 # After training vqvae, we need to grab the trainingset's encodings
 # and use these encodings to train our prior model
 latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
@@ -8387,15 +8392,24 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
-prior, ckptname = train_prior(prior,
-                              latent_codes,
-                              latent_labels,
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              latent_codes=latent_codes,
+                              latent_labels=latent_labels,
                               dataset_name=dataset,# for logging purposes only!
                               num_classes=10, 
                               epochs=120,
                               batchsize=64,
                               lr=0.001,
-                              weight_decay=1e-2)
+                              weight_decay=1e-2,
+                              selected_label=9,
+                              sample_size=64,
+                              temperature=1,
+                              rows=9,
+                              cols=8,
+                              generation_device='cuda',
+                              figsize=(3,4),
+                              seed=66)
 
 # prior = ImprovedPixelCNN(num_embds=model.embd_num, 
 #                          embedding_size=256,
@@ -8474,14 +8488,14 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#em
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 #
 # like before with the increased embd, the generation is near prefect!
-ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
 print(f'Epoch       : {ckpt["epoch"]}')
-# print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
+print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
 print(f'val_Loss    : {ckpt['val_loss']:.4f}   | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
@@ -8495,7 +8509,7 @@ elif dataset =='mnist':
 else:
     class_names = {i:str(i) for i in range(10)}
 
-seed=12    
+seed=12
 batch_size = 64
 num_classes=10
 selected_label = 9
