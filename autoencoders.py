@@ -8165,7 +8165,10 @@ def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_c
     return prior, model_checkpoint_name
 
 
-def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda"):
+def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
+    # todo use seed so we get the same images each time! for comparison purposes!
+    generator = torch.Generator(device).manual_seed(seed)
+    
     prior.eval()
     # it must match our latent space shape from our vqvae model
     # print(f'{model.enc_output_shape=}')
@@ -8177,7 +8180,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     # if we conditioned our images on 0s, first then we need to start with zeros
     # but we didnt so we use randint
     # codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
-    codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device)
+    codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
     labels = F.one_hot(labels,num_classes=num_classes).to(device)
     # print(f'{labels.shape=}')
     
@@ -8191,7 +8194,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
                 # convert to probability distribution
                 probs = F.softmax(logits, dim=-1)
                 # sample from the predicted distribution
-                sampled_codes = torch.multinomial(probs, 1).squeeze(-1)
+                sampled_codes = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
                 # update the latent code map
                 codes[:, i, j] = sampled_codes  
 
@@ -8205,7 +8208,6 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     generated = model.decoder(quantized)
     # print(f'{generated.shape=}')
     return generated
-
 
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
@@ -8492,7 +8494,8 @@ elif dataset =='mnist':
                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
 else:
     class_names = {i:str(i) for i in range(10)}
-    
+
+seed=12    
 batch_size = 64
 num_classes=10
 selected_label = 9
@@ -8511,7 +8514,8 @@ generated_image = generate(model,
                            # when using conditional, using smaller values 
                            # for temperature, give us weireder images/really 
                            # simplestic images! like with way less details!
-                           temperature=1)
+                           temperature=1,
+                           seed=seed)
 view_images(generated_image,labels,rows=9,cols=8,figsize=(3,4))
 #%%
 generated_image1 = generate_simple(model, latent_codes,num_samples=64)
