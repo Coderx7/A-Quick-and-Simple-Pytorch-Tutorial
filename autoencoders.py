@@ -6704,6 +6704,7 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                         # 'scheduler':scheduler.state_dict(),
                         'val_loss': best_loss,
                         'train_loss': mean_loss,
+                        'perplexity':mean_perplexity,
                         'enc_output_shape':model.enc_output_shape,
                         'img_size':img_size,
                         'model_config':{
@@ -6725,6 +6726,7 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                     'scheduler':scheduler.state_dict(),
                     'val_loss': best_loss,
                     'train_loss': mean_loss,
+                    'perplexity':mean_perplexity,
                     'enc_output_shape':model.enc_output_shape,
                     'img_size':img_size,
                     'model_config':{
@@ -6835,20 +6837,25 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
 # performs vert vert good ! increased embdsz actually results in way smaller loss
-# abd BPD!
+# abd BPD! I noticed the perplexity is much much lower though! but the generation
+# nonetheless is much much better!
 ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
-
-
+ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
+# ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
 
 
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
 dataset = checkpoint['dataset']
-img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
-enc_output_shape = model_config.pop('enc_output_shape',None)
+# img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
+img_size = checkpoint['img_size']
+# enc_output_shape = model_config.pop('enc_output_shape',None)
+enc_output_shape = checkpoint['enc_output_shape']
+perplexity = checkpoint.pop('perplexity',None)
+
 device = 'cuda'
 model = VQVAE(**model_config)
 model.to(device)
@@ -6856,20 +6863,21 @@ model.to(device)
 model.load_state_dict(checkpoint['state_dict'])
 model.enc_output_shape = enc_output_shape
 
+print(f'dataset    : {checkpoint['dataset'].upper()}')
+print(f'Epoch      : {checkpoint['epoch']}')
+print(f'img_size   : {img_size}')
+
 print(f'Encoder output size: {tuple(model.enc_output_shape)}')
-print(f'dataset: {checkpoint['dataset'].upper()}')
-print(f'img_size: {img_size}')
 
 for k,v in checkpoint['model_config'].items():
     print(f'{k:<10} : {v}')
 
-print(f'train_loss: {checkpoint['train_loss']:.6f}')
-print(f'val_loss:   {checkpoint['val_loss']:.6f}')
-
+print(f'\ntrain_loss : {checkpoint['train_loss']:.6f}')
+print(f'val_loss   : {checkpoint['val_loss']:.6f}')
+print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 
 # dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=checkpoint['dataset'],
-#                                                                                 batch_size=checkpoint['batchsize'])
-
+#                                                                  batch_size=checkpoint['batchsize'])
 
 #%%
 import pandas as pd
