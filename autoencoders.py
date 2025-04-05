@@ -8245,7 +8245,7 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
         class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
                     5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
     else:
-        class_names = {i:str(i) for i in range(10)}
+        class_names = {i:str(i) for i in range(num_classes)}
 
     print(f'Generating images of {class_names[selected_label]}')
     labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
@@ -8522,6 +8522,10 @@ ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 
+
+ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
+ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
+
 ckpt = torch.load(ckptname)
 prior.load_state_dict(ckpt["state_dict"])
 print(f'Epoch       : {ckpt["epoch"]}')
@@ -8537,11 +8541,11 @@ elif dataset =='mnist':
     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
 else:
-    class_names = {i:str(i) for i in range(10)}
+    class_names = {i:str(i) for i in range(40)}
 
 seed=12
 batch_size = 64
-num_classes=10
+num_classes=40
 selected_label = 9
 print(f'Generating images of {class_names[selected_label]}')
 labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
