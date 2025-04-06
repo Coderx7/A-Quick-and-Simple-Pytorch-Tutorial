@@ -6537,7 +6537,7 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
 #train
-def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, interval, device, img_size):
+def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size):
     
     timestamp = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
     model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
@@ -6545,8 +6545,9 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
                                                                                     batch_size=batch_size,
                                                                                     size=img_size)
     
-
-    # Improved learning rate scheduler
+    optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
+    
+    # improved learning rate scheduler
     warmup_epochs = 5
     total_steps = len(dataloader_train) * epochs
     warmup_steps = len(dataloader_train) * warmup_epochs
@@ -6577,7 +6578,6 @@ def train(model:VQVAE, dataset_name, optimizer, scheduler, epochs,batch_size, in
         # Only Cosine Annealing if no warmup
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
         print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
-
 
 
     # without this loss will decrease a lot but the result isnt as good as when
@@ -6754,7 +6754,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'celeba' #anime # celeba #cifar10
+dataset = 'anime' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
@@ -6779,13 +6779,14 @@ use_ema=False
 
 model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
 model.to(device)
-optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
-scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
+# optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
+# scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
 
 train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
                                                                         dataset,
-                                                                        optimizer, 
-                                                                        scheduler,
+                                                                        lr,
+                                                                        # optimizer, 
+                                                                        # scheduler,
                                                                         epochs, 
                                                                         batch_size,
                                                                         interval,
@@ -6836,7 +6837,7 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
-# performs vert vert good ! increased embdsz actually results in way smaller loss
+# performs very very good ! increased embdsz actually results in way smaller loss
 # abd BPD! I noticed the perplexity is much much lower though! but the generation
 # nonetheless is much much better!
 ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
@@ -7543,8 +7544,9 @@ class ImprovedPixelCNN(nn.Module):
 #########################
 def train_prior(prior:PixelCNN, 
                 vqvae_model:VQVAE,
-                latent_codes, 
-                latent_labels,
+                # latent_codes, 
+                # latent_labels,
+                dataloader,
                 dataset_name:str, 
                 num_classes=None,
                 epochs=50,
@@ -7568,13 +7570,17 @@ def train_prior(prior:PixelCNN,
     # H, W = latent_codes.shape[1:]
     
     optimizer = torch.optim.Adam(prior.parameters(), lr=lr)    
+    
+    # After training vqvae, we need to grab the training set's encodings
+    # and use these encodings to train our prior model
+    latent_codes,latent_labels = get_latent_codes(vqvae_model, dataloader)
+
+    # combine latent codes and labels
+    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
+
     # dataloader_train = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
     # we can also split our latents into train/val and better keep track of our training
     # but I noticed for our simple case, its really not needed
-    #! add the previous simple training that worked as a comment and then add this on top
-    
-    # combine latent codes and labels
-    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
     
     val_split = 0.1 
     dataset_size = len(dataset)
@@ -7597,12 +7603,12 @@ def train_prior(prior:PixelCNN,
                                                  drop_last=True)
     
     #AdamW works much better than Adam! by a long shot! with adam we got loss=4.0, while
-    # with AdamW with the same architecture we got down to 2!
+    # with AdamW with the same architecture we got down to 2 for mnist!
     optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=weight_decay,)
     
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                           factor=0.5, patience=3,
-                                                           min_lr=1e-6)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+    #                                                        factor=0.5, patience=3,
+    #                                                        min_lr=1e-6)
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=epochs)
     
     # new learning rate scheduler
@@ -8393,9 +8399,9 @@ def sample_from_prior(prior:PixelCNN, model:VQVAE, num_samples=16, temperature=1
 
 #%%
 #todo move get_latent_codes inside training because they are tightly coupled!
-# After training vqvae, we need to grab the trainingset's encodings
-# and use these encodings to train our prior model
-latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
+# # After training vqvae, we need to grab the trainingset's encodings
+# # and use these encodings to train our prior model
+# latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 
 # train our PixelCNN prior
 # embdsize=256 results in a very decent generation 
@@ -8403,9 +8409,9 @@ latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 # 
 # for celeba use the nonconditional version because it comes with 40 attributes for
 # each individual image. we can choose to incorporate them or at least condition our
-# models on one of these attributes, but for now we just ignore them and chopse the
+# models on one of these attributes, but for now we just ignore them and choose the
 # unconditional version
-# unconditional generation works great, but when we start using the labels on celeba, 
+# ok the unconditional generation works great, but when we start using the labels on celeba, 
 # it will make the trainig harder, and images start worse than the unconditional version
 # most probably because of the way we are incorporating the labels in our archiecture
 # since its a multilabel case, a much better fusion strategy is needed. there are many 
@@ -8424,8 +8430,7 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
 
 prior, ckptname = train_prior(prior=prior,
                               vqvae_model=model,
-                              latent_codes=latent_codes,
-                              latent_labels=latent_labels,
+                              dataloader=dataloader_train,
                               dataset_name=dataset,# for logging purposes only!
                               num_classes=num_classes, 
                               epochs=120,
