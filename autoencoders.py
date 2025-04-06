@@ -6548,10 +6548,11 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
 #train
-def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size):
+def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, save_recons_dir=None):
     
-    timestamp = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
-    model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp.replace(":","_").replace("/","_")}.ckpt'
+    timestamp_str = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
+    timestamp = timestamp_str.replace(":","_").replace("/","_")
+    model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp}.ckpt'
     dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
                                                                                     batch_size=batch_size,
                                                                                     size=img_size)
@@ -6612,7 +6613,7 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     # pixel_values = np.concatenate([img.flatten() for img in pixel_values])
     # data_variance = np.var(pixel_values)  
 
-    print(f'Experiment Date:     {timestamp}')
+    print(f'Experiment Date:     {timestamp_str}')
     print(f'Checkpoint:          {model_checkpoint_name}')
     print(f'Dataset:             {dataset_name.upper()}')
     print(f'Epochs:              {epochs}')
@@ -6682,7 +6683,16 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                 val_losses.append(val_loss.item())
 
         # display reconstruction performance!
-        view_results()
+        fname=None
+        if save_recons_dir:
+            ext = os.path.splitext(model_checkpoint_name)[-1]
+            dir_name = model_checkpoint_name.replace(ext,"")
+            recons_dir = os.path.join(save_recons_dir,dir_name)
+            if not os.path.exists(recons_dir):
+                os.makedirs(recons_dir)
+            fname = f'{recons_dir}/recons_{epoch}.jpg'
+
+        view_reconstructions(model, dataloader_test, fname=fname)
         
         # keep track of the stat for each epoch as well
         mean_loss = np.mean(losses)
@@ -6764,7 +6774,7 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     reconstructions = model.decoder(quantize)
     # for celeba only
     if labels[0].ndimension()>0:
-       labels = torch.ones((imgs.size(0),1))
+       labels = ['N/A' for _ in range(imgs.size(0))]
     view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
 
 
@@ -6819,7 +6829,9 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
                                                                         batch_size,
                                                                         interval,
                                                                         device,
-                                                                        img_size)
+                                                                        img_size,
+                                                                        save_recons_dir='./results')
+
 #%%
 # load the model
 # TODO: remove the old models cuz they take up space!
