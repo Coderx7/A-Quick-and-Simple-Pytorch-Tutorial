@@ -240,7 +240,9 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
         # instead of the shape 28x28x1, it wants 28x28,for color images
         # the squeeze and cmap will be ignored
         ax.imshow(imgs[i].squeeze(), cmap='Greys_r')
-        ax.set_title(labels[i].item())
+        lbl = labels[i]
+        lbl = lbl.item() if isinstance(lbl,torch.Tensor) else lbl
+        ax.set_title(lbl)
     
     # we can use plt.tight_layout(pad=1,rect= (0, 0, 2, 2)) to have nice
     # compact figure, we could also simply use tight_layout and let 
@@ -267,7 +269,7 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
 randns = torch.rand(size=(imgs.size(0),3,32,32))
-view_images(randns, labels,13,10,fname_to_save_as='./results/randomtest.jpg')
+view_images(randns, [f'num_{l.item()}' for l in labels], 13,10,fname_to_save_as='./results/randomtest.jpg')
 # good! we are ready for the actual implementation
 #%% 
 # The first autoencoder weare going to implement is the simplest one, 
@@ -6753,7 +6755,7 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
 
 @torch.no_grad()
-def view_reconstructions(model:VQVAE, dataloader):
+def view_reconstructions(model:VQVAE, dataloader, fname=None):
     model.eval()
     (imgs, labels) = next(iter(dataloader))
     imgs = imgs.to(device)
@@ -6763,7 +6765,7 @@ def view_reconstructions(model:VQVAE, dataloader):
     # for celeba only
     if labels[0].ndimension()>0:
        labels = torch.ones((imgs.size(0),1))
-    view_images(reconstructions, labels, normalized=False)
+    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
 
 
 dataset = 'cifar10'
