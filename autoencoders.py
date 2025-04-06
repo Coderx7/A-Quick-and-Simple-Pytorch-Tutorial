@@ -6534,8 +6534,11 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
         
         transformations_tr = transforms.Compose([transforms.Resize(size),
                                                  transforms.RandomHorizontalFlip(),
+                                                 transforms.Lambda(lambda img: img.convert("RGB")),  # convert to RGB
                                                  transforms.ToTensor(),])
-        transformations = transforms.Compose([transforms.Resize(size),transforms.ToTensor(),])
+        transformations = transforms.Compose([transforms.Resize(size),
+                                              transforms.Lambda(lambda img: img.convert("RGB")),  # convert to RGB
+                                              transforms.ToTensor(),])
         # subsets have dataset property, so we access it to assign transformations!
         dataset_train.dataset.transform = transformations_tr
         dataset_test.dataset.transform = transformations
@@ -6775,15 +6778,18 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     # for celeba only
     if labels[0].ndimension()>0:
        labels = ['N/A' for _ in range(imgs.size(0))]
+    # view_images(imgs, labels, normalized=False,fname_to_save_as=None)
     view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
 
 
-dataset = 'cifar10'
+dataset = 'anime'
 # # dataset = 'cifar10'
 # batch_size = 128
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
-                                                                                batch_size=batch_size)
-
+                                                                                batch_size=batch_size,
+                                                                                size=(64,64))
+(imgs, labels) = next(iter(dataloader_train))
+view_images(imgs,labels, rows=13,cols=10)
 #%%
 # we first start with mnist to see if our implementation is ok 
 # (sidenote: I actually faced quit a lot of issues and switching to mnist helped a lot. 
@@ -6792,7 +6798,9 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
-dataset = 'anime' #anime # celeba #cifar10
+
+#todo why doesnt anime work!? it gives me blurry blacknwhite recons!!?
+dataset = 'cifar10' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 input_channels = 1 if dataset=='mnist' else 3
@@ -6801,7 +6809,9 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 batch_size=128
 epochs = 100#100
 interval = 1000
-lr=0.001
+# when learning rate is too large, we usually see artifacts in early stages
+# of training (which tells us lr might be high!)
+lr=0.001 #0.001
 milestones=[120]
 embd_num=512
 embd_size=256#128
