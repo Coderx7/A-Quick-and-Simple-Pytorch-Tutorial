@@ -200,7 +200,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5]):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
@@ -252,13 +252,22 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
     # clear just a few lines back, these are related!
     plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
     # plt.tight_layout()
+    
+    # save the fig to disk if needs be!
+    if fname_to_save_as:
+        # bbox_inches='tight' makes matplotlib to include all of 
+        # the elements of the figure even those that extend outside
+        # the default bounding box, without this only a portion of 
+        # our figure will be saved!
+        plt.savefig(fname_to_save_as, bbox_inches='tight')
+    
     plt.show()
 
 # now lets view some 
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
 randns = torch.rand(size=(imgs.size(0),3,32,32))
-view_images(randns, labels,13,10)
+view_images(randns, labels,13,10,fname_to_save_as='./results/randomtest.jpg')
 # good! we are ready for the actual implementation
 #%% 
 # The first autoencoder weare going to implement is the simplest one, 
@@ -6670,6 +6679,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                 val_loss = val_reconstruction_error + vq_loss
                 val_losses.append(val_loss.item())
 
+        # display reconstruction performance!
+        view_results()
+        
         # keep track of the stat for each epoch as well
         mean_loss = np.mean(losses)
         mean_val_loss = np.mean(val_losses)
@@ -6739,6 +6751,20 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                   }, model_checkpoint_name)
         
     return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
+
+@torch.no_grad()
+def view_reconstructions(model:VQVAE, dataloader):
+    model.eval()
+    (imgs, labels) = next(iter(dataloader))
+    imgs = imgs.to(device)
+    vq_encoder_output = model.encoder(imgs)
+    _, quantize, _ = model.quantizer(vq_encoder_output)
+    reconstructions = model.decoder(quantize)
+    # for celeba only
+    if labels[0].ndimension()>0:
+       labels = torch.ones((imgs.size(0),1))
+    view_images(reconstructions, labels, normalized=False)
+
 
 dataset = 'cifar10'
 # # dataset = 'cifar10'
@@ -6824,7 +6850,9 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # we wont see this issue for larger fmaps. but lets see how this goes!)
 # ok it seems our estimate is correct. 32x32 gives somewhat identifiable non-autoregressive 
 # generations, not complete noise! trying with 64x64 to see how it goes again
-# 
+# I cant replicate this anymore! I dont know why I cant get meanigful generations out of
+# simple_generation function! 
+#
 # ckpt_name = 'vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
 # ckpt_name = 'vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
