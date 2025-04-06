@@ -6556,6 +6556,11 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     timestamp_str = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
     timestamp = timestamp_str.replace(":","_").replace("/","_")
     model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp}.ckpt'
+    if save_recons_dir:
+        ext = os.path.splitext(model_checkpoint_name)[-1]
+        dir_name = model_checkpoint_name.replace(ext,"")
+        recons_dir = os.path.join(save_recons_dir,dir_name)
+    
     dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
                                                                                     batch_size=batch_size,
                                                                                     size=img_size)
@@ -6688,9 +6693,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
         # display reconstruction performance!
         fname=None
         if save_recons_dir:
-            ext = os.path.splitext(model_checkpoint_name)[-1]
-            dir_name = model_checkpoint_name.replace(ext,"")
-            recons_dir = os.path.join(save_recons_dir,dir_name)
+            # ext = os.path.splitext(model_checkpoint_name)[-1]
+            # dir_name = model_checkpoint_name.replace(ext,"")
+            # recons_dir = os.path.join(save_recons_dir,dir_name)
             if not os.path.exists(recons_dir):
                 os.makedirs(recons_dir)
             fname = f'{recons_dir}/recons_{epoch}.jpg'
@@ -6764,7 +6769,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                       'input_channels':model.input_channels,
                       },
                   }, model_checkpoint_name)
-        
+    
+    # create gifs from recons
+    create_gifs(recons_dir)
     return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
 
 @torch.no_grad()
@@ -6783,14 +6790,27 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
 
 from PIL import Image
 # create gifs
-def create_gifs(dir_path, delay=500, loop=0):
-    img_list = [os.path.join(dir_path,fname) for fname in os.listdir(dir_path) if fname.endswith('.jpg')]
-    imgs = [Image.open(img_path) for img_path in img_list]
+def create_gifs(dir_path, delay=100, loop=0):
+    # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
+    imgs = [Image.open(os.path.join(dir_path,fname)) for fname in os.listdir(dir_path) if fname.endswith('.jpg')]
+    # imgs = [Image.open(img_path) for img_path in img_list]
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
+    
     imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
                save_all=True, duration=delay, loop=loop)
-    print(f'gif created successfully!')
+    
+# import imageio.v2 as imageio
+# def create_gifs(dir_path, fps=30):
+#     img_list = sorted([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(('.jpg', '.png'))])
+#     if not img_list:
+#         print("No valid images found.")
+#         return
+#     imgs = [imageio.imread(img) for img in img_list]
+#     dirname = os.path.basename(os.path.normpath(dir_path))
+#     gif_path = os.path.join(dir_path, f"{dirname}.gif")
+#     imageio.mimsave(gif_path, imgs, fps=fps)
+#     print(f'gif created successfully!')
 
 
 dataset = 'anime'
@@ -6943,6 +6963,9 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 # dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=checkpoint['dataset'],
 #                                                                  batch_size=checkpoint['batchsize'])
 
+#%%
+# create gifs and show images
+create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',delay=30)
 #%%
 import pandas as pd
 # for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
