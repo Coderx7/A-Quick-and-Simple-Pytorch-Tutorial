@@ -6781,6 +6781,17 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     # view_images(imgs, labels, normalized=False,fname_to_save_as=None)
     view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
 
+from PIL import Image
+# create gifs
+def create_gifs(dir_path, delay=500, loop=0):
+    img_list = [os.path.join(dir_path,fname) for fname in os.listdir(dir_path) if fname.endswith('.jpg')]
+    imgs = [Image.open(img_path) for img_path in img_list]
+    dirname = os.path.basename(os.path.normpath(dir_path))
+    gif_path = os.path.join(dir_path, f'{dirname}.gif')
+    imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
+               save_all=True, duration=delay, loop=loop)
+    print(f'gif created successfully!')
+
 
 dataset = 'anime'
 # # dataset = 'cifar10'
