@@ -200,7 +200,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None,figure_title=''):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None, title=None, title_top_margine=0.99,title_fontsize=12):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
@@ -222,8 +222,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # there might not be enough space to display the labels at the top!
     # (try (6,4) and see the result!)
     fig = plt.figure(figsize=figsize, dpi=dpi)
-    if figure_title:
-        fig.suptitle(figure_title, fontsize=12)
+    if title:
+        fig.suptitle(title, fontsize=title_fontsize, y=title_top_margine)
     # plt.title('View Images') 
     
     max_plots = rows*cols
@@ -233,7 +233,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
         num_plots = imgs.shape[0] 
     else:
         num_plots = max_plots
-        print(f'Warning, number of images({imgs.shape[0]}) exceed figures plots({max_plots}). Only displaying the first {max_plots} images. (Hint: Increase rows/cols)')
+        print(f'Warning, number of images({imgs.shape[0]}) exceed figures plots({max_plots}). '
+              f'Only displaying the first {max_plots} images. (Hint: Increase rows/cols ())')
     
     for i in range(num_plots):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
@@ -245,7 +246,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
         lbl = labels[i]
         lbl = lbl.item() if isinstance(lbl,torch.Tensor) else lbl
         ax.set_title(lbl)
-        
+    
+    # plt.subplots_adjust(top=0.90)    
     # we can use plt.tight_layout(pad=1,rect= (0, 0, 2, 2)) to have nice
     # compact figure, we could also simply use tight_layout and let 
     # matplotlib handle the padding, and scaling, but in this case lets
@@ -254,10 +256,16 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # sidenote, when using large numbers here, we may get an error if
     # we have used a large figuresize with a large dpi, I made that
     # clear just a few lines back, these are related!
+    # note: I couldnt get this to work for figsize(6,8) when we add a title
+    # to the figure. without a title, figsize(6,8) works great and tight_layout
+    # like below does the job, however, when we add the title, it messes up the
+    # title position, if I use tight_layout(), the figsize(6,8) doesnt look well
+    # anymore! so I have to increase the figsize 2x!, it works, but it makes the
+    # images larger, and is has more overhead! using plt.
     if figsize == (6,8):
         plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
     else:
-    # tight layout works well for larger fig_szes like (8,12)
+        # tight layout works well for larger fig_szes like (8,12)
         plt.tight_layout()
 
     # save the figure to the disk, this comes handy when we want to
@@ -277,10 +285,13 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
 randns = torch.rand(size=(imgs.size(0),3,32,32))
-view_images(randns, [f'num_{l.item()}' for l in labels], 13,10,
+view_images(imgs=randns, 
+            labels=[f'num_{l.item()}' for l in labels], 
+            rows=13,
+            cols=10,
             fname_to_save_as='./results/randomtest.jpg',
             # figsize=(12,16),
-            figure_title='Random images1')
+            title='Random images')
 
 # good! we are ready for the actual implementation
 #%% 
