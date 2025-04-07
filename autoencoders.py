@@ -6859,7 +6859,7 @@ def is_notebook():
         return False  # Probably standard Python interpreter
 
 # create gifs
-def create_gifs0(dir_path, frame_interval=90, loop=0):
+def create_gifs_large(dir_path, frame_interval=90, loop=0):
     imgs = [Image.open(os.path.join(dir_path,fname)) 
             for fname in sorted(os.listdir(dir_path),key=numerical_sort_key) if fname.endswith('.jpg')]
     
@@ -6877,14 +6877,18 @@ def create_gifs0(dir_path, frame_interval=90, loop=0):
         plt.show()
 
 import matplotlib.animation as animation
-# matplotlib animation module does a better job, it takes less space, so I guess I'll use this one
-# than my previous implemetation-fps=600, and interval=90 results seem to have roughly the same speed 
+# matplotlib animation module does a better job, it takes less space 
+# because we can use different figsize,even with figsize(12,16) it
+# takes nearly half of what previous function takes up! but on the other hand
+# our previous implementation is simpler and more straightforward! (I might keep both!)
+# ok I guess I'll use this one instead of my previous implemetation-
+# fps=600, and interval=90 results seem to have roughly the same speed 
 # (because 1/600 = 0.0016 second(or 1.6 milliseconds) for each frame when using fps,
 # likewise to get 600 fps with interval we need 1/1.6 = 600 fps !
 # however, in my experience interval=90 feels like fps=600! so you might want to go for that!
 #!todo choose one over the other!
 # )
-def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=None, figsize=(6,8)):
+def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=600, figsize=(6,8)):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111)
     imgs = [Image.open(os.path.join(dir_path,fname)) 
@@ -6892,7 +6896,6 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=N
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
     def animate(i):
-        ax.set_title(str(i))
         ax.clear()
         ax.axis('off')
         ax.imshow(imgs[i])
@@ -6904,10 +6907,10 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=N
                                    repeat_delay=repeat_delay)
     if fps and frame_interval:
         print(f'Warning, frame_interval wont be used for gif creation!'
-              f'either use FPS or frame_interval for gif creation (set one to None!)'
-              'frame_interval is used for delay inside jupyternotebook'
-              'while FPS is used for gif creation. Only if FPS=None,frame_interval is used'
-              'otherwise, FPS superceeds frame_interval in gif creation')
+              f'\neither use FPS or frame_interval for gif creation (set one to None!)'
+              '\nframe_interval is used for delay inside jupyternotebook'
+              '\nwhile FPS is used for gif creation. Only if FPS=None,frame_interval is used'
+              '\notherwise, FPS superceeds frame_interval in gif creation')
         # print(f'Note: FPS is used for gif creation while ')
     
     # save the git using pillow backedn
@@ -6917,7 +6920,7 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=N
         ipd.display(ipd.Image(filename=gif_path))
     else:
         print(f'gif created successfully!')
-        plt.show()
+        # plt.show()
     
 # dataset = 'anime'
 dataset = 'cifar10'
@@ -6968,7 +6971,7 @@ img_size=(64,64)# larger image sizes, result in more detailed generations!
 # be ok with 1000 samples! cifar10 on the other hand is much more complex and is composed of natural images 
 # so it obviously requires way more training data!) with 10k cifar10 this is what I get:
 # Epoch: 99/100 | Loss: 0.0182 | Val-Loss: 0.0176 | Recons-Error: 0.0026 | VQ-Loss: 0.0156 | Perplexity: 13.1167 | LR: 0.000010
-limited_samples=True
+limited_samples=False
 training_samplesize=8000
 test_samplesize=100
 
@@ -7111,18 +7114,17 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 # create gifs and show images
 dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
 dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
-create_gifs0(dirpath,
-            delay=90,
-            # figsize=(12,16)
-            )
+dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
+create_gifs_large(dirpath, frame_interval=90,)
 #%%
 dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
 dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
 create_gifs(dirpath,
-            interval=90,
-            delay=300,
-            fps=None,
-            # figsize=(12,16)
+            frame_interval=None,
+            # repeat_delay=300,
+            fps=500,
+            figsize=(6,8)
             )
 #%%
 import pandas as pd
