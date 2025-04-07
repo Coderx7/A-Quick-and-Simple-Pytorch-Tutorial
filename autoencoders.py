@@ -6828,47 +6828,67 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     if labels[0].ndimension()>0:
        labels = ['N/A' for _ in range(imgs.size(0))]
     # view_images(imgs, labels, normalized=False,fname_to_save_as=None)
-    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
+    # extract epoch from fname and use it to mark each image
+    epoch = os.path.splitext(fname)[0].split('_')[-1]
+    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname,title=f'Epoch {int(epoch):0}')
 
+# lets also make a gif_creator!
+import re
+# to create gifs, we need our images to be ordered!
+# we cant use sorted(), because it cant sort properly 
+# when we have numbers, it will go frm 3 to 30!
+# and 4 to 40, etc because it compares character by character!
+# so we need to write a custom filter based on numbers!
+def numerical_sort_key(filename, _re=re.compile(r'(\d+)')):
+    # first we check if the fname has number in it extract it
+    # if it doesnt come with a number, we take the text itself
+    # and sorted() compares it alphabatically with others 
+    return [int(text) if text.isdigit() else text.lower()
+            for text in _re.split(filename)]
+
+# needed for our gif display
 from PIL import Image
 import IPython.display as ipd
 
 def is_notebook():
     try:
         shell = get_ipython().__class__.__name__
-        return shell in ['ZMQInteractiveShell', 'Shell']  # Jupyter Notebook or IPython terminal
+         # check if we are executing from jupyter notebook or an ipython terminal
+        return shell in ['ZMQInteractiveShell', 'Shell'] 
     except NameError:
         return False  # Probably standard Python interpreter
 
 # create gifs
-def create_gifs(dir_path, delay=300, loop=0):
-    # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
-    # we must use sorted otherwise os.listdir wont keep the order of files
-    # and we may very well endup with garbage gifs (out of order images)
+def create_gifs0(dir_path, frame_interval=90, loop=0):
     imgs = [Image.open(os.path.join(dir_path,fname)) 
-            for fname in sorted(os.listdir(dir_path)) if fname.endswith('.jpg')]
-    # imgs = [Image.open(img_path) for img_path in img_list]
+            for fname in sorted(os.listdir(dir_path),key=numerical_sort_key) if fname.endswith('.jpg')]
+    
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
     
     imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
-               save_all=True, duration=delay, loop=loop)
-    # display the gif
+               save_all=True, duration=frame_interval, loop=loop)
+    
+    # display the gif inside jupyernotebook
     if is_notebook():
         ipd.display(ipd.Image(filename=gif_path))
     else:
         print(f'gif created successfully!')
         plt.show()
 
-# import matplotlib.animation as animation
-# matplotlib animation module does a way better job than my previous immplemetation
-# that used PILs functionality!
-
-def create_gifs0(dir_path, interval=200, delay=1000, loop=True, fps=None, figsize=(6,8)):
+import matplotlib.animation as animation
+# matplotlib animation module does a better job, it takes less space, so I guess I'll use this one
+# than my previous implemetation-fps=600, and interval=90 results seem to have roughly the same speed 
+# (because 1/600 = 0.0016 second(or 1.6 milliseconds) for each frame when using fps,
+# likewise to get 600 fps with interval we need 1/1.6 = 600 fps !
+# however, in my experience interval=90 feels like fps=600! so you might want to go for that!
+#!todo choose one over the other!
+# )
+def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=None, figsize=(6,8)):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111)
     imgs = [Image.open(os.path.join(dir_path,fname)) 
-            for fname in sorted(os.listdir(dir_path)) if fname.endswith(('.jpg', 'jpeg','.png'))]
+            for fname in sorted(os.listdir(dir_path),key=numerical_sort_key) if fname.endswith(('.jpg', 'jpeg','.png'))]
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
     def animate(i):
@@ -6879,15 +6899,20 @@ def create_gifs0(dir_path, interval=200, delay=1000, loop=True, fps=None, figsiz
     
     fig.tight_layout()
     anim = animation.FuncAnimation(fig, animate, frames=len(imgs),
-                                   interval=interval, 
+                                   interval=frame_interval, 
                                    repeat=loop, 
-                                   repeat_delay=delay)
-    # if fps and interval:
-    #     print(f'Warning, interval wont be used for gif creation! FPS will be used instead!')
+                                   repeat_delay=repeat_delay)
+    if fps and frame_interval:
+        print(f'Warning, frame_interval wont be used for gif creation!'
+              f'either use FPS or frame_interval for gif creation (set one to None!)'
+              'frame_interval is used for delay inside jupyternotebook'
+              'while FPS is used for gif creation. Only if FPS=None,frame_interval is used'
+              'otherwise, FPS superceeds frame_interval in gif creation')
         # print(f'Note: FPS is used for gif creation while ')
-    # save the git using pillow
+    
+    # save the git using pillow backedn
     anim.save(gif_path, writer="pillow",fps=fps)
-    # display the gif
+    # display the gif inside jupyernotebook
     if is_notebook():
         ipd.display(ipd.Image(filename=gif_path))
     else:
@@ -6900,8 +6925,8 @@ dataset = 'cifar10'
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                                                 batch_size=batch_size,
                                                                                 size=(64,64))
-(imgs, labels) = next(iter(dataloader_train))
-view_images(imgs,labels, rows=13,cols=10)
+(imgs, labels) = next(iter(dataloader_test))
+view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}')
 #%%
 # we first start with mnist to see if our implementation is ok 
 # (sidenote: I actually faced quit a lot of issues and switching to mnist helped a lot. 
@@ -6939,11 +6964,12 @@ img_size=(64,64)# larger image sizes, result in more detailed generations!
 # the colors seem accurate, objects are formed properly for the most part, details are kinda there
 # but do not much, cuz images are very blurry still and look smudged! the image size definitely matters here,
 # im working with 64x64 here! (aside from the nature of the images, obviously complex images will be tougher
-# and simpler images/concepts should require much less effort to get this right! cifar10
-# is composed of natural images so thats that!) with 10k cifar10 this is what I get:
+# and simpler images/concepts should require much less effort to get this right! in fact mnist seems to 
+# be ok with 1000 samples! cifar10 on the other hand is much more complex and is composed of natural images 
+# so it obviously requires way more training data!) with 10k cifar10 this is what I get:
 # Epoch: 99/100 | Loss: 0.0182 | Val-Loss: 0.0176 | Recons-Error: 0.0026 | VQ-Loss: 0.0156 | Perplexity: 13.1167 | LR: 0.000010
-limited_samples=False
-training_samplesize=1000
+limited_samples=True
+training_samplesize=8000
 test_samplesize=100
 
 input_channels = 1 if dataset=='mnist' else 3
@@ -7083,10 +7109,19 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 
 #%%
 # create gifs and show images
-create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',
-            # interval=300,
+dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+create_gifs0(dirpath,
+            delay=90,
+            # figsize=(12,16)
+            )
+#%%
+dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+create_gifs(dirpath,
+            interval=90,
             delay=300,
-            # fps=None,
+            fps=None,
             # figsize=(12,16)
             )
 #%%
