@@ -6830,7 +6830,7 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     # view_images(imgs, labels, normalized=False,fname_to_save_as=None)
     # extract epoch from fname and use it to mark each image
     epoch = os.path.splitext(fname)[0].split('_')[-1]
-    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname,title=f'Epoch {int(epoch):0}')
+    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname,title=f'Epoch {int(epoch)}')
 
 # lets also make a gif_creator!
 import re
@@ -8537,7 +8537,9 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
                                temperature=temperature,
                                device=device,
                                seed=seed)
-    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname) 
+    # extract epoch from fname and use it to mark each image
+    epoch = os.path.splitext(fname)[0].split('_')[-1]
+    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname,title=f'Epoch {int(epoch)}') 
 
 
 #!edit add more explanation
