@@ -6855,12 +6855,34 @@ view_images(imgs,labels, rows=13,cols=10)
 #todo why doesnt anime work!? it gives me blurry blacknwhite recons!!?
 # our anime dataset is just too small to work! try cifar10 or other datasets with
 # limited_samples=True and see the resulut (basically aroudn 1000 samples wont
-# work if we train a model from scratch!)
+# work if we train a model from scratch!) asign of small/inadequate training set
+# is that the images will be discolored, almost black and white, becoming monocolors
+# lots of yellow, brownish colors, and needless to say images are very blury
+# test with limited samples and you'll see what I mean!
 dataset = 'cifar10' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
+# based on my prelimenary tests, a training size of 10K seems to be bare minimum
+# to give us some what borderline reconstructions, 5K would be insufficient and 
+# colors wont form, we would get discolored, monocolor, black/yellow/brownish colors,
+# with 7000 images, we get some more colors, images are a bit more visible/ but still
+# theres a lot of monocolors, yellow, brown, blue, gray colors, not vivid colors at all
+# images are not formed properly, but for some classes, we can see the objects sillohet!
+# (we get Epoch: 99/100 | Loss: 0.1285 | Val-Loss: 0.1179 | Recons-Error: 0.0079 | VQ-Loss: 0.1207 | Perplexity: 3.4678 | LR: 0.000010)
+# starting with 8000, we see normal colors being back, and images start to look normal!
+# (by normal I mean compared to previous cases, not all are still well formed! but its much
+# better than before, but it still lacking by a large extend!)
+# we get Epoch: 99/100 | Loss: 0.0355 | Val-Loss: 0.0322 | Recons-Error: 0.0040 | VQ-Loss: 0.0315 | Perplexity: 10.4210 | LR: 0.000010
+# note that im not saying 10k is enough to get something nice, not at all, what im saying
+# 10k seems to be the limit that doesnt give us crappy images that cant even be bothered with!
+# the colors seem accurate, objects are formed properly for the most part, details are kinda there
+# but do not much, cuz images are very blurry still and look smudged! the image size definitely matters here,
+# im working with 64x64 here! (aside from the nature of the images, obviously complex images will be tougher
+# and simpler images/concepts should require much less effort to get this right! cifar10
+# is composed of natural images so thats that!) with 10k cifar10 this is what I get:
+# Epoch: 99/100 | Loss: 0.0182 | Val-Loss: 0.0176 | Recons-Error: 0.0026 | VQ-Loss: 0.0156 | Perplexity: 13.1167 | LR: 0.000010
 limited_samples=False
 training_samplesize=1000
 test_samplesize=100
@@ -6968,6 +6990,7 @@ ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x6
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
 dataset = checkpoint['dataset']
+limited_samples = checkpoint.pop('limited_samples', False)
 # img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
 img_size = checkpoint['img_size']
 # enc_output_shape = model_config.pop('enc_output_shape',None)
@@ -6984,7 +7007,7 @@ model.enc_output_shape = enc_output_shape
 print(f'dataset    : {checkpoint['dataset'].upper()}')
 print(f'Epoch      : {checkpoint['epoch']}')
 print(f'img_size   : {img_size}')
-
+print(f'Limited samples    : {limited_samples}')
 print(f'Encoder output size: {tuple(model.enc_output_shape)}')
 
 for k,v in checkpoint['model_config'].items():
