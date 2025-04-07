@@ -7816,7 +7816,7 @@ def train_prior(prior:PixelCNN,
                 cols=8,
                 save_recons_dir=None,
                 generation_device='cuda',
-                figsize=(6,8),
+                figsize=(12,16),
                 seed=66):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
@@ -8516,7 +8516,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
                               batch_size=64, temperature=1, device='cuda', 
-                              rows=9, cols=8, figsize=(6,8),seed=66, fname=None):
+                              rows=9, cols=8, figsize=(12,16),seed=66, fname=None):
 
     if 'cifar' in dataset:
         class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
@@ -8697,7 +8697,7 @@ def sample_from_prior(prior:PixelCNN, model:VQVAE, num_samples=16, temperature=1
 # labels semantic are transfered properly throughout the features in the model, to simply
 # using several layers on embeddings to get better representation/or using summing/etc the
 # list goes on!
-
+#TODO: check why the generation seems random here despite having used seed!
 conditional = True 
 num_classes = 40 if dataset=='celeba' else 10
 
@@ -8721,7 +8721,7 @@ prior, ckptname = train_prior(prior=prior,
                               rows=9,
                               cols=8,
                               generation_device='cuda',
-                              figsize=(6,8),
+                              figsize=(12,16),
                               seed=66,
                               save_recons_dir='./results/')
 
