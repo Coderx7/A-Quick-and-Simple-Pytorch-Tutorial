@@ -200,7 +200,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                pin_memory=True)
 
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None,figure_title=''):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
@@ -222,6 +222,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
     # there might not be enough space to display the labels at the top!
     # (try (6,4) and see the result!)
     fig = plt.figure(figsize=figsize, dpi=dpi)
+    if figure_title:
+        fig.suptitle(figure_title, fontsize=12)
     # plt.title('View Images') 
     
     max_plots = rows*cols
@@ -243,18 +245,21 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
         lbl = labels[i]
         lbl = lbl.item() if isinstance(lbl,torch.Tensor) else lbl
         ax.set_title(lbl)
-    
+        
     # we can use plt.tight_layout(pad=1,rect= (0, 0, 2, 2)) to have nice
     # compact figure, we could also simply use tight_layout and let 
     # matplotlib handle the padding, and scaling, but in this case lets
     # use rect to scale our images so they are larger in the plot!
     # (try numbers like 0.8, 1, 2, 20!)
-    # sidenote, when using large numbers here, you may get an error if
-    # you have used a large figuresize with a large dpi, I made that
+    # sidenote, when using large numbers here, we may get an error if
+    # we have used a large figuresize with a large dpi, I made that
     # clear just a few lines back, these are related!
-    plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
-    # plt.tight_layout()
-    
+    if figsize == (6,8):
+        plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
+    else:
+    # tight layout works well for larger fig_szes like (8,12)
+        plt.tight_layout()
+
     # save the figure to the disk, this comes handy when we want to
     # keep track of our progress, or later on create a gif out of these
     # images. (basically keep traking how the model is doing in terms of
@@ -272,7 +277,11 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
 randns = torch.rand(size=(imgs.size(0),3,32,32))
-view_images(randns, [f'num_{l.item()}' for l in labels], 13,10,fname_to_save_as='./results/randomtest.jpg')
+view_images(randns, [f'num_{l.item()}' for l in labels], 13,10,
+            fname_to_save_as='./results/randomtest.jpg',
+            # figsize=(12,16),
+            figure_title='Random images1')
+
 # good! we are ready for the actual implementation
 #%% 
 # The first autoencoder weare going to implement is the simplest one, 
@@ -6821,31 +6830,30 @@ def is_notebook():
         return False  # Probably standard Python interpreter
 
 # create gifs
-# def create_gifs(dir_path, delay=300, loop=0):
-#     # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
-#     # we must use sorted otherwise os.listdir wont keep the order of files
-#     # and we may very well endup with garbage gifs (out of order images)
-#     imgs = [Image.open(os.path.join(dir_path,fname)) 
-#             for fname in sorted(os.listdir(dir_path)) if fname.endswith('.jpg')]
-#     # imgs = [Image.open(img_path) for img_path in img_list]
-#     dirname = os.path.basename(os.path.normpath(dir_path))
-#     gif_path = os.path.join(dir_path, f'{dirname}.gif')
+def create_gifs(dir_path, delay=300, loop=0):
+    # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
+    # we must use sorted otherwise os.listdir wont keep the order of files
+    # and we may very well endup with garbage gifs (out of order images)
+    imgs = [Image.open(os.path.join(dir_path,fname)) 
+            for fname in sorted(os.listdir(dir_path)) if fname.endswith('.jpg')]
+    # imgs = [Image.open(img_path) for img_path in img_list]
+    dirname = os.path.basename(os.path.normpath(dir_path))
+    gif_path = os.path.join(dir_path, f'{dirname}.gif')
     
-#     imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
-#                save_all=True, duration=delay, loop=loop)
-#     # display the gif
-#     if is_notebook():
-#         ipd.display(ipd.Image(filename=gif_path))
-#     else:
-#         print(f'gif created successfully!')
-#         plt.show()
+    imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
+               save_all=True, duration=delay, loop=loop)
+    # display the gif
+    if is_notebook():
+        ipd.display(ipd.Image(filename=gif_path))
+    else:
+        print(f'gif created successfully!')
+        plt.show()
 
 # import matplotlib.animation as animation
 # matplotlib animation module does a way better job than my previous immplemetation
 # that used PILs functionality!
 
-@torch.no_grad()
-def create_gifs(dir_path, interval=200, delay=1000, loop=True, fps=30, figsize=(6,8)):
+def create_gifs0(dir_path, interval=200, delay=1000, loop=True, fps=None, figsize=(6,8)):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111)
     imgs = [Image.open(os.path.join(dir_path,fname)) 
@@ -6853,16 +6861,21 @@ def create_gifs(dir_path, interval=200, delay=1000, loop=True, fps=30, figsize=(
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
     def animate(i):
+        ax.set_title(str(i))
         ax.clear()
         ax.axis('off')
         ax.imshow(imgs[i])
-
+    
+    fig.tight_layout()
     anim = animation.FuncAnimation(fig, animate, frames=len(imgs),
                                    interval=interval, 
                                    repeat=loop, 
                                    repeat_delay=delay)
+    # if fps and interval:
+    #     print(f'Warning, interval wont be used for gif creation! FPS will be used instead!')
+        # print(f'Note: FPS is used for gif creation while ')
     # save the git using pillow
-    anim.save(gif_path, writer="pillow", fps=fps)
+    anim.save(gif_path, writer="pillow",fps=fps)
     # display the gif
     if is_notebook():
         ipd.display(ipd.Image(filename=gif_path))
@@ -7060,9 +7073,11 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 #%%
 # create gifs and show images
 create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',
-            interval=5000,
-            delay=1000,
-            fps=60)
+            # interval=300,
+            delay=300,
+            # fps=None,
+            # figsize=(12,16)
+            )
 #%%
 import pandas as pd
 # for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
