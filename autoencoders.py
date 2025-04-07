@@ -6982,17 +6982,19 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
-ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
+# ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
 # ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
-
+#todo add train and test sizes so the rest of the pipeline also use the same
+# number of samples for prior training. 
 
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
 dataset = checkpoint['dataset']
 limited_samples = checkpoint.pop('limited_samples', False)
-# img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
-img_size = checkpoint['img_size']
+img_size = checkpoint.pop('img_size',None)
+if not img_size:
+    img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
 # enc_output_shape = model_config.pop('enc_output_shape',None)
 enc_output_shape = checkpoint['enc_output_shape']
 perplexity = checkpoint.pop('perplexity',None)
@@ -7701,6 +7703,7 @@ def train_prior(prior:PixelCNN,
                 temperature=1,
                 rows=9,
                 cols=8,
+                save_recons_dir=None,
                 generation_device='cuda',
                 figsize=(3,4),
                 seed=66):
@@ -7709,6 +7712,13 @@ def train_prior(prior:PixelCNN,
     is_conditional = "Conditional_" if prior.make_conditional else ""
     model_checkpoint_name = f'vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{train_datetime}.ckpt'
     device = next(prior.parameters()).device
+    
+    recons_dir=None
+    if save_recons_dir:
+        ext = os.path.splitext(model_checkpoint_name)[-1]
+        dir_name = model_checkpoint_name.replace(ext,"")
+        recons_dir = os.path.join(save_recons_dir,dir_name)
+    
     # H,W = prior.input_size
     # H, W = latent_codes.shape[1:]
     
@@ -7966,6 +7976,14 @@ def train_prior(prior:PixelCNN,
             }, model_checkpoint_name)
         
         print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds_training):.6f} |  BPD_VAL: {np.mean(bpds_val):.6f} | LR:{scheduler.get_last_lr()[-1]:.6f}')
+        
+        # display reconstruction performance!
+        fname=None
+        if save_recons_dir:
+            if not os.path.exists(recons_dir):
+                os.makedirs(recons_dir)
+            fname = f'{recons_dir}/generated_{epoch}.jpg'
+        
         display_generated_samples(vqvae_model=vqvae_model,
                                   prior_model=prior,
                                   dataset=dataset_name,
@@ -7977,7 +7995,11 @@ def train_prior(prior:PixelCNN,
                                   rows=rows,
                                   cols=cols,
                                   figsize=figsize,
-                                  seed=seed)
+                                  seed=seed,
+                                  fname=fname)
+    
+    # create gifs out of all generated samples
+    create_gifs(dir_path=recons_dir)
     
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
@@ -8008,7 +8030,6 @@ def train_prior(prior:PixelCNN,
     # pd.DataFrame(losses_epoch).plot()
     # plt.plot()
     return prior, model_checkpoint_name
-
 
 
 from tqdm import tqdm
@@ -8384,7 +8405,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
                               batch_size=64, temperature=1, device='cuda', 
-                              rows=9, cols=8, figsize=(3,4),seed=66):
+                              rows=9, cols=8, figsize=(3,4),seed=66, fname=None):
 
     if 'cifar' in dataset:
         class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
@@ -8393,10 +8414,11 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
     elif dataset =='mnist':
         class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
                     5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
-    else:
-        class_names = {i:str(i) for i in range(num_classes)}
+    else:#celeba
+        class_names = {i:'N/A' for i in range(num_classes)}
 
     print(f'Generating images of {class_names[selected_label]}')
+    # todo: create proper label for celeba!
     labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
     # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
     # I would get weird generations! when I icnreased the image size form 32 to 64 and
@@ -8414,7 +8436,7 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
                                temperature=temperature,
                                device=device,
                                seed=seed)
-    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize) 
+    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname) 
 
 
 #!edit add more explanation
