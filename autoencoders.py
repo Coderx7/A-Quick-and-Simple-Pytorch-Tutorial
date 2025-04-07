@@ -255,7 +255,10 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(6,8), dpi=100, norma
     plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
     # plt.tight_layout()
     
-    # save the fig to disk if needs be!
+    # save the figure to the disk, this comes handy when we want to
+    # keep track of our progress, or later on create a gif out of these
+    # images. (basically keep traking how the model is doing in terms of
+    # reconstruction is essential when it comes to generative models!)
     if fname_to_save_as:
         # bbox_inches='tight' makes matplotlib to include all of 
         # the elements of the figure even those that extend outside
@@ -6503,7 +6506,7 @@ print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=} {model_test.enc_output_shape
 
 #%%
 
-def select_dataset(dataset_name='mnist', batch_size=128, size=28):
+def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_samples=False, train_samplesize=1000, test_samplesize=100):
     if dataset_name.lower() == 'mnist':
         dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
         dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
@@ -6545,13 +6548,20 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     else:
         raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
     
+    if limited_samples:
+        # temporary test to see how many samples may be insuffiecient to train 
+        # a vqvae properly from scratch, we use Subset() to specify and grab the
+        # number of suitable samples we want for our test
+        dataset_train = torch.utils.data.Subset(dataset_train, list(range(train_samplesize)))
+        dataset_test = torch.utils.data.Subset(dataset_test, list(range(test_samplesize)))
+    
     dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
     dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
 
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
 #train
-def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, save_recons_dir=None):
+def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, save_recons_dir=None,limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
     
     timestamp_str = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
     timestamp = timestamp_str.replace(":","_").replace("/","_")
@@ -6563,7 +6573,10 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     
     dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
                                                                                     batch_size=batch_size,
-                                                                                    size=img_size)
+                                                                                    size=img_size,
+                                                                                    limited_samples=limited_samples,
+                                                                                    train_samplesize=train_samplesize,
+                                                                                    test_samplesize=test_samplesize)
     
     optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
     
@@ -6624,6 +6637,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     print(f'Experiment Date:     {timestamp_str}')
     print(f'Checkpoint:          {model_checkpoint_name}')
     print(f'Dataset:             {dataset_name.upper()}')
+    print(f'Limited Samples:     {"\033[91m" + str(limited_samples) + "\033[0m" if limited_samples else limited_samples}')# make it red so it stands out!
+    print(f'Train size:          {len(dataloader_train.dataset):,}')
+    print(f'Test size:           {len(dataloader_test.dataset):,}')
     print(f'Epochs:              {epochs}')
     print(f'BatchSize:           {batch_size}')
     print(f'embeddings_num:      {model.embd_num}')
@@ -6739,6 +6755,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                         'perplexity':mean_perplexity,
                         'enc_output_shape':model.enc_output_shape,
                         'img_size':img_size,
+                        'limited_samples':limited_samples,
+                        'train_samplesize':train_samplesize,
+                        'test_samplesize':test_samplesize,
                         'model_config':{
                           'beta':model.beta,
                           'use_ema':model.use_ema,
@@ -6761,6 +6780,9 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                     'perplexity':mean_perplexity,
                     'enc_output_shape':model.enc_output_shape,
                     'img_size':img_size,
+                    'limited_samples':limited_samples,
+                    'train_samplesize':train_samplesize,
+                    'test_samplesize':test_samplesize,
                     'model_config':{
                       'beta':model.beta,
                       'use_ema':model.use_ema,
@@ -6790,7 +6812,7 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
 
 from PIL import Image
 # create gifs
-def create_gifs(dir_path, delay=100, loop=0):
+def create_gifs(dir_path, delay=300, loop=0):
     # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
     imgs = [Image.open(os.path.join(dir_path,fname)) for fname in os.listdir(dir_path) if fname.endswith('.jpg')]
     # imgs = [Image.open(img_path) for img_path in img_list]
@@ -6813,8 +6835,8 @@ def create_gifs(dir_path, delay=100, loop=0):
 #     print(f'gif created successfully!')
 
 
-dataset = 'anime'
-# # dataset = 'cifar10'
+# dataset = 'anime'
+dataset = 'cifar10'
 # batch_size = 128
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                                                 batch_size=batch_size,
@@ -6831,9 +6853,18 @@ view_images(imgs,labels, rows=13,cols=10)
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
 
 #todo why doesnt anime work!? it gives me blurry blacknwhite recons!!?
+# our anime dataset is just too small to work! try cifar10 or other datasets with
+# limited_samples=True and see the resulut (basically aroudn 1000 samples wont
+# work if we train a model from scratch!)
 dataset = 'cifar10' #anime # celeba #cifar10
 #! enshaallah tomorrow, run cifar1032x32, mnist64x64, celeba64x64 and call it a day!
 img_size=(64,64)# larger image sizes, result in more detailed generations!
+# whether to use limited samples (for testing purposes)
+# to see how the model performs with different number of samples!
+limited_samples=False
+training_samplesize=1000
+test_samplesize=100
+
 input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -6871,7 +6902,10 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
                                                                         interval,
                                                                         device,
                                                                         img_size,
-                                                                        save_recons_dir='./results')
+                                                                        save_recons_dir='./results',
+                                                                        limited_samples=limited_samples,
+                                                                        train_samplesize=training_samplesize,
+                                                                        test_samplesize=test_samplesize)
 
 #%%
 # load the model
@@ -6965,7 +6999,7 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 
 #%%
 # create gifs and show images
-create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',delay=30)
+create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',delay=300)
 #%%
 import pandas as pd
 # for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
