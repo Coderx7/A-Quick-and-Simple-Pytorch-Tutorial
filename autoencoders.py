@@ -6811,30 +6811,65 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname)
 
 from PIL import Image
+import IPython.display as ipd
+
+def is_notebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        return shell in ['ZMQInteractiveShell', 'Shell']  # Jupyter Notebook or IPython terminal
+    except NameError:
+        return False  # Probably standard Python interpreter
+
 # create gifs
-def create_gifs(dir_path, delay=300, loop=0):
-    # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
-    imgs = [Image.open(os.path.join(dir_path,fname)) for fname in os.listdir(dir_path) if fname.endswith('.jpg')]
-    # imgs = [Image.open(img_path) for img_path in img_list]
+# def create_gifs(dir_path, delay=300, loop=0):
+#     # img_list = sorted([os.path.join(dir_path, fname) for fname in os.listdir(dir_path) if fname.endswith(('.jpg', '.png'))])
+#     # we must use sorted otherwise os.listdir wont keep the order of files
+#     # and we may very well endup with garbage gifs (out of order images)
+#     imgs = [Image.open(os.path.join(dir_path,fname)) 
+#             for fname in sorted(os.listdir(dir_path)) if fname.endswith('.jpg')]
+#     # imgs = [Image.open(img_path) for img_path in img_list]
+#     dirname = os.path.basename(os.path.normpath(dir_path))
+#     gif_path = os.path.join(dir_path, f'{dirname}.gif')
+    
+#     imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
+#                save_all=True, duration=delay, loop=loop)
+#     # display the gif
+#     if is_notebook():
+#         ipd.display(ipd.Image(filename=gif_path))
+#     else:
+#         print(f'gif created successfully!')
+#         plt.show()
+
+# import matplotlib.animation as animation
+# matplotlib animation module does a way better job than my previous immplemetation
+# that used PILs functionality!
+
+@torch.no_grad()
+def create_gifs(dir_path, interval=200, delay=1000, loop=True, fps=30, figsize=(6,8)):
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    imgs = [Image.open(os.path.join(dir_path,fname)) 
+            for fname in sorted(os.listdir(dir_path)) if fname.endswith(('.jpg', 'jpeg','.png'))]
     dirname = os.path.basename(os.path.normpath(dir_path))
     gif_path = os.path.join(dir_path, f'{dirname}.gif')
-    
-    imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
-               save_all=True, duration=delay, loop=loop)
-    
-# import imageio.v2 as imageio
-# def create_gifs(dir_path, fps=30):
-#     img_list = sorted([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(('.jpg', '.png'))])
-#     if not img_list:
-#         print("No valid images found.")
-#         return
-#     imgs = [imageio.imread(img) for img in img_list]
-#     dirname = os.path.basename(os.path.normpath(dir_path))
-#     gif_path = os.path.join(dir_path, f"{dirname}.gif")
-#     imageio.mimsave(gif_path, imgs, fps=fps)
-#     print(f'gif created successfully!')
+    def animate(i):
+        ax.clear()
+        ax.axis('off')
+        ax.imshow(imgs[i])
 
-
+    anim = animation.FuncAnimation(fig, animate, frames=len(imgs),
+                                   interval=interval, 
+                                   repeat=loop, 
+                                   repeat_delay=delay)
+    # save the git using pillow
+    anim.save(gif_path, writer="pillow", fps=fps)
+    # display the gif
+    if is_notebook():
+        ipd.display(ipd.Image(filename=gif_path))
+    else:
+        print(f'gif created successfully!')
+        plt.show()
+    
 # dataset = 'anime'
 dataset = 'cifar10'
 # batch_size = 128
@@ -7024,7 +7059,10 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 
 #%%
 # create gifs and show images
-create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',delay=300)
+create_gifs('./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/',
+            interval=5000,
+            delay=1000,
+            fps=60)
 #%%
 import pandas as pd
 # for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
@@ -8609,7 +8647,8 @@ prior, ckptname = train_prior(prior=prior,
                               cols=8,
                               generation_device='cuda',
                               figsize=(3,4),
-                              seed=66)
+                              seed=66,
+                              save_recons_dir='./results/')
 
 # prior = ImprovedPixelCNN(num_embds=model.embd_num, 
 #                          embedding_size=256,
