@@ -7073,6 +7073,9 @@ ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
 # ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
+# limited cifar10 - 8000 samples
+ckpt_name = 'vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07.ckpt'
+
 #todo add train and test sizes so the rest of the pipeline also use the same
 # number of samples for prior training. 
 
@@ -7080,6 +7083,8 @@ checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
 dataset = checkpoint['dataset']
 limited_samples = checkpoint.pop('limited_samples', False)
+train_samplesize = checkpoint.pop('train_samplesize', None)
+test_samplesize = checkpoint.pop('test_samplesize', None)
 img_size = checkpoint.pop('img_size',None)
 if not img_size:
     img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
@@ -7098,6 +7103,8 @@ print(f'dataset    : {checkpoint['dataset'].upper()}')
 print(f'Epoch      : {checkpoint['epoch']}')
 print(f'img_size   : {img_size}')
 print(f'Limited samples    : {limited_samples}')
+print(f'Train samplesize   : {train_samplesize}')
+print(f'Test samplesize    : {test_samplesize}')
 print(f'Encoder output size: {tuple(model.enc_output_shape)}')
 
 for k,v in checkpoint['model_config'].items():
@@ -7181,7 +7188,10 @@ def view_results(model,train_dataloader, val_dataloader):
 
 _, _, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                              batch_size=batch_size,
-                                                             size=img_size)
+                                                             size=img_size,
+                                                             limited_samples=limited_samples,
+                                                             train_samplesize=train_samplesize,
+                                                             test_samplesize=test_samplesize)
 view_results(model, dataloader_train, dataloader_test)
 # now alhamdolelah finally we got pretty great reconstructions with 64x64
 # image dimensions. the actual reason behind this is the larger encoder output shape
@@ -7806,7 +7816,7 @@ def train_prior(prior:PixelCNN,
                 cols=8,
                 save_recons_dir=None,
                 generation_device='cuda',
-                figsize=(3,4),
+                figsize=(6,8),
                 seed=66):
     
     train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
@@ -8506,7 +8516,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
                               batch_size=64, temperature=1, device='cuda', 
-                              rows=9, cols=8, figsize=(3,4),seed=66, fname=None):
+                              rows=9, cols=8, figsize=(6,8),seed=66, fname=None):
 
     if 'cifar' in dataset:
         class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
@@ -8711,7 +8721,7 @@ prior, ckptname = train_prior(prior=prior,
                               rows=9,
                               cols=8,
                               generation_device='cuda',
-                              figsize=(3,4),
+                              figsize=(6,8),
                               seed=66,
                               save_recons_dir='./results/')
 
