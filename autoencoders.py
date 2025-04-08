@@ -9054,8 +9054,8 @@ def get_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
         image_tensor.unsqueeze_(0)
     encodings = vqvae.encoder(image_tensor)
     # now convert to quantized indexes which are our latents!
-    loss, quantized_vectors, perplexity, indexes = vqvae.quantizer(encodings)
-    return indexes
+    loss, quantized_vectors, perplexity, latents = vqvae.quantizer(encodings)
+    return latents
 
 imgs, labels = next(iter(dataloader_test))
 latents_real = get_latents(model,imgs[0],device='cuda')
@@ -9113,6 +9113,10 @@ def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10
             probs = F.softmax(logits, dim=-1)
             # lets sample from it based on the probablity of each entry
             # since we are filling pixel values, one value is enough
+            # note that replacement=False has no effect here because num_samples=1
+            # that is we can't sample the same element twice if we are only picking one!
+            # just wanted to make that clear!
+            # todo: pixelvalies is not accurate, choose a better name like latent_values?!
             pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
             # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
             # and get (64,) so when we assign it below all is good and we dont get expand error!
@@ -9126,7 +9130,44 @@ latents_prior = get_latents_prior(prior,model, batch_size=1, num_classes=10,sele
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
 
+from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
+
+def visualize_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch.Tensor, num_embeddings, cmap='viridis', figsize=(6,8)):
+    
+    latents = [latent_map_real, latent_map_prior]
+    titles = ['Real Latent Maps (from Encoder)',
+              'Prior Latent Maps (from Prior)']
+    
+    fig,axes = plt.subplots(1,2,sharex=True, sharey=True, figsize=figsize)
+    im = None
+    for i,(latent_map,title) in enumerate(zip(latents,titles)):
+        # remove batch dim
+        if latent_map.ndim == 2:
+            latent_map.unsqueeze_(0)
+
+        # print(f'{latent_map.shape=}')
+        latent_map_np = latent_map[0].detach().cpu().numpy()
+        # print(f'{latent_map_np.shape=}')
+        ax = axes[i]
+        im = ax.imshow(latent_map_np, cmap=cmap,vmin=0, vmax=num_embeddings-1)
+        ax.set_title(title)
+        ax.axis('off')
+
+        # neatly place colorbar next to plots
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(im, cax=cax)
+    # fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.45)
+    plt.tight_layout()
+    plt.show()
+
+visualize_latent_maps(latents_real, latents_prior, model.quantizer.num_embd)
+
 #%% old dbeugging stuff
+
+
+
+
 # check to see if our codebook has collapsed
 # if only a few codes are used here (e.g. 1-2 codes dominate), our VQ-VAE codebook has collapsed
 # despite the perplexity of 180 (which may be misleading if embd_num is large).
