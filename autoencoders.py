@@ -6257,6 +6257,8 @@ class Quantizer(nn.Module):
         # this is basically a selection based on indexes now our quantized tensor will
         # have embeddings at the specified indexes, and 0s everywhere else.
         # this is zₑ(x)
+        # (this is embedding vectors corresponding to the chosen indexes, 
+        # I guess I'd better to choose a better name for it)
         quantized_z_ex = torch.matmul(encodings, self.embeddings.weight).view(encoder_outputs_shape)
         
         if not self.use_ema:
@@ -6437,8 +6439,9 @@ class Quantizer(nn.Module):
         #
         #
         prepelexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs+ 1e-10)))
-        
-        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity #, encodings
+        # note from me from future: encodings come in handy later on! they are actually indexes!
+        # and come in handy in debugging later on! (im writting this during debugging!!)
+        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , encodings
 
 # lets now add the main model 
 #! make it conditional so we can create different types of images?!
@@ -6514,9 +6517,9 @@ class VQVAE(nn.Module):
         if not self.enc_output_shape:
             self.enc_output_shape = outputs.shape[2:]
         
-        loss, quantized, prepelexity = self.quantizer(outputs)
+        loss, quantized_vectors, prepelexity,_ = self.quantizer(outputs)
         # print(f'{quantized.shape=}')
-        recons = self.decoder(quantized)
+        recons = self.decoder(quantized_vectors)
         return loss, recons, prepelexity
 
 model_test = VQVAE(input_channels=3, embd_num=100, embd_size=64, beta=0.2, use_ema=True)
@@ -6821,8 +6824,8 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     (imgs, labels) = next(iter(dataloader))
     imgs = imgs.to(device)
     vq_encoder_output = model.encoder(imgs)
-    _, quantize, _ = model.quantizer(vq_encoder_output)
-    reconstructions = model.decoder(quantize)
+    _, quantized_vectors, _ = model.quantizer(vq_encoder_output)
+    reconstructions = model.decoder(quantized_vectors)
     # for celeba only
     if labels[0].ndimension()>0:
        labels = ['N/A' for _ in range(imgs.size(0))]
@@ -6923,7 +6926,7 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=6
     
 # dataset = 'anime'
 dataset = 'cifar10'
-# batch_size = 128
+batch_size = 128
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                                                 batch_size=batch_size,
                                                                                 size=(64,64))
@@ -7169,8 +7172,9 @@ def view_results(model,train_dataloader, val_dataloader):
         (imgs, labels) = next(iter(dataloader))
         imgs = imgs.to(device)
         vq_encoder_output = model.encoder(imgs)
-        _, quantize, _ = model.quantizer(vq_encoder_output)
-        reconstructions = model.decoder(quantize)
+        # grab quantized vectors (i.e. quantized embeddings)
+        _, quantize_vectors, _,_ = model.quantizer(vq_encoder_output)
+        reconstructions = model.decoder(quantize_vectors)
         # print(f'{reconstructions.shape=}')
         # print(f'{labels.shape=} {labels.ndimension()=}')
         # for celeba only
@@ -8466,7 +8470,8 @@ def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_c
     
     return prior, model_checkpoint_name
 
-
+# I wrote a much better explanation of what happens in the debugging section down below
+# todo: add new explanations here as well
 def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
     # todo use seed so we get the same images each time! for comparison purposes!
     generator = torch.Generator(device).manual_seed(seed)
@@ -8478,7 +8483,7 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     # print(f'{H=},{W=}')
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
-    # !edit explanation
+    # !edit explanation its wrong!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11
     # if we conditioned our images on 0s, first then we need to start with zeros
     # but we didnt so we use randint
     codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
@@ -8651,8 +8656,7 @@ def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=
     latent_H, latent_W = shape
 
     # create empty latent codes
-    latent_shape = (batch_size, latent_H, latent_W)
-    latents = torch.zeros(latent_shape, dtype=torch.long, device=device)
+    latents = torch.zeros(size=(batch_size, latent_H, latent_W), dtype=torch.long, device=device)
 
     # Prepare conditional labels if needed
     labels_onehot = None
@@ -8981,7 +8985,7 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,
 # after I sorted out my isuese, i learned these new debugging tips that come handy!
 # so here it is:
 #
-# we can visualize latents to see if they demonstrate random patterns or some actual patterns!
+# we can visualize latents to see if they display random patterns or some actual patterns!
 # we can use real images, conver them to latents and try to generate an image using them
 # and compare them to prior_latents which we get from prior model,
 # this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
@@ -9002,14 +9006,78 @@ def get_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
         image_tensor.unsqueeze_(0)
     encodings = vqvae.encoder(image_tensor)
     # now convert to quantized indexes which are our latents!
-    _, quantized_indexes, _ = vqvae.quantizer(encodings)
-    return quantized_indexes
+    loss, quantized_vectors, perplexity, indexes = vqvae.quantizer(encodings)
+    return indexes
 
 imgs, labels = next(iter(dataloader_test))
 latents_real = get_latents(model,imgs[0],device='cuda')
-# print(f'{latents_real.shape=}')
-# now lets grab prior_latents 
-latents_prior = prior(late)
+print(f'{latents_real.shape=}')
+#
+# now lets grab prior_latents, for that we just do what we do when generating a new image
+# I initially tried feeding that to the prior model, but it turned out it was wrong
+# because the purpose of our prior model is not to transform existing latent
+# codes rather its job is to simply generate completely new latent codes from scratch, 
+# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
+# examples during training(that is basically our training set converted into latent codes)
+# so we start off with an empty latents and fill it up 
+@torch.no_grad()
+def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, device='cuda'):
+    # lets first take care of the models before we forget
+    # about them and face all sorts of weird issues!
+    prior.eval()
+    vqvae.eval()
+    prior.to(device)
+    vqvae.to(device)
+    
+    H,W = vqvae.enc_output_shape
+    # our latents_prior is simply a HxW matrix of indexes. so to create one we simply
+    # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
+    # each latent will become a whole image ultimately, when we feed it to our decoder.
+    # we can think of it as a compressed, structured blueprint for the image. 
+    # our prior model (i.e. PixelCNN) learns the 'language' or 'grammar' of these blueprints,
+    # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
+    # when given to our decoder, will give us an image based on the said blue-prnts
+    latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+    
+    # since we support conditional generation we need to one_hot our labels
+    if prior.make_conditional:
+        labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+        # we could also do 
+        # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
+        labels = F.one_hot(labels, num_classes=num_classes).float()
+        # print(f'{labels.shape=}')
+    else:
+        labels = None
+    
+    #now we autoregressively fill up our empty latents pixels with proper values predicted by prior
+    # for that we loop using H,W
+    for h in range(H):
+        for w in range(W):
+            # logits shape is (batchsize, embdsz, h, w)
+            logits = prior(latents_prior, labels)
+            # since we are dealing with pixels and doing this in a loop
+            # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
+            # we only grab the logits for current h,w 
+            # coordinates we do this for all samples, this will give us
+            # (batch,embdsz)
+            logits = logits[:,:,h,w]
+            # now we convert it to probablities so we can sample from it
+            probs = F.softmax(logits, dim=-1)
+            # lets sample from it based on the probablity of each entry
+            # since we are filling pixel values, one value is enough
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
+            # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
+            # and get (64,) so when we assign it below all is good and we dont get expand error!
+            # now lets fill in the empty places in latents_prior
+            latents_prior[:,h,w] = pixels_values.squeeze(1)
+            
+    return latents_prior
+
+# now lets grab our latents_prior
+latents_prior = get_latents_prior(prior,model, batch_size=1, num_classes=10,selected_class=9)
+print(f'{latents_prior.shape=}')
+# now lets visualize them both and compare them against each other: 
+
 
 #%% old dbeugging stuff
 # check to see if our codebook has collapsed
