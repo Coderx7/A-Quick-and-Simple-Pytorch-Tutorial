@@ -8481,8 +8481,8 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     # !edit explanation
     # if we conditioned our images on 0s, first then we need to start with zeros
     # but we didnt so we use randint
-    # codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
-    codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
+    codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
+    # codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
     labels = F.one_hot(labels,num_classes=num_classes).to(device)
     # print(f'{labels.shape=}')
     
@@ -8949,7 +8949,7 @@ generated_image = generate(model,
                            # simplestic images! like with way less details!
                            temperature=1,
                            seed=seed)
-view_images(generated_image,labels,rows=9,cols=8,figsize=(6,8))
+view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
 #%%
 latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 generated_image1 = generate_simple(model, latent_codes,batch_size=64)
@@ -8968,6 +8968,50 @@ generated_image, latents = sample_from_prior(prior,
 print(f'{generated_image.shape=}')
 view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,title=class_names[selected_label])
 #%%
+# debugging section. I wrote this part when I faced a lot of issues early on
+# I couldnt get the model to generate anything! all I could get was noise or 
+# just pure solid colors! (in fact, I only got solid colors at first regardless
+# of what I did, then I searched and was told to check the prior model, it could
+# be faulty, to do that the first thing i did was to create generate_simple() to
+# see if I get the same behavior, if so then its latents themselves, so my vqvae 
+# had to have issues, if not it was the prior! from there I went on and found the
+# following tips, they helped but not by much when I had more nuanced issues in both
+# vqvae and prior. they both worked, kindof, and it took me a lot of time to know what
+# was wrong!
+# after I sorted out my isuese, i learned these new debugging tips that come handy!
+# so here it is:
+#
+# we can visualize latents to see if they demonstrate random patterns or some actual patterns!
+# we can use real images, conver them to latents and try to generate an image using them
+# and compare them to prior_latents which we get from prior model,
+# this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
+# or whether they show similar spatial structures or patterns? 
+# if latents from our prior model (latents_prior) look drastically different (e.g., all zeros, random noise, weird repeating blocks)
+# while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
+# it hasn't learned the correct distribution of latent codes.
+@torch.no_grad()
+def get_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
+    vqvae.eval()
+    vqvae.to(device)
+    image_tensor = image_tensor.to(device)
+    # I guess its a good idea to add an encode/quantize method to vavae to
+    # make this easier!
+    # todo add enocde/quantize method to vqvae, and a separate decode() as well
+    # add batch
+    if image_tensor.ndim<4:
+        image_tensor.unsqueeze_(0)
+    encodings = vqvae.encoder(image_tensor)
+    # now convert to quantized indexes which are our latents!
+    _, quantized_indexes, _ = vqvae.quantizer(encodings)
+    return quantized_indexes
+
+imgs, labels = next(iter(dataloader_test))
+latents_real = get_latents(model,imgs[0],device='cuda')
+# print(f'{latents_real.shape=}')
+# now lets grab prior_latents 
+latents_prior = prior(late)
+
+#%% old dbeugging stuff
 # check to see if our codebook has collapsed
 # if only a few codes are used here (e.g. 1-2 codes dominate), our VQ-VAE codebook has collapsed
 # despite the perplexity of 180 (which may be misleading if embd_num is large).
@@ -8993,7 +9037,7 @@ quantized = quantized.permute(0, 3, 1, 2).contiguous()
 generated_image = model.decoder(quantized)
 view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 #%%
-# The most frequent code maps to a vector that decodes to blue.
+# the most frequent code maps to a vector that decodes to blue.
 # the solution is to inspect the dominant codes embedding:
 # if this is blue, the decoder associates this code with blue. 
 # we need to retrain the VQ-VAE with a larger codebook (embd_num=512)
@@ -9013,6 +9057,23 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 # In PixelCNN.forward, ensure embeddings are normalized
 # x = self.embedding(x)
 # x = F.layer_norm(x, [self.emb_dim])  # Add this line
+# update: ok this was so not the case! this is what I was refering to back there,  
+# that vqvae and prior would work but not well! the issue I was having here
+# was i kept getting weird garbage output! twice! the first one was simply because
+# the dumb me used the wrong latents, that is, I would train my vqvae on 64x64, but
+# then I would use a much smaller portion of the actual latents (the latents were 16x16
+# and I would get 8x8 due to a bug that was caused by harcoded values for H and W
+# weird enough I wouldnt get an error, but the output was absolute garbage!
+# and the prior would still overfit severely! so I would think its the prior
+# and change it up and down to no avail!
+# the next time I faced this kind of weird issue was, I couldnt get any proper generation
+# the BPD wouldnt go down beyond 5,6 which was huge for cifar (expect 3/2 at elast for something
+# representable!) and it wouldnt just train properly! turned out my vqvae was weak! i had to use
+# a larger embdessing size! and voila that solved the issue, the modle still overfits but
+# the loss and PBD drops significantly!down to 1.3/1.2 which was pretty good!
+# this took me a good portion of a month to figure out, partly because the code wasnt organized
+# and this caused many bugs! it got messy quickly when I faced issues one after another, it wasnt
+# that bad initially!)
 #%%
 #side notes for debugging: 
 # make sure the final layer uses nn.Sigmoid() for [0, 1] images
