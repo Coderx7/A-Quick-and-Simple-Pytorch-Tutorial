@@ -6376,6 +6376,12 @@ class Quantizer(nn.Module):
                 # Laplace Symbiosis: The earlier smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, even rarely used ones.
                 
                 self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+                # or we could also do: 
+                # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+                # heres the kicker, instead of a new nn.Parameter each time, we update 
+                # the existing embedding weight tensor's data inplace!
+                # self.embeddings.weight.data.copy_(updated_embeddings)
+            
             
             e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
             loss = self.beta_weight * e_loss
@@ -6439,9 +6445,47 @@ class Quantizer(nn.Module):
         #
         #
         prepelexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs+ 1e-10)))
-        # note from me from future: encodings come in handy later on! they are actually indexes!
+        # !todo fix this, this is not accurate! encodings are not simple indexes!
+        # note from me from future: min_indexes come in handy later on! 
         # and come in handy in debugging later on! (im writting this during debugging!!)
-        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , encodings
+        # note 2: initially I used encodings, which is the onehot encoded version of it
+        # the outcome didnt make sense, so after a few tries, im writing this here and making
+        # the corrections. we can still get the min_indexes from encodings using 
+        # torch.argmax(encodings, dim=1) for example, but its an extra operation and using
+        # min_indexes directly is the right choice here (why would I be using encodings
+        # when im actually needing min_indexes? I have no use for the one-hot-encoded 
+        # version of integer indexes! so I remove it and use min_indexes instead
+        # since min_indexes shape is (N,) and N being H*W*batch, we need to reshape it 
+        # back to (batch_size, H, W) so we can easily use it down the line!
+        # print(f'{encoder_outputs_shape=}')
+        # print(f'{min_indexes.shape=}')
+        # sidenote: 
+        # the terms 'latent vectors' or 'quantized latents' seem to be used 
+        # to refer to the actual vectors from the embeddings/codebook (in our case quantized_z_ex),
+        # and 'latent codes' usually refers specifically to the map of discrete integer indexes 
+        # (in our case min_indexes reshaped properly(batch,H,W))
+        # so I call the min_indexes that are reshaped to (b,h,w) as latents and call 
+        # min_indexes as indexes otherwise, I guess this conveys the usage pretty well
+        # sidenote 2: 
+        # as to why they are called the way they do, these remarks are usually stated as reasons
+        # behind the naming convention:
+        # First min_indexes are actually the final output of the encoding and quantization process, 
+        # and represent the original input image in a compressed, discrete form so it makes sense 
+        # to call it latent codes!
+        # second, min_indexes is really a sequence of indexes(obviously!), that contains the essential,
+        # quantized information in compressed form, extracted by the encoder.(its called a map of integer indexes 
+        # when its reshaped to its proper form of (b,h,w)), so once again it seems logical to call it latents!
+        # third, later on when we plan on generating new images we use models like PixelCNN or Transformers 
+        # that are autoregressive (we use them to learn priors from the data instead of using a fixed predetermined ones),
+        # we use them to train specifically to model the probability distribution of these integer indexes.
+        # (p(z), where z is the map of indexes). They learn to predict the next index based on the previous ones.
+        # so again, as you can see, these indexes really act like latents for them(these models/in this context!)
+        # and finally these indexes act as keys to look up the actual embedding vectors 
+        # (quantized_z_ex in our case) from the embeddings/codebook, which are then used by the decoder.
+        # while the decoder uses the embedding vectors, the indexes fully determine which vectors are used,
+        # hence the name latent codes!
+        latents = min_indexes.view(*encoder_outputs_shape[:3])
+        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , latents
 
 # lets now add the main model 
 #! make it conditional so we can create different types of images?!
@@ -6824,7 +6868,7 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
     (imgs, labels) = next(iter(dataloader))
     imgs = imgs.to(device)
     vq_encoder_output = model.encoder(imgs)
-    _, quantized_vectors, _ = model.quantizer(vq_encoder_output)
+    _, quantized_vectors, _, _ = model.quantizer(vq_encoder_output)
     reconstructions = model.decoder(quantized_vectors)
     # for celeba only
     if labels[0].ndimension()>0:
@@ -7210,30 +7254,34 @@ view_results(model, dataloader_train, dataloader_test)
 #%%
 # now to be able to generate images, as we stated before, we need a prior model
 # todo: explain 
-
+#! Todo, add a separate method in vqvae to make this easier and not repeat
+#! each time we may want to access latents (i.e. min_indexes)
 def get_latent_codes(model, dataloader):
     model.eval()
-    all_indices = []
+    # indexes are latents! (latent codes) I use them interchangably throughout 
+    # this tutorial
+    all_latents = []
+    # labels are for when we want to train our prior models conditionally (on labels!)
     all_labels = []
     with torch.no_grad():
         for data, labels in dataloader:
             data = data.to(device)
             encoder_output = model.encoder(data)
-            
+            # reshape the encoder output from bchw to bhwc (c is embedding_size)
             encoder_output = encoder_output.permute(0,2,3,1).contiguous()
             encoder_flatten = encoder_output.view(-1, model.embd_size)
             distances = torch.cdist(encoder_flatten, model.quantizer.embeddings.weight)
-            indices = torch.argmin(distances, dim=1)
+            indexes = torch.argmin(distances, dim=1) # shape is (N,1)
             
             # reshape to (batch_size, H, W)
-            indices = indices.view(data.shape[0], encoder_output.shape[1], encoder_output.shape[2])
-            all_indices.append(indices.cpu())
+            latents = indexes.view(*encoder_output.shape[:3])
+            all_latents.append(latents.cpu())
             # for use in conditional generation
             all_labels.append(labels)
-            
-    all_indices =  torch.cat(all_indices, dim=0)  # Shape: [num_samples, H, W]
+
+    all_latents =  torch.cat(all_latents, dim=0)  # shape is (batch, H, W)
     all_labels = torch.cat(all_labels, dim=0)
-    return all_indices,all_labels
+    return all_latents,all_labels
 
 # prior model i.e. pixelcnn (we can use a transformer based model as well, 
 # (we could also use gan for this!))
@@ -9077,7 +9125,6 @@ def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10
 latents_prior = get_latents_prior(prior,model, batch_size=1, num_classes=10,selected_class=9)
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
-
 
 #%% old dbeugging stuff
 # check to see if our codebook has collapsed
