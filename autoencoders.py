@@ -143,7 +143,7 @@ import datetime
 import numpy as np 
 import torch
 import torchvision
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms as tf
 from torchvision.utils import save_image, make_grid
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -180,11 +180,11 @@ import matplotlib.pyplot as plt
 # after we created our dataset, we will implement different types of AutoEncoders 
 dataset_train = datasets.MNIST(root='MNIST',
                                train=True,
-                               transform = transforms.ToTensor(),
+                               transform = tf.ToTensor(),
                                download=True)
 dataset_test  = datasets.MNIST(root='MNIST', 
                                train=False, 
-                               transform = transforms.ToTensor(),
+                               transform = tf.ToTensor(),
                                download=True)
 batch_size = 128
 num_workers = 0
@@ -2936,12 +2936,12 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
 # I just resized cifar10 so the changes is minimal here ))
 epochs = 50
 
-dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
-dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=tf.ToTensor())
+dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=tf.ToTensor())
 
 ## uncomment these lines to test with cifar10 
 ## (only do this after you ave experimented with mnist)
-# transformations = transforms.Compose([transforms.Resize(28), transforms.ToTensor()])
+# transformations = tf.Compose([tf.Resize(28), tf.ToTensor()])
 # dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
 # dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
 
@@ -4399,15 +4399,15 @@ def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, f
 
 def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     if dataset_name.lower() == 'mnist':
-        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
-        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
+        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=tf.ToTensor())
+        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=tf.ToTensor())
     
     elif dataset_name.lower() in ['cifar','cifar10']:
         # for cifar10 a better architecture and training regime is required
-        transformations_tr = transforms.Compose([transforms.Resize(size),
-                                                 transforms.RandomHorizontalFlip(),
-                                                 transforms.ToTensor(),])
-        transformations = transforms.Compose([transforms.Resize(size), transforms.ToTensor(),])
+        transformations_tr = tf.Compose([tf.Resize(size),
+                                                 tf.RandomHorizontalFlip(),
+                                                 tf.ToTensor(),])
+        transformations = tf.Compose([tf.Resize(size), tf.ToTensor(),])
         dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
         dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
    
@@ -6572,27 +6572,42 @@ vq_loss,rec,perp = model_test(x)
 print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=} {model_test.enc_output_shape=}')
 
 #%%
-
+#TODO reformat this, make it better!
 def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_samples=False, train_samplesize=1000, test_samplesize=100):
-    if dataset_name.lower() == 'mnist':
-        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=transforms.ToTensor())
-        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=transforms.ToTensor())
     
-    elif dataset_name.lower() in ['cifar','cifar10']:
-        transformations_tr = transforms.Compose([transforms.Resize(size),
-                                                 transforms.RandomHorizontalFlip(),
-                                                 transforms.ToTensor(),])
-        transformations = transforms.Compose([transforms.Resize(size), transforms.ToTensor(),])
-        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
-        dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+    dataset_name = dataset_name.lower()
     
-    elif dataset_name=='celeba':
-        transformations_tr = transforms.Compose([transforms.Resize(size),
-                                                 transforms.RandomHorizontalFlip(),
-                                                 transforms.ToTensor(),])
-        transformations = transforms.Compose([transforms.Resize(size),transforms.ToTensor(),])
-        dataset_train = torchvision.datasets.CelebA('./data/','train',download=True,transform=transformations_tr)
-        dataset_test = torchvision.datasets.CelebA('./data/','valid',download=True,transform=transformations)
+    if dataset_name == 'mnist':
+        dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True, transform=tf.ToTensor())
+        dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True, transform=tf.ToTensor())
+    
+    elif dataset_name in ['cifar','cifar10']:
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, download=True,transform=tr_train)
+        dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, download=True,transform=tr_test)
+    
+    elif dataset_name == 'celeba':
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.CelebA('./data/', 'train', download=True, transform=tr_train)
+        dataset_test = datasets.CelebA('./data/', 'valid', download=True, transform=tr_test)
     
     elif dataset_name=='anime':
         dataset_train = datasets.ImageFolder('./data/anime_characters/raw_dirs/')
@@ -6601,16 +6616,36 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
         # split the dataset
         dataset_train, dataset_test = torch.utils.data.random_split(dataset_train, [train_size, test_size])
         
-        transformations_tr = transforms.Compose([transforms.Resize(size),
-                                                 transforms.RandomHorizontalFlip(),
-                                                 transforms.Lambda(lambda img: img.convert("RGB")),  # convert to RGB
-                                                 transforms.ToTensor(),])
-        transformations = transforms.Compose([transforms.Resize(size),
-                                              transforms.Lambda(lambda img: img.convert("RGB")),  # convert to RGB
-                                              transforms.ToTensor(),])
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            # since we have some png images, convert all to rgb
+            tf.Lambda(lambda img: img.convert("RGB")),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.Lambda(lambda img: img.convert("RGB")),
+            tf.ToTensor(),
+        ])
         # subsets have dataset property, so we access it to assign transformations!
-        dataset_train.dataset.transform = transformations_tr
-        dataset_test.dataset.transform = transformations
+        # we could also do sth like this 
+        # class TransformedDataset(torch.utils.Dataset):
+        #     def __init__(self, subset, transform):
+        #         self.subset = subset
+        #         self.transform = transform
+        #     def __getitem__(self, index):
+        #         x, y = self.subset[index]
+        #         if self.transform:
+        #             x = self.transform(x)
+        #         return x, y
+        #     def __len__(self):
+        #         return len(self.subset)
+        # dataset_train = TransformedDataset(dataset_train, tr_train)
+        # dataset_train = TransformedDataset(dataset_test, tr_test)
+        # but I find this easier and shorter!
+        dataset_train.dataset.transform = tr_train
+        dataset_test.dataset.transform = tr_test
     else:
         raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
     
@@ -7494,6 +7529,8 @@ class PixelCNN(nn.Module):
         # make model conditional 
         self.make_conditional = make_conditional
         
+        self.dropout_rate = dropout_rate
+        
         self.fc_label_embedding = nn.Linear(num_class, embedding_size)
         
         self.embedding = nn.Embedding(num_embds, embedding_size)
@@ -8101,6 +8138,7 @@ def train_prior(prior:PixelCNN,
             best_val_loss = avg_val_loss
             torch.save({
                 'epoch': epoch,
+                'dataset':dataset_name,
                 'state_dict': prior.state_dict(),
                 # 'optimizer': optimizer.state_dict(),
                 # 'scheduler':scheduler.state_dict(),
@@ -8112,7 +8150,8 @@ def train_prior(prior:PixelCNN,
                     'num_embds': prior.num_embds,
                     'embedding_size': prior.embedding_size,
                     'num_class': prior.num_class,
-                    'make_conditional': prior.make_conditional
+                    'make_conditional': prior.make_conditional,
+                    'dropout_rate': prior.dropout_rate,
                 }
             }, model_checkpoint_name.replace('.ckpt','_best.pt'))
             
@@ -8120,19 +8159,21 @@ def train_prior(prior:PixelCNN,
         
         # save the last epoch 
         torch.save({
-                'epoch': epoch,
-                'state_dict': prior.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler':scheduler.state_dict(),
-                'loss': avg_loss,
-                'val_loss': avg_val_loss,
-                'bpd': avg_bpd,
-                'bpd_val':avg_val_bpd,
-                'model_config': {
-                    'num_embds': prior.num_embds,
-                    'embedding_size': prior.embedding_size,
-                    'num_class': prior.num_class,
-                    'make_conditional': prior.make_conditional
+            'epoch': epoch,
+            'dataset':dataset_name,
+            'state_dict': prior.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler':scheduler.state_dict(),
+            'loss': avg_loss,
+            'val_loss': avg_val_loss,
+            'bpd': avg_bpd,
+            'bpd_val':avg_val_bpd,
+            'model_config': {
+                'num_embds': prior.num_embds,
+                'embedding_size': prior.embedding_size,
+                'num_class': prior.num_class,
+                'make_conditional': prior.make_conditional,
+                'dropout_rate': prior.dropout_rate,
                 }
             }, model_checkpoint_name)
         
@@ -8962,12 +9003,24 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#em
 
 # ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, map_location=device, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+dataset = ckpt.pop('dataset', dataset)
 
-ckpt = torch.load(ckptname)
+prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
 prior.load_state_dict(ckpt["state_dict"])
-print(f'Epoch       : {ckpt["epoch"]}')
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'\nEpoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
 print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
-print(f'val_Loss    : {ckpt['val_loss']:.4f}   | BPD: {ckpt['bpd_val']:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
 if 'cifar' in dataset:
@@ -9162,6 +9215,7 @@ def visualize_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch
     plt.show()
 
 visualize_latent_maps(latents_real, latents_prior, model.quantizer.num_embd)
+
 
 #%% old dbeugging stuff
 
