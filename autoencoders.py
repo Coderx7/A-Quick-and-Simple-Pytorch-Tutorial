@@ -7305,15 +7305,18 @@ view_results(model, dataloader_train, dataloader_test)
 # todo: explain 
 #! Todo, add a separate method in vqvae to make this easier and not repeat
 #! each time we may want to access latents (i.e. min_indexes)
-def get_latent_codes(model, dataloader):
+# from future!:
+# after a second thouht, our function works pretty much with any iterable
+# not just dataloaders, so I'll guess I add a bit of type info so later on
+# I can reuse this 
+from typing import Iterable, Tuple
+def get_discrete_latent_codes(model:VQVAE, data:Iterable[Tuple[torch.Tensor, torch.Tensor]]):
     model.eval()
-    # indexes are latents! (latent codes) I use them interchangably throughout 
-    # this tutorial
     all_latents = []
     # labels are for when we want to train our prior models conditionally (on labels!)
     all_labels = []
     with torch.no_grad():
-        for data, labels in dataloader:
+        for data, labels in data:
             data = data.to(device)
             encoder_output = model.encoder(data)
             # reshape the encoder output from bchw to bhwc (c is embedding_size)
@@ -7897,7 +7900,6 @@ class ImprovedPixelCNN(nn.Module):
         return logits
 
 
-
 #########################
 def train_prior(prior:PixelCNN, 
                 vqvae_model:VQVAE,
@@ -7938,7 +7940,7 @@ def train_prior(prior:PixelCNN,
     
     # After training vqvae, we need to grab the training set's encodings
     # and use these encodings to train our prior model
-    latent_codes,latent_labels = get_latent_codes(vqvae_model, dataloader)
+    latent_codes,latent_labels = get_discrete_latent_codes(vqvae_model, dataloader)
 
     # combine latent codes and labels
     dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
@@ -8887,7 +8889,7 @@ def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=
 #todo move get_latent_codes inside training because they are tightly coupled!
 # # After training vqvae, we need to grab the trainingset's encodings
 # # and use these encodings to train our prior model
-# latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
+# latent_codes,latent_labels = get_discrete_latent_codes(model, dataloader_train)
 
 # train our PixelCNN prior
 # embdsize=256 results in a very decent generation 
@@ -9070,7 +9072,7 @@ generated_image = generate(model,
                            seed=seed)
 view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
 #%%
-latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
 generated_image1 = generate_simple(model, latent_codes,batch_size=64)
 # print(f'{generated_image1.shape=}')
 view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
@@ -9156,11 +9158,18 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     
     # since we support conditional generation we need to one_hot our labels
     if prior.make_conditional:
-        labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+        if isinstance(selected_class,int):
+            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+        elif isinstance(selected_class, list) and len(selected_class) == batch_size:
+            labels = torch.tensor(selected_class, device=device, dtype=torch.long)
+        else:
+            raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
+            
         # we could also do 
         # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
         labels = F.one_hot(labels, num_classes=num_classes).float()
         # print(f'{labels.shape=}')
+        # print(f'{labels=}')
     else:
         labels = None
     
@@ -9230,12 +9239,8 @@ def visualize_discrete_latent_maps(latent_map_real: torch.Tensor, latent_map_pri
 
 visualize_discrete_latent_maps(discrete_latents_real, latents_prior, model.quantizer.num_embd)
 
-
-def display_image_tensor(ax, img_tensor, title=""):
-    """Helper to display a single image tensor."""
+def show_image_tensor(ax, img_tensor, title=""):
     img = img_tensor.detach().cpu().permute(1, 2, 0).numpy()
-    # Basic unnormalization assumption: clip to [0, 1]
-    # Adjust if your data has different normalization
     img = np.clip(img, 0, 1)
     ax.imshow(img)
     ax.set_title(title)
@@ -9243,7 +9248,6 @@ def display_image_tensor(ax, img_tensor, title=""):
 
 @torch.no_grad()
 def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='cuda'):
-    
     vqvae.eval()
     vqvae.to(device)
     discrete_latents = discrete_latents.to(device)
@@ -9277,6 +9281,80 @@ def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='
     reconstructed_imgs = vqvae.decoder(quantized_vectors)
     return reconstructed_imgs
 
+def compare_real_vs_prior(prior: PixelCNN, 
+                          vqvae: VQVAE, 
+                          imgs,
+                          labels, 
+                          batch_size, 
+                          num_classes,
+                          class_names,
+                          device='cuda',
+                          figsize=(6,8),
+                          ):
+    prior.eval()
+    vqvae.eval()
+    prior.to(device)
+    vqvae.to(device)
+    
+    num_samples = min(batch_size, imgs.size(0))
+    imgs = imgs[:num_samples].to(device)
+    labels = labels[:num_samples].to(device)
+
+    latents_real = get_discrete_latents(vqvae, imgs, device=device)
+    img_recon = decode_discrete_latents(vqvae, latents_real, device=device)
+    
+    # use the label from the real image, so we can compare them
+    selected_class = labels[:num_samples].tolist()
+    # print(f'{selected_class=}')
+    latents_prior = get_discrete_latents_prior(prior, vqvae, 
+                                               batch_size=batch_size,
+                                               num_classes=num_classes, 
+                                               selected_class=selected_class,
+                                               device=device)
+    img_prior_recon = decode_discrete_latents(vqvae, latents_prior, device=device)
+    
+    num_embeddings = model.quantizer.num_embd
+    # need 5 columns for original img, real_latent, real_recon, prior_latent, prior_recon
+    cols = 5 
+    rows = num_samples
+    fig, axes = plt.subplots(rows, cols, figsize=figsize)
+
+    if rows == 1:
+        axes = axes.reshape(1,-1)
+    
+    for i in range(num_samples):
+        show_image_tensor(axes[i, 0], imgs[i], f"Img {i} ({class_names[labels[i].item()]})")
+            # display the latent map
+            # display the recon_img
+        j = 1
+        for latents, recons, title1,title2 in zip([latents_real, latents_prior],
+                                                  [img_recon, img_prior_recon],
+                                                  ["Real Latent","Prior Latent"],
+                                                  ["Real Recon","Prior Recon"]
+                                                ):
+            # print(f'{latents.shape=}')
+            axes[i,j].imshow(latents[i].cpu().numpy(), cmap='viridis', vmin=0, vmax=num_embeddings - 1)
+            axes[i,j].set_title(f"{title1}")
+            axes[i,j].axis('off')
+            show_image_tensor(axes[i, j+1], recons[i], f"{title2}({class_names[labels[i].item()]})")
+            j+=2
+
+    fig.suptitle("Real vs. Prior Generation Comparison", fontsize=14)
+    plt.tight_layout()
+    plt.show()
+
+
+imgs, labels = next(iter(dataloader_test))
+class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+               5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+compare_real_vs_prior(prior, model, 
+                      imgs, 
+                      labels,
+                      batch_size=4,
+                      num_classes=10,
+                      class_names=class_names,
+                      device=device,
+                      figsize=(12,16))
 
 #%% old dbeugging stuff
 
