@@ -6484,8 +6484,22 @@ class Quantizer(nn.Module):
         # (quantized_z_ex in our case) from the embeddings/codebook, which are then used by the decoder.
         # while the decoder uses the embedding vectors, the indexes fully determine which vectors are used,
         # hence the name latent codes!
-        latents = min_indexes.view(*encoder_outputs_shape[:3])
-        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , latents
+        # sidenote3:
+        # a bit more searching and I found out, my initial though was correct! that is
+        # technically speaking, when we talk about latent space, it usually refers to 
+        # the continuous vector space produced by the encoder (in our case encoders outputs before quantization)
+        # so, the encoders outputs are the actual latent variables/latent representations.
+        # However! in practice, many started refering to the integer indexes (which are a 
+        # discrete representation derived from that continuous latent space) the latents!.
+        # other well-known names that are used are discrete_latents and quantized_latents which 
+        # are more accurate imho! so I'll be using the discrete_latents instead from now on!
+        # (as to why people do that(aside from our previous points which still are valid imho),
+        # I guess since, given the context, its known knowledge, everyone just shortens the 
+        # explanation and directly calls them that way!(after all they are the discrete form of
+        # the continuous counterpart! (also it makes sense in the vqvae context itself, without
+        # taking prior model interactions into account!))
+        discrete_latents = min_indexes.view(*encoder_outputs_shape[:3])
+        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , discrete_latents
 
 # lets now add the main model 
 #! make it conditional so we can create different types of images?!
@@ -9017,7 +9031,7 @@ print(f'{prior.__class__.__name__} loaded!')
 for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
     print(f'{k:<16} : {v}')
 
-print(f'\nEpoch       : {ckpt["epoch"]}')
+print(f'Epoch       : {ckpt["epoch"]}')
 print(f'Dataset     : {dataset.upper()}')
 print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
 print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
@@ -9059,7 +9073,7 @@ view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
 latent_codes,latent_labels = get_latent_codes(model, dataloader_train)
 generated_image1 = generate_simple(model, latent_codes,batch_size=64)
 # print(f'{generated_image1.shape=}')
-view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8)
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
 
 #%%
 generated_image, latents = sample_from_prior(prior,
@@ -9215,6 +9229,7 @@ def visualize_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch
     plt.show()
 
 visualize_latent_maps(latents_real, latents_prior, model.quantizer.num_embd)
+
 
 
 #%% old dbeugging stuff
