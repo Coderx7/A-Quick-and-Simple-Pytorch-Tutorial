@@ -9109,7 +9109,7 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,
 # while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
 # it hasn't learned the correct distribution of latent codes.
 @torch.no_grad()
-def get_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
+def get_discrete_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
     vqvae.eval()
     vqvae.to(device)
     image_tensor = image_tensor.to(device)
@@ -9125,8 +9125,8 @@ def get_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
     return latents
 
 imgs, labels = next(iter(dataloader_test))
-latents_real = get_latents(model,imgs[0],device='cuda')
-print(f'{latents_real.shape=}')
+discrete_latents_real = get_discrete_latents(model,imgs[0],device='cuda')
+print(f'{discrete_latents_real.shape=}')
 #
 # now lets grab prior_latents, for that we just do what we do when generating a new image
 # I initially tried feeding that to the prior model, but it turned out it was wrong
@@ -9136,7 +9136,7 @@ print(f'{latents_real.shape=}')
 # examples during training(that is basically our training set converted into latent codes)
 # so we start off with an empty latents and fill it up 
 @torch.no_grad()
-def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, device='cuda'):
+def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, device='cuda'):
     # lets first take care of the models before we forget
     # about them and face all sorts of weird issues!
     prior.eval()
@@ -9145,7 +9145,7 @@ def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10
     vqvae.to(device)
     
     H,W = vqvae.enc_output_shape
-    # our latents_prior is simply a HxW matrix of indexes. so to create one we simply
+    # our latents_prior is simply a HxW matrix of integer indexes. so to create one we simply
     # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
     # each latent will become a whole image ultimately, when we feed it to our decoder.
     # we can think of it as a compressed, structured blueprint for the image. 
@@ -9193,13 +9193,13 @@ def get_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10
     return latents_prior
 
 # now lets grab our latents_prior
-latents_prior = get_latents_prior(prior,model, batch_size=1, num_classes=10,selected_class=9)
+latents_prior = get_discrete_latents_prior(prior,model, batch_size=1, num_classes=10, selected_class=9)
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
 
 from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
 
-def visualize_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch.Tensor, num_embeddings, cmap='viridis', figsize=(6,8)):
+def visualize_discrete_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch.Tensor, num_embeddings, cmap='viridis', figsize=(6,8)):
     
     latents = [latent_map_real, latent_map_prior]
     titles = ['Real Latent Maps (from Encoder)',
@@ -9228,8 +9228,54 @@ def visualize_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch
     plt.tight_layout()
     plt.show()
 
-visualize_latent_maps(latents_real, latents_prior, model.quantizer.num_embd)
+visualize_discrete_latent_maps(discrete_latents_real, latents_prior, model.quantizer.num_embd)
 
+
+def display_image_tensor(ax, img_tensor, title=""):
+    """Helper to display a single image tensor."""
+    img = img_tensor.detach().cpu().permute(1, 2, 0).numpy()
+    # Basic unnormalization assumption: clip to [0, 1]
+    # Adjust if your data has different normalization
+    img = np.clip(img, 0, 1)
+    ax.imshow(img)
+    ax.set_title(title)
+    ax.axis('off')
+
+@torch.no_grad()
+def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='cuda'):
+    
+    vqvae.eval()
+    vqvae.to(device)
+    discrete_latents = discrete_latents.to(device)
+    # discrete_latents are indexes to actual embedding vectors
+    # so to we need to grab the embedding vectors for eachone 
+    # since we are just after the embedding vectors, we dont 
+    # need to keep its shape! we flatten the indexes and get
+    # a list of embeding vectors, this means we will have a
+    # tensor of shape (batch*H*W, embedding_size)
+    quantized_vectors = vqvae.quantizer.embeddings(discrete_latents.view(-1))
+    # we could also use F.embedding() and use the embeddings weight
+    # to grab the vectors but since we have access to embeddings 
+    # module in quantizer, we simply use that!
+    # quantized_vectors = F.embedding(discrete_latents.view(-1), vqvae.quantizer.embeddings.weight)
+    # we would be using this if we want a bit more performance as 
+    # the functional form might be a btter choice, 
+    # Get the embedding vectors corresponding to the generated indices
+    
+    # now to actually decode it, we need to reshape it into what 
+    # our decoder expects, which is the encoders output shape! which
+    # was (batchsize, embedding_size, H, W) but if you recall, we reshaped
+    # it to (batchsize, H,W,embedding_size) early on in quantizer to get
+    # the discrete version of it! so we now have to reshape into bhwc
+    # and then into the correct bchw!
+    batch_size, H, W = discrete_latents.shape
+    quantized_vectors = quantized_vectors.view(batch_size, H, W, -1)
+    # now move the embedding channel from last dim to second dim (dim=1), 
+    # and it has to be continuous! so they use the same contiguous memory chunk!
+    quantized_vectors = quantized_vectors.permute(0, 3, 1, 2).contiguous()
+    # we can now decode the quantized vectors!
+    reconstructed_imgs = vqvae.decoder(quantized_vectors)
+    return reconstructed_imgs
 
 
 #%% old dbeugging stuff
