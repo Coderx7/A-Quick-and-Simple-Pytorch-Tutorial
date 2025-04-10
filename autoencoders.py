@@ -9107,7 +9107,8 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,
 # and compare them to prior_latents which we get from prior model,
 # this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
 # or whether they show similar spatial structures or patterns? 
-# if latents from our prior model (latents_prior) look drastically different (e.g., all zeros, random noise, weird repeating blocks)
+# if latents from our prior model (latents_prior) look drastically different 
+# (e.g., all zeros, random noise, weird repeating blocks)
 # while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
 # it hasn't learned the correct distribution of latent codes.
 @torch.no_grad()
@@ -9138,7 +9139,7 @@ print(f'{discrete_latents_real.shape=}')
 # examples during training(that is basically our training set converted into latent codes)
 # so we start off with an empty latents and fill it up 
 @torch.no_grad()
-def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, device='cuda'):
+def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
     # lets first take care of the models before we forget
     # about them and face all sorts of weird issues!
     prior.eval()
@@ -9185,6 +9186,101 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
             # coordinates we do this for all samples, this will give us
             # (batch,embdsz)
             logits = logits[:,:,h,w]
+            
+            # advanced sampling
+            # initially I went with normal/basic sampling but the generation
+            # left a lot to be desired, then I added this section to see how
+            # it does (tldr, topk sampling does infact improve our result!
+            # but top_p not really, it actually made it worse! but im keeping it
+            # maybe im doing something wrong here!)
+            if advanced_sampling:
+                # temperature scaling - it specifies output randomness, more temp, more randomness!
+                # low temperatures make the probability distribution sharper (more peaky),
+                # intuitively it means, when we divide our logits by a small number, the logits
+                # values are less affected, they stay the same, larger values stay larger,
+                # and the models output will be more deterministic, because it focuses on the
+                # most likely tokens like normal. This means less randomness/diversity in the 
+                # final generation!(which is the default behavior)
+                # on the other hand, if we use higher values, it makes the probability distribution
+                # flatter(less spiky) and therefore the probabilities will become more uniform. 
+                # again that is, when logits is divided by a larger value, their magnitudes decrease,
+                # the larger that value, the more values become smaller, making them closer to eachother
+                # therefore, after some threshold, we'll see basically all tokens are roughly in the 
+                # same range, making them essentially as likely to happen! when this happens, and
+                # we go for sampling, any values can be selected(regardless of their initial raw value
+                # whether they were higher and now become lower, or they were lower, and because others 
+                # got decreased, they are now in the same range, and thus as likely to happen!)
+                # and this will lead to more randomness/diversity in the generation process!
+                # and as to why messing with logits like this makes sense, I believe its directly
+                # related to the fact that our models are not prefect, and therefore, its pretty likely
+                # that the right tokens, get a somewhat lower probablity than the should, and by default
+                # they dont get a chance to be used, so models incompetence hurts us, but when we
+                # do such tricks! we are actually enabling those tokens/features to get involved
+                # and play a role and suddenly we see our generation perofrmance gets better!
+                if temperature != 1:
+                    logits = logits/temperature
+
+                # top-k filtering
+                if top_k > 0:
+                    # first we grab the top values and their indexes, the idea is we
+                    # are trying to get rid of the less lileky candidates and only 
+                    # work with a pool of highly likely or more likely candidates!
+                    top_k_logits, top_k_indexes = torch.topk(logits, top_k, dim=-1)
+                    # we then create a mask and set all logits that are not in top-k to -inf
+                    mask = torch.ones_like(logits) * -float('inf')
+                    # we could also do
+                    # mask = torch.full_like(logits, -float('Inf'))
+                    # and fill the rest of the mask with the actual top values
+                    mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
+                    # now our mask is essentially the top logits with all the rest set to -inf
+                    # so when we later use softmax, -inf becomes nans and doesnt contribute!
+                    # this has the desired outcome that now, when we sample,the pool ofvalues
+                    # is already made of highly likely/relvant choices, hopefully resulting 
+                    # in higher quality selection and thus generation(because we already took
+                    # out low probablity/irrelavent/noisy choices, at least this is the idea! 
+                    # if our model somehow isnt trained properly and produces garbage obviously
+                    # it wont work, it works great if the model confidently predicts acucractly
+                    # most of the time!)
+                    # on a sidenote, this is one of the reason why a larger spatial size for
+                    # encoders outputs and hence our min_indexes, and then discrete_latents 
+                    # affect the performance this much! the larger the more information is 
+                    # encoded and retained which can be used to more accurately recove image
+                    # details!(again think about it, with larger dims, we have more values, 
+                    # each value(discrete latent value) corresponds to a smaller patch of 
+                    # the image and therefore, more details of the iamge is captured!)
+                    # (so in a nutshell larger size = more codes = finer/smaller patches = more information = more details!)
+                    logits = mask
+
+                # heres another form of sampling known as top-p (nucleus) (its infact a filtering scheme,
+                # but since its a part of our sampling I call it sampling strategy!)
+                # I really didnt have much luck with it, topk, has worked way better
+                # but for the sake of the experiment i add it here! it wasntt worth it so far!
+                # especially when used with topk it can get cumbersome, because topk
+                # can narrow the pool size(especially if we use a small number), and
+                # top_p makes it even narrower which may be why it doesnt work out properly!
+                # or maybe im missing something here!
+                if 0 < top_p < 1.0:
+                    
+                    sorted_logits, sorted_indexes = torch.sort(logits, descending=True, dim=-1)
+                    cumulative_probs = torch.cumsum(sorted_logits.softmax(dim=-1), dim=-1)
+
+                    # remove values with cumulative probability above the threshold(nucleus)
+                    # 
+                    sorted_indexes_to_remove = cumulative_probs > top_p
+                    # shift the indexes to the right to keep also the first value above the 
+                    # threshold
+                    sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
+                    # never remove the most probable value
+                    sorted_indexes_to_remove[..., 0] = 0 
+
+                    # create a mask, setting logits to be removed to -inf
+                    # scatter sorted_indexes_to_remove back to original positions
+                    indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, 
+                                                                         index=sorted_indexes,
+                                                                         src=sorted_indexes_to_remove)
+                    logits = logits.masked_fill(indexes_to_remove, -float('inf'))
+            
+            
             # now we convert it to probablities so we can sample from it
             probs = F.softmax(logits, dim=-1)
             # lets sample from it based on the probablity of each entry
@@ -9288,6 +9384,10 @@ def compare_real_vs_prior(prior: PixelCNN,
                           batch_size, 
                           num_classes,
                           class_names,
+                          advanced_sampling=False,
+                          temperature=1,
+                          top_k=1,
+                          top_p=1,
                           device='cuda',
                           figsize=(6,8),
                           ):
@@ -9310,6 +9410,10 @@ def compare_real_vs_prior(prior: PixelCNN,
                                                batch_size=batch_size,
                                                num_classes=num_classes, 
                                                selected_class=selected_class,
+                                               advanced_sampling=advanced_sampling,
+                                               temperature=temperature,
+                                               top_k=top_k,
+                                               top_p=top_p,
                                                device=device)
     img_prior_recon = decode_discrete_latents(vqvae, latents_prior, device=device)
     
@@ -9347,14 +9451,26 @@ def compare_real_vs_prior(prior: PixelCNN,
 imgs, labels = next(iter(dataloader_test))
 class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
                5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+
 compare_real_vs_prior(prior, model, 
                       imgs, 
                       labels,
                       batch_size=4,
                       num_classes=10,
                       class_names=class_names,
+                      advanced_sampling=True,
+                      temperature=1,
+                      top_k=3,#3 seems to be a good spot for my currentcifar10 model
+                      top_p=1,#
                       device=device,
                       figsize=(12,16))
+
+#TODO use more advanced generation technique and see if it really affects the outcome
+#TODO currently looking at the prior generations, we can see they are from the same 
+#TODO class, but are not well formed!
+# ok topk filtering actally improved the result, which makes sense, 
+# but other types of filtering such as topp filtering didnt do much!
+# so I'll be keeping topk for sure!
 
 #%% old dbeugging stuff
 
