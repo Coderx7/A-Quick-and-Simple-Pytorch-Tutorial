@@ -221,6 +221,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # also note the figsize row,cols, if you use the wrong size
     # there might not be enough space to display the labels at the top!
     # (try (6,4) and see the result!)
+    # sidenote 2: the first number specifies the width and second specifies the 
+    # height of the plot! so it might be better to say figsize (cols,rows) or figsize(w,h)!
     fig = plt.figure(figsize=figsize, dpi=dpi)
     if title:
         fig.suptitle(title, fontsize=title_fontsize, y=title_top_margine)
@@ -6676,6 +6678,7 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
     return dataset_train, dataset_test, dataloader_train, dataloader_test
 
 #train
+# todo: add mixed-precision trainig so we can train larger models/inputsizes
 def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, save_recons_dir=None,limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
     
     timestamp_str = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
@@ -6784,7 +6787,7 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
         for i, (imgs, _) in enumerate(dataloader_train):
             imgs = imgs.to(device)
             vq_loss, imgs_rec, perplexity = model(imgs)
-            
+
             #! normalzie the loss
             reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance_train
             # reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_train
@@ -7041,7 +7044,7 @@ view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}')
 # is that the images will be discolored, almost black and white, becoming monocolors
 # lots of yellow, brownish colors, and needless to say images are very blury
 # test with limited samples and you'll see what I mean!
-dataset = 'cifar10' #anime # celeba #cifar10
+dataset = 'mnist' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
@@ -7155,13 +7158,20 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
+
 # ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+
+# with embds=256
+ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
+# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
+# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
+
 
 # performs very very good ! increased embdsz actually results in way smaller loss
 # abd BPD! I noticed the perplexity is much much lower though! but the generation
 # nonetheless is much much better!
-ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+# ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
 # ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
@@ -8992,6 +9002,11 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckp
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
+#embd256 
+ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
+# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
+
 # train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
 # clean and git push to privae repo first
 
@@ -9003,7 +9018,7 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckp
 # more! in our case it was to simply use larger embedding dim (256)!
 # I need to train others with the new embd_size for vqvae to see how they perform :)
 # test these 3 models to see how they fair against each other
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 #
@@ -9086,7 +9101,7 @@ generated_image, latents = sample_from_prior(prior,
                                     temperature=1,
                                     num_classes=num_classes,
                                     class_label=9,  # Optional: specific class to generate
-                                    top_p=0.8,  # Use nucleus sampling
+                                    top_p=1,  # Use nucleus sampling
                                 device='cuda')
 
 print(f'{generated_image.shape=}')
@@ -9654,16 +9669,15 @@ def compare_real_vs_prior(prior: PixelCNN,
     plt.tight_layout()
     plt.show()
 
-
 imgs, labels = next(iter(dataloader_test))
 
 # class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
 #                5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
 
-torch.set_printoptions(profile='full')
+# torch.set_printoptions(profile='full')
 compare_real_vs_prior(prior, model, 
-                      imgs, 
-                      labels,
+                      imgs[20:24], 
+                      labels[20:24],
                       batch_size=4,
                       num_classes=num_classes,
                       class_names=class_names,
@@ -9684,6 +9698,35 @@ compare_real_vs_prior(prior, model,
 # but other types of filtering such as topp filtering didnt do much!
 # so I'll be keeping topk for sure!
 
+def visualize_latent_distribution(latent_maps_list,
+                                  labels_list,
+                                  num_embeddings,
+                                  title="Discrerte Latent Code Distribution",
+                                  figsize=(12, 6)):#figsize(w,h)!
+
+    if len(latent_maps_list) != len(labels_list):
+        raise ValueError("number of latent maps tensors must match number of labels.")
+
+    plt.figure(figsize=figsize)
+    for i, latent_maps in enumerate(latent_maps_list):
+        codes = latent_maps.view(-1).detach().cpu().numpy()
+        plt.hist(codes,
+                 bins=num_embeddings,
+                 range=(-0.5, num_embeddings - 0.5),
+                 density=True, 
+                 alpha=0.6, 
+                 label=labels_list[i])
+
+    plt.xlabel("Latent Code Index(Embedding Vector Index)")
+    plt.ylabel("Probability Density")
+    plt.title(title)
+    plt.legend()
+    plt.grid(axis='y', alpha=0.5)
+    plt.show()
+
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,figsize=(12,8))
 
 # now how do we interpret these?
 # Assessing the VQ-VAE (Columns 1, 2, 3):
@@ -9731,7 +9774,9 @@ compare_real_vs_prior(prior, model,
 # it doesnt need to look identical, because the prior is generating something new
 # so it wont look identical, however, it should look statistically
 # similar to the real latent map, all latent codes need to look similar in thsi fashion
-# for that matter!
+# for that matter!(note that when I say the pattern/structure needs to be identical, 
+# it may not always be easily visible or identifiable, especially in more complex datasets like cifar10.
+# but for simpler datasets such as mnist we can easily spot the patterns)
 # similar levels of structure, complexity and a similar range/distribution of [codebook] indices 
 # are a few examples to name that we can take into account. 
 # if our prior model is conditional then code maps for the same class 
