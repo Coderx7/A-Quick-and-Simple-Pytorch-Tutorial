@@ -9771,6 +9771,18 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
                              figsize=(12,8),
                              num_indexes_per_bins=1)
 
+# note: add more, about mnist, cifar as well, at the end of debuggin explantion below?
+# celeba example, shows us when enough trainig samples and longer training
+# our prior is able to perform better, we cant see this in cifar10,
+# because despite it being like mnits, its much more complex, and prior recons
+# are hit and miss, mnist is too easy, but celeba shows clearly how much
+# trainig size matters, using original labels, we can see model performs well
+# unlike our initial try in generation which used random labels that wasnt well
+# structured!(torch.ones(batchsize,)*9 for example, instead of a geniun label)
+# also playing with topk, temperature,and topp shows us their impact on final result
+# and how they can improve visuals, (and also steer away from the condition we specified)!
+# 
+
 # now how do we interpret these?
 # Assessing the VQ-VAE (Columns 1, 2, 3):
 # the first column is our ground truth, our original image
