@@ -9697,21 +9697,42 @@ compare_real_vs_prior(prior, model,
 # ok topk filtering actally improved the result, which makes sense, 
 # but other types of filtering such as topp filtering didnt do much!
 # so I'll be keeping topk for sure!
-
+import math
 def visualize_latent_distribution(latent_maps_list,
                                   labels_list,
                                   num_embeddings,
                                   title="Discrerte Latent Code Distribution",
-                                  figsize=(12, 6)):#figsize(w,h)!
-
-    if len(latent_maps_list) != len(labels_list):
-        raise ValueError("number of latent maps tensors must match number of labels.")
+                                  figsize=(12, 6),#figsize(w,h)!
+                                  num_indexes_per_bins=1):
 
     plt.figure(figsize=figsize)
+    # since the number of indexes may be small, the histogram maynot look well
+    # so for the case where there are ctually a few indexes, we can try to 
+    # allocate more indexes per each bin, and this way by decreasing the 
+    # number of bins involves, make each column thicker and more noticeable
+    # sidenote: we could have also math.ceil
+    # but I didnt want to use math module just for this function, 
+    # otherwise doing math.ceil is clearer nonetheless
+    
+    # number_of_bins = math.ceil(num_embeddings/num_indexes_per_bins)
+    number_of_bins = (num_embeddings + num_indexes_per_bins-1) // num_indexes_per_bins
+    hist_min_range = -0.5
+    hist_max_range =  num_embeddings - 0.5
+    if num_indexes_per_bins > 1:
+         # create equally spaced steps from the start to the end of the range
+         # so it matches our number of bins automatically
+         bin_edges = np.linspace(hist_min_range, hist_max_range, number_of_bins + 1)
+         # the last edge must be exactly the end of the range
+         bin_edges[-1] = hist_max_range
+         new_bins = bin_edges
+    else:
+         new_bins = number_of_bins
+    
+    # new_bins = num_embeddings
     for i, latent_maps in enumerate(latent_maps_list):
         codes = latent_maps.view(-1).detach().cpu().numpy()
         plt.hist(codes,
-                 bins=num_embeddings,
+                 bins=new_bins,
                  range=(-0.5, num_embeddings - 0.5),
                  density=True, 
                  alpha=0.6, 
@@ -9726,7 +9747,8 @@ def visualize_latent_distribution(latent_maps_list,
 
 visualize_latent_distribution([discrete_latents_real, latents_prior],
                              ["Real (Encoder)", "Prior (Generated)"],
-                             model.embd_num,figsize=(12,8))
+                             model.embd_num,figsize=(12,8),
+                             num_indexes_per_bins=1)
 
 # now how do we interpret these?
 # Assessing the VQ-VAE (Columns 1, 2, 3):
