@@ -7163,7 +7163,7 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
 # with embds=256
-ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
+# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
 # ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
 # ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
 
@@ -7174,7 +7174,7 @@ ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
-# ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
+ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
 # ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
 # limited cifar10 - 8000 samples
@@ -9003,7 +9003,7 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckp
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
 #embd256 
-ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
 # ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
 # ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
 
@@ -9028,7 +9028,7 @@ ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb2
 # ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 # 
 # conditional
-# ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
+ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
 # ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
 
 
@@ -9148,7 +9148,7 @@ def get_discrete_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
 imgs, labels = next(iter(dataloader_test))
 discrete_latents_real = get_discrete_latents(model,imgs[0],device='cuda')
 print(f'{discrete_latents_real.shape=}')
-#
+
 # now lets grab prior_latents, for that we just do what we do when generating a new image
 # I initially tried feeding that to the prior model, but it turned out it was wrong
 # because the purpose of our prior model is not to transform existing latent
@@ -9174,23 +9174,25 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
     # when given to our decoder, will give us an image based on the said blue-prnts
     latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
-    # print(f'{selected_class=}')
+    print(f'*{selected_class=}')
     # since we support conditional generation we need to one_hot our labels
     if prior.make_conditional:
         if isinstance(selected_class,int):
             labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+            # we could also do 
+            # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
         elif isinstance(selected_class, list) and len(selected_class) == batch_size:
             labels = torch.tensor(selected_class, device=device, dtype=torch.long)
-            print(f'{labels.shape=}')
+            print(f'+{labels.shape=}')
         else:
             raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
         
         #! dont onehot celeba
-        # we could also do 
-        # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
-        labels = F.one_hot(labels, num_classes=num_classes).float()
-        # print(f'{labels.shape=}')
-        # print(f'{labels=}')
+        # only one-hot encode, selected_class if its int, or if its a list, it must only be int
+        if isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
+            labels = F.one_hot(labels, num_classes=num_classes).float()
+            # print(f'{labels.shape=}')
+            # print(f'{labels=}')
         print(f'{labels.shape=}')
     else:
         labels = None
@@ -9517,6 +9519,7 @@ latents_prior = get_discrete_latents_prior(prior,model, batch_size=1, num_classe
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
 
+#%%
 from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
 
 def visualize_discrete_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch.Tensor, num_embeddings, cmap='viridis', figsize=(6,8)):
@@ -9600,7 +9603,8 @@ def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='
     return reconstructed_imgs
 
 def compare_real_vs_prior(prior: PixelCNN, 
-                          vqvae: VQVAE, 
+                          vqvae: VQVAE,
+                          dataset_name,
                           imgs,
                           labels, 
                           batch_size, 
@@ -9612,6 +9616,8 @@ def compare_real_vs_prior(prior: PixelCNN,
                           top_p=1,
                           device='cuda',
                           figsize=(6,8),
+                          save_figure=True,
+                          save_dir='./'
                           ):
     prior.eval()
     vqvae.eval()
@@ -9649,7 +9655,9 @@ def compare_real_vs_prior(prior: PixelCNN,
         axes = axes.reshape(1,-1)
     
     for i in range(num_samples):
-        show_image_tensor(axes[i, 0], imgs[i], f"Img {i} ({class_names[labels[i].item()]})")
+        label = labels[i]
+        label = class_names[label.item()] if label.ndim ==0 else 'N/A'
+        show_image_tensor(axes[i, 0], imgs[i], f"Img {i} ({label})")
             # display the latent map
             # display the recon_img
         j = 1
@@ -9662,22 +9670,33 @@ def compare_real_vs_prior(prior: PixelCNN,
             axes[i,j].imshow(latents[i].cpu().numpy(), cmap='viridis', vmin=0, vmax=num_embeddings - 1)
             axes[i,j].set_title(f"{title1}")
             axes[i,j].axis('off')
-            show_image_tensor(axes[i, j+1], recons[i], f"{title2}({class_names[labels[i].item()]})")
+            show_image_tensor(axes[i, j+1], recons[i], f"{title2}({label})")
             j+=2
-
-    fig.suptitle("Real vs. Prior Generation Comparison", fontsize=14)
+    cfg_used = f'{temperature=:.2f} | {top_k=} | {top_p=:.2f}'
+    fig.suptitle(f"Real vs. Prior Generation Comparison\nDataset: {dataset_name.upper()}\n{cfg_used}", fontsize=14)
     plt.tight_layout()
+    # save the fig for further analysis
+    if save_figure and save_dir:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        img_name = f'{dataset_name.upper()}_{cfg_used}_{timestamp}.jpg'
+        img_path = os.path.join(save_dir, img_name)
+        plt.savefig(img_path)
     plt.show()
+    
 
 imgs, labels = next(iter(dataloader_test))
-
+print(f'@{labels.shape=}')
 # class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
 #                5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
 
 # torch.set_printoptions(profile='full')
-compare_real_vs_prior(prior, model, 
-                      imgs[20:24], 
-                      labels[20:24],
+compare_real_vs_prior(prior,
+                      model,
+                      dataset,
+                      imgs, 
+                      labels,
                       batch_size=4,
                       num_classes=num_classes,
                       class_names=class_names,
@@ -9689,7 +9708,9 @@ compare_real_vs_prior(prior, model,
                       # this actually was my bug that prevented me from usingtop_p
                       top_p=1,
                       device=device,
-                      figsize=(12,16))
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging')
 
 #TODO use more advanced generation technique and see if it really affects the outcome
 #TODO currently looking at the prior generations, we can see they are from the same 
@@ -9697,7 +9718,6 @@ compare_real_vs_prior(prior, model,
 # ok topk filtering actally improved the result, which makes sense, 
 # but other types of filtering such as topp filtering didnt do much!
 # so I'll be keeping topk for sure!
-import math
 def visualize_latent_distribution(latent_maps_list,
                                   labels_list,
                                   num_embeddings,
@@ -9747,7 +9767,8 @@ def visualize_latent_distribution(latent_maps_list,
 
 visualize_latent_distribution([discrete_latents_real, latents_prior],
                              ["Real (Encoder)", "Prior (Generated)"],
-                             model.embd_num,figsize=(12,8),
+                             model.embd_num,
+                             figsize=(12,8),
                              num_indexes_per_bins=1)
 
 # now how do we interpret these?
