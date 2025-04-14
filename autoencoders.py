@@ -6680,7 +6680,7 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
 
 #train
 # todo: add mixed-precision trainig so we can train larger models/inputsizes
-def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, checkpoint_dir_path='./weights', recons_dir_path=None,limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
+def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, use_fp16=False, checkpoint_dir_path='./weights', recons_dir_path=None, limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
     # note our timestamp needs to be sortable so if later on we need
     # to sort our files for whatever reason the order of files isnt 
     # messed up. (this form is sortable, and filename friendly so allis good now!)
@@ -6771,6 +6771,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
     # data_variance = np.var(pixel_values)  
 
     print(f'Experiment Date:     {timestamp}')
+    print(f'Mixed Precision:     {"\033[32mEnabled\033[0m" if use_fp16 else "\033[91mDisabled\033[0m"}')
     print(f'Checkpoint:          {checkpoint_fname}')
     print(f'Checkpoint Dir:      {checkpoint_dir_path}')
     print(f'Reconstructions:     {recons_dir_path}')
@@ -6782,7 +6783,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
     print(f'BatchSize:           {batch_size}')
     print(f'embeddings_num:      {model.embd_num}')
     print(f'embedding_size:      {model.embd_size}')
-    print(f'use_ema:             {model.use_ema}')
+    print(f'use_ema:             {"\033[32mEnabled\033[0m" if model.use_ema else "\033[91mDisabled\033[0m"}')
     print(f'beta/commmitment:    {model.beta}')
     print(f'optimizer:           {optimizer}')
     print(f'scheduler:           {scheduler.state_dict()}')
@@ -6798,6 +6799,9 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
     best_loss = float("inf")
     
     model.to(device)
+    
+    scaler = torch.amp.grad_scaler.GradScaler()
+    
     for epoch in range(epochs):
         model.train()
         reconstruction_errors = []
@@ -6807,18 +6811,57 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
         val_losses=[]
         for i, (imgs, _) in enumerate(dataloader_train):
             imgs = imgs.to(device)
-            vq_loss, imgs_rec, perplexity = model(imgs)
-
+ 
+            with torch.amp.autocast(device_type='cuda', enabled=use_fp16):
+                vq_loss, imgs_rec, perplexity = model(imgs)
+            
             #! normalzie the loss
-            reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance_train
+            # lets calculate the loss outside of autocast and specifically 
+            # convert them into fp32 for maximum precision. 
+            reconstruction_error = F.mse_loss(imgs_rec.float(), imgs.float()) / data_variance_train
             # reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_train
             loss = reconstruction_error + vq_loss
             
             losses.append(loss.item())
             
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # scale the loss before doing backward, 
+            # note this is required regardless of whether we calculated
+            # the loss inside autocast or not. the autocast() manages gradients
+            # and makes sure they dont undeflow when in fp16 mode (because
+            # gradients computed during the backward pass can become very small
+            # and get flushed to zero before the optimizer uses them, so autocast 
+            # is to takecare of that. however we still need to scale our loss, so
+            # the gradients for the parts of the model that were calculated in fp16 mode
+            # take the proper scale and dont stay small! so this part is a must when 
+            # we want to do backward! so before doing the backwardpass, we make the
+            # gradients larger, (scale it accordingly) then run backward pass calculation
+            # this way our tiny gradients dont get clamped to zero, and get larger 
+            # so the backward pass does it jon properly!)
+            scaler.scale(loss).backward()
+            # when we are done with the backward pass, we can safely unscale the gradients
+            # and revert them back to their original magnitude, and then take an optimizer step
+            # if we dont do this, our weight updates will be massive and it will mess up trainig
+            # the thing is, the crucial part in fp16 trainig is the backward pass, when its
+            # taken care of, we go on as normal! and can use the original gradient magnitudes
+            # note that this unscaling is done automatically in scaler.step(optimizer) by the way)
+            # there is a beautiful analogy for this dont know who came up with it though,anyway
+            # it goes like this, imagine we want to weigh an extremely light feather on a 
+            # scale that isnt precise enough for such weights (feather in milli grams e.g.(lets imagine its 10 miligram each),
+            # while our scale is gram precise! (so to the scale its near zero and it isn't very sensitive near zero values at all)
+            # scaling up here is analegous to us taking 100 identical feathers together 
+            # (scaling) and weighting the bundle! the bundle is much heavier now , 
+            # infact heavy enough for our scale to register the weight accurately
+            # the backward pass in our case is analegous to the scale measuring the weight of 
+            # the bundle (calculating the scaled-up gradients without losing them to zero)
+            # scaling down part is, now that we are done weighing, we take the measured weight 
+            # of the bundle and divide it by 100 (unscaling in scaler.step).
+            # the optimizer step part is, now we have the accurate weight of a single feather
+            # (the true gradient magnitude), which we can use for our calculations (weight updates)
+            scaler.step(optimizer)
+            # update the scale value for the next round
+            scaler.update()            
+            
             scheduler.step()
               
             reconstruction_errors.append(reconstruction_error.item())
@@ -6837,11 +6880,31 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
        
         with torch.no_grad():
             model.eval()
+            model.to(device)
+            # we may also convert the wieghts which are by default in fp32 to fp16
+            # this will make the model weihts be in fp16, would take less space
+            # but needs to be loaded with autocast (inputs and operations need to
+            # match the lower precision so all goes well!)
+            # however, by default we dont do this, we store the full precision model
+            # and then if we want, during inference, use fp16 and it will be cast to afp16
+            # the good thing is the model weights is retained in full precision, and
+            # gives us flexibility and ability to train(in a stable and accurate manner) again
+            # in mixed-precision later on (note in training not every module's calculation
+            # is done in fp16, some need to be done in fp32, and thus having full precision 
+            # is the way to go) also highest accuracy(in some cases,(well see some examples 
+            # in llms chapter)) so I leave this for now well see more when we cover later chapters like llms.
+            # model.half()
             for imgs, _ in dataloader_test:
                 imgs = imgs.to(device)
-                vq_loss, imgs_rec, perplexity = model(imgs)
-                val_reconstruction_error = F.mse_loss(imgs_rec, imgs) / data_variance_val
-                # val_reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_val
+                with torch.amp.autocast(device_type='cuda', enabled=use_fp16):
+                    vq_loss, imgs_rec, perplexity = model(imgs)
+                # again we can do this inside autocast conext manager, it usually
+                # takes care of the loss magnitude just fine for famous loss functions
+                # but I thought its a good idea to leave this note for future especially
+                # for the cases where custom loss functions may be used and one needs to
+                # take this into consideration!
+                val_reconstruction_error = F.mse_loss(imgs_rec.float(), imgs.float()) / data_variance_val
+                # val_reconstruction_error = F.binary_cross_entropy(imgs_rec.float(), imgs.float()) / data_variance_val
                 val_loss = val_reconstruction_error + vq_loss
                 val_losses.append(val_loss.item())
 
@@ -6892,6 +6955,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
                         'limited_samples':limited_samples,
                         'train_samplesize':train_samplesize,
                         'test_samplesize':test_samplesize,
+                        'use_fp16':use_fp16,
                         'model_config':{
                           'beta':model.beta,
                           'use_ema':model.use_ema,
@@ -6917,6 +6981,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
                     'limited_samples':limited_samples,
                     'train_samplesize':train_samplesize,
                     'test_samplesize':test_samplesize,
+                    'use_fp16':use_fp16,
                     'model_config':{
                       'beta':model.beta,
                       'use_ema':model.use_ema,
@@ -7120,7 +7185,8 @@ embd_size=256#128
 beta=0.25 #0.25
 # use ema for quantzier embeddings update
 use_ema=False
-
+# use mixed-precision for faster training and smaller vram usage
+use_fp16=True
 #!edit 
 #!use_ema doesnt make any difference on quality of recons 
 # apparently when model is weak?!
@@ -7138,6 +7204,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
                                                interval,
                                                device,
                                                img_size,
+                                               use_fp16=use_fp16,
                                                checkpoint_dir_path='./weights/',
                                                recons_dir_path='./results/temp/',
                                                limited_samples=limited_samples,
