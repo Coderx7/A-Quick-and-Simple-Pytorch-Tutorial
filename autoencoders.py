@@ -7140,7 +7140,7 @@ view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}')
 # is that the images will be discolored, almost black and white, becoming monocolors
 # lots of yellow, brownish colors, and needless to say images are very blury
 # test with limited samples and you'll see what I mean!
-dataset = 'mnist' #anime # celeba #cifar10
+dataset = 'cifar10' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
@@ -7172,7 +7172,7 @@ input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 batch_size=128
-epochs = 2#100
+epochs = 100#100
 interval = 1000
 # when learning rate is too large, we usually see artifacts in early stages
 # of training (which tells us lr might be high!)
@@ -7184,9 +7184,21 @@ embd_size=256#128
 # lower values result in worse loss and recons error! (I tried 0.2)
 beta=0.25 #0.25
 # use ema for quantzier embeddings update
-use_ema=False
+# this makes the convergence rate way faster, by several folds!
+# like we immediately get color images at the first epoch!!
+# without it, we need at least 40~50 epochs to get to a similar loss
+# at epoch 5 we are already seeing near prefect reconstructions with loss
+# as low as 0.0067! (way lower than what we get after 100 epochs normally!)
+use_ema=True
 # use mixed-precision for faster training and smaller vram usage
-use_fp16=True
+# note when we enable fp16, the convergence speed is lower, e.g.
+# for cifar10, it takes 5 epochs until we go from solid grays to
+# first signs of objects in reconstructions, whereas for full fp32
+# it takes only 1 epoch! see explanations ahead
+# however at the end, it seems to catch up and gives us the same
+# loss and perplexity (sometimes better even)
+# its faster in training (52 mins vs 100 mins)
+use_fp16=False
 #!edit 
 #!use_ema doesnt make any difference on quality of recons 
 # apparently when model is weak?!
@@ -7205,8 +7217,8 @@ dataloader_train,dataloader_test = train_vqvae(model,
                                                device,
                                                img_size,
                                                use_fp16=use_fp16,
-                                               checkpoint_dir_path='./weights/',
-                                               recons_dir_path='./results/temp/',
+                                               checkpoint_dir_path='./weights/vqvae/emb256/',
+                                               recons_dir_path='./results/',
                                                limited_samples=limited_samples,
                                                train_samplesize=training_samplesize,
                                                test_samplesize=test_samplesize)
@@ -7287,6 +7299,28 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_12 - 2025_04_06.ckpt'#e1-no
 ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_38 - 2025_04_06.ckpt'#41e
 ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 
+# using fp16
+# experimenting with fp16 and see if our implementation is ok and we get expected result
+# initially after enabling fp16, I noticed, early reconstructions take much longer to 
+# yield a meaningful resul, it took around 5 epochs(as apposed to 1 epoch in fp32 version!)
+# until early silluhet of objects were formed before that it was simply solid grays with 
+# occasional color blobs (see reconstruction examples in ./results)
+# 
+# todo explain properly:
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
+# fp16 with ema enabled - completely fails with default configs
+# results in nans in loss, and completely white reconstructions 
+# everywhere! canceled after 8 epochs - 
+#! todo fix quantizer bug with fp16 
+#! (use all operations in fp32 exclusively and see if that fixes the issue)
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_182650/vqvae_CIFAR10_64x64_20250414_182650.ckpt'
+
+# using fp32 version 
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
+# fp32 with ema enabled - trains smoothly with default configs 
+# convergence is way faster with ema, and I mean by a lot! ~100x faster!!
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 
 #todo add train and test sizes so the rest of the pipeline also use the same
 # number of samples for prior training. 
@@ -7297,9 +7331,11 @@ dataset = checkpoint['dataset']
 limited_samples = checkpoint.pop('limited_samples', False)
 train_samplesize = checkpoint.pop('train_samplesize', None)
 test_samplesize = checkpoint.pop('test_samplesize', None)
+use_fp16 = checkpoint.pop('use_fp16', False)
 img_size = checkpoint.pop('img_size',None)
 if not img_size:
     img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
+
 # enc_output_shape = model_config.pop('enc_output_shape',None)
 enc_output_shape = checkpoint['enc_output_shape']
 perplexity = checkpoint.pop('perplexity',None)
@@ -7312,6 +7348,7 @@ model.load_state_dict(checkpoint['state_dict'])
 model.enc_output_shape = enc_output_shape
 
 print(f'dataset    : {checkpoint['dataset'].upper()}')
+print(f'use_fp16   : {use_fp16}')
 print(f'Epoch      : {checkpoint['epoch']}')
 print(f'img_size   : {img_size}')
 print(f'Limited samples    : {limited_samples}')
