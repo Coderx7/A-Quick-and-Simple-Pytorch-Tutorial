@@ -6278,13 +6278,25 @@ class Quantizer(nn.Module):
             # we later add the reconstruction loss(log) from decoder to this 
             loss = q_loss + self.beta_weight*e_loss
         
-        else:# Use EMA to update the embedding vectors
+        else:# use EMA to update the embedding vectors
             if self.training:
                 # note that we are only using ema during training to stabilize and
                 # update the embeddings and we dont need it during inference.
                 # the whole point of of this process is to make training more stable,
                 # by directly influencing the embeddings weight instead of using 
                 # a second loss term (q_loss) like the normal form
+                # 
+                # update from future: 
+                # ema massively, and I mean massively speeds up convergence!
+                # in my experiments it was around 100x! what I would get nearly
+                # 100 epochs, I get in just a few epoch! this worked great!
+                # 
+                # update 2 from future: 
+                # my initial version didnt work in fp16 mode! so all the .float()s
+                # here are because im trying to force all ema related operations to
+                # be done exclusively in fp32(full precision) mode so we can use ema
+                # with fp16 as well!
+                encodings = encodings.float()
                 self.ema_cluster_size = self.ema_cluster_size * self.decay_rate\
                                          + (1 - self.decay_rate) * torch.sum(encodings, 0)
 
@@ -6326,7 +6338,7 @@ class Quantizer(nn.Module):
                 # to update the embeddings.(when we transpose encodings and multiply it by 
                 # encoder_outputs_flatten, we're essentially summing the encoder outputs that
                 # correspond to each embedding entry, this becomes the new value for our embeddings)
-                dw = torch.matmul(encodings.t(), encoder_outputs_flatten)
+                dw = torch.matmul(encodings.t(), encoder_outputs_flatten.float())
                 # update for the embeddings vectors. we use ema_w is to stabilize training 
                 # by gradually updating the embeddings based on the recent assignments.
                 # decay_rate determines how much of the old average is kept versus the new data(dw)
@@ -6385,8 +6397,7 @@ class Quantizer(nn.Module):
                 # the existing embedding weight tensor's data inplace!
                 # self.embeddings.weight.data.copy_(updated_embeddings)
             
-            
-            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
+            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
             loss = self.beta_weight * e_loss
         
         # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
