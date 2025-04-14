@@ -141,6 +141,7 @@
 
 import datetime
 import numpy as np 
+import pandas as pd
 import torch
 import torchvision
 from torchvision import datasets, transforms as tf
@@ -178,11 +179,11 @@ import matplotlib.pyplot as plt
 # before we continue, we should pickup a dataset. I chose MNIST as its simple enough
 # to be used in different types of autoencoders with short training time. 
 # after we created our dataset, we will implement different types of AutoEncoders 
-dataset_train = datasets.MNIST(root='MNIST',
+dataset_train = datasets.MNIST(root='./data/MNIST/',
                                train=True,
                                transform = tf.ToTensor(),
                                download=True)
-dataset_test  = datasets.MNIST(root='MNIST', 
+dataset_test  = datasets.MNIST(root='./data/MNIST/', 
                                train=False, 
                                transform = tf.ToTensor(),
                                download=True)
@@ -6679,15 +6680,32 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
 
 #train
 # todo: add mixed-precision trainig so we can train larger models/inputsizes
-def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, save_recons_dir=None,limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
+def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, checkpoint_dir_path='./weights', recons_dir_path=None,limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
+    # note our timestamp needs to be sortable so if later on we need
+    # to sort our files for whatever reason the order of files isnt 
+    # messed up. (this form is sortable, and filename friendly so allis good now!)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # checkpoint_dir_path = './' if not checkpoint_dir_path else checkpoint_dir_path
+    checkpoint_dir_path = checkpoint_dir_path or './'
+    checkpoint_fname = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp}.ckpt'
+
+    # grab the checkpoint filename and use it for the directory name
+    # so everything is neat and tidy at one place under one name!
+    ext = os.path.splitext(checkpoint_fname)[-1]
+    model_dir_name = checkpoint_fname.replace(ext, "")
     
-    timestamp_str = datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")
-    timestamp = timestamp_str.replace(":","_").replace("/","_")
-    model_checkpoint_name = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp}.ckpt'
-    if save_recons_dir:
-        ext = os.path.splitext(model_checkpoint_name)[-1]
-        dir_name = model_checkpoint_name.replace(ext,"")
-        recons_dir = os.path.join(save_recons_dir,dir_name)
+    checkpoint_dir_path = os.path.join(checkpoint_dir_path, model_dir_name)
+    
+    # with exist_ok=True, we dont need to check if the dir
+    # already exists or not, if it doesnt it creates one, if
+    # if does, it leaves it be!
+    os.makedirs(checkpoint_dir_path, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir_path, checkpoint_fname)
+    
+    if recons_dir_path:
+        recons_dir_path = os.path.join(recons_dir_path, model_dir_name)
+        os.makedirs(recons_dir_path, exist_ok=True)
     
     dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
                                                                                     batch_size=batch_size,
@@ -6752,8 +6770,10 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     # pixel_values = np.concatenate([img.flatten() for img in pixel_values])
     # data_variance = np.var(pixel_values)  
 
-    print(f'Experiment Date:     {timestamp_str}')
-    print(f'Checkpoint:          {model_checkpoint_name}')
+    print(f'Experiment Date:     {timestamp}')
+    print(f'Checkpoint:          {checkpoint_fname}')
+    print(f'Checkpoint Dir:      {checkpoint_dir_path}')
+    print(f'Reconstructions:     {recons_dir_path}')
     print(f'Dataset:             {dataset_name.upper()}')
     print(f'Limited Samples:     {"\033[91m" + str(limited_samples) + "\033[0m" if limited_samples else limited_samples}')# make it red so it stands out!
     print(f'Train size:          {len(dataloader_train.dataset):,}')
@@ -6777,6 +6797,7 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
     total_val_losses=[]
     best_loss = float("inf")
     
+    model.to(device)
     for epoch in range(epochs):
         model.train()
         reconstruction_errors = []
@@ -6826,13 +6847,8 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
 
         # display reconstruction performance!
         fname=None
-        if save_recons_dir:
-            # ext = os.path.splitext(model_checkpoint_name)[-1]
-            # dir_name = model_checkpoint_name.replace(ext,"")
-            # recons_dir = os.path.join(save_recons_dir,dir_name)
-            if not os.path.exists(recons_dir):
-                os.makedirs(recons_dir)
-            fname = f'{recons_dir}/recons_{epoch}.jpg'
+        if recons_dir_path:
+            fname = f'{recons_dir_path}/recons_{epoch}.jpg'
 
         view_reconstructions(model, dataloader_test, fname=fname)
         
@@ -6883,7 +6899,7 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                           'embd_size':model.embd_size,
                           'input_channels':model.input_channels,
                           },
-                       }, model_checkpoint_name.replace('.ckpt','_best.pt'))
+                       }, checkpoint_path.replace('.ckpt','_best.pt'))
             print(f'Best model with loss={best_loss:.4f} saved at epoch {epoch}!')
         
         # save the last model
@@ -6908,11 +6924,26 @@ def train(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, im
                       'embd_size':model.embd_size,
                       'input_channels':model.input_channels,
                       },
-                  }, model_checkpoint_name)
+                  }, checkpoint_path)
     
     # create gifs from recons
-    create_gifs(recons_dir)
-    return total_losses,total_val_losses, total_reconstruction_errors, total_perplexities
+    create_gifs(recons_dir_path)
+    
+    # display model performance
+    for label, logs in zip(["Train Loss", "Val Loss", "Train Recon Error", "Train Perplexity"],
+                            [total_losses, total_val_losses, total_reconstruction_errors, total_perplexities]):
+        # quick and simple plot using pandas dataframe!
+        df = pd.DataFrame(logs)
+        # grab the axis so we can use it to 
+        # annotate it a bit so its not too raw!
+        ax = df.plot()
+        ax.set_xlabel("Epochs")  # Label x-axis
+        ax.set_ylabel("Value")  # Label y-axis
+        ax.set_title(label)  # Set title
+        plt.show()
+        
+    # return dataloaders that were used to train the model for later stages that may need it
+    return dataloader_train, dataloader_test
 
 @torch.no_grad()
 def view_reconstructions(model:VQVAE, dataloader, fname=None):
@@ -7076,12 +7107,12 @@ input_channels = 1 if dataset=='mnist' else 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 batch_size=128
-epochs = 100#100
+epochs = 2#100
 interval = 1000
 # when learning rate is too large, we usually see artifacts in early stages
 # of training (which tells us lr might be high!)
 lr=0.001 #0.001
-milestones=[120]
+# milestones=[120]
 embd_num=512
 embd_size=256#128
 # commitment loss beta/weight
@@ -7099,36 +7130,35 @@ model.to(device)
 # optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
 # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
 
-train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
-                                                                        dataset,
-                                                                        lr,
-                                                                        # optimizer, 
-                                                                        # scheduler,
-                                                                        epochs, 
-                                                                        batch_size,
-                                                                        interval,
-                                                                        device,
-                                                                        img_size,
-                                                                        save_recons_dir='./results',
-                                                                        limited_samples=limited_samples,
-                                                                        train_samplesize=training_samplesize,
-                                                                        test_samplesize=test_samplesize)
+dataloader_train,dataloader_test = train_vqvae(model,
+                                               dataset,
+                                               lr,
+                                               epochs, 
+                                               batch_size,
+                                               interval,
+                                               device,
+                                               img_size,
+                                               checkpoint_dir_path='./weights/',
+                                               recons_dir_path='./results/temp/',
+                                               limited_samples=limited_samples,
+                                               train_samplesize=training_samplesize,
+                                               test_samplesize=test_samplesize)
 
 #%%
 # load the model
 # TODO: remove the old models cuz they take up space!
-# ckpt_name = 'vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
-# ckpt_name = 'vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
-# ckpt_name = 'vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
-# ckpt_name = 'vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
-# ckpt_name = 'vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
-# ckpt_name = 'vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
-# ckpt_name = 'vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
-# ckpt_name = 'vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
-# ckpt_name = 'vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
-# ckpt_name = 'vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
+# ckpt_name = './weights/vqvae/old/vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
+# ckpt_name = './weights/vqvae/old/vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
 # codesize=8x8 - to see if codesize effects the latent variables
 # because previously when we trained with 32x32, the simple generation would create
 # somewhat meanigful outputs, like for celeba, the faces could be easily identified
@@ -7148,37 +7178,48 @@ train_losses, val_losses, train_recons_errors, train_perplexities = train(model,
 # generations, not complete noise! trying with 64x64 to see how it goes again
 # I cant replicate this anymore! I dont know why I cant get meanigful generations out of
 # simple_generation function! 
-#
-# ckpt_name = 'vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03_best.ckpt'
-# ckpt_name = 'vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
 
-# ckpt_name = 'vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
-# ckpt_name = 'vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+# no model_config/extra information
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
+# 
+# has model_config but not enc_output_shape
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03_best.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
+# with model_config and extra information
 # with embds=256
-# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
-# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
-# ckpt_name = 'vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
-
+# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
 
 # performs very very good ! increased embdsz actually results in way smaller loss
 # abd BPD! I noticed the perplexity is much much lower though! but the generation
 # nonetheless is much much better!
-# ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
-# ckpt_name = 'vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
-ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
-# ckpt_name = 'vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
+ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
 # limited cifar10 - 8000 samples
-# ckpt_name = 'vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07.ckpt'
+
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_01_22 - 2025_04_06.ckpt'#3epochs-nolimit
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_51_05 - 2025_04_06.ckpt'#e99-nolimit-embd256
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_12_58_51 - 2025_04_06.ckpt'#e14-nolimit-embd256
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_02_15 - 2025_04_06.ckpt'#99e-nolimit-embd256
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_12 - 2025_04_06.ckpt'#e1-nolimit256
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_38 - 2025_04_06.ckpt'#41e
+ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
+
 
 #todo add train and test sizes so the rest of the pipeline also use the same
 # number of samples for prior training. 
@@ -8973,39 +9014,48 @@ prior, ckptname = train_prior(prior=prior,
 # when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
 # better than than before!(when we used 32x32 versions!)
 
-# ckptname='vqvae_18_28_36_2025_03_25.ckpt'
+#!todo remove from here
+# these blocks use our initial version of pixel cnn, and i also didnt save any hyperparameters
+# for them, so they're just weights I dont plan on getting to work! early versions didnt
+# work properly until i improved the architecture (the architecture is roughly the same
+# though I uses residual connections, it should be in previous commits, so if needs be
+# can use that, but I dont plan on doing it! lets remove them altogether!)
+# ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
 # cifar10 unconditional
-# ckptname = 'vqvae_23_13_38_2025_03_25.ckpt'
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64
+# ckptname = './weights/old/vqvae_23_13_38_2025_03_25.ckpt'
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
 # I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
 # better generation usually! so try both checkpoints (the last one and the best one) and 
 # compare the results
+#todo down to here!
 
-ckptname = 'vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckp'#32
+# with extra info (model_config, train loss, etc)
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
 # Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
 # get that in early epochs. the smalles training loss/bpd has a much better result
 # than the our best val/bpd values! makes me wonder if having a validation set even
 # matters!
-ckptname = 'vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
-ckptname = 'vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
+# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
+# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
 
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
 # not good. I lowered the dropout ratio and it I believe it make it worse than before!
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
-ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
 # for celeba because the dataset is much larger, we have far b etter generations!
 # obviously having a better vqvae and prior models with better training can yield
 # much better result. but for us this siffuces and shows given more data, with the
 # same architecture, we can achieve pretty good results.
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
+# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
 #embd256 
-# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
-# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
-# ckptname = 'vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
 
 # train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
 # clean and git push to privae repo first
@@ -9018,25 +9068,28 @@ ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckp
 # more! in our case it was to simply use larger embedding dim (256)!
 # I need to train others with the new embd_size for vqvae to see how they perform :)
 # test these 3 models to see how they fair against each other
-# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
-# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
-# ckptname = 'vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 #
 # like before with the increased embd, the generation is near prefect!(unconditional)
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
-# ckptname = 'vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 # 
 # conditional
-ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
-# ckptname = 'vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
-
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
 
 print(f'{dataset=}')
 print(f'{device=}\n')
 ckpt = torch.load(ckptname, map_location=device, weights_only=False)
 model_config = ckpt["model_config"]
 dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
 dataset = ckpt.pop('dataset', dataset)
 
 prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
@@ -9048,7 +9101,7 @@ for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
 
 print(f'Epoch       : {ckpt["epoch"]}')
 print(f'Dataset     : {dataset.upper()}')
-print(f'train_Loss  : {ckpt['loss']:.4f} | BPD: {ckpt['bpd']:.4f}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
 print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
