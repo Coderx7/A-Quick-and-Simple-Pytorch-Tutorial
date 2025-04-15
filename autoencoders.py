@@ -6188,6 +6188,21 @@ class Quantizer(nn.Module):
         self.embeddings = nn.Embedding(self.num_embd, self.embd_size)
         # lets normalize the weights uniformly
         self.embeddings.weight.data.uniform_(-1/self.num_embd, 1/self.num_embd)
+        
+        # # -----------------------DEBUG---------------------
+        # # reason: fp16 doesnt work with ema enabled! checking which modules
+        # # are causing this issue. (although embeddings weight should be fine
+        # # here but im inspecting everything at this point
+        # # also as a sidenote, embedding weights values should be small, if 
+        # # they are large its an issue!)
+        # # update: this is ok
+        # print(f"Initial embedding min/max:"
+        #       f"{self.embeddings.weight.min().item()},"
+        #       f"{self.embeddings.weight.max().item()}")
+        # if not torch.isfinite(self.embeddings.weight).all():
+        #     print("!!! WARNING: NaNs/Infs in initial self.embeddings !!!")
+        # # -----------------------DEBUG---------------------
+
                 
         # using exponential moving average to update the embedding
         # vectors instead of an auxillary loss can seemingly improve
@@ -6242,11 +6257,51 @@ class Quantizer(nn.Module):
         # we keepdim=True for encoderoutputs so it gives us a tensor of shape [N,1]
         # so when we add it to sum of embeddings which will be [embd_num], its broadcast to
         # the final shape of [N,embd_num] which simply says, we have embd_num for each sample!
-        distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
-                    torch.sum(self.embeddings.weight**2, dim=1) -
-                    2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
-        # or we could use torch.cdist
-        # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
+
+        # -----------------------DEBUG---------------------
+        # its very probable our multiplication here overflows when we are in fp16
+        # and with it its going to affect distances and the restof teh code
+        # so lets check if this is the case! 
+        # update1: ok we were right, the matmul operation has nans, and it makes distances
+        # to also become nans!
+        # !!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!
+        # !!! NaN/Inf detected in calculated distances !!!
+        # now we need to make them all fp32!
+        # ok that didnt work and I still kept getting the same nans!
+        # I had to wrap this section in autocast and explictly disable
+        # it! and only then the issue for this section got resolved
+        # however I', still hetting nans for loss! so we need to check 
+        # the rest of the code!
+        # encoder_outputs_flatten = encoder_outputs_flatten.float()
+        # self.embeddings.weight = self.embeddings.weight.float()
+        # with torch.amp.autocast(device_type='cuda',enabled=False):
+        #     enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
+        #     em_norm = torch.sum(self.embeddings.weight**2, dim=1)
+        #     enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
+        #     distances = enc_norm + em_norm - 2 * enc_mul_em
+            
+        #     if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
+        #     if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
+        #     if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
+            
+        #     if not torch.isfinite(distances).all():
+        #         print("!!! NaN/Inf detected in calculated distances !!!")
+        #         # torch.save({'encoder_norm':enc_norm,
+        #         #             'embd_norm':em_norm,
+        #         #             'encoder_out_mul_embd_weight':enc_mul_em,
+        #         #             'distances': distances},
+        #         #            'debug_distances.pt')
+        #         # raise ValueError("NaN/Inf in distances")
+        # # -----------------------DEBUG---------------------
+
+        encoder_outputs_flatten = encoder_outputs_flatten.float()
+        self.embeddings.weight = self.embeddings.weight.float()
+        with torch.amp.autocast(device_type='cuda',enabled=False):
+            distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
+                        torch.sum(self.embeddings.weight**2, dim=1) -
+                        2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
+            # or we could use torch.cdist
+            # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
 
         # now that we have the distances, lets grab the min indexes 
         min_indexes = torch.argmin(distances, dim=1).unsqueeze(1)
@@ -6339,6 +6394,15 @@ class Quantizer(nn.Module):
                 # encoder_outputs_flatten, we're essentially summing the encoder outputs that
                 # correspond to each embedding entry, this becomes the new value for our embeddings)
                 dw = torch.matmul(encodings.t(), encoder_outputs_flatten.float())
+                # -----------------------DEBUG---------------------
+                # heres another matmul operation that could go wrong lets check!
+                # update: ok seems dw is ok with both encodings and encoders_outputs_flatten
+                # bing in float(). no warning, but we are still getting nans for loss!
+                # 
+                if not torch.isfinite(dw).all(): print("!!! NaN/Inf in dw !!!")
+                #
+                # -----------------------DEBUG---------------------
+                
                 # update for the embeddings vectors. we use ema_w is to stabilize training 
                 # by gradually updating the embeddings based on the recent assignments.
                 # decay_rate determines how much of the old average is kept versus the new data(dw)
@@ -6351,8 +6415,32 @@ class Quantizer(nn.Module):
                 # stabilizing training.
                 # ema_w tracks the cumulative weighted sum of encoder outputs assigned to each
                 # codebook entry.
+                # self.ema_w = nn.Parameter(self.ema_w * self.decay_rate + (1 - self.decay_rate) * dw)
+                # or 
+                self.ema_w.data.mul_(self.decay_rate).add_(dw, alpha=(1 - self.decay_rate))
+                # -----------------------DEBUG---------------------
+                # a nother operation involving multiplication, 
+                # update: no warning, so this is not the issue, we are still getting nans!
+                # update2: see debug below, the way we are using nn.parameter seems 
+                # to have been causing the instablities in fp16 mode! most probably
+                # it has something to do with creating new instance of nn.Parameter
+                # and somehow its messing everything up!
+                # the weird thing is it works flawlessly with fp32! im not sure how 
+                # this could have caused an issue knowing we really dont involved
+                # optimizer here at all! 
+                # update: 
+                # ok im still clueless but believe it has something to do with autocast
+                # and it way it manages objects/operations, and we creating new instances
+                # each time instead of updating one object inplace each time causes the issue!
+                # update3: 
+                # we no longer get any nans, but the loss now keeps getting larger and
+                # larger instead of going the other way around! im tired now and have absolutely
+                # no idea what the hell is wrong!
+                # 
+                if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
+                #
+                # -----------------------DEBUG---------------------
                 
-                self.ema_w = nn.Parameter(self.ema_w * self.decay_rate + (1 - self.decay_rate) * dw)
                 # and finally to normalize the EMA of the embeddings vectors we divide ema_w by the cluster size 
                 # as we saw the ema_cluster_size tracks how many times each embedding has been assigned, 
                 # so dividing by this would average the summed encoder outputs (dw) by the number of 
@@ -6390,12 +6478,78 @@ class Quantizer(nn.Module):
                 # Normalization: Ensures embeddings represent the average of assigned encoder outputs, not their sum.
                 # Laplace Symbiosis: The earlier smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, even rarely used ones.
                 
-                self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+                # from future: 
+                # see debug below, this works for fp32, but not fp16!
+                # self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
                 # or we could also do: 
-                # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+                updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
                 # heres the kicker, instead of a new nn.Parameter each time, we update 
                 # the existing embedding weight tensor's data inplace!
+                self.embeddings.weight.data.copy_(updated_embeddings)
+                # 
+                # -----------------------DEBUG---------------------
+                # heres another operation that may make things go haywire!
+                # this might result in underflow, if ema_w is large but divided by
+                # ema_size which might be huge, result in a tiny number! too tiny
+                # for fp16! (sidenote, fp16 can properly handle only 3 decimals or
+                # if numbers are smaller than that we have issues!
+                # ok I got no warnings here and the values seem normal
+                # after one epoch:
+                # ema_w: min=-530.088806,max=3973.94092
+                # ema_cluster_size min=0.00098,max=1811.74976
+                # updated_embeddings min=-82.19506,max=94.43382
+                # ema_w: min=-528.237122,max=3964.63916
+                # ema_cluster_size min=0.00098,max=1805.99194
+                # updated_embeddings min=-81.35664,max=93.47057
+                # 
+                # ok we dont get any nans now! so this shouldnt be it!
+                # Update: ok when i commented out these and instead used our
+                # initial one liner:
+                # self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+                # we started to get nans, again, I tried 3 times and noticed this 
+                # is the culprit here! so im reverting that change,
+                # 
+                # 
+                #
+                # reminder to myself: 
+                # fp16 has 3.3 decimal, fp32 has 7 and fp64 has 16 decimal places
+                # so even if our number shows more decimals, anything after 3rd decimal
+                # is not accurate and cant be trusted for fp16.
+                # also the number of decimals is calculated roughly by:
+                # number of significant bits*log10(2) which is 11*0.30103=3.31 for fp16
+                # also another reminder: 
+                # floating-point numbers don't store a fixed number of decimal places 
+                # like decimal dtypes. they store a binary representation 
+                # (sign, exponent, significand/mantissa) that approximates a real number.
+                # The precision is defined by the number of bits in the significand
+                # For fp16 (as defined by IEEE 754): total bits: 16
+                # Significand bits: 10 explicit bits + 1 implicit 
+                # leading bit = 11 bits of precision)
+                #
+                # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+                
+                # print(f'ema_w: min={self.ema_w.min().item():5f},'
+                #       f'max={self.ema_w.max().item():.5f}')
+                
+                # print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
+                #       f'max={self.ema_cluster_size.max().item():.5f}')
+                
+                # print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
+                #       f'max={updated_embeddings.max().item():.5f}')
+                
+                if not torch.isfinite(updated_embeddings).all():
+                    print(f"!!! NaN/Inf in updated_embeddings BEFORE assignment !!!"
+                          f"ema_w finite: {torch.isfinite(self.ema_w).all()},"
+                          f"cluster_size min: {self.ema_cluster_size.min().item()}")
+                
                 # self.embeddings.weight.data.copy_(updated_embeddings)
+                
+                if not torch.isfinite(self.embeddings.weight).all(): 
+                    print("!!! NaN/Inf AFTER embeddings.weight update !!!")
+                # -----------------------DEBUG---------------------
+                
+            
+            
             
             e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
             loss = self.beta_weight * e_loss
@@ -7209,7 +7363,7 @@ use_ema=True
 # however at the end, it seems to catch up and gives us the same
 # loss and perplexity (sometimes better even)
 # its faster in training (52 mins vs 100 mins)
-use_fp16=False
+use_fp16=True
 #!edit 
 #!use_ema doesnt make any difference on quality of recons 
 # apparently when model is weak?!
@@ -7324,17 +7478,23 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CI
 # everywhere! canceled after 8 epochs - 
 #! todo fix quantizer bug with fp16 
 #! (use all operations in fp32 exclusively and see if that fixes the issue)
+#! didnt fix the issue! need to investigate more!
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_182650/vqvae_CIFAR10_64x64_20250414_182650.ckpt'
 
 # using fp32 version 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
+# the perplexity is also very high around 33 (while without ema it was around 14/15!)
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
-
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 #todo add train and test sizes so the rest of the pipeline also use the same
-# number of samples for prior training. 
+# number of samples for prior training.
+# train prior with this new vqvae and see how much it affects the end result 
+# I guess with this improvement, our simple_generator should work somehow aswell
+# im not sure but i might have seen the improvement back then because of ema maybe?
+# need to test this out!
 
 checkpoint = torch.load(ckpt_name, weights_only=False)
 model_config = checkpoint['model_config']
@@ -7393,31 +7553,7 @@ create_gifs(dirpath,
             fps=500,
             figsize=(6,8)
             )
-#%%
-import pandas as pd
-# for logs in [train_losses, val_losses, train_recons_errors, train_perplexities]:
-#     pd.DataFrame(logs).plot()
-#     plt.show()
-# pd.DataFrame(train_recons_errors).plot()
-# plt.show()
-# pd.DataFrame(train_perplexities).plot()
-# plt.show()
 
-# print(f'{len(train_losses)=}')
-# print(f'{len(val_losses)=}')
-# print(f'{len(train_recons_errors)=}')
-# print(f'{len(train_perplexities)=}')
-def display_logs(train_losses, val_losses, train_recons_errors, train_perplexities):
-    for label, logs in zip(["Train Loss", "Val Loss", "Train Recon Error", "Train Perplexity"],
-                            [train_losses, val_losses, train_recons_errors, train_perplexities]):
-        df = pd.DataFrame(logs)
-        ax = df.plot()  # Create the plot and get the axis
-        ax.set_xlabel("Epochs")  # Label x-axis
-        ax.set_ylabel("Value")  # Label y-axis
-        ax.set_title(label)  # Set title
-        plt.show()
-
-display_logs(train_losses, val_losses, train_recons_errors, train_perplexities)
 #%%
 # taken from Aäron van den Oord implementation (link given before)
 # use umap for latent space visualization, umap is better than tsne
