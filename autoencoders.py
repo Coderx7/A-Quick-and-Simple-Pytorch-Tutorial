@@ -6136,12 +6136,19 @@ latent_space_walk(num_rows)
 # sequences of discrete codes, which the VQ-VAE decoder can then turn into images
 
 # a simplistic res module
+#-------------------------------DEBUG--------------------------------
+# sidenote from future:
+# batchnorm eps is set only for debugging ema calculation in quantzier when its run in fp16 mode
+# read update 10 in Quantizer and you'll know everything. by default dont pay attention to 
+# debug coments like this if you are reading this for the first time. 
+# eps by default is 1e-5
+#-------------------------------DEBUG--------------------------------
 class conv(nn.Module):
-    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2)):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2), eps=1e-5):
         super().__init__()
         self.conv_block = nn.Sequential(
             nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
-            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            nn.BatchNorm2d(out_dim,eps=eps) if batch_norm else nn.Identity(),
             act,
             # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
             # nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
@@ -6157,11 +6164,11 @@ class conv(nn.Module):
         return out
 
 class deconv(nn.Module):
-    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True, eps=1e-5):
         super().__init__()
         self.deconv_block = nn.Sequential(
             nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
-            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            nn.BatchNorm2d(out_dim,eps=eps) if batch_norm else nn.Identity(),
             # nn.GroupNorm(1,out_dim) if batch_norm else nn.Identity(),
             act,
             # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
@@ -6401,6 +6408,8 @@ class Quantizer(nn.Module):
                 # 
                 if not torch.isfinite(dw).all(): print("!!! NaN/Inf in dw !!!")
                 #
+                # this is forupdate6 (see down below)
+                print(f"dw max abs: {dw.abs().max().item()}") # dw calculated using .float() inputs
                 # -----------------------DEBUG---------------------
                 
                 # update for the embeddings vectors. we use ema_w is to stabilize training 
@@ -6436,6 +6445,482 @@ class Quantizer(nn.Module):
                 # we no longer get any nans, but the loss now keeps getting larger and
                 # larger instead of going the other way around! im tired now and have absolutely
                 # no idea what the hell is wrong!
+                # update 4:
+                # ok this is what we get for running the model for 14 epochs: 
+                # Epoch: 0/100 | Loss: 0.7172 | Val-Loss: 0.6983 | Recons-Error: 0.1788 | VQ-Loss: 0.5383 | Perplexity: 36.0258 | LR: 0.000200
+                # Best model with loss=0.6983 saved at epoch 0!
+                # Epoch: 1/100 | Loss: 0.7083 | Recons-Error: 0.1649 | VQ-Loss: 0.5434 | Perplexity: 37.8641 | LR: 0.000201
+                # Epoch: 1/100 | Loss: 0.7079 | Val-Loss: 0.7530 | Recons-Error: 0.1233 | VQ-Loss: 0.5846 | Perplexity: 37.7547 | LR: 0.000400
+                # Epoch: 2/100 | Loss: 0.7308 | Recons-Error: 0.0797 | VQ-Loss: 0.6512 | Perplexity: 36.2423 | LR: 0.000401
+                # Epoch: 2/100 | Loss: 0.8095 | Val-Loss: 0.9259 | Recons-Error: 0.0567 | VQ-Loss: 0.7528 | Perplexity: 35.7823 | LR: 0.000600
+                # Epoch: 3/100 | Loss: 0.9117 | Recons-Error: 0.0416 | VQ-Loss: 0.8700 | Perplexity: 35.4852 | LR: 0.000601
+                # Epoch: 3/100 | Loss: 1.0916 | Val-Loss: 1.3347 | Recons-Error: 0.0369 | VQ-Loss: 1.0547 | Perplexity: 38.6637 | LR: 0.000800
+                # Epoch: 4/100 | Loss: 1.3246 | Recons-Error: 0.0308 | VQ-Loss: 1.2938 | Perplexity: 40.4407 | LR: 0.000801
+                # /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:240: UserWarning: The epoch parameter in scheduler.step() was not necessary and is being deprecated where possible. Please use scheduler.step() to step the scheduler. During the deprecation, if epoch is different from None, the closed form is used instead of the new chainable form, where available. Please open an issue if you are unable to replicate your use case: https://github.com/pytorch/pytorch/issues/new/choose.
+                # warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
+                # Epoch: 4/100 | Loss: 1.5891 | Val-Loss: 1.9012 | Recons-Error: 0.0293 | VQ-Loss: 1.5598 | Perplexity: 40.0954 | LR: 0.001000
+                # Epoch: 5/100 | Loss: 1.8805 | Recons-Error: 0.0253 | VQ-Loss: 1.8552 | Perplexity: 39.0371 | LR: 0.001000
+                # Epoch: 5/100 | Loss: 2.2010 | Val-Loss: 2.5755 | Recons-Error: 0.0244 | VQ-Loss: 2.1766 | Perplexity: 38.4601 | LR: 0.001000
+                # Epoch: 6/100 | Loss: 2.5382 | Recons-Error: 0.0216 | VQ-Loss: 2.5166 | Perplexity: 37.1451 | LR: 0.001000
+                # 
+                # image reconstructions are either solid whites or solid blacks or cyan(light blue) 
+                # it starts black, then white, then a bit of cyan and then compleyely cyan 
+                # and then back to solid white at epch 14 where I ended the trainig
+                # looking athe losses for both training and validation shows they are
+                # both getting larger and larger each epoch, so we are 100% diverging badly!
+                # on the other hand, our reconstruction loss is decreasing (0.17 -> 0.12 -> 0.07 -> 0.04...)
+                # which is a good sign! however, the VQ-Loss is increasing (0.53 -> 0.54 -> 0.65 -> 0.87 -> 1.29...) fast!!,
+                # and looking at loss its clearly obvious that the vq-loss term is so large
+                # and growing so fast that it completely overwhelms the reconstruction signal
+                # in the final loss.
+                # the perplexity value seems ok, at least compared to our previous 
+                # experiments in fp32 (34~50 is a good range for perplexity),however im not sure
+                # how to feel about this or what to take from it!
+                # because this only means several codebook/embedding vectors are being selected 
+                # so it's not total codebook collapse (i.e. we are not using a single vector or only few vectors).
+                # but it doesnt mean its utilizing the codebook properly either!
+                # its massively under utilizing the codebook, so it could be codebook collapse or
+                # something close to it or may be not(because of what we saw in our previous experiments)! 
+                # it also doesn't tell us which codes are being used or if they represent diverse features
+                # forexample in our case, since we have 512 embedding vectors, a perpelxity of 34 
+                # means as if only 34 codes were being used uniformly, its high compared to 14 that
+                # we used to get in some previous examples, but its stilly a tiny fraction of 512 vectors!
+                # this is usually treated as a major form of codebook collapse or underutilization!
+                # but then again the can be prefectly fine because they represent diverse features! but I dont know forsure now!
+                # (our previous experiments were doing pretty well despite having similar
+                # perplexity or even much lower!) so for now I leave this aside and if I couldnt solve
+                # tihs the other way around, comeback and see what I can get out of it! 
+                # 
+                # concerning solid colors that we get it means the decoder is 
+                # receiving latent vectors (quantized_z_ex) that correspond to extreme or uniform
+                # values, or the decoder's own weights are exploding. 
+                # cyan usually points to issues where blue and green channels dominate. 
+                # and the fact that the colors change like hat, means the values are swinging wildly.
+                # so we only have vq-loss as our lead, looking at it 
+                # its:
+                # e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
+                # self.beta_weight *loss_e
+                # so my first try will be to lower the beta_weight and see if it fixes it
+                # update5: 
+                # ok before I change the beta, I went ahead and checked the e_loss first
+                # which involves quantzied vectors and encoders outputs, 
+                # for the absolute majority of iterations it was around 2.1x like 2.18x
+                # 2.19x, until the last iteration which it suddenly jumps to 49434444431360.0
+                # which is insane!(this makes all images solid blue by the way!)
+                # epoch 1: 
+                # e_loss.item()=2.201829671859741
+                # e_loss.item()=2.102466106414795
+                # e_loss.item()=2.15078067779541
+                # e_loss.item()=2.173875093460083
+                # e_loss.item()=2.2475433349609375
+                # e_loss.item()=2.3060145378112793
+                # e_loss.item()=2.2587552070617676
+                # e_loss.item()=2.184400796890259
+                # e_loss.item()=2.176929473876953
+                # e_loss.item()=49434444431360.0
+                # 
+                # this repeats in second epoch and we get:
+                # e_loss.item()=2.6162514686584473
+                # e_loss.item()=2.484062671661377
+                # e_loss.item()=2.54720401763916
+                # e_loss.item()=2.5991740226745605
+                # e_loss.item()=2.6544599533081055
+                # e_loss.item()=2.6641557216644287
+                # e_loss.item()=2.687133312225342
+                # e_loss.item()=2.6065897941589355
+                # e_loss.item()=2.6258320808410645
+                # e_loss.item()=inf
+                # and goes on like that!
+                # so its not the beta_weight! its the e_loss that goes nuts!
+                # all of this means we are facing another numerical instability in fp16
+                # we are either corrupting the embeddings (quantized_z_ex) or encoder_outputs
+                # during ema!
+                # either our ema update is accumulating errors or exploding values over the epoch,
+                # causing self.embeddings.weight (and thus the selected quantized_z_ex) to become 
+                # extremely large or inf by the end or its the gradients from the previous steps 
+                # (driven by the beta * e_loss term) that are destabilizing the encoder's weights,
+                # causing its output to explode by the end of the epoch.
+                # Given that e_loss is the distance between these two, either one exploding will
+                # cause e_loss to explode. The fact that it happens late in the epoch suggests 
+                # an accumulation or feedback loop issue is more likely than random data spikes.
+                # 
+                # update6: I printed the loss as well, but noticed they both have prefectly fine ranges
+                # and only at the very last iteration go haywire!
+                # epoch 0: 
+                # ...
+                # e_loss.item()=2.01871 | loss.item()=0.50468
+                # e_loss.item()=2.17197 | loss.item()=0.54299
+                # e_loss.item()=2.17167 | loss.item()=0.54292
+                # e_loss.item()=2.15292 | loss.item()=0.53823
+                # e_loss.item()=2.25649 | loss.item()=0.56412
+                # e_loss.item()=2.11446 | loss.item()=0.52861
+                # e_loss.item()=2.19241 | loss.item()=0.54810
+                # e_loss.item()=2.09980 | loss.item()=0.52495
+                # e_loss.item()=1340629346942976.00000 | loss.item()=335157336735744.00000
+                # epoch 1:
+                # ...
+                # e_loss.item()=2.65261 | loss.item()=0.66315
+                # e_loss.item()=2.74691 | loss.item()=0.68673
+                # e_loss.item()=2.70624 | loss.item()=0.67656
+                # e_loss.item()=2.67747 | loss.item()=0.66937
+                # e_loss.item()=2.85469 | loss.item()=0.71367
+                # e_loss.item()=2.72992 | loss.item()=0.68248
+                # e_loss.item()=inf | loss.item()=inf
+                # 
+                # so it everything seems stable until something else causes this instablity
+                # at the last iteration!! this might be because of trainig loop itself
+                # lets check training part again
+                # update 7:
+                # ok, I did a bit more printing and along with e_loss and loss tried
+                # print(f"dw max abs: {dw.abs().max().item()}") # dw calculated using .float() inputs
+                # print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
+                # print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
+                # it went on until I got a weird erro saying :
+                # UnboundLocalError: cannot access local variable 'dw' where it is not associated with a value
+                # that made me realize that I made a mistake dw only works in training_mode,
+                # so I removed it and moved it to its current location where its calculated, 
+                # then it dawned on me that, this means during traiing we dont haev any issues!
+                # cuz we didnt get any large number or inf! we just got and local variable error
+                # which meant the actual problem lies in validation code! so I went ahead and added
+                # a new print to training loop showiing start of validation!
+                # lo and behold, that was the case! this issue only happens after validation code is run. 
+                # the training log at the end looks like this:
+                # training stays at e_loss.item()=2.63252 | loss.item()=0.65813 at the 
+                # end of iteration yet validation becomes inf at the end (# e_loss.item()=inf | loss.item()=inf) 
+                # ....
+                # e_loss.item()=2.63151 | loss.item()=0.65788
+                # ema_w max abs: 6381.849609375
+                # Embeddings max abs: 11.438188552856445
+                # dw max abs: 9416.0
+                # e_loss.item()=2.63836 | loss.item()=0.65959
+                # ema_w max abs: 6412.19140625
+                # Embeddings max abs: 11.430124282836914
+                # dw max abs: 5340.0
+                # e_loss.item()=2.63252 | loss.item()=0.65813
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # ...............VALIDATION...............
+                # e_loss.item()=2.73628 | loss.item()=0.68407
+                # ....
+                # dw max abs: 8424.0
+                # e_loss.item()=2.63151 | loss.item()=0.65788
+                # ema_w max abs: 6381.849609375
+                # Embeddings max abs: 11.438188552856445
+                # dw max abs: 9416.0
+                # e_loss.item()=2.63836 | loss.item()=0.65959
+                # ema_w max abs: 6412.19140625
+                # Embeddings max abs: 11.430124282836914
+                # dw max abs: 5340.0
+                # e_loss.item()=2.63252 | loss.item()=0.65813
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # while the validation information its like this:
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=2.61591 | loss.item()=0.65398
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=2.70347 | loss.item()=0.67587
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=inf | loss.item()=inf
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                #
+                # so it means the validation code is messing something up
+                # but how? 
+                # update 8: 
+                # ok it seems, because we are calculating loss in validation mode
+                # as well, and in validation mode, since the embeddings are fixed,
+                # the explosion must be coming from encoder_outputs becoming inf 
+                # or extremely large during the validation forward pass for certain 
+                # batches! so we need to check if batchnorm stats are corrupted somehow
+                # but how? if huge gradients are involved they could corrupt it, but
+                # why not training? ok first I try to see if batchnorm stat is coruppted
+                # if not i need to find something else:
+                # update 9:
+                # batchnorm seems normal to me! at this point, I can only think of 
+                # one other thing and try gradient clipping, see if that does something
+                # not sure if its even logical, if that doesnt work, I'd probably go 
+                # full precision for validation at this point!
+                # 
+                # update 10: 
+                # after closely looking at bn statistics, it doesnt see fine everywhere!
+                # this is what I got for first epoch:
+                # # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.5718710422515869
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.08771437406539917
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.6632750630378723
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.8938791155815125
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.6106663942337036
+                # encoder.2.conv_block.1 - Running Var Max Abs: 0.4625694453716278
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 0.7466787099838257
+                # encoder.3.conv_block.1 - Running Var Max Abs: 0.4020826816558838
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 1.010559320449829
+                # encoder.4.conv_block.1 - Running Var Max Abs: 1.0877726078033447
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.58249831199646
+                # encoder.5.conv_block.1 - Running Var Max Abs: 0.5586868524551392
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 0.9389406442642212
+                # encoder.6.conv_block.1 - Running Var Max Abs: 1.5494104623794556
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 0.691523551940918
+                # encoder.7.conv_block.1 - Running Var Max Abs: 0.7997860312461853
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 1.3911665678024292
+                # encoder.8.conv_block.1 - Running Var Max Abs: 1.9451509714126587
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 0.00035661112633533776
+                # decoder.0.conv_block.1 - Running Var Max Abs: 6.221558805918903e-07
+                #
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 0.20308828353881836
+                # decoder.1.conv_block.1 - Running Var Max Abs: 0.00601273775100708
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.2749442756175995
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 0.13937747478485107
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.3565812408924103
+                # decoder.3.conv_block.1 - Running Var Max Abs: 0.22257192432880402
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 1.0208137035369873
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 0.6718440651893616
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.7394704222679138
+                # decoder.5.conv_block.1 - Running Var Max Abs: 0.45452943444252014
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.3748507797718048
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 0.30892425775527954
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.32845693826675415
+                # decoder.7.conv_block.1 - Running Var Max Abs: 0.266750693321228
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 1.0342155694961548
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 1.7763946056365967
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.3009571433067322
+                # decoder.9.conv_block.1 - Running Var Max Abs: 0.2649553120136261
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.5053802132606506
+                # decoder.10.conv_block.1 - Running Var Max Abs: 0.5508503317832947
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # now comparing it with fp16 without ema: 
+                # 
+                # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.70957184
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.12105470
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.54147869
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.88723356
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.87415302
+                # encoder.2.conv_block.1 - Running Var Max Abs: 2.39960027
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 1.02115321
+                # encoder.3.conv_block.1 - Running Var Max Abs: 3.02251101
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 2.23244810
+                # encoder.4.conv_block.1 - Running Var Max Abs: 12.35795498
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.86817431
+                # encoder.5.conv_block.1 - Running Var Max Abs: 6.47394800
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 2.63191867
+                # encoder.6.conv_block.1 - Running Var Max Abs: 24.31080246
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 2.09242058
+                # encoder.7.conv_block.1 - Running Var Max Abs: 34.30396652
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 5.11474609
+                # encoder.8.conv_block.1 - Running Var Max Abs: 119.33450317
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 0.24592298
+                # decoder.0.conv_block.1 - Running Var Max Abs: 0.00192129
+                # 
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 0.65776098
+                # decoder.1.conv_block.1 - Running Var Max Abs: 2.85738802
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.34116608
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 1.30416238
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.67023188
+                # decoder.3.conv_block.1 - Running Var Max Abs: 1.65899801
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 2.04253769
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 11.17685890
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.57578510
+                # decoder.5.conv_block.1 - Running Var Max Abs: 2.40160894
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.41974333
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 1.36730051
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.39025623
+                # decoder.7.conv_block.1 - Running Var Max Abs: 1.16634774
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 1.17512047
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 15.18108463
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.32922232
+                # decoder.9.conv_block.1 - Running Var Max Abs: 1.04681122
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.71955955
+                # decoder.10.conv_block.1 - Running Var Max Abs: 2.77790952
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # comparing it with the fp32 which is : 
+                # 
+                # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.62610096
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.09068304
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.48086452
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.52218562
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.51117438
+                # encoder.2.conv_block.1 - Running Var Max Abs: 0.79944575
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 0.39278689
+                # encoder.3.conv_block.1 - Running Var Max Abs: 0.82266533
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 0.90310228
+                # encoder.4.conv_block.1 - Running Var Max Abs: 3.74095893
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.56521201
+                # encoder.5.conv_block.1 - Running Var Max Abs: 1.40113008
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 1.37824154
+                # encoder.6.conv_block.1 - Running Var Max Abs: 5.67221069
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 0.64184862
+                # encoder.7.conv_block.1 - Running Var Max Abs: 1.74469852
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 1.02916014
+                # encoder.8.conv_block.1 - Running Var Max Abs: 2.51045156
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 1.52436340
+                # decoder.0.conv_block.1 - Running Var Max Abs: 0.68965399
+                # 
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 1.68325686
+                # decoder.1.conv_block.1 - Running Var Max Abs: 2.49783731
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.63934857
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 1.66693866
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.42520446
+                # decoder.3.conv_block.1 - Running Var Max Abs: 0.50907129
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 1.12013841
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 2.16791487
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.30991670
+                # decoder.5.conv_block.1 - Running Var Max Abs: 0.97034746
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.21082824
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 0.59495980
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.28866979
+                # decoder.7.conv_block.1 - Running Var Max Abs: 0.66196996
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 0.84830022
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 4.54579210
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.25317752
+                # decoder.9.conv_block.1 - Running Var Max Abs: 0.80862129
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.33949623
+                # decoder.10.conv_block.1 - Running Var Max Abs: 1.42396164
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # the running variance for the batchnorm layer in the very first block
+                # of our decoder(decoder.0.conv_block.1) is extremely small (its 6.22-1e7 its 0.0000006!)
+                # its practically 0! looking at the fp16 version without ema its 0.00192129
+                # and full precision version, we can see 
+                # its way way smaller (0.0000006 vs 0.6! its a million times smaller!)
+                # this is probably whats giving us all this headache!
+                # see the formula for batchorm was 
+                # y = (x - running_mean) / sqrt(running_var + eps) * gamma + beta
+                # now our variance is tiny, sqart(tiny+eps) is a tiny tiny number,
+                # epsilon by default is 1e-5, gamma and beta are by default 1 and 0
+                # and are learned during trainig so lets ignore them for now, 
+                # if we go on with what we have here, we would have:
+                # running_var+eps = 6.22e-7 + 1e-5 = 0.000010622 or 1.0622e-5
+                # and sqrt(1.0622e-5) = 0.00325914099 or 0.003! 
+                # now we have (x-running_mean) that must be divided by 0.003 
+                # and since its a tiny number, it will amplify the input values massively
+                # when we add in fp16 to the mix and the fact that it has a very limited maximum 
+                # representable value (~65504) we can clearly see how it can cause those nans/infs 
+                # because of overflowing! 
+                # with this we can guess how the rest plays out, this inf value propagates
+                # through the rest of the decoder, it likely causes imgs_rec to also contain
+                # infs values from there, when e_loss is calculated later(even if its inputs are cast
+                # to fp32) if the encoder_outputs that produced the inf were themselves inf, 
+                # the e_loss will also become inf.
+                # similarly, the reconstruction loss using imgs_rec would also become inf, messing up
+                # the whole thing.
+                # as to why this didnt happen in training, I believe its because during trainig
+                # batchnorm uses the mean and variance calculated from the current
+                # batch, not the running versions, so if we have large enough batch(which we do)
+                # its gives us decent statistics, so we dont face an issue, however in validation
+                # as we saw this is not the case, we are bound to running mean/variance
+                # which are affected/updated during traing. 
+                # now why would running variance be tiny in fp16? 
+                # it means that during training, the variance of the activations being fed to that 
+                # batchborm layer(calculated per batch), was consistently very, very small over many 
+                # iterations. 
+                # moreover, a tiny variance within a batch for the input to decoder.0 means 
+                # that across the different samples (and potentially spatial positions) in that batch, 
+                # the specific feature maps/activations arriving at that batchnorm layer are 
+                # almost identical(i.e. they use the same indexes?). 
+                # now our decoder recieves the output of Quantizer! that is quantized_z_ex!
+                # so it means our quantized_z_ex has low variance, again that means, two things, 
+                # its either a codebook collapse or near-collapse specific to the fp16 training 
+                # because it doesnt happen in fp32, and we know for a fact that fp16 is numerically
+                # unstable when it comes to ema calculation, after all we have already faced the 
+                # issues first hand (i.e. exploding loss, nans/infs).
+                # 
+                # the issue could be that the encoder is influenced by potentially large/unstable
+                # gradients (especially from the vq-loss term before clipping/tuning) and operating with 
+                # fp16 precision, might be producing less diverse outputs (encoder_outputs) compared
+                # to its fp32 counterpart. these outputs might numerically cluster together more easily in fp16.
+                # 
+                # or it could be due to the distance calculation stage, that is, 
+                # during it, operating on these less precise fp16 encoder_outputs and fp16/fp32
+                # embeddings might become biased towards selecting only a very small number of
+                # the "closest" numerically "safest" codebook vectors for most inputs within 
+                # a batch. it's easier for minor numerical differences (significant in fp16, negligible 
+                # in fp32) to tip the balance towards the same few indices repeatedly.
+                #  in other words, due to lower precisions, more numbers will lose precision and
+                # may endup in the same range, practically becoming very close, so close that the
+                # distinction between is gone, where as in fp32, this wouldnt be an issue, as
+                # the numbers could be represented way more accurate and the distinction between them
+                # be pretty obvious)
+                #
+                # it would also be the ema update itself, that is, for example, if the dw term
+                # (sum of encoder_outputs assigned to an embedding) is calculated
+                # based on unstable/clustered fp16 encoder_outputs, the ema update might 
+                # inadvertently reinforce the dominance of only a few codebook vectors, 
+                # further reducing diversity.
+                # 
+                # recap:
+                # so basically if the quantizer consistently picks only 1, 2, or a tiny handful of distinct 
+                # codebook vectors for almost all the spatial positions in our discrete latent,
+                # and batch items feeding into decoder.0, the resulting quantized_z_ex 
+                # tensor entering that layer will indeed have extremely low variance within the 
+                # batch. The values across the batch dimension will be repetitions of just those 
+                # few selected vectors.
+                # tiny batch variance -> tiny running variance: 
+                # batchnorm calculates variance per batch during training. if the batch variance
+                # is consistently near-zero due to the collapsed codebook usage, the running 
+                # variance (which is an exponential moving average of these batch variances) 
+                # will also decay towards near-zero. hence all these issues.
+                #
+                # so to fix this i can think of doing these: 
+                # 1. use larger eps
+                # 2. completely ditch fp16 for eval mode
+                # 3. gradient clipping!
+                #
+                # update 11:
+                # tried ditiching fp16 for eval mode, and faced lots of nans in batchnorm
+                # which didnt occur when we were using fp16! it shows something is wrong!
+                # and small variance was simply masking that issue! 
+                # I added fp32 to eval with:
+                # scaler.unscale_(optimizer)
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Clip!
+                # I disabled both and set eps=1e-3 and still get nans in batchnorm!
+                # set eps = 1e-4 with fp32 and gradientclip commented out and still no luck
+                # set eps=1e-5 im still getting nans for batchnorm! its weird I disabled
+                # all these things and im still getting nans in bn where as i wasnt!
+                # im tired now! i'll deal with this tomorrow inshaalah.
+                # todo: maybe calculate losses inside autocast thistime and see if it
+                # changes anything!
+                #
+                 
+                # we need to make sqrt value larger, and by that we can either use a larger
+                # epsilon and see how that helps, or 
+                #
+                # Monitor Tensor Magnitudes:
+                # Add temporary print statements inside the Quantizer's 
+                # forward method (specifically within the if self.training: 
+                # block for EMA) to check the magnitudes 
+                # (e.g., .abs().max().item(), .mean().item()) of:
+                # encoder_outputs_flatten
+                # dw
+                # self.ema_w (after update)
+                # self.embeddings.weight (after update)
+                # e_loss (the scalar value)
+                # Rationale: See if any of these values are consistently growing 
+                # very large epoch over epoch. This will pinpoint where the 
+                # numerical explosion is happening.
+                #  # Gradient Clipping:
+                # Add gradient clipping before scaler.step(optimizer).
+                # scaler.scale(loss).backward()
+                # scaler.unscale_(optimizer) # Unscale gradients before clipping
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Clip norms
+                # scaler.step(optimizer)
+                # scaler.update()
+                # Rationale: Prevents excessively large gradient magnitudes 
+                # (even if not inf/NaN) from causing huge weight updates. 
+                # max_norm=1.0 is a common starting point, adjust as needed.
+                # Note: Requires unscaling first.
+                # Check GradScaler Scale:
+                # Print scaler.get_scale() periodically.
+                # Rationale: Ensure it's not stuck at an extremely high value.
+                #
                 # 
                 if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
                 #
@@ -6552,8 +7037,15 @@ class Quantizer(nn.Module):
             
             
             e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
+            # print(f'{e_loss.item()=}')
             loss = self.beta_weight * e_loss
-        
+            #----------------------------DEBUG------------------------
+            # see update 6 and 7 up
+            print(f'{e_loss.item()=:.5f} | {loss.item()=:.5f}')
+            print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
+            print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
+            #----------------------------DEBUG------------------------
+            
         # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
         # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
         # which is non-differentiable.
@@ -6599,7 +7091,27 @@ class Quantizer(nn.Module):
         #  PPL = exp(H(p)) = e^(- Σ p_i * log(p_i))
         #This measures how uncertain or diverse a probability distribution is. In VQ-VAE,
         # it helps evaluate how well embedding space is being utilized.
-
+        # 
+        # Ok this didnt explain much at all, perplexity in fact measures the effective number
+        # of codebook/embedding vectors used, weighted by their usage probability(p_i). 
+        # It essentially tells us how spread out the usage distribution is, 
+        # a higher number means usage is spread more evenly across more codes
+        # for example, if we have 512 embedding vectors(num_embds=512), and we get
+        # a perpelxity=40, it means, the usage distribution is as spread out as if 
+        # only 40 codes were being used uniformly. 
+        # this can also help us understand if we are facing a codebook collapse (that is
+        # we are only using one codebook/embedding vector or only few out of the whole codebook
+        # for example, the value 40 also means only a fraction of our codebook is being used, 
+        # but whether its a total collapse or not, isnt readily clear to us, because it could be 
+        # using 40 diverse features that works prefectly fine for us, or it may not be the case!
+        # and the codes being used may very well all represent very similar variations of a 
+        # limited set of features (e.g. different background textures, slight color shifts), and
+        # actual crucial featuresbe for object details are missing or lacking greatly! 
+        # so the trick is, to look how reconstruction looks, if the model cant can't reconstruct 
+        # those details well even if the perplexity number isn't rock bottom it means we have a codebook collapse
+        # but if the reconstructions are pretty good with much needed details and diversity then, 
+        # we are good! even if its 40 out of 512 codebook verctors!
+        # 
         # sidenote: 
         # in many implementations you may see people refering to embeddings(the whole embedding vectors/ditionary of embedding vectors!)
         # as codebooks! 
@@ -7023,6 +7535,12 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
             # of the bundle and divide it by 100 (unscaling in scaler.step).
             # the optimizer step part is, now we have the accurate weight of a single feather
             # (the true gradient magnitude), which we can use for our calculations (weight updates)
+            #-----------------DEBUG---------------------
+            # clip to solve fp16-ema issue? since we want to clipgradient
+            # so we unscale first
+            # scaler.unscale_(optimizer)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) 
+            #-----------------DEBUG---------------------
             scaler.step(optimizer)
             # update the scale value for the next round
             scaler.update()            
@@ -7059,6 +7577,16 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
             # is the way to go) also highest accuracy(in some cases,(well see some examples 
             # in llms chapter)) so I leave this for now well see more when we cover later chapters like llms.
             # model.half()
+            # from future: added this so I can see if this is causing issues with
+            # fp16 and ema bug!
+            print(f'...............VALIDATION...............')
+            #------------------------debug-------------------
+            # make model full precision and disable autocast in eval mode!
+            # see update 10 in Quantizer! for context -
+            # ok enabling this and making it fp32, resulted in nans in batchnorm
+            # and both losses, see update 10/11 in Quantizer
+            # model.float()
+            #------------------------debug-------------------
             for imgs, _ in dataloader_test:
                 imgs = imgs.to(device)
                 with torch.amp.autocast(device_type='cuda', enabled=use_fp16):
@@ -7073,6 +7601,27 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
                 val_loss = val_reconstruction_error + vq_loss
                 val_losses.append(val_loss.item())
 
+        #------------------------------------DEBUG--------------------------------
+        # see update 8 in Quantizer model - finding why fp16 and ema fails
+        print("--- Checking BatchNorm Stats ---")
+        for name, module in model.named_modules():
+            if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                if module.running_mean is not None:
+                    if not torch.isfinite(module.running_mean).all():
+                        print(f"!!! NaN/Inf in running_mean for {name} !!!")
+                    if not torch.isfinite(module.running_var).all():
+                        print(f"!!! NaN/Inf in running_var for {name} !!!")
+                    # check for near-zero variance which can cause division issues
+                    if (module.running_var < 1e-7).any():
+                        print(f"!!! WARNING: Very small running_var detected for {name} !!! Min value: {module.running_var.min().item()}")
+
+                print(f"{name} - Running Mean Max Abs: {module.running_mean.abs().max().item():.8f}")
+                print(f"{name} - Running Var Max Abs: {module.running_var.abs().max().item():.8f}") # Variance shouldn't explode usually
+        print("--- BatchNorm Stats Check Done ---")
+        
+        
+        #------------------------------------DEBUG--------------------------------
+        
         # display reconstruction performance!
         fname=None
         if recons_dir_path:
@@ -7472,6 +8021,7 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 # occasional color blobs (see reconstruction examples in ./results)
 # 
 # todo explain properly:
+
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
 # fp16 with ema enabled - completely fails with default configs
 # results in nans in loss, and completely white reconstructions 
