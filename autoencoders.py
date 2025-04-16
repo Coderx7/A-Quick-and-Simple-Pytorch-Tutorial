@@ -6244,7 +6244,7 @@ class Quantizer(nn.Module):
         # basically moving the channel to the last dim, so that when we
         # flatten the whole thing, we get each separate channels,
         # so if our input shape is [16,64,32,32] we ultimately get
-        # [16*32*32, 64] or [16384,64] which means we are quantizing 
+        # [16*32*32, 64] or [16384,64] which means we are quantizing
         # each 16384 vectors independently, in otherwords, the channels
         # are used as space in which it gets quantized (so it matches embedding size)
         encoder_outputs = encoder_outputs.permute(dims=(0,2,3,1)).contiguous()
@@ -7195,14 +7195,12 @@ class Quantizer(nn.Module):
                 # 
                 clip_value = 10.0
                 updated_embeddings.clamp_(min=-clip_value, max=clip_value)
-                #----------------------------------------------------------
-                # self.embeddings.weight.data.copy_(updated_embeddings)
+                # now update the embeddings!
+                self.embeddings.weight.data.copy_(updated_embeddings)
                 
                 # if not torch.isfinite(self.embeddings.weight).all(): 
                 #     print("!!! NaN/Inf AFTER embeddings.weight update !!!")
                 # # -----------------------DEBUG---------------------
-                
-            
             
             
             e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
@@ -8201,117 +8199,25 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 
 # using fp16
 # experimenting with fp16 and see if our implementation is ok and we get expected result
-# initially after enabling fp16, I noticed, early reconstructions take much longer to 
-# yield a meaningful resul, it took around 5 epochs(as apposed to 1 epoch in fp32 version!)
-# until early silluhet of objects were formed before that it was simply solid grays with 
-# occasional color blobs (see reconstruction examples in ./results)
-# 
-# todo explain properly:
-# sometimes, FP16 requires adjustments or reveals sensitivities.
-# Numerical Precision and Stability:
-# the thing is, when we use f16, despite all the machinery(autocast on safe operations only,
-# using gradscaler for scaling up,etc) we use to make it as safe
-# as possible and prevent gradient underflow, some operations might still suffer and
-# we face numerical instability during training!
-# values within layers might get clipped or rounded differently in fp16, which 
-# changes the information flow in a subtle manner we might not notice at first
-# even though we correctly cast imgs_rec.float() and imgs.float() when calling
-# F.mse_loss() to make the loss work in full precision, the imgs_rec tensor itself is
-# produced by potentially fp16 operations. 
-# its values might already be slightly less precise than the equivalent fp32 output
-# before the cast. this can lead to a slightly noisier or less accurate loss signal being 
-# backpropagated.
-# 
-# the Vector Quantization step itself involves distance calculations 
-# (e.g. Euclidean distance between encoder outputs and codebook/embedding vectors) and 
-# ema updates for the codebook/embeddings(if we enable it). 
-# these operations might be more sensitive to the lower precision of f16. 
-# small inaccuracies in distance calculations could lead to slightly suboptimal 
-# codebook/embedding vector selection or slower/noisier codebook learning. 
-# ema updates in f16 might also accumulate errors faster.
-# 
-# Color Tint Artifacts: t
-# he intermittent blue/green hues are a strong indicator of numerical instability 
-# creeping in. This could mean:
-# 
-# Gradient Issues: gradients for specific color channels might occasionally become NaN or
-# inf due to fp16 overflows/underflows during the backward pass, even if GradScaler 
-# catches most issues scaler.step() would skip the optimizer update for that batch, 
-# potentially leading to uneven learning across channels.
-#
-# Activation Issues: activations in certain layers might be hitting the limits of fp16 
-# representation, leading to clipping or wrapping artifacts that manifest as color shifts
-# in the final reconstruction.
-# 
-# Codebook Instability: the codebook/embedding vectors themselves might be developing
-# unstable values or biases in certain dimensions (corresponding to colors) due to the
-# imprecise updates in the fp16 environment.
-# 
-# Hyperparameter Sensitivity:
-# Learning Rate: FP16 training can sometimes be more sensitive to the learning rate. 
-# An LR that's optimal for FP32 might be slightly too high for stable FP16 training, 
-# leading to oscillations or slower convergence as the model struggles with the less 
-# precise updates.
-# Weight Decay: Interactions between weight decay and lower precision might differ slightly.
-# VQ Commitment Loss (beta): The balance between reconstruction loss and the VQ commitment
-# loss might need re-tuning in an FP16 environment. The relative scale of these losses could
-# be affected by the precision changes.
-# Scheduler: While the scheduler itself is fine, the learning rate values it produces might 
-# interact differently with FP16 training dynamics.
-# GradScaler Dynamics:
-# While GradScaler helps, it's not magic. If instability causes frequent inf/NaN gradients,
-# the scaler will skip optimizer steps. Frequent skips significantly slow down effective training. It might also decrease the scale factor drastically, potentially re-introducing some risk of underflow later.
-# How to Investigate and Improve:
-# Tune Learning Rate: This is often the first thing to try. Reduce the initial learning rate
-# for your FP16 run (e.g., by 2x, 5x, or 10x) and see if convergence becomes more stable 
-# and quality improves. You might need a slightly different LR schedule as well 
-# (e.g., longer warmup).
-# Check VQ Commitment Loss (beta): Experiment with slightly different values for beta. 
-# Maybe the commitment loss needs to be weighted differently relative to the reconstruction
-# loss in FP16.
-# Monitor GradScaler: Print scaler.get_scale() periodically during training. 
-# Is it decreasing rapidly or staying very low? Are optimizer steps being skipped 
-# frequently? (You can check if scaler.step(optimizer) returns None).
-# Frequent skips point to instability.
-# Check for NaNs: Add checks within your training loop (maybe only occasionally for 
-# performance) to see if NaNs are appearing in the loss, model outputs, or gradients 
-# (after backward, before step). torch.isnan(tensor).any() is useful. 
-# Use torch.autograd.detect_anomaly() for more detailed (but slower) debugging if needed.
-# Explicit FP32 for Sensitive Ops: As a diagnostic step (it might hurt performance), 
-# try forcing specific parts of the VQ operation (like distance calculation or EMA updates 
-# if applicable) to run in FP32 even within the autocast block by manually casting their 
-# inputs/outputs .float(). If this fixes the problem, it pinpoints the VQ step as being 
-# sensitive.
-# 
-# Analyze Loss Components: Plot the reconstruction_error and vq_loss separately during 
-# training for both FP32 and FP16. Are their relative magnitudes or trends significantly 
-# different? Is the vq_loss behaving erratically in FP16?
-# Data Normalization: Although you disabled it, ensure your input data normalization 
-# (e.g., to [0, 1] or [-1, 1]) is appropriate and consistently applied. Extreme values 
-# could exacerbate FP16 issues.
-# 
-# In summary, FP16 often requires more careful tuning, especially of the learning rate, 
-# compared to FP32. The artifacts you're seeing suggest numerical precision issues, 
-# potentially centered around the VQ mechanism or loss calculation feeding back into 
-# the gradients. Start by lowering the learning rate and monitoring the GradScaler's 
-# behavior.
-
-
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
 # fp16 with ema enabled - completely fails with default configs
 # results in nans in loss, and completely white reconstructions 
 # everywhere! canceled after 8 epochs - 
-#! todo fix quantizer bug with fp16 
-#! (use all operations in fp32 exclusively and see if that fixes the issue)
-#! didnt fix the issue! need to investigate more!
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_182650/vqvae_CIFAR10_64x64_20250414_182650.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_182650/vqvae_CIFAR10_64x64_20250414_182650.ckpt'
+# 
+# fixed fp16 and fp16 with ema:
+# fp16(no ema) 
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_132947/vqvae_CIFAR10_64x64_20250416_132947.ckpt'
+#
+# fp16 with ema
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/'
 
 # using fp32 version 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 #todo add train and test sizes so the rest of the pipeline also use the same
