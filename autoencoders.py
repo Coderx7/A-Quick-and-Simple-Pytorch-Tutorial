@@ -6279,34 +6279,34 @@ class Quantizer(nn.Module):
         # it! and only then the issue for this section got resolved
         # however I', still hetting nans for loss! so we need to check 
         # the rest of the code!
-        # encoder_outputs_flatten = encoder_outputs_flatten.float()
-        # self.embeddings.weight = self.embeddings.weight.float()
-        # with torch.amp.autocast(device_type='cuda',enabled=False):
-        #     enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
-        #     em_norm = torch.sum(self.embeddings.weight**2, dim=1)
-        #     enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
-        #     distances = enc_norm + em_norm - 2 * enc_mul_em
-            
-        #     if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
-        #     if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
-        #     if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
-            
-        #     if not torch.isfinite(distances).all():
-        #         print("!!! NaN/Inf detected in calculated distances !!!")
-        #         # torch.save({'encoder_norm':enc_norm,
-        #         #             'embd_norm':em_norm,
-        #         #             'encoder_out_mul_embd_weight':enc_mul_em,
-        #         #             'distances': distances},
-        #         #            'debug_distances.pt')
-        #         # raise ValueError("NaN/Inf in distances")
-        # # -----------------------DEBUG---------------------
-
         encoder_outputs_flatten = encoder_outputs_flatten.float()
         self.embeddings.weight = self.embeddings.weight.float()
         with torch.amp.autocast(device_type='cuda',enabled=False):
-            distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
-                        torch.sum(self.embeddings.weight**2, dim=1) -
-                        2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
+            enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
+            em_norm = torch.sum(self.embeddings.weight**2, dim=1)
+            enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
+            distances = enc_norm + em_norm - 2 * enc_mul_em
+            
+            if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
+            if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
+            if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
+            
+            if not torch.isfinite(distances).all():
+                print("!!! NaN/Inf detected in calculated distances !!!")
+                # torch.save({'encoder_norm':enc_norm,
+                #             'embd_norm':em_norm,
+                #             'encoder_out_mul_embd_weight':enc_mul_em,
+                #             'distances': distances},
+                #            'debug_distances.pt')
+                # raise ValueError("NaN/Inf in distances")
+        # # -----------------------DEBUG---------------------
+
+        # encoder_outputs_flatten = encoder_outputs_flatten.float()
+        # self.embeddings.weight = self.embeddings.weight.float()
+        # with torch.amp.autocast(device_type='cuda',enabled=False):
+        #     distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
+        #                 torch.sum(self.embeddings.weight**2, dim=1) -
+        #                 2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
             # or we could use torch.cdist
             # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
 
@@ -6395,6 +6395,11 @@ class Quantizer(nn.Module):
                 # then multiply by original total to maintain the same total assignments but with smoothed counts.
                 # all of this to prevent any cluster from having zero count, thus avoiding division
                 # by zero when computing the average (ema_w / ema_cluster_size).
+                #--------------------------------Debug-------------------------------
+                # epsilon is too tiny and when ema enabled will cause the explosion in values in embeddings
+                # so lets choose a larger one here so it doesnt go boom!
+                # self.epsilon = 1e-4
+                #--------------------------------DEBUG--------------------------------
                 self.ema_cluster_size = ((self.ema_cluster_size + self.epsilon)/(total_assignments + self.num_embd * self.epsilon) * total_assignments)
                 # dw is the sum of encoder outputs assigned to each embedding, which is used 
                 # to update the embeddings.(when we transpose encodings and multiply it by 
@@ -6812,29 +6817,34 @@ class Quantizer(nn.Module):
                 # the e_loss will also become inf.
                 # similarly, the reconstruction loss using imgs_rec would also become inf, messing up
                 # the whole thing.
-                # as to why this didnt happen in training, I believe its because during trainig
+                # as to why this didnt happen in training, I think its because during trainig
                 # batchnorm uses the mean and variance calculated from the current
                 # batch, not the running versions, so if we have large enough batch(which we do)
                 # its gives us decent statistics, so we dont face an issue, however in validation
                 # as we saw this is not the case, we are bound to running mean/variance
                 # which are affected/updated during traing. 
-                # now why would running variance be tiny in fp16? 
-                # it means that during training, the variance of the activations being fed to that 
-                # batchborm layer(calculated per batch), was consistently very, very small over many 
-                # iterations. 
-                # moreover, a tiny variance within a batch for the input to decoder.0 means 
-                # that across the different samples (and potentially spatial positions) in that batch, 
-                # the specific feature maps/activations arriving at that batchnorm layer are 
-                # almost identical(i.e. they use the same indexes?). 
-                # now our decoder recieves the output of Quantizer! that is quantized_z_ex!
-                # so it means our quantized_z_ex has low variance, again that means, two things, 
-                # its either a codebook collapse or near-collapse specific to the fp16 training 
-                # because it doesnt happen in fp32, and we know for a fact that fp16 is numerically
-                # unstable when it comes to ema calculation, after all we have already faced the 
-                # issues first hand (i.e. exploding loss, nans/infs).
                 # 
-                # the issue could be that the encoder is influenced by potentially large/unstable
-                # gradients (especially from the vq-loss term before clipping/tuning) and operating with 
+                # now why would running variance be tiny in fp16? 
+                # we saw that while fp16 has smaller variance compared to the fp32 version, its
+                # still way larger than the current value we get when ema is enabled!
+                # so its not just fp16, its the ema calculations thats somehow causing this!
+                # 
+                # if hypotheticall it was fp16s fault, that would mean that during training, 
+                # the variance of the activations being fed to that batchborm layer(calculated per batch),
+                # was consistently very very small over many iterations. 
+                # moreover, a tiny variance within a batch for the input to decoder.0 means 
+                # that across the different samples (and potentially spatial positions in latents)
+                # in that batch, the specific feature maps/activations arriving at that batchnorm
+                # layer are almost identical(i.e. they use the same indexes?).
+                # now our decoder recieves the output of Quantizer! that is quantized_z_ex!
+                # so our quantized_z_ex has low variance, again that means, two things, 
+                # its either a codebook collapse or near-collapse specific to the fp16 training 
+                # because it doesnt happen in fp32, and we know for a fact that fp16 itself works 
+                # just fine without ema, but when ema is enabled it is numerically unstable, 
+                # after all im writing these debug logs because of the damn thing!
+                # 
+                # so the issue could stem from the encoder being influenced by probably large/unstable
+                # gradients (especially from the vq-loss before clipping/tuning) and working with 
                 # fp16 precision, might be producing less diverse outputs (encoder_outputs) compared
                 # to its fp32 counterpart. these outputs might numerically cluster together more easily in fp16.
                 # 
@@ -6886,41 +6896,183 @@ class Quantizer(nn.Module):
                 # set eps=1e-5 im still getting nans for batchnorm! its weird I disabled
                 # all these things and im still getting nans in bn where as i wasnt!
                 # im tired now! i'll deal with this tomorrow inshaalah.
-                # todo: maybe calculate losses inside autocast thistime and see if it
-                # changes anything!
+                # 
+                # updae 12: 
+                # this morning I remembered fp16 works just fine, its just the ema that doesnt
+                # work, so probably the previous update explanation isnt right (although i believe
+                # the points stand, though not here, not now! at least I think)
+                # I'll revisit it later
+                # update 13:
+                # ok I printed scaler factor and see if optimizer step is skipped during training
+                # or not. the fp16 mode without ema, the scaler factor starts at 8192, and gradually
+                # comes down to 2048 at the end of first epoch, at the second epoch it continues with
+                # 2048 and sometimes goes down to 1024, but then comes back to 2048, there are 
+                # optimizer skips as well. the training goes as smoothly, but it takes a few epochs
+                # (like around 4 epochs to get going and images start to pop up and from there it goes
+                # pretty fast and stable. (I tried a few more times, the scaler factor starts as high as
+                # 32k, going down to 16k, and even as low as 256, but it always does well without any issues)
+                # however, when we enaled ema, the scaler factor is starts at 8192 but immediately 
+                # goes down to 4096 and then 2048 and then 1024 then it continues to stay at 1024 
+                # all the way to epoch 2 where I ended the training.
+                # the optimizer step is skipped constantly, and loss is nan, and its aweful!
+                # this means we are facing a lot of nans/infs that causes the optimizer step
+                # to be skipped, but it keeps facing nans/infs and the scaler factor stays low, 
+                # and optimizer steps gets skipped more often than not!
+                # so the issue 100% lies in ema calculation, its messing up the embeddings weights
+                # corrupting them because of its low precision! 
+                # update 14:
+                # I tried gradient clipping, again and again to no avail! until I remembered our ema
+                # doesnt even participate in the computation graph, we dont even use gradients! so it
+                # wont work!
+                # I then uncommented all the previous sectons of debugging prints that we initially tested
+                # for nans out of pure desperation! including the min/max values for updated_embeddings
+                # and we hit gold! I noticed our updated_embeddings.max() initially was extremely high
+                # around 400k! compare it to the default value wich is in range of 0.001!
+                # when I looked at other values like dw,ema_w and ema_cluster_size!(see the log below)
+                # at first I was only looking at the max value, it was 69 so didnt think much of it
+                # until it dawned on me that I also need to take a close look at min value! because
+                # we devide ema_w / ema_cluster_size to get embedding values! and it means, 
+                # all the elements that get divided by 0.000001 will be massively amplified!
+                # ultimately causing an explosion!
+                # moreover, if we look at the min value closely, we see its exactly 1e-5! that is
+                # the same value of our self.epsilon! so basically whatever happened in calculating
+                # ema_cluster_size, it made it clamp to the epsilon value! and that epsilon value
+                # ultimately ends up amplifying the ema_w values, resulting in huge values in our embeddings
+                # and consequently nans! 
+                # so I could do two things, one to increase epsilon so we makde ema_cluster_size larger
+                # and then decrease the magnitude of embedding values and hopefully preventing nans!
+                # or clamping embedding values themselevs from exploding! 
+                # I chose the second one because if I change epsilon, it will play a more prominent role
+                # in ema_cluster_size calculation, skewing it, especially for fp32/fp16 without ema
+                # and it could cause suboptimal situations or other headaches! 
+                # so I went for the clamping and now need to chose a number, as I explained in the
+                # clamping section, I first printed the embeddings values for fp16 without ema to have
+                # arough idea of the proper values I can pick, but it was 0.001 and the nature of operations
+                # were also not the same, it would start small, and as we train more the magnitude would
+                # start to get larger, for example it was at 0.001 initially, but by the time we got to
+                # 4th epoch, it had risen to 0.8 and it would continue to grow accordingly in later epochs
+                # until it stablizes, but in our case, it involved different operations, so I ended up
+                # going with 10, alhamdolelahh it went prefectly, nans were no more, everytihng got stable
+                # and we got great outcome overall, had this nt worked, I would have switched to increasing
+                # epslion from 1e-5 to 1e-4 or 1e-3 and see how that would do. but thankfully that wasnt 
+                # necessary. 
                 #
-                 
-                # we need to make sqrt value larger, and by that we can either use a larger
-                # epsilon and see how that helps, or 
-                #
-                # Monitor Tensor Magnitudes:
-                # Add temporary print statements inside the Quantizer's 
-                # forward method (specifically within the if self.training: 
-                # block for EMA) to check the magnitudes 
-                # (e.g., .abs().max().item(), .mean().item()) of:
-                # encoder_outputs_flatten
-                # dw
-                # self.ema_w (after update)
-                # self.embeddings.weight (after update)
-                # e_loss (the scalar value)
-                # Rationale: See if any of these values are consistently growing 
-                # very large epoch over epoch. This will pinpoint where the 
-                # numerical explosion is happening.
-                #  # Gradient Clipping:
-                # Add gradient clipping before scaler.step(optimizer).
-                # scaler.scale(loss).backward()
-                # scaler.unscale_(optimizer) # Unscale gradients before clipping
-                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Clip norms
-                # scaler.step(optimizer)
-                # scaler.update()
-                # Rationale: Prevents excessively large gradient magnitudes 
-                # (even if not inf/NaN) from causing huge weight updates. 
-                # max_norm=1.0 is a common starting point, adjust as needed.
-                # Note: Requires unscaling first.
-                # Check GradScaler Scale:
-                # Print scaler.get_scale() periodically.
-                # Rationale: Ensure it's not stuck at an extremely high value.
-                #
+                # this is our log: 
+                # dw max abs: 15200.0
+                # ema_w: min=-4.061383,max=152.30571
+                # ema_cluster_size min=0.00001,max=69.66891
+                # updated_embeddings min=-393109.87500,max=372818.50000
+                # e_loss.item()=2.19839 | loss.item()=0.54960
+                # ema_w max abs: 152.3057098388672
+                # Embeddings max abs: 393109.875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 32768.0
+                # Epoch: 0/100 | Loss: 0.7379 | Recons-Error: 0.1883 | VQ-Loss: 0.5496 | Perplexity: 47.1236 | LR: 0.000001
+                # dw max abs: 17376.0
+                # ema_w: min=-8.488791,max=324.54266
+                # ema_cluster_size min=0.00002,max=124.23125
+                # updated_embeddings min=-195567.21875,max=185472.50000
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 324.54266357421875
+                # Embeddings max abs: 195567.21875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 16384.0
+                # dw max abs: 12712.0
+                # ema_w: min=-15.423903,max=448.41724
+                # ema_cluster_size min=0.00003,max=160.49811
+                # updated_embeddings min=-129721.89062,max=123025.96094
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 448.417236328125
+                # Embeddings max abs: 129721.890625
+                # /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:224: UserWarning: Detected call of lr_scheduler.step() before optimizer.step(). In PyTorch 1.1.0 and later, you should call them in the opposite order: optimizer.step() before lr_scheduler.step().  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+                # warnings.warn(
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 8192.0
+                # dw max abs: 10856.0
+                # ema_w: min=-21.434664,max=552.49310
+                # ema_cluster_size min=0.00004,max=190.65237
+                # updated_embeddings min=-96800.89062,max=91804.25781
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 552.4931030273438
+                # Embeddings max abs: 96800.890625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 4096.0
+                # dw max abs: 8776.0
+                # ema_w: min=-27.200317,max=634.72821
+                # ema_cluster_size min=0.00005,max=214.03519
+                # updated_embeddings min=-77049.61719,max=73072.49219
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 634.7282104492188
+                # Embeddings max abs: 77049.6171875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 2048.0
+                # dw max abs: 7608.0
+                # ema_w: min=-33.508312,max=704.46094
+                # ema_cluster_size min=0.00006,max=232.55423
+                # updated_embeddings min=-63883.21094,max=60585.71094
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 704.4609375
+                # Embeddings max abs: 63883.2109375
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6596.0
+                # ema_w: min=-38.833229,max=763.37634
+                # ema_cluster_size min=0.00007,max=248.85812
+                # updated_embeddings min=-54479.57422,max=51667.46875
+                # e_loss.item()=1.03190 | loss.item()=0.25797
+                # ema_w max abs: 763.3763427734375
+                # Embeddings max abs: 54479.57421875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 5984.0
+                # ema_w: min=-44.349895,max=815.58264
+                # ema_cluster_size min=0.00008,max=263.18903
+                # updated_embeddings min=-47427.68359,max=44979.58203
+                # e_loss.item()=0.99855 | loss.item()=0.24964
+                # ema_w max abs: 815.5826416015625
+                # Embeddings max abs: 47427.68359375
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6488.0
+                # ema_w: min=-49.316090,max=868.58679
+                # ema_cluster_size min=0.00009,max=278.24664
+                # updated_embeddings min=-41943.62500,max=39778.59375
+                # e_loss.item()=1.00264 | loss.item()=0.25066
+                # ema_w max abs: 868.5867919921875
+                # Embeddings max abs: 41943.625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 5756.0
+                # ema_w: min=-56.222931,max=917.46094
+                # ema_cluster_size min=0.00010,max=291.33371
+                # updated_embeddings min=-37557.03906,max=35618.43359
+                # e_loss.item()=0.98612 | loss.item()=0.24653
+                # ema_w max abs: 917.4609375
+                # Embeddings max abs: 37557.0390625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6804.0
+                # ema_w: min=-63.370701,max=961.32629
+                # ema_cluster_size min=0.00010,max=303.32993
+                # updated_embeddings min=-33968.62109,max=32215.23828
+                # e_loss.item()=0.97424 | loss.item()=0.24356
+                # 
+                # so to recap of this long debugging session, 
+                # we first need to monitor min/max/abs values  for all the tensors involved
+                # specifically pay attention to min values in divisions because it can lead to infs/nans
+                # in multiplications we pay attention to max values, cause they can overflow can
+                # result in infs/nans again especially when precision is reduced
+                # and if we see if any of these values are consistently growing 
+                # very large iteration over iteration or epoch over epoch this will
+                # pinpoint where the numerical explosion is happening.
+                # gradient clipping is also a good idea to stablize training when huge gradients are involved
+                # we do this so huge updates do not take place, and weights dont go nans/infs!
+                # though in our experiments here it did absoluly nothing, because we were applying
+                # changings outside of the computation graph! completely outside of optimiziation forward
+                # pass. ema calculations didnt require gradients! otherwise we would have seen the effect of it. 
+                # also printing scaler.get_scale() can give us better ideas whats going on and whether
+                # we have some serious instablity going on or not.
+                # 
                 # 
                 if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
                 #
@@ -6967,10 +7119,15 @@ class Quantizer(nn.Module):
                 # see debug below, this works for fp32, but not fp16!
                 # self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
                 # or we could also do: 
+                # ---------------------debug-------------------------
+                # this is causing explosin in embeddings weight causing nans!
+                # because when ema_cluster_size is tiny it makes ema_w huge!
+                # see update 14!
+                # ---------------------DEBUG--------------------------------
                 updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
                 # heres the kicker, instead of a new nn.Parameter each time, we update 
                 # the existing embedding weight tensor's data inplace!
-                self.embeddings.weight.data.copy_(updated_embeddings)
+                # self.embeddings.weight.data.copy_(updated_embeddings)
                 # 
                 # -----------------------DEBUG---------------------
                 # heres another operation that may make things go haywire!
@@ -7013,21 +7170,34 @@ class Quantizer(nn.Module):
                 #
                 # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
                 
-                # print(f'ema_w: min={self.ema_w.min().item():5f},'
-                #       f'max={self.ema_w.max().item():.5f}')
+                print(f'ema_w: min={self.ema_w.min().item():5f},'
+                      f'max={self.ema_w.max().item():.5f}')
                 
-                # print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
-                #       f'max={self.ema_cluster_size.max().item():.5f}')
+                print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
+                      f'max={self.ema_cluster_size.max().item():.5f}')
                 
-                # print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
-                #       f'max={updated_embeddings.max().item():.5f}')
+                print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
+                      f'max={updated_embeddings.max().item():.5f}')
                 
                 if not torch.isfinite(updated_embeddings).all():
                     print(f"!!! NaN/Inf in updated_embeddings BEFORE assignment !!!"
                           f"ema_w finite: {torch.isfinite(self.ema_w).all()},"
                           f"cluster_size min: {self.ema_cluster_size.min().item()}")
-                
-                # self.embeddings.weight.data.copy_(updated_embeddings)
+                #---------------------------Debug2-------------------------
+                # our embedding weights explode quickly, lets try clipping it
+                # and see if it fixes the exploding values. see update 14
+                # we first select a value, like 10 here (we got 400k! as our
+                # initial embeddings.max() but we dont set it to 400k, instead
+                # choose a value like 1,5 or 10! and then sit and watch for a few
+                # epochs how large the embeddings max gets, if it keeps maxingout
+                # at our clipvalue, we'd want to increase the clip value so we
+                # dont hinder the training unless it gives us nans again(not likely though here))
+                # if it didnt maxout at clipvalue, and we dont get nans we are good!
+                # 
+                clip_value = 10.0
+                updated_embeddings.clamp_(min=-clip_value, max=clip_value)
+                #----------------------------------------------------------
+                self.embeddings.weight.data.copy_(updated_embeddings)
                 
                 if not torch.isfinite(self.embeddings.weight).all(): 
                     print("!!! NaN/Inf AFTER embeddings.weight update !!!")
@@ -7045,6 +7215,12 @@ class Quantizer(nn.Module):
             print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
             print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
             #----------------------------DEBUG------------------------
+        
+        #----------------------------DEBUG------------------------
+        # see update 14
+        print(f'self.embeddings.weight min={self.embeddings.weight.data.min().item():.5f},'
+              f'max={self.embeddings.weight.data.max().item():.5f}')
+        #----------------------------DEBUG------------------------
             
         # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
         # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
@@ -7537,14 +7713,29 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
             # (the true gradient magnitude), which we can use for our calculations (weight updates)
             #-----------------DEBUG---------------------
             # clip to solve fp16-ema issue? since we want to clipgradient
-            # so we unscale first
+            # so we unscale first - see update 14
             # scaler.unscale_(optimizer)
             # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) 
             #-----------------DEBUG---------------------
-            scaler.step(optimizer)
+            out = scaler.step(optimizer)
             # update the scale value for the next round
             scaler.update()            
             
+            # ----------------DEBUG----------------------
+            # if instability happens in fp16, gradscaler may drop optimization steps
+            # for and batches of updates get ignored! if it happens a lot it means
+            # we have serious issues,
+            # what should we look for here:
+            # the scale factor by default is 1 for fp32, but its different for fp16. 
+            # the actual value depends on the model and calculations involved. 
+            # the scaler factor increases when gradients are consistently finite after unscaling.
+            # so if it decreases sharply, it means inf or nan gradients are detected (overflow)
+            #
+            if not out:
+                print(f'!!!   Optimizer Step Skipped({i})  !!!')
+            print(f'batch:{i}) Scaler factor {scaler.get_scale()}')
+            #----------------DEBUG----------------------
+             
             scheduler.step()
               
             reconstruction_errors.append(reconstruction_error.item())
@@ -8021,7 +8212,6 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 # occasional color blobs (see reconstruction examples in ./results)
 # 
 # todo explain properly:
-
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
 # fp16 with ema enabled - completely fails with default configs
 # results in nans in loss, and completely white reconstructions 
