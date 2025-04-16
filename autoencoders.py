@@ -6237,7 +6237,6 @@ class Quantizer(nn.Module):
         self.register_buffer('ema_cluster_size', torch.zeros(self.num_embd))
         self.ema_w = nn.Parameter(torch.Tensor(self.num_embd, self.embd_size))
         self.ema_w.data.normal_()
-
         
     def forward(self, encoder_outputs:torch.Tensor):
         # print(f'{encoder_outputs.shape=}')
@@ -6279,20 +6278,20 @@ class Quantizer(nn.Module):
         # it! and only then the issue for this section got resolved
         # however I', still hetting nans for loss! so we need to check 
         # the rest of the code!
-        encoder_outputs_flatten = encoder_outputs_flatten.float()
-        self.embeddings.weight = self.embeddings.weight.float()
-        with torch.amp.autocast(device_type='cuda',enabled=False):
-            enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
-            em_norm = torch.sum(self.embeddings.weight**2, dim=1)
-            enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
-            distances = enc_norm + em_norm - 2 * enc_mul_em
+        # encoder_outputs_flatten = encoder_outputs_flatten.float()
+        # self.embeddings.weight = self.embeddings.weight.float()
+        # with torch.amp.autocast(device_type='cuda',enabled=False):
+        #     enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
+        #     em_norm = torch.sum(self.embeddings.weight**2, dim=1)
+        #     enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
+        #     distances = enc_norm + em_norm - 2 * enc_mul_em
             
-            if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
-            if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
-            if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
+            # if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
+            # if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
+            # if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
             
-            if not torch.isfinite(distances).all():
-                print("!!! NaN/Inf detected in calculated distances !!!")
+            # if not torch.isfinite(distances).all():
+            #     print("!!! NaN/Inf detected in calculated distances !!!")
                 # torch.save({'encoder_norm':enc_norm,
                 #             'embd_norm':em_norm,
                 #             'encoder_out_mul_embd_weight':enc_mul_em,
@@ -6301,12 +6300,12 @@ class Quantizer(nn.Module):
                 # raise ValueError("NaN/Inf in distances")
         # # -----------------------DEBUG---------------------
 
-        # encoder_outputs_flatten = encoder_outputs_flatten.float()
-        # self.embeddings.weight = self.embeddings.weight.float()
-        # with torch.amp.autocast(device_type='cuda',enabled=False):
-        #     distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
-        #                 torch.sum(self.embeddings.weight**2, dim=1) -
-        #                 2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
+        encoder_outputs_flatten = encoder_outputs_flatten.float()
+        self.embeddings.weight = self.embeddings.weight.float()
+        with torch.amp.autocast(device_type='cuda',enabled=False):
+            distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
+                        torch.sum(self.embeddings.weight**2, dim=1) -
+                        2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
             # or we could use torch.cdist
             # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
 
@@ -6411,10 +6410,10 @@ class Quantizer(nn.Module):
                 # update: ok seems dw is ok with both encodings and encoders_outputs_flatten
                 # bing in float(). no warning, but we are still getting nans for loss!
                 # 
-                if not torch.isfinite(dw).all(): print("!!! NaN/Inf in dw !!!")
+                # if not torch.isfinite(dw).all(): print("!!! NaN/Inf in dw !!!")
                 #
                 # this is forupdate6 (see down below)
-                print(f"dw max abs: {dw.abs().max().item()}") # dw calculated using .float() inputs
+                # print(f"dw max abs: {dw.abs().max().item()}") 
                 # -----------------------DEBUG---------------------
                 
                 # update for the embeddings vectors. we use ema_w is to stabilize training 
@@ -7074,7 +7073,7 @@ class Quantizer(nn.Module):
                 # we have some serious instablity going on or not.
                 # 
                 # 
-                if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
+                # if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
                 #
                 # -----------------------DEBUG---------------------
                 
@@ -7170,19 +7169,19 @@ class Quantizer(nn.Module):
                 #
                 # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
                 
-                print(f'ema_w: min={self.ema_w.min().item():5f},'
-                      f'max={self.ema_w.max().item():.5f}')
+                # print(f'ema_w: min={self.ema_w.min().item():5f},'
+                #       f'max={self.ema_w.max().item():.5f}')
                 
-                print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
-                      f'max={self.ema_cluster_size.max().item():.5f}')
+                # print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
+                #       f'max={self.ema_cluster_size.max().item():.5f}')
                 
-                print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
-                      f'max={updated_embeddings.max().item():.5f}')
+                # print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
+                #       f'max={updated_embeddings.max().item():.5f}')
                 
-                if not torch.isfinite(updated_embeddings).all():
-                    print(f"!!! NaN/Inf in updated_embeddings BEFORE assignment !!!"
-                          f"ema_w finite: {torch.isfinite(self.ema_w).all()},"
-                          f"cluster_size min: {self.ema_cluster_size.min().item()}")
+                # if not torch.isfinite(updated_embeddings).all():
+                #     print(f"!!! NaN/Inf in updated_embeddings BEFORE assignment !!!"
+                #           f"ema_w finite: {torch.isfinite(self.ema_w).all()},"
+                #           f"cluster_size min: {self.ema_cluster_size.min().item()}")
                 #---------------------------Debug2-------------------------
                 # our embedding weights explode quickly, lets try clipping it
                 # and see if it fixes the exploding values. see update 14
@@ -7197,11 +7196,11 @@ class Quantizer(nn.Module):
                 clip_value = 10.0
                 updated_embeddings.clamp_(min=-clip_value, max=clip_value)
                 #----------------------------------------------------------
-                self.embeddings.weight.data.copy_(updated_embeddings)
+                # self.embeddings.weight.data.copy_(updated_embeddings)
                 
-                if not torch.isfinite(self.embeddings.weight).all(): 
-                    print("!!! NaN/Inf AFTER embeddings.weight update !!!")
-                # -----------------------DEBUG---------------------
+                # if not torch.isfinite(self.embeddings.weight).all(): 
+                #     print("!!! NaN/Inf AFTER embeddings.weight update !!!")
+                # # -----------------------DEBUG---------------------
                 
             
             
@@ -7209,18 +7208,18 @@ class Quantizer(nn.Module):
             e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
             # print(f'{e_loss.item()=}')
             loss = self.beta_weight * e_loss
-            #----------------------------DEBUG------------------------
-            # see update 6 and 7 up
-            print(f'{e_loss.item()=:.5f} | {loss.item()=:.5f}')
-            print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
-            print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
-            #----------------------------DEBUG------------------------
+            # #----------------------------DEBUG------------------------
+            # # see update 6 and 7 up
+            # print(f'{e_loss.item()=:.5f} | {loss.item()=:.5f}')
+            # print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
+            # print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
+            # #----------------------------DEBUG------------------------
         
-        #----------------------------DEBUG------------------------
-        # see update 14
-        print(f'self.embeddings.weight min={self.embeddings.weight.data.min().item():.5f},'
-              f'max={self.embeddings.weight.data.max().item():.5f}')
-        #----------------------------DEBUG------------------------
+        # #----------------------------DEBUG------------------------
+        # # see update 14
+        # print(f'self.embeddings.weight min={self.embeddings.weight.data.min().item():.5f},'
+        #       f'max={self.embeddings.weight.data.max().item():.5f}')
+        # #----------------------------DEBUG------------------------
             
         # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
         # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
@@ -7731,9 +7730,9 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
             # the scaler factor increases when gradients are consistently finite after unscaling.
             # so if it decreases sharply, it means inf or nan gradients are detected (overflow)
             #
-            if not out:
-                print(f'!!!   Optimizer Step Skipped({i})  !!!')
-            print(f'batch:{i}) Scaler factor {scaler.get_scale()}')
+            # if not out:
+            #     print(f'!!!   Optimizer Step Skipped({i})  !!!')
+            # print(f'batch:{i}) Scaler factor {scaler.get_scale()}')
             #----------------DEBUG----------------------
              
             scheduler.step()
@@ -7794,23 +7793,22 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
 
         #------------------------------------DEBUG--------------------------------
         # see update 8 in Quantizer model - finding why fp16 and ema fails
-        print("--- Checking BatchNorm Stats ---")
-        for name, module in model.named_modules():
-            if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-                if module.running_mean is not None:
-                    if not torch.isfinite(module.running_mean).all():
-                        print(f"!!! NaN/Inf in running_mean for {name} !!!")
-                    if not torch.isfinite(module.running_var).all():
-                        print(f"!!! NaN/Inf in running_var for {name} !!!")
-                    # check for near-zero variance which can cause division issues
-                    if (module.running_var < 1e-7).any():
-                        print(f"!!! WARNING: Very small running_var detected for {name} !!! Min value: {module.running_var.min().item()}")
+        # print("--- Checking BatchNorm Stats ---")
+        # for name, module in model.named_modules():
+        #     if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+        #         if module.running_mean is not None:
+        #             if not torch.isfinite(module.running_mean).all():
+        #                 print(f"!!! NaN/Inf in running_mean for {name} !!!")
+        #             if not torch.isfinite(module.running_var).all():
+        #                 print(f"!!! NaN/Inf in running_var for {name} !!!")
+        #             # check for near-zero variance which can cause division issues
+        #             if (module.running_var < 1e-7).any():
+        #                 print(f"!!! WARNING: Very small running_var detected for {name} !!! Min value: {module.running_var.min().item()}")
 
-                print(f"{name} - Running Mean Max Abs: {module.running_mean.abs().max().item():.8f}")
-                print(f"{name} - Running Var Max Abs: {module.running_var.abs().max().item():.8f}") # Variance shouldn't explode usually
-        print("--- BatchNorm Stats Check Done ---")
-        
-        
+        #         print(f"{name} - Running Mean Max Abs: {module.running_mean.abs().max().item():.8f}")
+        #         print(f"{name} - Running Var Max Abs: {module.running_var.abs().max().item():.8f}") # Variance shouldn't explode usually
+        # print("--- BatchNorm Stats Check Done ---")
+               
         #------------------------------------DEBUG--------------------------------
         
         # display reconstruction performance!
@@ -8104,9 +8102,6 @@ use_ema=True
 # loss and perplexity (sometimes better even)
 # its faster in training (52 mins vs 100 mins)
 use_fp16=True
-#!edit 
-#!use_ema doesnt make any difference on quality of recons 
-# apparently when model is weak?!
 
 model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
 model.to(device)
@@ -8212,6 +8207,96 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 # occasional color blobs (see reconstruction examples in ./results)
 # 
 # todo explain properly:
+# sometimes, FP16 requires adjustments or reveals sensitivities.
+# Numerical Precision and Stability:
+# the thing is, when we use f16, despite all the machinery(autocast on safe operations only,
+# using gradscaler for scaling up,etc) we use to make it as safe
+# as possible and prevent gradient underflow, some operations might still suffer and
+# we face numerical instability during training!
+# values within layers might get clipped or rounded differently in fp16, which 
+# changes the information flow in a subtle manner we might not notice at first
+# even though we correctly cast imgs_rec.float() and imgs.float() when calling
+# F.mse_loss() to make the loss work in full precision, the imgs_rec tensor itself is
+# produced by potentially fp16 operations. 
+# its values might already be slightly less precise than the equivalent fp32 output
+# before the cast. this can lead to a slightly noisier or less accurate loss signal being 
+# backpropagated.
+# 
+# the Vector Quantization step itself involves distance calculations 
+# (e.g. Euclidean distance between encoder outputs and codebook/embedding vectors) and 
+# ema updates for the codebook/embeddings(if we enable it). 
+# these operations might be more sensitive to the lower precision of f16. 
+# small inaccuracies in distance calculations could lead to slightly suboptimal 
+# codebook/embedding vector selection or slower/noisier codebook learning. 
+# ema updates in f16 might also accumulate errors faster.
+# 
+# Color Tint Artifacts: t
+# he intermittent blue/green hues are a strong indicator of numerical instability 
+# creeping in. This could mean:
+# 
+# Gradient Issues: gradients for specific color channels might occasionally become NaN or
+# inf due to fp16 overflows/underflows during the backward pass, even if GradScaler 
+# catches most issues scaler.step() would skip the optimizer update for that batch, 
+# potentially leading to uneven learning across channels.
+#
+# Activation Issues: activations in certain layers might be hitting the limits of fp16 
+# representation, leading to clipping or wrapping artifacts that manifest as color shifts
+# in the final reconstruction.
+# 
+# Codebook Instability: the codebook/embedding vectors themselves might be developing
+# unstable values or biases in certain dimensions (corresponding to colors) due to the
+# imprecise updates in the fp16 environment.
+# 
+# Hyperparameter Sensitivity:
+# Learning Rate: FP16 training can sometimes be more sensitive to the learning rate. 
+# An LR that's optimal for FP32 might be slightly too high for stable FP16 training, 
+# leading to oscillations or slower convergence as the model struggles with the less 
+# precise updates.
+# Weight Decay: Interactions between weight decay and lower precision might differ slightly.
+# VQ Commitment Loss (beta): The balance between reconstruction loss and the VQ commitment
+# loss might need re-tuning in an FP16 environment. The relative scale of these losses could
+# be affected by the precision changes.
+# Scheduler: While the scheduler itself is fine, the learning rate values it produces might 
+# interact differently with FP16 training dynamics.
+# GradScaler Dynamics:
+# While GradScaler helps, it's not magic. If instability causes frequent inf/NaN gradients,
+# the scaler will skip optimizer steps. Frequent skips significantly slow down effective training. It might also decrease the scale factor drastically, potentially re-introducing some risk of underflow later.
+# How to Investigate and Improve:
+# Tune Learning Rate: This is often the first thing to try. Reduce the initial learning rate
+# for your FP16 run (e.g., by 2x, 5x, or 10x) and see if convergence becomes more stable 
+# and quality improves. You might need a slightly different LR schedule as well 
+# (e.g., longer warmup).
+# Check VQ Commitment Loss (beta): Experiment with slightly different values for beta. 
+# Maybe the commitment loss needs to be weighted differently relative to the reconstruction
+# loss in FP16.
+# Monitor GradScaler: Print scaler.get_scale() periodically during training. 
+# Is it decreasing rapidly or staying very low? Are optimizer steps being skipped 
+# frequently? (You can check if scaler.step(optimizer) returns None).
+# Frequent skips point to instability.
+# Check for NaNs: Add checks within your training loop (maybe only occasionally for 
+# performance) to see if NaNs are appearing in the loss, model outputs, or gradients 
+# (after backward, before step). torch.isnan(tensor).any() is useful. 
+# Use torch.autograd.detect_anomaly() for more detailed (but slower) debugging if needed.
+# Explicit FP32 for Sensitive Ops: As a diagnostic step (it might hurt performance), 
+# try forcing specific parts of the VQ operation (like distance calculation or EMA updates 
+# if applicable) to run in FP32 even within the autocast block by manually casting their 
+# inputs/outputs .float(). If this fixes the problem, it pinpoints the VQ step as being 
+# sensitive.
+# 
+# Analyze Loss Components: Plot the reconstruction_error and vq_loss separately during 
+# training for both FP32 and FP16. Are their relative magnitudes or trends significantly 
+# different? Is the vq_loss behaving erratically in FP16?
+# Data Normalization: Although you disabled it, ensure your input data normalization 
+# (e.g., to [0, 1] or [-1, 1]) is appropriate and consistently applied. Extreme values 
+# could exacerbate FP16 issues.
+# 
+# In summary, FP16 often requires more careful tuning, especially of the learning rate, 
+# compared to FP32. The artifacts you're seeing suggest numerical precision issues, 
+# potentially centered around the VQ mechanism or loss calculation feeding back into 
+# the gradients. Start by lowering the learning rate and monitoring the GradScaler's 
+# behavior.
+
+
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
 # fp16 with ema enabled - completely fails with default configs
 # results in nans in loss, and completely white reconstructions 
