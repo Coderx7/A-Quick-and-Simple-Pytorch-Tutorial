@@ -8210,14 +8210,18 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_132947/vqvae_CIFAR10_64x64_20250416_132947.ckpt'
 #
 # fp16 with ema
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/'
+# right off the bat the perplexity is 3x better (15vs45) and loss is 10x better!
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
+
+# todo compare embedding/codebook utilization (histogram) for fp16/fp32 and fp16/fp32 ema versions
+# todo and see which one does a better job of utilizing codebooks
 
 # using fp32 version 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 #todo add train and test sizes so the rest of the pipeline also use the same
@@ -8936,8 +8940,6 @@ class ImprovedPixelCNN(nn.Module):
 #########################
 def train_prior(prior:PixelCNN, 
                 vqvae_model:VQVAE,
-                # latent_codes, 
-                # latent_labels,
                 dataloader,
                 dataset_name:str, 
                 num_classes=None,
@@ -8945,37 +8947,59 @@ def train_prior(prior:PixelCNN,
                 batchsize=32,
                 lr=1e-3,
                 weight_decay=1e-5,
+                use_fp16=False,
                 selected_label=9,
                 sample_size=64,
                 temperature=1,
                 rows=9,
                 cols=8,
-                save_recons_dir=None,
+                checkpoint_dir_path='./weights',
+                recons_dir_path=None,
+                device='cuda',
                 generation_device='cuda',
                 figsize=(12,16),
                 seed=66):
     
-    train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+    
+    
+    prior.to(device)
+    vqvae_model.to(device)
+    # device = next(prior.parameters()).device
+    
+    # note our timestamp needs to be sortable so if later on we need
+    # to sort our files for whatever reason the order of files isnt 
+    # messed up. (this form is sortable, and filename friendly so allis good now!)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+    # checkpoint_dir_path = './' if not checkpoint_dir_path else checkpoint_dir_path
+    checkpoint_dir_path = checkpoint_dir_path or './'
     is_conditional = "Conditional_" if prior.make_conditional else ""
-    model_checkpoint_name = f'vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{train_datetime}.ckpt'
-    device = next(prior.parameters()).device
+    checkpoint_fname = f'vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{timestamp}.ckpt'
     
-    recons_dir=None
-    if save_recons_dir:
-        ext = os.path.splitext(model_checkpoint_name)[-1]
-        dir_name = model_checkpoint_name.replace(ext,"")
-        recons_dir = os.path.join(save_recons_dir,dir_name)
+    # grab the checkpoint filename and use it for the directory name
+    # so everything is neat and tidy at one place under one name!
+    ext = os.path.splitext(checkpoint_fname)[-1]
+    model_dir_name = checkpoint_fname.replace(ext, "")
     
-    # H,W = prior.input_size
-    # H, W = latent_codes.shape[1:]
+    checkpoint_dir_path = os.path.join(checkpoint_dir_path, model_dir_name)
     
+    # with exist_ok=True, we dont need to check if the dir
+    # already exists or not, if it doesnt it creates one, if
+    # if does, it leaves it be!
+    os.makedirs(checkpoint_dir_path, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir_path, checkpoint_fname)
+    
+    if recons_dir_path:
+        recons_dir_path = os.path.join(recons_dir_path, model_dir_name)
+        os.makedirs(recons_dir_path, exist_ok=True)
+        
     optimizer = torch.optim.Adam(prior.parameters(), lr=lr)    
     
     # After training vqvae, we need to grab the training set's encodings
     # and use these encodings to train our prior model
-    latent_codes,latent_labels = get_discrete_latent_codes(vqvae_model, dataloader)
+    latent_codes, latent_labels = get_discrete_latent_codes(vqvae_model, dataloader)
 
-    # combine latent codes and labels
+    # combine latent codes and labels for conditional training
     dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
 
     # dataloader_train = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
@@ -9048,13 +9072,27 @@ def train_prior(prior:PixelCNN,
     BPD_epoch_val=[]
     best_val_loss = float('inf')
     
-    param_cnt = sum(p.numel() for p in prior.parameters())    
-    
-    print(f'Experiment Date:  {train_datetime}')
-    print(f'Dataset Name   :  {dataset_name.upper()}')
-    print(f'Embedding Size :  {prior.embedding_size}')
-    print(f'Parameter Count:  {param_cnt:,}')
-    print(f'Checkpoint Name:  {model_checkpoint_name}')
+    prior_param_cnt = sum(p.numel() for p in prior.parameters())    
+    vqvae_param_cnt = sum(p.numel() for p in vqvae_model.parameters())    
+
+    print(f'Experiment Date:     {timestamp}')
+    print(f'Dataset:             {dataset_name.upper()}')
+    print(f'Prior Param Count:   {prior_param_cnt:,}')
+    print(f'VQVAE Param Count:   {vqvae_param_cnt:,}')
+    print(f'Mixed Precision:     {"\033[32mEnabled\033[0m" if use_fp16 else "\033[91mDisabled\033[0m"}')
+    print(f'Checkpoint:          {checkpoint_fname}')
+    print(f'Checkpoint Dir:      {checkpoint_dir_path}')
+    print(f'Reconstructions:     {recons_dir_path}')
+    print(f'Train size:          {len(dataloader_train.dataset):,}')
+    print(f'Test size:           {len(dataloader_val.dataset):,}')
+    print(f'Epochs:              {epochs}')
+    print(f'BatchSize:           {batch_size}')
+    print(f'Embedding Size:      {prior.embedding_size}')
+    print(f'VQVAE embd_num:      {vqvae_model.embd_num}')
+    print(f'VQVAE embd_size:     {vqvae_model.embd_size}')
+    print(f'VQVAE commmitment:   {vqvae_model.beta}')
+    print(f'optimizer:           {optimizer}')
+    print(f'scheduler:           {scheduler.state_dict()}')
 
     
     for epoch in range(epochs):
@@ -9202,7 +9240,7 @@ def train_prior(prior:PixelCNN,
                     'make_conditional': prior.make_conditional,
                     'dropout_rate': prior.dropout_rate,
                 }
-            }, model_checkpoint_name.replace('.ckpt','_best.pt'))
+            }, checkpoint_path.replace('.ckpt','_best.pt'))
             
             print(f'best model saved with val-loss: {best_val_loss:.6f}')
         
@@ -9224,16 +9262,14 @@ def train_prior(prior:PixelCNN,
                 'make_conditional': prior.make_conditional,
                 'dropout_rate': prior.dropout_rate,
                 }
-            }, model_checkpoint_name)
+            }, checkpoint_path)
         
         print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds_training):.6f} |  BPD_VAL: {np.mean(bpds_val):.6f} | LR:{scheduler.get_last_lr()[-1]:.6f}')
         
         # display reconstruction performance!
         fname=None
-        if save_recons_dir:
-            if not os.path.exists(recons_dir):
-                os.makedirs(recons_dir)
-            fname = f'{recons_dir}/generated_{epoch}.jpg'
+        if recons_dir_path:
+            fname = f'{recons_dir_path}/generated_{epoch}.jpg'
         
         display_generated_samples(vqvae_model=vqvae_model,
                                   prior_model=prior,
@@ -9250,7 +9286,7 @@ def train_prior(prior:PixelCNN,
                                   fname=fname)
     
     # create gifs out of all generated samples
-    create_gifs(dir_path=recons_dir)
+    create_gifs(dir_path=recons_dir_path)
     
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
@@ -9280,7 +9316,7 @@ def train_prior(prior:PixelCNN,
     print('training prior model complete!')
     # pd.DataFrame(losses_epoch).plot()
     # plt.plot()
-    return prior, model_checkpoint_name
+    return prior, checkpoint_path
 
 
 from tqdm import tqdm
@@ -9940,6 +9976,8 @@ def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=
 conditional = True 
 num_classes = 40 if dataset=='celeba' else 10
 
+#TODO improve prior training function like vqvae trainig!
+#
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=num_classes,
                  make_conditional=conditional,
@@ -9954,15 +9992,19 @@ prior, ckptname = train_prior(prior=prior,
                               batchsize=64,
                               lr=0.001,
                               weight_decay=1e-2,
+                              use_fp16=False,
                               selected_label=9,
                               sample_size=64,
                               temperature=1,
                               rows=9,
                               cols=8,
+                              device='cuda',
                               generation_device='cuda',
                               figsize=(12,16),
                               seed=66,
-                              save_recons_dir='./results/')
+                              checkpoint_dir_path='./weights/prior/emb256/',
+                              recons_dir_path='./results/',
+                              )
 
 # prior = ImprovedPixelCNN(num_embds=model.embd_num, 
 #                          embedding_size=256,
@@ -10062,6 +10104,18 @@ prior, ckptname = train_prior(prior=prior,
 # conditional
 # ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
 # ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
+
+#fp16/ema vqvae
+# cifa10-embd256-64x64
+ckptname = './vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16.ckpt'
+ckptname = './vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.pt'
+
+
+#fp32/eva vqvae
+#cifa10-embd256-64x64
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
+
+
 
 print(f'{dataset=}')
 print(f'{device=}\n')
@@ -10735,7 +10789,7 @@ compare_real_vs_prior(prior,
                       batch_size=4,
                       num_classes=num_classes,
                       class_names=class_names,
-                      advanced_sampling=True,
+                      advanced_sampling=False,
                       temperature=1,
                       top_k=3,#3 seems to be a good spot for my currentcifar10 model
                       #for testing top_p either leave top_k=0, or make sure its a 
