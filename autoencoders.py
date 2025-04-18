@@ -9010,23 +9010,26 @@ def train_prior(prior:PixelCNN,
     train_size = dataset_size - val_size
     dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size])
     
-    dataloader_train = torch.utils.data.DataLoader(dataset_train, 
-                                                   batch_size=batchsize, 
-                                                   shuffle=True, 
-                                                   pin_memory=True, 
-                                                   num_workers=8, 
-                                                   drop_last=True)
+    dataloader_train = torch.utils.data.DataLoader(
+        dataset_train, 
+        batch_size=batchsize, 
+        shuffle=True, 
+        pin_memory=True, 
+        num_workers=8, 
+        drop_last=True)
     
-    dataloader_val = torch.utils.data.DataLoader(dataset_val, 
-                                                 batch_size=batchsize, 
-                                                 shuffle=False,
-                                                 pin_memory=True,
-                                                 num_workers=8,
-                                                 drop_last=True)
+    dataloader_val = torch.utils.data.DataLoader(
+        dataset_val, 
+        batch_size=batchsize, 
+        shuffle=False,
+        pin_memory=True,
+        num_workers=8,
+        drop_last=True)
     
     #AdamW works much better than Adam! by a long shot! with adam we got loss=4.0, while
     # with AdamW with the same architecture we got down to 2 for mnist!
-    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=weight_decay,)
+    optimizer = torch.optim.AdamW(prior.parameters(),
+                                  lr=lr, weight_decay=weight_decay,)
     
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
     #                                                        factor=0.5, patience=3,
@@ -9126,44 +9129,65 @@ def train_prior(prior:PixelCNN,
             loss = F.cross_entropy(logits.float(), latents.long())
             
             #! calculate bits per dimension: needs excessive edits
-            # bits per dimension(bpd) is used to evaluate generative models(autoregressive ones 
-            # like pixelcnn, transformers,etc), especially those that work with images. 
-            # for example , the original pixelcnn achieves bpd of 2.29 for cifar10. and everyone 
+            # bits per dimension(BPD) is used to evaluate autoregressive generative models like pixelcnn,
+            # transformers,etc), that work with high dimensional data like images. 
+            # For example, the original Pixelcnn achieves BPD of 2.29 for Cifar10 and everyone 
             # who trains or works in this subfield/subject uses it.
-            # this metric is used because it makes comparing different models across different image
-            # sizes (or datasets) easier.
-            # its essentially measuring how well the model compresses the data. (in fact it means
-            # the model is correctly selecting the most likely outcome constantly which makes it
-            # chooses the right data for compression thus getting better at compressing the data!)
-            # the lower the value the better, it means the model is better at predicting the data distribution, 
-            # as it requires fewer bits per dimension (or per pixel in our case) to encode the image
-            # (since images are high-dimensional data, we normalize the negative log-likelihood by 
-            # the number of dimensions (pixels) in the image)
-            # the actual formula is BPD = (NLL) / (number of pixels * log(2))
-            # our model outputs probabilities for each pixel and each pixel is modeled as a discrete distribution
-            # (i.e. like 256 possible values for each color channel in an 8-bit image) 
-            # The loss is the negative log-likelihood of the true pixel values given the model's predicted distribution
-            # we sum the NLL over all pixels in the image, then average over the batch. This gives us the average
-            # NLL per image.
-            # we then divide this average NLL by the number of pixels per image (i.e. 32*32*3=3072) to get NLL per dimension (pixel).
-            # then convert from nats to bits by dividing by log(2). 
-            # note that since log base e (natural log) is used in the NLL calculation, if we divide by log(2) it converts it 
-            # to bits (since log2(x) = ln(x)/ln(2)).
-            # so, the formula would be:
-            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
-            # or :
-            # BPD = (NLL_total / (num_images * num_pixels)) / log(2)
-            # but since we used crossentropy here,  it's already averaged over the batch and the elements.
-            # so if the loss is computed as the average NLL per pixel, then we just need to convert that
-            # average to bits by dividing by log(2) and dont need to divide it by n_dims here!
-            #  
-            
-            # correct explanation : (revised by google):
+            # (we have other metrics that we use for other types of models, such as GANs which are non-likelihood-based.
+            # we'll cover these in future chapters)
+            # this is used because it makes comparing different models across different image
+            # sizes (or datasets) easier. 
+            # it essentially measurs how well the model compresses the data, which put in other words
+            # means, it shows how well our model correctly assigns higher likelihood (lower NLL) to 
+            # the true data, which in turn shows how good its predictive power and compression capabilities
+            # are.
             # 
-            # Purpose: BPD quantifies how well a model predicts the data distribution. 
-            # It essentially measures the average number of bits required to encode each dimension
-            # (e.g. each pixel value or sub-pixel value) of the data, assuming an ideal compression scheme
-            # based on the model's predicted probabilities. 
+            # (second version might be better and more on point):
+            # BPD simply put, measures how well a model predicts the data distribution.
+            # it essentially measures the average number of bits required to encode each dimension
+            # (e.g. each pixel value or sub-pixel value) of the data, assuming an ideal compression
+            # scheme based on the model's predicted probabilities?
+            # when a model achieves a lower BPD, it means that model is better at predicting the data
+            # distribution, as it requires fewer bits per dimension (or per pixel in our case) to 
+            # encode the image.
+            # 
+            
+            # note that since log base e (natural log) is used in the NLL calculation, if we divide 
+            # by log(2) it converts it to bits (since log2(x) = ln(x)/ln(2)).
+            # the actual formula for BPD then is : 
+            # BPD = (NLL) / (number of pixels * log(2))
+            # our model outputs probabilities for each pixel and each pixel is modeled as a discrete distribution
+            # (i.e. like 256 possible values for each color channel element in an 8-bit image) 
+            # The loss is the negative log-likelihood of the true pixel values given the model's predicted
+            # distribution. 
+            # we sum the NLL over all pixels in the image, then average over the batch. 
+            # This gives us the average NLL per image.
+            # we then divide this average NLL by the number of pixels per image (i.e. 32*32*3=3072) 
+            # to get NLL per dimension (pixel). then convert from nats to bits by dividing by log(2). 
+            # 
+            
+            # note that since log base e (natural log) is used in the NLL calculation, if we divide 
+            # by log(2) it converts it to bits (since log2(x) = ln(x)/ln(2)).
+            # so, the formula would be (for single image):
+            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
+            # or (for batch):
+            # BPD = (NLL_total / (num_images * num_pixels)) / log(2)
+            # but since we used crossentropy here, and by default it uses reduction='mean', 
+            # it's already averaged over the batch and the elements. 
+            # so if the loss is computed as the average NLL per pixel, then we just need to 
+            # convert that average to bits by dividing by log(2) and dont need to divide it 
+            # by n_dims here!
+            #  
+            # so to recap again, when we simply use F.cross_entropy(), by default it uses reduction='mean'
+            # which means first the NLL loss is calculated for each individual spatial position (h, w) within 
+            # each image/latent n in the batch.
+            # then reduction='mean' part, computes the average of all these individual NLL values across 
+            # the entire batch (N) and all spatial dimensions (H, W), and all thats left to do to get
+            # BPD is to simply divide the loss by log(2)! (or multiply by log2(e))
+            # 
+            # Dividing the NLL (calculated using natural log, ln) by log(2) (which is ln(2)) converts 
+            # the units from nats to bits. The formula log2(x) = ln(x)/ln(2) is the justification.
+            # 
             # Lower BPD indicates a better model (better compression, closer fit to the true data distribution). 
             # It allows for standardized comparison across models and datasets, normalizing for dimensionality.
             # 
@@ -9178,24 +9202,24 @@ def train_prior(prior:PixelCNN,
             # base-2 logarithm of e (approx 1.443). 
             # The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
             # 
-            # Role of F.cross_entropy: When modeling discrete data (like pixel values 0-255), 
+            # When modeling discrete data (like pixel values 0-255), 
             # F.cross_entropy is commonly used as the loss function.
             # It calculates the NLL for each individual element (pixel/sub-pixel) based on the 
             # model's predicted probabilities (logits) and the true target value (latents.long()).
-            # Crucially, with the default reduction='mean', F.cross_entropy averages these NLL values
-            # (in nats) over all elements across the entire batch.
-            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly gives us
-            # the Average NLL per Dimension (in nats).
-            # Calculating BPD from F.cross_entropy Loss: Since loss.item() already represents the average
-            # NLL per dimension in nats:
-            # # loss = F.cross_entropy(logits, latents.long()) # Assumes reduction='mean'
+            # important note:
+            # the reduction type for F.crossentropy by default is reduction='mean', therefor 
+            # F.cross_entropy averages these NLL values (in nats) over all elements across
+            # the entire "batch"!
+            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly 
+            # gives us the average nll per dimension (in nats).
+            # since loss.item() already represents the average NLL per dimension in nats:
+            # # loss = F.cross_entropy(logits, latents.long()) # reduction='mean'
             # nats_per_dim = loss.item()
-            # # Convert nats per dimension to bits per dimension
-            # # Using np.log(2) which is ln(2):
+            # we convert nats per dimension to bits per dimension using np.log(2) which is ln(2):
             # bpd = nats_per_dim / np.log(2)
-            # # Or using np.log2(np.e):
-            # # bpd = nats_per_dim * np.log2(np.e)
-            # You do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:]))
+            # or using np.log2(np.e):
+            # bpd = nats_per_dim * np.log2(np.e)
+            # we do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:]))
             # again, because the cross-entropy loss with mean reduction has already performed that averaging.
                 
             # n_dims = np.prod(latents.shape)
@@ -9696,9 +9720,24 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     # print(f'{H=},{W=}')
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
-    # !edit explanation its wrong!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11
-    # if we conditioned our images on 0s, first then we need to start with zeros
-    # but we didnt so we use randint
+    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
+    # generates autoregressively. it predicts the code for position (i, j) based on the
+    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
+    # so we need a blank canvas to fill sequentially and starting with zeros is the 
+    # standard way to provide this initial empty state.
+    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
+    # anything because it was too simplistic, because of that, when i first wrote the early
+    # version of this function, using zeros would only give me solid colors like red! blue!
+    # after some diggings, found a suggestion that told me to use randints, and it actually 
+    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
+    # that actually looked like an object, though badly deformed and pretty low quality in general,
+    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
+    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
+    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
+    # all of this worse! only after that I found about the issue that starting with random 
+    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
+    # have the correct sequential context it was trained on, it expects to see the results of
+    # its own previous predictions when predicting the next step, not random noise.
     codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
     # codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
     labels = F.one_hot(labels,num_classes=num_classes).to(device)
@@ -9720,7 +9759,8 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 
     # print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
-    # we dont even need to flatten codes! reshaping twice like this unnecessary!
+    # we dont even need to flatten codes! because Embedding layer can handle
+    # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
     # quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
     quantized = model.quantizer.embeddings(codes)
     # print(f'{quantized.shape=}')
@@ -10029,7 +10069,7 @@ num_classes = 40 if dataset=='celeba' else 10
 #   we get rid of infs!
 # todo next, create more diverse generation for celeba and also for classes 
 #! like for each class, n samples ge generated, so we can asses all classes at each epoch
-#! 
+#! check generate-without reshaping is ok? 
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=num_classes,
                  make_conditional=conditional,
@@ -10314,6 +10354,26 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     # our prior model (i.e. PixelCNN) learns the 'language' or 'grammar' of these blueprints,
     # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
     # when given to our decoder, will give us an image based on the said blue-prnts
+    # 
+    # old:
+    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
+    # generates autoregressively. it predicts the code for position (i, j) based on the
+    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
+    # so we need a blank canvas to fill sequentially and starting with zeros is the 
+    # standard way to provide this initial empty state.
+    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
+    # anything because it was too simplistic, because of that, when i first wrote the early
+    # version of this function, using zeros would only give me solid colors like red! blue!
+    # after some diggings, found a suggestion that told me to use randints, and it actually 
+    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
+    # that actually looked like an object, though badly deformed and pretty low quality in general,
+    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
+    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
+    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
+    # all of this worse! only after that I found about the issue that starting with random 
+    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
+    # have the correct sequential context it was trained on, it expects to see the results of
+    # its own previous predictions when predicting the next step, not random noise.
     latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
     print(f'*{selected_class=}')
     # since we support conditional generation we need to one_hot our labels
