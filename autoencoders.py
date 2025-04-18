@@ -8224,9 +8224,9 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
-#todo add train and test sizes so the rest of the pipeline also use the same
-# number of samples for prior training.
-# train prior with this new vqvae and see how much it affects the end result 
+
+
+# train prior with this new vqvae(ema enabled) and see how much it affects the end result 
 # I guess with this improvement, our simple_generator should work somehow aswell
 # im not sure but i might have seen the improvement back then because of ema maybe?
 # need to test this out!
@@ -8939,7 +8939,7 @@ class ImprovedPixelCNN(nn.Module):
 
 #########################
 def train_prior(prior:PixelCNN, 
-                vqvae_model:VQVAE,
+                vqvae_model:VQVAE, # vqvae is only used for generation during training to see how well we are doing!
                 dataloader,
                 dataset_name:str, 
                 num_classes=None,
@@ -8959,11 +8959,9 @@ def train_prior(prior:PixelCNN,
                 generation_device='cuda',
                 figsize=(12,16),
                 seed=66):
-    
-    
+   
     
     prior.to(device)
-    vqvae_model.to(device)
     # device = next(prior.parameters()).device
     
     # note our timestamp needs to be sortable so if later on we need
@@ -8995,7 +8993,7 @@ def train_prior(prior:PixelCNN,
         
     optimizer = torch.optim.Adam(prior.parameters(), lr=lr)    
     
-    # After training vqvae, we need to grab the training set's encodings
+    # after training vqvae, we need to grab the training set's encodings
     # and use these encodings to train our prior model
     latent_codes, latent_labels = get_discrete_latent_codes(vqvae_model, dataloader)
 
@@ -9094,6 +9092,8 @@ def train_prior(prior:PixelCNN,
     print(f'optimizer:           {optimizer}')
     print(f'scheduler:           {scheduler.state_dict()}')
 
+    # setup scaler for fp16 trainig
+    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=use_fp16)
     
     for epoch in range(epochs):
         losses=[]
@@ -9112,15 +9112,29 @@ def train_prior(prior:PixelCNN,
             else:
                 labels = None
             
-            logits = prior(latents,labels)
-            # targets = latents.long()
-            loss = F.cross_entropy(logits, latents.long())
+            with torch.amp.autocast(device_type=device, enabled=use_fp16):
+                logits = prior(latents, labels)
+            
+            # sidenote:
+            # outside of autocast, loss always becomes nans, even with smaller lr(1e-4, 1e-5)
+            # even with much lower weight decay (1e-5/1e-7 from 1e-2)
+            # to get this to work, we either leave in inside autocast, or if we insist on having 
+            # it outside of autocast contextmanager, we need to make sure its in full precision,
+            # so logits.float() is needed, and that should do it.
+            # wrapping it explictly in autocast(enabled=False) is better but its not needed in 
+            # our case, as the loss seems to be working well so far
+            loss = F.cross_entropy(logits.float(), latents.long())
+            
             #! calculate bits per dimension: needs excessive edits
-            # bits per dimension(bpd) is used to evaluate generative models, 
-            # (especially those that work with images). for example , the original pixelcnn achieves bpd
-            # of 2.29 for cifar10. and everyone who trains or works in this section uses it. 
-            # because it makes comparing different models across different image sizes (or datasets) easier,
-            # its essentially measuring how well the model compresses the data. 
+            # bits per dimension(bpd) is used to evaluate generative models(autoregressive ones 
+            # like pixelcnn, transformers,etc), especially those that work with images. 
+            # for example , the original pixelcnn achieves bpd of 2.29 for cifar10. and everyone 
+            # who trains or works in this subfield/subject uses it.
+            # this metric is used because it makes comparing different models across different image
+            # sizes (or datasets) easier.
+            # its essentially measuring how well the model compresses the data. (in fact it means
+            # the model is correctly selecting the most likely outcome constantly which makes it
+            # chooses the right data for compression thus getting better at compressing the data!)
             # the lower the value the better, it means the model is better at predicting the data distribution, 
             # as it requires fewer bits per dimension (or per pixel in our case) to encode the image
             # (since images are high-dimensional data, we normalize the negative log-likelihood by 
@@ -9144,20 +9158,36 @@ def train_prior(prior:PixelCNN,
             # average to bits by dividing by log(2) and dont need to divide it by n_dims here!
             #  
             
-            #correct explanation : (revised by google):
-            # Bits Per Dimension (BPD) is a standard metric used to evaluate the performance of generative models, particularly those modeling high-dimensional data like images (e.g., PixelCNN achieving ~2.92 BPD on CIFAR-10 is a common benchmark reference, though numbers vary slightly).
-            # Purpose: BPD quantifies how well a model predicts the data distribution. It essentially measures the average number of bits required to encode each dimension (e.g., each pixel value or sub-pixel value) of the data, assuming an ideal compression scheme based on the model's predicted probabilities. Lower BPD indicates a better model (better compression, closer fit to the true data distribution). It allows for standardized comparison across models and datasets, normalizing for dimensionality.
-            # Underlying Calculation: BPD is derived from the negative log-likelihood (NLL) of the data under the model. The NLL is typically calculated using the natural logarithm (base e), resulting in units of "nats".
-            # Formula: The fundamental definition is:
+            # correct explanation : (revised by google):
+            # 
+            # Purpose: BPD quantifies how well a model predicts the data distribution. 
+            # It essentially measures the average number of bits required to encode each dimension
+            # (e.g. each pixel value or sub-pixel value) of the data, assuming an ideal compression scheme
+            # based on the model's predicted probabilities. 
+            # Lower BPD indicates a better model (better compression, closer fit to the true data distribution). 
+            # It allows for standardized comparison across models and datasets, normalizing for dimensionality.
+            # 
+            # BPD is derived from the negative log-likelihood (NLL) of the data under the model. 
+            # The NLL is typically calculated using the natural logarithm (base e), resulting in
+            # units of "nats".
+            # The fundamental definition is:
             # BPD = Average NLL per Dimension (in nats) / ln(2)
             # or equivalently:
             # BPD = Average NLL per Dimension (in nats) * log2(e)
-            # where ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the base-2 logarithm of e (approx 1.443). The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
-            # Role of F.cross_entropy: When modeling discrete data (like pixel values 0-255), F.cross_entropy is commonly used as the loss function.
-            # It calculates the NLL for each individual element (pixel/sub-pixel) based on the model's predicted probabilities (logits) and the true target value (latents.long()).
-            # Crucially, with the default reduction='mean', F.cross_entropy averages these NLL values (in nats) over all elements across the entire batch.
-            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly gives you the Average NLL per Dimension (in nats).
-            # Calculating BPD from F.cross_entropy Loss: Since loss.item() already represents the average NLL per dimension in nats:
+            # where ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the 
+            # base-2 logarithm of e (approx 1.443). 
+            # The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
+            # 
+            # Role of F.cross_entropy: When modeling discrete data (like pixel values 0-255), 
+            # F.cross_entropy is commonly used as the loss function.
+            # It calculates the NLL for each individual element (pixel/sub-pixel) based on the 
+            # model's predicted probabilities (logits) and the true target value (latents.long()).
+            # Crucially, with the default reduction='mean', F.cross_entropy averages these NLL values
+            # (in nats) over all elements across the entire batch.
+            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly gives us
+            # the Average NLL per Dimension (in nats).
+            # Calculating BPD from F.cross_entropy Loss: Since loss.item() already represents the average
+            # NLL per dimension in nats:
             # # loss = F.cross_entropy(logits, latents.long()) # Assumes reduction='mean'
             # nats_per_dim = loss.item()
             # # Convert nats per dimension to bits per dimension
@@ -9165,18 +9195,23 @@ def train_prior(prior:PixelCNN,
             # bpd = nats_per_dim / np.log(2)
             # # Or using np.log2(np.e):
             # # bpd = nats_per_dim * np.log2(np.e)
-            # Use code with caution.
-            # Python
-            # You do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:])) again, because the cross-entropy loss with mean reduction has already performed that averaging.
+            # You do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:]))
+            # again, because the cross-entropy loss with mean reduction has already performed that averaging.
                 
             # n_dims = np.prod(latents.shape)
             bpd = loss.item() * np.log2(np.e) #/ n_dims
             
             optimizer.zero_grad()
-            loss.backward()
+            # before doing backward, first rescale gradients
+            scaler.scale(loss).backward()
             # clip gradients to prevent exploding gradients
+            # before gradient clipping we must unsacle gradients
+            # in optimizer parameters
+            # scaler.unscale_(optimizer)
             # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
+            
             # when using lambdalr/cosinelr
             scheduler.step()
             
@@ -9200,15 +9235,17 @@ def train_prior(prior:PixelCNN,
                         labels = F.one_hot(labels,num_classes=num_classes).to(device)
                 else:
                     labels = None
+                
+                with torch.amp.autocast(device_type=device, enabled=use_fp16):    
+                    logits = prior(latents, labels)
                     
-                logits = prior(latents, labels)
-                # targets = latents.long()
-                loss = F.cross_entropy(logits, latents.long())
+                loss = F.cross_entropy(logits.float(), latents.long())
                 bpd = loss.item() * np.log2(np.e)
+                    
                 # store them for plots
                 losses_val.append(loss.item())
                 bpds_val.append(bpd)
-                
+
         avg_loss = np.mean(losses)
         avg_bpd = np.mean(bpds_training)
         avg_val_loss = np.mean(losses_val)
@@ -9218,9 +9255,9 @@ def train_prior(prior:PixelCNN,
         losses_val_epoch.append(avg_val_loss)
         BPD_epoch.append(avg_bpd)
         BPD_epoch_val.append(avg_val_bpd)
-        
+
         # scheduler.step(avg_val_loss)
-        
+
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             torch.save({
@@ -9233,6 +9270,7 @@ def train_prior(prior:PixelCNN,
                 'val_loss': best_val_loss,
                 'bpd': avg_bpd,
                 'bpd_val':avg_val_bpd,
+                'use_fp16':use_fp16,
                 'model_config': {
                     'num_embds': prior.num_embds,
                     'embedding_size': prior.embedding_size,
@@ -9255,6 +9293,7 @@ def train_prior(prior:PixelCNN,
             'val_loss': avg_val_loss,
             'bpd': avg_bpd,
             'bpd_val':avg_val_bpd,
+            'use_fp16':use_fp16,
             'model_config': {
                 'num_embds': prior.num_embds,
                 'embedding_size': prior.embedding_size,
@@ -9294,7 +9333,6 @@ def train_prior(prior:PixelCNN,
     plt.plot(losses_val_epoch, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.legend()
     plt.title('Training and Validation Loss')
     
     # Plot bits per dimension
@@ -9311,6 +9349,7 @@ def train_prior(prior:PixelCNN,
     plt.title('Model Efficiency[BPD-Val](Lower is Better)')
     
     plt.tight_layout()
+    plt.legend()
     plt.show()
     
     print('training prior model complete!')
@@ -9458,7 +9497,7 @@ def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_c
             scaler.scale(loss).backward()
             
             # Gradient clipping
-            scaler.unscale_(optimizer)
+            # scaler.unscale_(optimizer)
             # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
             
             # Update weights with gradient scaling
@@ -9973,11 +10012,21 @@ def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=
 # using several layers on embeddings to get better representation/or using summing/etc the
 # list goes on!
 #TODO: check why the generation seems random here despite having used seed!
-conditional = True 
+conditional = True
+use_fp16 = True
 num_classes = 40 if dataset=='celeba' else 10
 
 #TODO improve prior training function like vqvae trainig!
-#
+#! test fp16 training and see if gradient clipping made it ok or moving loss 
+# - no gradient clipping isnt necessary it seems!
+#! under autocast, if so why?!
+# - outside of autocast, loss always nans, with smaller lr(1e-4,1e-5) its still inf
+# - even with low lr(1e-5) and wd down to 1e-5/1e-7 (from 1e-2) its still inf!
+# - only when we explictly wrap loss in autocast(enabled=False) and set logits.float()
+#   we get rid of infs!
+# todo next, create more diverse generation for celeba and also for classes 
+#! like for each class, n samples ge generated, so we can asses all classes at each epoch
+#! 
 prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  num_class=num_classes,
                  make_conditional=conditional,
@@ -9990,9 +10039,9 @@ prior, ckptname = train_prior(prior=prior,
                               num_classes=num_classes, 
                               epochs=120,
                               batchsize=64,
-                              lr=0.001,
-                              weight_decay=1e-2,
-                              use_fp16=False,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
                               selected_label=9,
                               sample_size=64,
                               temperature=1,
