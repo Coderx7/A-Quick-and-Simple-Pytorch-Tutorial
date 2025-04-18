@@ -9720,8 +9720,11 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
 
     # print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
-    quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    # we dont even need to flatten codes! reshaping twice like this unnecessary!
+    # quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    quantized = model.quantizer.embeddings(codes)
     # print(f'{quantized.shape=}')
+    # reshape back to the shape decoder expects, i.e. (b,c,h,w)
     quantized = quantized.permute(0, 3, 1, 2).contiguous()
     # print(f'{quantized.shape=}')
     # decode the quantized representations into images
