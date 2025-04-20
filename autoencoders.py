@@ -9454,12 +9454,12 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
     # decode the quantized representations into images
     generated = model.decoder(quantized)
     # print(f'{generated.shape=}')
-    return generated
-
+    return codes
 
 @torch.no_grad()
 def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda', seed=66):
-
+    vqvae.eval()
+    vqvae.to(device)
     latent_map = get_discrete_latents_prior(prior=prior, 
                                             vqvae=vqvae, 
                                             batch_size=batch_size, 
@@ -9471,18 +9471,19 @@ def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selecte
                                             top_p=top_p,
                                             device=device,
                                             seed=seed)
+    
     # print(f'{latent_map.shape=}')
     # convert latent codes to embeddings and reshape for decoding
     # we dont even need to flatten latent_map! because Embedding layer can handle
     # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
-    # quantized_embeddings_vector = model.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
-    quantized_embeddings_map = model.quantizer.embeddings(latent_map)
+    # quantized_embeddings_vector = vqvae.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
+    quantized_embeddings_map = vqvae.quantizer.embeddings(latent_map)
     # print(f'{quantized_embeddings_map.shape=}')
     # reshape back to the shape decoder expects, i.e. (b,c,h,w)
     quantized_embeddings_map = quantized_embeddings_map.permute(0, 3, 1, 2).contiguous()
     # print(f'{quantized_embeddings_map.shape=}')
     # decode the quantized representations into images
-    generated_image = model.decoder(quantized_embeddings_map)
+    generated_image = vqvae.decoder(quantized_embeddings_map)
     # print(f'{generated_image.shape=}')
     # 
     # from futre: 
@@ -9886,7 +9887,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
             # just wanted to make that clear!
             # todo: pixelvalies is not accurate, choose a better name like latent_values?!
             # but when I use a simple sampling strategy it starts working! and waaay better!
-            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False, generator=generator)
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False)#,generator=generator
             # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
             # and get (64,) so when we assign it below all is good and we dont get expand error!
             # now lets fill in the empty places in latent_map_prior
@@ -10044,6 +10045,8 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
+# the new generator has issues! need to fix it ! Iget solid colors using it! which is weird!
+
 prior, ckptname = train_prior(prior=prior,
                               vqvae_model=model,
                               dataloader=dataloader_train,
@@ -10058,7 +10061,7 @@ prior, ckptname = train_prior(prior=prior,
                               sample_size=64,
                               advanced_sampling=True,
                               temperature=1,#1
-                              top_k=3,#3 works well
+                              top_k=1,#3 works well
                               top_p=0,#
                               rows=9,
                               cols=8,
