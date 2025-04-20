@@ -8950,7 +8950,10 @@ def train_prior(prior:PixelCNN,
                 use_fp16=False,
                 selected_label=9,
                 sample_size=64,
+                advanced_sampling=True,
                 temperature=1,
+                top_k=1,
+                top_p=0,
                 rows=9,
                 cols=8,
                 checkpoint_dir_path='./weights',
@@ -9340,7 +9343,10 @@ def train_prior(prior:PixelCNN,
                                   num_classes=num_classes,
                                   selected_label=selected_label,
                                   batch_size=sample_size,
+                                  advanced_sampling=advanced_sampling,
                                   temperature=temperature,
+                                  top_k=top_k,
+                                  top_p=top_p,
                                   device=generation_device,
                                   rows=rows,
                                   cols=cols,
@@ -9382,335 +9388,9 @@ def train_prior(prior:PixelCNN,
     return prior, checkpoint_path
 
 
-from tqdm import tqdm
-
-def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_classes=None, 
-                        epochs=100, batchsize=64, lr=3e-4, weight_decay=1e-4):
-    
-    train_datetime = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
-    is_conditional = "Conditional_" if prior.make_conditional else ""
-    model_checkpoint_name = f'improved_vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{train_datetime}.ckpt'
-    device = next(prior.parameters()).device
-    
-    # Create dataset with latent codes and labels
-    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
-    
-    val_split= 0.1
-    dataset_size = len(dataset)
-    val_size = int(val_split * dataset_size)
-    train_size = dataset_size - val_size 
-    
-    generator = torch.Generator().manual_seed(42)
-    dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size],
-                                                                        generator=generator)
-    
-    # Create data loaders with proper augmentation
-    dataloader_train = torch.utils.data.DataLoader(dataset_train, 
-                                                   batch_size=batchsize, 
-                                                   shuffle=True, 
-                                                   pin_memory=True, 
-                                                   num_workers=8, 
-                                                   drop_last=True)
-    
-    dataloader_val = torch.utils.data.DataLoader(dataset_val, 
-                                                 batch_size=batchsize, 
-                                                 shuffle=False,
-                                                 pin_memory=True,
-                                                 num_workers=8,
-                                                 drop_last=False)
-    
-    optimizer = torch.optim.AdamW(prior.parameters(), lr=lr, weight_decay=weight_decay,)
-    
-    # Improved learning rate scheduler
-    warmup_epochs = 5
-    total_steps = len(dataloader_train) * epochs
-    warmup_steps = len(dataloader_train) * warmup_epochs
-    
-    def lr_lambda(current_step):
-        if current_step < warmup_steps:
-            return float(current_step) / float(max(1, warmup_steps))
-        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
-    
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    
-    
-    # if warmup_steps > 0:
-    #     # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
-    #     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
-    #                                                          start_factor=1e-8,
-    #                                                          end_factor=1.0,
-    #                                                          total_iters=warmup_steps) 
-    #     # decay to 1% of peak LR
-    #     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-    #                                                                   T_max=total_steps - warmup_steps,
-    #                                                                   eta_min=lr * 0.01)
-    #     # combine schedulers
-    #     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
-    #     print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
-    # else:
-    #     # Only Cosine Annealing if no warmup
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
-    #     print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
-
-    
-    # Evaluation metrics
-    losses_train = []
-    losses_val = []
-    bpd_train = []
-    bpd_val = []
-    lr_history = []
-    
-    # Early stopping parameters
-    best_val_loss = float('inf')
-    patience = 10
-    patience_counter = 0
-    
-    # Model info
-    param_cnt = sum(p.numel() for p in prior.parameters() if p.requires_grad)
-    
-    print(f'====== Training Details ======')
-    print(f'Experiment Date  : {train_datetime}')
-    print(f'Dataset          : {dataset_name.upper()}')
-    print(f'Embedding Size   : {prior.embedding_size}')
-    print(f'Parameter Count  : {param_cnt:,}')
-    print(f'Batch Size       : {batchsize}')
-    print(f'Learning Rate    : {lr}')
-    print(f'Weight Decay     : {weight_decay}')
-    print(f'Dataset Sizes    : Train {train_size}, Val {val_size}')
-    print(f'Checkpoint Name  : {model_checkpoint_name}')
-    print(f'===========================')
-    
-    # Add AMP for mixed precision training
-    scaler = torch.amp.GradScaler()
-    
-    for epoch in range(epochs):
-        # Training phase
-        prior.train()
-        train_loss = 0.0
-        train_bpd = 0.0
-        
-        progress_bar = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{epochs}')
-        
-        for latents, labels in progress_bar:
-            latents = latents.to(device)
-            labels = labels.to(device)
-            
-            # Convert labels to one-hot if needed and the model is conditional
-            if prior.make_conditional and num_classes:
-                if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
-                    labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
-                else:
-                    labels_onehot = labels.float()
-            else:
-                labels_onehot = None
-            
-            optimizer.zero_grad()
-            
-            # Use mixed precision training
-            with torch.amp.autocast(device_type="cuda"):
-                logits = prior(latents, labels_onehot)
-                loss = F.cross_entropy(logits, latents.long())
-            
-            # since we are using F.cross_entropy with the default reduction='mean' 
-            # it means it averages the loss over all the individual elements (dimensions) already
-            # and we dont need to divide it by n_dims again (normalize it again!)
-            # n_dims = np.prod(latents.shape)
-            bpd = loss.item() * np.log2(np.e)
-            
-            # Backward pass with gradient scaling
-            scaler.scale(loss).backward()
-            
-            # Gradient clipping
-            # scaler.unscale_(optimizer)
-            # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
-            
-            # Update weights with gradient scaling
-            scaler.step(optimizer)
-            scaler.update()
-            
-            # Update learning rate
-            scheduler.step()
-            
-            # Update metrics
-            train_loss += loss.item()
-            train_bpd += bpd
-            
-            # Update progress bar
-            progress_bar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'bpd': f'{bpd:.4f}',
-                'lr': f'{scheduler.get_last_lr()[0]:.6f}'
-            })
-        
-        # Calculate average metrics for the epoch
-        train_loss /= len(dataloader_train)
-        train_bpd /= len(dataloader_train)
-        
-        # Validation phase
-        prior.eval()
-        val_loss = 0.0
-        val_bpd = 0.0
-        
-        with torch.no_grad():
-            for latents, labels in dataloader_val:
-                latents = latents.to(device)
-                labels = labels.to(device)
-                
-                # Convert labels to one-hot if needed and the model is conditional
-                if prior.make_conditional and num_classes:
-                    if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
-                        labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
-                    else:
-                        labels_onehot = labels.float()
-                else:
-                    labels_onehot = None
-                
-                logits = prior(latents, labels_onehot)
-                loss = F.cross_entropy(logits, latents.long())
-                
-                # Calculate bits per dimension
-                # n_dims = np.prod(latents.shape)
-                bpd = loss.item() * np.log2(np.e)
-                
-                val_loss += loss.item()
-                val_bpd += bpd
-        
-        # Calculate average metrics for validation
-        val_loss /= len(dataloader_val)
-        val_bpd /= len(dataloader_val)
-        
-        # Store metrics
-        losses_train.append(train_loss)
-        losses_val.append(val_loss)
-        bpd_train.append(train_bpd)
-        bpd_val.append(val_bpd)
-        lr_history.append(scheduler.get_last_lr()[0])
-        
-        # Print epoch summary
-        print(f'Epoch: {epoch+1}/{epochs} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f} | Train BPD: {train_bpd:.6f} | Val BPD: {val_bpd:.6f} | LR: {scheduler.get_last_lr()[0]:.6f}')
-        
-        # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            
-            #! make it match the old training script
-            torch.save({'epoch': epoch,
-                        'state_dict': prior.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict(),
-                        'val_loss': best_val_loss,
-                        'bpd':train_bpd,
-                        'bpd_val': val_bpd,
-                        'model_config': {
-                            'num_embds': prior.num_embds,
-                            'embedding_size': prior.embedding_size,
-                            'num_class': prior.num_class,
-                            'make_conditional': prior.make_conditional
-                        }
-            }, model_checkpoint_name.replace(".ckpt","_best.ckpt"))
-            
-            print(f'✅ Best model saved with val-loss: {best_val_loss:.6f}')
-        else:
-            patience_counter += 1
-            print(f'⚠️ Validation loss did not improve. Patience: {patience_counter}/{patience}')
-                
-        # save all the models
-        torch.save({'epoch': epoch,
-                    'state_dict': prior.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict(),
-                    'val_loss': best_val_loss,
-                    'bpd':train_bpd,
-                    'bpd_val': val_bpd,
-                    'model_config': {
-                        'num_embds': prior.num_embds,
-                        'embedding_size': prior.embedding_size,
-                        'num_class': prior.num_class,
-                        'make_conditional': prior.make_conditional
-                        }
-        }, model_checkpoint_name.replace(".ckpt","_best.ckpt"))
-
-        # Early stopping
-        # if patience_counter >= patience:
-        #     print(f'⛔ Early stopping triggered after {epoch+1} epochs')
-        #     break
-    
-    # 
-    # prior.eval()
-    # test_loss = 0.0
-    # test_bpd = 0.0
-    
-    # with torch.no_grad():
-    #     for latents, labels in dataloader_test:
-    #         latents = latents.to(device)
-    #         labels = labels.to(device)
-            
-    #         if prior.make_conditional and num_classes:
-    #             if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
-    #                 labels_onehot = F.one_hot(labels.squeeze(), num_classes=num_classes).float()
-    #             else:
-    #                 labels_onehot = labels.float()
-    #         else:
-    #             labels_onehot = None
-            
-    #         logits = prior(latents, labels_onehot)
-    #         loss = F.cross_entropy(logits, latents.long())
-            
-    #         # n_dims = np.prod(latents.shape)
-    #         bpd = loss.item() * np.log2(np.e)
-            
-    #         test_loss += loss.item()
-    #         test_bpd += bpd
-    
-    # test_loss /= len(dataloader_test)
-    # test_bpd /= len(dataloader_test)
-    
-    # print(f'📊 Test Results | Loss: {test_loss:.6f} | BPD: {test_bpd:.6f}')
-    
-    # Plot training history
-    plt.figure(figsize=(18, 6))
-    
-    # Loss plot
-    plt.subplot(1, 3, 1)
-    plt.plot(losses_train, label='Training Loss')
-    plt.plot(losses_val, label='Validation Loss')
-    # plt.axhline(y=test_loss, color='r', linestyle='--', label='Test Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.title('Training and Validation Loss')
-    
-    # BPD plot
-    plt.subplot(1, 3, 2)
-    plt.plot(bpd_train, label='Training BPD')
-    plt.plot(bpd_val, label='Validation BPD')
-    # plt.axhline(y=test_bpd, color='r', linestyle='--', label='Test BPD')
-    plt.xlabel('Epoch')
-    plt.ylabel('Bits per Dimension')
-    plt.legend()
-    plt.title('Model Efficiency (Lower is Better)')
-    
-    # Learning rate plot
-    plt.subplot(1, 3, 3)
-    plt.plot(lr_history)
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title('Learning Rate Schedule')
-    plt.yscale('log')
-    
-    plt.tight_layout()
-    plt.savefig(f'training_history_{dataset_name.upper()}_{train_datetime}.png')
-    plt.show()
-    
-    print('✨ Training complete!')
-    
-    return prior, model_checkpoint_name
-
-
 # I wrote a much better explanation of what happens in the debugging section down below
 # todo: replace this with the newer version
-def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
+def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
     # todo use seed so we get the same images each time! for comparison purposes!
     generator = torch.Generator(device).manual_seed(seed)
     
@@ -9794,16 +9474,20 @@ def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selecte
     # convert latent codes to embeddings and reshape for decoding
     # we dont even need to flatten latent_map! because Embedding layer can handle
     # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
-    # quantized = model.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
-    quantized = model.quantizer.embeddings(latent_map)
-    # print(f'{quantized.shape=}')
+    # quantized_embeddings_vector = model.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
+    quantized_embeddings_map = model.quantizer.embeddings(latent_map)
+    # print(f'{quantized_embeddings_map.shape=}')
     # reshape back to the shape decoder expects, i.e. (b,c,h,w)
-    quantized = quantized.permute(0, 3, 1, 2).contiguous()
-    # print(f'{quantized.shape=}')
+    quantized_embeddings_map = quantized_embeddings_map.permute(0, 3, 1, 2).contiguous()
+    # print(f'{quantized_embeddings_map.shape=}')
     # decode the quantized representations into images
-    generated = model.decoder(quantized)
-    # print(f'{generated.shape=}')
-    return generated
+    generated_image = model.decoder(quantized_embeddings_map)
+    # print(f'{generated_image.shape=}')
+    # 
+    # from futre: 
+    # return both generated image and the latentmap it came from
+    # its great for debugging
+    return generated_image, latent_map
 
 
 # now lets grab prior_latents, for that we just do what we do when generating a new image
@@ -9814,7 +9498,17 @@ def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selecte
 # examples during training(that is basically our training set converted into latent codes)
 # so we start off with an empty latents and fill it up 
 @torch.no_grad()
-def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
+def get_discrete_latents_prior(prior:PixelCNN, 
+                               vqvae:VQVAE, 
+                               batch_size=64, 
+                               num_classes=10,
+                               selected_class=9, 
+                               advanced_sampling=False,
+                               temperature=1,
+                               top_k=1,
+                               top_p=0,
+                               device='cuda'):
+    
     # lets first take care of the models before we forget
     # about them and face all sorts of weird issues!
     prior.eval()
@@ -9823,7 +9517,7 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     vqvae.to(device)
     
     H,W = vqvae.enc_output_shape
-    # our latents_prior is simply a HxW matrix of integer indexes. so to create one we simply
+    # our latent_map_prior is simply a HxW matrix of integer indexes. so to create one we simply
     # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
     # each latent will become a whole image ultimately, when we feed it to our decoder.
     # we can think of it as a compressed, structured blueprint for the image. 
@@ -9855,7 +9549,7 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     # to me it looks much better, I find map way better becasuse its like feature-map,
     # it implies a 2d shape and loos more intuitive to me (than latent_codes
     # which is fine but doesnt convey its 2d shape, we only know it becasue of context!)
-    latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+    latent_map_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
     # print(f'*{selected_class=}')
     # since we support conditional generation we need to one_hot our labels
     if prior.make_conditional:
@@ -9884,7 +9578,7 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
     for h in range(H):
         for w in range(W):
             # logits shape is (batchsize, embdsz, h, w)
-            logits = prior(latents_prior, labels)
+            logits = prior(latent_map_prior, labels)
             # since we are dealing with pixels/codes and doing this in a loop
             # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
             # we only grab the logits for current h,w position 
@@ -10191,17 +9885,20 @@ def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_c
             pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
             # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
             # and get (64,) so when we assign it below all is good and we dont get expand error!
-            # now lets fill in the empty places in latents_prior
-            latents_prior[:,h,w] = pixels_values.squeeze(1)
+            # now lets fill in the empty places in latent_map_prior
+            latent_map_prior[:,h,w] = pixels_values.squeeze(1)
             
-    return latents_prior
-
-
+    return latent_map_prior
 
 
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
-                              batch_size=64, temperature=1, device='cuda', 
+                              batch_size=64, 
+                              advanced_sampling=True,
+                              temperature=1,
+                              top_k=1,
+                              top_p=0, 
+                              device='cuda', 
                               rows=9, cols=8, figsize=(12,16),seed=66, fname=None):
 
     if 'cifar' in dataset:
@@ -10222,241 +9919,81 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
     # retired, the reconstructions got much better, but generation seemed cropped! looked
     # closer and noticed my bug and fixed it and now images are way better. they are very good
     # a bit deformed which is relaetd to overfitting , but overall it seems alright!
-    generated_image = generate(vqvae_model,
+    generated_image,_ = generate(vqvae_model,
                                prior_model,
                                labels=labels,
                                num_classes=num_classes,
                                batch_size=batch_size,
+                               advanced_sampling=advanced_sampling,
                                # when using conditional, using smaller values 
                                # for temperature, give us weireder images/really 
                                # simplestic images! like with way less details!
+                               # update: it seems using smaller values for temp
+                               # makes the overall probs more uniform, making all
+                               # smaller neurons fire as likely as any larger ones
+                               # probablity wise! and those small probablity neurons
+                               # tend to work on lower abstractions? (imagine a photoshop layer
+                               # where the final image is made of several layers, adding details
+                               # retouches, etc to the image, at least this is the feeling 
+                               # i get from these images. 
+                               # todo work on explanation!)
                                temperature=temperature,
+                               top_k=top_k,#3 works well it seems
+                               top_p=top_p,# either set this or set topk, topk=1,withtop p usually fails!(0.9 seems ok)
                                device=device,
                                seed=seed)
+    
     # extract epoch from fname and use it to mark each image
     epoch = os.path.splitext(fname)[0].split('_')[-1]
     view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname,title=f'Epoch {int(epoch)}') 
 
 
 #!edit add more explanation
+#todo use topk/topp on this and see how it affects it
 # another way to generate images, instead of using prior model
 # we directly sample from code frequency, it shows if our model
 # has good features or not (whether the problem lies in prior model/its training
 # or vqvae features itself. the images may not look good! more explanation ahead)
-def generate_simple(model, latent_codes, batch_size=1):
+def generate_simple(model, latent_codes, topk, topp, batch_size=1):
     # compute code frequencies from training data
+    # instead of autoregressively get predictions 
+    # for each position using prior! 
     counts = torch.bincount(latent_codes.flatten())
     probs = counts / counts.sum()
     # sample indices from the frequency distribution
     H, W = latent_codes.shape[1:] #7x7
-    #nonautoregressive way
-    indices = torch.multinomial(probs, batch_size * H * W, replacement=True)
-    indices = indices.view(batch_size, H, W).to(device)
-    # print(f'{indices.shape=}')
-    # decode the indices
-    quantized = model.quantizer.embeddings(indices)  # (batch_size, H, W, embd_size)
-    # print(f'{quantized.shape=}')
-    quantized = quantized.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
-    # print(f'{quantized.shape=}')
-    generated = model.decoder(quantized)
-    # print(f'{generated.shape=}')
-    return generated
-
-
-# advantages of this version compared to our own simplistic version :
-# Advantage of Function 1: top_k and especially top_p sampling are powerful techniques
-# to improve the quality and coherence of generated samples. 
-# They prevent the model from picking very low-probability (often nonsensical) tokens,
-# while still allowing for diversity (unlike greedy sampling). 
-# This often leads to much better results than temperature scaling alone.
-
-# Function 1: Initializes the latents tensor with zeros (torch.zeros).
-# Function 2: Initializes the codes tensor with random integers (torch.randint).
-# Advantage of Function 1: Starting with zeros (or a dedicated start token) is the standard 
-# and correct way to perform auto-regressive generation with models like PixelCNN. 
-# The model learns to predict the first element based on this initial state 
-# (often implicitly representing a start-of-sequence context). 
-# Starting with random codes means the model's initial predictions are based on random, 
-# potentially meaningless context, which can negatively impact the quality and coherence of 
-# the generated latent map, especially at the beginning. 
-# The comment in Function 2 suggesting random initialization is okay because they "didn't condition
-# on 0s" seems like a misunderstanding of how auto-regressive priors typically work.
-
-
-# Robustness and Input Handling:
-# Function 1: Has more robust handling for class_label (accepts int, list/tuple, tensor) and
-# includes checks for conditional consistency. It also allows manually specifying the latent shape.
-# Sets both prior and model to evaluation mode (eval()).
-# Function 2: Only accepts a labels tensor, assumes it's correct. Only sets prior to eval(), 
-# potentially leaving the model (VQVAE decoder) in training mode, which could affect results 
-# if it uses layers like Dropout or BatchNorm.
-# Advantage of Function 1: More user-friendly, less prone to errors due to incorrect input types, 
-# and ensures both models are correctly set for inference.
-# Return Values:
-# Function 1: Returns both the final generated images (reconstructions) and the intermediate latent
-# codes (latents).
-# Function 2: Returns only the generated images (generated).
-# Advantage of Function 1: Returning the latents can be very useful for debugging, analysis, or
-# understanding what the prior model is actually producing before decoding.
-
-# Function 1 (sample_from_prior) is significantly more advanced and generally preferable for generating high-quality samples.
-
-# function 1 is our sample_from_prior() function below and function 2 is our generate() function above!
-# I compared them using google and got this feedback
-
-
-from tqdm.auto import tqdm # Use auto version for notebook/script compatibility
-
-def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=1.0, class_label=None,
-                      num_classes=10, shape=None, top_k=0, top_p=0.9, device='cuda'):
-    """
-    Generate samples from the trained prior model.
-
-    Args:
-        prior: Trained PixelCNN prior model.
-        model: Trained VQVAE model for decoding latent codes. **MUST have a way to access the codebook, e.g., model.quantizer.embedding.weight**
-        batch_size: Number of samples to generate.
-        temperature: Temperature for sampling (higher = more diverse, lower = more conservative).
-        class_label: Class label(s) for conditional generation (None for unconditional). Can be int or list/tensor.
-        num_classes: Number of classes in the dataset (required if prior is conditional).
-        shape: Shape of latent space (height, width). If None, uses prior.input_shape.
-        top_k: If > 0, only sample from the top k most likely tokens. Applied before top_p.
-        top_p: If < 1.0, only sample from the smallest set of tokens whose cumulative probability exceeds p (nucleus sampling).
-        device: Device to generate samples on ('cuda' or 'cpu').
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
-            - Tensor of generated samples (batch_size, channels, height, width).
-            - Tensor of generated latent codes (batch_size, latent_height, latent_width).
-    """
-    prior.eval()
-    model.eval()
-    prior.to(device)
-    model.to(device)
-
-    if shape is None:
-        shape = model.enc_output_shape
+    if topk>0:
+        # use topk/top_p to see how it affects it
+        top_k_logits, top_k_indexes = torch.topk(probs, topk, dim=-1)
+        # we then create a mask and set all logits that are not in top-k to -inf
+        mask = torch.ones_like(probs) * -float('inf')
+        # we could also do
+        # mask = torch.full_like(logits, -float('Inf'))
+        # and fill the rest of the mask with the actual top values
+        mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
+        probs = mask
+    
+    if 0<topp<1.0:
+        assert topk!=1,('cant use top_p with top_k=1, when using top_p, you must use a high top_k, otherwise top_p wont work!')
+        sorted_probs, sorted_indexes = torch.sort(probs, descending=True, dim=-1)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        sorted_indexes_to_remove = cumulative_probs > topp
+        sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
+        sorted_indexes_to_remove[..., 0] = 0 
+        indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, index=sorted_indexes,src=sorted_indexes_to_remove)
+        probs = probs.masked_fill(indexes_to_remove, -float('inf'))
         
-    latent_H, latent_W = shape
-
-    # create empty latent codes
-    latents = torch.zeros(size=(batch_size, latent_H, latent_W), dtype=torch.long, device=device)
-
-    labels_onehot = None
-    if prior.make_conditional:
-        if class_label is None:
-            # if prior is conditional but no label given, sample uniformly or raise error?
-            # option 1: Sample random labels
-            # labels = torch.randint(0, num_classes, (batch_size,), device=device)
-            # option 2: Raise error
-            raise ValueError("Prior is conditional, but 'class_label' was not provided.")
-        
-        elif isinstance(class_label, int):
-            labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
-        
-        elif isinstance(class_label, (list, tuple)):
-             if len(class_label) != batch_size:
-                 raise ValueError(f"Length of class_label list ({len(class_label)}) must match batch_size ({batch_size})")
-             labels = torch.tensor(class_label, dtype=torch.long, device=device)
-        
-        elif isinstance(class_label, torch.Tensor):
-             if class_label.ndim == 0: # single tensor value
-                 labels = torch.full((batch_size,), class_label.item(), dtype=torch.long, device=device)
-             
-             elif class_label.ndim == 1 and class_label.shape[0] == batch_size:
-                 labels = class_label.to(device=device, dtype=torch.long)
-             
-             else:
-                  raise ValueError(f"Invalid shape for class_label tensor: {class_label.shape}. Expected scalar or ({batch_size},).")
-        
-        else:
-            raise TypeError(f"Unsupported type for class_label: {type(class_label)}")
-
-        labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
-        labels_onehot = labels_onehot.to(device)
-
-
-    with torch.no_grad():
-        for h in tqdm(range(latent_H), desc="Generating rows"):
-            for w in range(latent_W):
-                # Get predictions for the current pixel (h, w) based on previous ones
-                # Pass the current state of latents and conditional labels (if any)
-                # PixelCNN should handle causality internally
-                logits = prior(latents, labels_onehot) 
-
-                # extract logits for the specific position we are predicting
-                # logits shape from PixelCNN is (batch, num_embeddings, H, W)
-                logits = logits[:, :, h, w] # shape: (batch_size, num_embeddings)
-
-                # Apply temperature scaling
-                if temperature <= 0:
-                     raise ValueError("Temperature must be positive.")
-                if temperature != 1.0:
-                    logits = logits / temperature
-
-                # --- Apply top-k / top-p filtering ---
-                # (Optional) Apply top-k filtering first
-                if top_k > 0:
-                    # Get the top_k logits and their indices
-                    top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
-                    # Create a mask, setting logits not in top-k to -inf
-                    mask = torch.full_like(logits, -float('Inf'))
-                    mask.scatter_(-1, top_k_indices, top_k_logits)
-                    logits = mask
-
-                # Apply top-p (nucleus) filtering
-                if 0 < top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-                    # remove tokens with cumulative probability above the threshold (nucleus)
-                    sorted_indices_to_remove = cumulative_probs > top_p
-                    # shift the indices to the right to keep also the first token above the threshold
-                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                    sorted_indices_to_remove[..., 0] = 0 # Never remove the most probable token
-
-                    # create a mask, setting logits to be removed to -inf
-                    # scatter sorted_indices_to_remove back to original positions
-                    indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
-                    logits = logits.masked_fill(indices_to_remove, -float('Inf'))
-
-                # calculate probabilities from the potentially filtered logits
-                probs = F.softmax(logits, dim=-1)
-
-                # sample from the filtered distribution
-                # torch.multinomial expects probabilities, not logits
-                pixel_samples = torch.multinomial(probs, num_samples=1) # shape: (batch_size, 1)
-                pixel_samples = pixel_samples.squeeze(-1) # shape: (batch_size,)
-
-                # update the latents tensor with the sampled index for position (h, w)
-                latents[:, h, w] = pixel_samples
-
-    with torch.no_grad():
-        # **MAJOR CORRECTION:** Map latent indices to embedding vectors
-        codebook = model.quantizer.embeddings.weight # shape: (num_embeddings, embedding_dim)
-        num_embeddings, embedding_dim = codebook.shape
-
-        # check if generated latents are valid indices
-        if latents.max() >= num_embeddings:
-             raise ValueError(f"Generated latent index {latents.max()} is out of bounds for codebook size {num_embeddings}. check PixelCNN output range.")
-
-        # Get the embedding vectors corresponding to the generated indices
-        # Flatten latents for efficient embedding lookup
-        latents_flat = latents.view(-1) # shape: (batch_size * H * W)
-        # Lookup embeddings
-        quantized_vectors_flat = F.embedding(latents_flat, codebook)
-        # Shape: (batch_size * H * W, embedding_dim)
-
-        # Reshape to the grid format expected by the decoder
-        # Common format: (batch_size, embedding_dim, H, W)
-        quantized_vectors = quantized_vectors_flat.view(batch_size, latent_H, latent_W, embedding_dim)
-        # Permute dimensions: (N, H, W, C) -> (N, C, H, W)
-        quantized_vectors = quantized_vectors.permute(0, 3, 1, 2).contiguous()
-
-        # Decode the quantized vectors
-        reconstructions = model.decoder(quantized_vectors)
-
-    return reconstructions, latents
+    latent_map = torch.multinomial(probs, batch_size * H * W, replacement=True)
+    latent_map = latent_map.view(batch_size, H, W).to(device)
+    # print(f'{latent_map.shape=}')
+    # decode the latent_map
+    quantized_embedding_map = model.quantizer.embeddings(latent_map)  # (batch_size, H, W, embd_size)
+    # print(f'{quantized_embedding_map.shape=}')
+    quantized_embedding_map = quantized.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
+    # print(f'{quantized_embedding_map.shape=}')
+    generated_image = model.decoder(quantized_embedding_map)
+    # print(f'{generated_image.shape=}')
+    return generated_image
 
 
 #%%
@@ -10514,7 +10051,10 @@ prior, ckptname = train_prior(prior=prior,
                               use_fp16=use_fp16,
                               selected_label=9,
                               sample_size=64,
-                              temperature=1,
+                              advanced_sampling=True,
+                              temperature=1,#1
+                              top_k=3,#3 works well
+                              top_p=0,#
                               rows=9,
                               cols=8,
                               device='cuda',
@@ -10733,7 +10273,7 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,
 # and compare them to prior_latents which we get from prior model,
 # this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
 # or whether they show similar spatial structures or patterns? 
-# if latents from our prior model (latents_prior) look drastically different 
+# if latents from our prior model (latent_map_prior) look drastically different 
 # (e.g., all zeros, random noise, weird repeating blocks)
 # while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
 # it hasn't learned the correct distribution of latent codes.
