@@ -9458,7 +9458,7 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
 
 
 @torch.no_grad()
-def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
+def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda', seed=66):
 
     latent_map = get_discrete_latents_prior(prior=prior, 
                                               vqvae=vqvae, 
@@ -9469,7 +9469,8 @@ def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selecte
                                               temperature=temperature,
                                               top_k=top_k,
                                               top_p=top_p,
-                                              device=device)
+                                              device=device,
+                                              seed=seed)
     # print(f'{latent_map.shape=}')
     # convert latent codes to embeddings and reshape for decoding
     # we dont even need to flatten latent_map! because Embedding layer can handle
@@ -9507,7 +9508,8 @@ def get_discrete_latents_prior(prior:PixelCNN,
                                temperature=1,
                                top_k=1,
                                top_p=0,
-                               device='cuda'):
+                               device='cuda',
+                               seed=66):
     
     # lets first take care of the models before we forget
     # about them and face all sorts of weird issues!
@@ -9515,6 +9517,8 @@ def get_discrete_latents_prior(prior:PixelCNN,
     vqvae.eval()
     prior.to(device)
     vqvae.to(device)
+    #!todo check validity
+    generator = torch.Generator(device).manual_seed(seed)
     
     H,W = vqvae.enc_output_shape
     # our latent_map_prior is simply a HxW matrix of integer indexes. so to create one we simply
@@ -9882,7 +9886,7 @@ def get_discrete_latents_prior(prior:PixelCNN,
             # just wanted to make that clear!
             # todo: pixelvalies is not accurate, choose a better name like latent_values?!
             # but when I use a simple sampling strategy it starts working! and waaay better!
-            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False, generator=generator)
             # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
             # and get (64,) so when we assign it below all is good and we dont get expand error!
             # now lets fill in the empty places in latent_map_prior
@@ -9921,7 +9925,7 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
     # a bit deformed which is relaetd to overfitting , but overall it seems alright!
     generated_image,_ = generate(vqvae_model,
                                prior_model,
-                               labels=labels,
+                               #labels=labels,
                                num_classes=num_classes,
                                batch_size=batch_size,
                                advanced_sampling=advanced_sampling,
