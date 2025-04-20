@@ -8274,20 +8274,20 @@ print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
 
 #%%
 # create gifs and show images
-dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
-dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
-dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
-create_gifs_large(dirpath, frame_interval=90,)
-#%%
-dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
-dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
-dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
-create_gifs(dirpath,
-            frame_interval=None,
-            # repeat_delay=300,
-            fps=500,
-            figsize=(6,8)
-            )
+# dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+# dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+# dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
+# create_gifs_large(dirpath, frame_interval=90,)
+# #%%
+# dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+# dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+# dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
+# create_gifs(dirpath,
+#             frame_interval=None,
+#             # repeat_delay=300,
+#             fps=500,
+#             figsize=(6,8)
+#             )
 
 #%%
 # taken from Aäron van den Oord implementation (link given before)
@@ -9454,14 +9454,27 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
     # decode the quantized representations into images
     generated = model.decoder(quantized)
     # print(f'{generated.shape=}')
-    return codes
+    return generated, codes
 
-@torch.no_grad()
-def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda', seed=66):
+# @torch.no_grad()
+def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, 
+             selected_class=9, advanced_sampling=False, temperature=1,
+             top_k=1, top_p=0, device='cuda', seed=66):
+    
     vqvae.eval()
     vqvae.to(device)
-    latent_map = get_discrete_latents_prior(prior=prior, 
-                                            vqvae=vqvae, 
+    
+    # generated_image, latent_map = generate_old(model=vqvae,
+    #                           prior=prior,
+    #                           labels=torch.ones(size=(batch_size,),dtype=torch.long,device=device)*selected_class,
+    #                           batch_size=batch_size,
+    #                           num_classes=num_classes,
+    #                           temperature=temperature,
+    #                           device=device,
+    #                           seed=seed)
+    print(f'{batch_size=}')
+    latent_map = get_discrete_latents_prior(vqvae=vqvae, 
+                                            prior=prior,
                                             batch_size=batch_size, 
                                             num_classes=num_classes, 
                                             selected_class=selected_class,
@@ -9491,7 +9504,7 @@ def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selecte
     # its great for debugging
     return generated_image, latent_map
 
-
+import math
 # now lets grab prior_latents, for that we just do what we do when generating a new image
 # I initially tried feeding that to the prior model, but it turned out it was wrong
 # because the purpose of our prior model is not to transform existing latent
@@ -9501,8 +9514,8 @@ def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selecte
 # so we start off with an empty latents and fill it up 
 @torch.no_grad()
 def get_discrete_latents_prior(vqvae:VQVAE,
-                               prior:PixelCNN, 
-                               batch_size=64, 
+                               prior:PixelCNN,
+                               batch_size=64,
                                num_classes=10,
                                selected_class=9, 
                                advanced_sampling=False,
@@ -9522,6 +9535,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     generator = torch.Generator(device).manual_seed(seed)
     
     H,W = vqvae.enc_output_shape
+    # print(f'{H=}, {W=}')
     # our latent_map_prior is simply a HxW matrix of integer indexes. so to create one we simply
     # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
     # each latent will become a whole image ultimately, when we feed it to our decoder.
@@ -9557,32 +9571,51 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     latent_map_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
     # print(f'*{selected_class=}')
     # since we support conditional generation we need to one_hot our labels
+    # todo:
+    # instead of creating a whole batch for a single label/class, create 
+    # samples for each class to see how the generation works
+    # print(f'{selected_class=}')
     if prior.make_conditional:
         if isinstance(selected_class,int):
             labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_class
             # we could also do 
             # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
+        
+        elif not selected_class:
+            # lets make a grid of classes, nxm where each row belongs to a class
+            # labels = torch.stack([torch.full(size=(batch_size//num_classes), fill_value=i, device=device, dtype=torch.long) for i in range(num_classes)]).flatten()
+            # or use repeat_interleave to repeat each class m times
+            # create class indexes (0,1,2,...)
+            class_indexes = torch.arange(num_classes, device=device, dtype=torch.long)
+            # repeat each class index n times consecutively
+            labels = class_indexes.repeat_interleave(batch_size//num_classes)
+            # print(f'{labels=}')
+            # print(f'{labels.shape=}')
+            assert labels.size(0) == batch_size, f'label size({labels.size(0)}({num_classes}*{batch_size//num_classes})) must match batchisze({batch_size})!!'
+            
         elif isinstance(selected_class, list) and len(selected_class) == batch_size:
             labels = torch.tensor(selected_class, device=device, dtype=torch.long)
             # print(f'+{labels.shape=}')
+        
         else:
             raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
         
         #! dont onehot celeba
         # only one-hot encode, selected_class if its int, or if its a list, it must only be int
-        if isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
+        if not selected_class or isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
             labels = F.one_hot(labels, num_classes=num_classes).float()
             # print(f'{labels.shape=}')
             # print(f'{labels=}')
         # print(f'{labels.shape=}')
     else:
         labels = None
-    
+    # print(f'{labels=}')
     #now we autoregressively fill up our empty latents pixels with proper values predicted by prior
     # for that we loop using H,W
     for h in range(H):
         for w in range(W):
             # logits shape is (batchsize, embdsz, h, w)
+            # print(f'{latent_map_prior.shape=} {labels.shape=}')
             logits = prior(latent_map_prior, labels)
             # since we are dealing with pixels/codes and doing this in a loop
             # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
@@ -9866,7 +9899,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
                     # scatter the removal mask back to the original token order.
                     # We need to know which *original* tokens (before sorting) should be removed.
                     indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, 
-                                                                         index=sorted_indexes,# Use the mapping from sorted back to original
+                                                                         index=sorted_indexes,# use the mapping from sorted back to original
                                                                          src=sorted_indexes_to_remove)
                     # print(f'{indexes_to_remove=}')
                     # apply the mask. Set the logits of tokens marked for removal to -inf.
@@ -9887,7 +9920,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
             # just wanted to make that clear!
             # todo: pixelvalies is not accurate, choose a better name like latent_values?!
             # but when I use a simple sampling strategy it starts working! and waaay better!
-            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False)#,generator=generator
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False,generator=generator)#,generator=generator
             # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
             # and get (64,) so when we assign it below all is good and we dont get expand error!
             # now lets fill in the empty places in latent_map_prior
@@ -9898,7 +9931,9 @@ def get_discrete_latents_prior(vqvae:VQVAE,
 
 def display_generated_samples(vqvae_model:VQVAE, 
                               prior_model:PixelCNN, 
-                              dataset, num_classes=10, selected_label=9,
+                              dataset, 
+                              num_classes=10, 
+                              selected_label=9,
                               batch_size=64, 
                               advanced_sampling=True,
                               temperature=1,
@@ -9917,18 +9952,26 @@ def display_generated_samples(vqvae_model:VQVAE,
     else:#celeba
         class_names = {i:'N/A' for i in range(num_classes)}
 
-    print(f'Generating images of {class_names[selected_label]}')
+    print(f'Generating images of {class_names[selected_label] if selected_label else "All Classes!"}')
     # todo: create proper label for celeba!
-    labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+    if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+    else:
+        labels = [class_names[i] 
+                  for i in range(num_classes) # outer loop for each class
+                  for _ in range(batch_size//num_classes)] # inner loop for num_samples for each class
+                  
+        
     # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
     # I would get weird generations! when I icnreased the image size form 32 to 64 and
     # retired, the reconstructions got much better, but generation seemed cropped! looked
     # closer and noticed my bug and fixed it and now images are way better. they are very good
     # a bit deformed which is relaetd to overfitting , but overall it seems alright!
-    generated_image,_ = generate(prior=prior_model,
-                                vqvae=vqvae_model,
+    generated_image,_ = generate(vqvae=vqvae_model,
+                                prior=prior_model,
                                #labels=labels,
                                num_classes=num_classes,
+                               selected_class=selected_label,
                                batch_size=batch_size,
                                advanced_sampling=advanced_sampling,
                                # when using conditional, using smaller values 
@@ -10002,6 +10045,163 @@ def generate_simple(model, latent_codes, topk, topp, batch_size=1):
     return generated_image
 
 
+
+
+from tqdm.auto import tqdm # Use auto version for notebook/script compatibility
+
+def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=1.0, class_label=None,
+                      num_classes=10, shape=None, top_k=0, top_p=0.9, device='cuda'):
+    """
+    Generate samples from the trained prior model.
+
+    Args:
+        prior: Trained PixelCNN prior model.
+        model: Trained VQVAE model for decoding latent codes. **MUST have a way to access the codebook, e.g., model.quantizer.embedding.weight**
+        batch_size: Number of samples to generate.
+        temperature: Temperature for sampling (higher = more diverse, lower = more conservative).
+        class_label: Class label(s) for conditional generation (None for unconditional). Can be int or list/tensor.
+        num_classes: Number of classes in the dataset (required if prior is conditional).
+        shape: Shape of latent space (height, width). If None, uses prior.input_shape.
+        top_k: If > 0, only sample from the top k most likely tokens. Applied before top_p.
+        top_p: If < 1.0, only sample from the smallest set of tokens whose cumulative probability exceeds p (nucleus sampling).
+        device: Device to generate samples on ('cuda' or 'cpu').
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]:
+            - Tensor of generated samples (batch_size, channels, height, width).
+            - Tensor of generated latent codes (batch_size, latent_height, latent_width).
+    """
+    prior.eval()
+    model.eval()
+    prior.to(device)
+    model.to(device)
+
+    if shape is None:
+        shape = model.enc_output_shape
+        
+    latent_H, latent_W = shape
+
+    # create empty latent codes
+    latents = torch.zeros(size=(batch_size, latent_H, latent_W), dtype=torch.long, device=device)
+
+    labels_onehot = None
+    if prior.make_conditional:
+        if class_label is None:
+            # if prior is conditional but no label given, sample uniformly or raise error?
+            # option 1: Sample random labels
+            # labels = torch.randint(0, num_classes, (batch_size,), device=device)
+            # option 2: Raise error
+            raise ValueError("Prior is conditional, but 'class_label' was not provided.")
+        
+        elif isinstance(class_label, int):
+            labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
+        
+        elif isinstance(class_label, (list, tuple)):
+             if len(class_label) != batch_size:
+                 raise ValueError(f"Length of class_label list ({len(class_label)}) must match batch_size ({batch_size})")
+             labels = torch.tensor(class_label, dtype=torch.long, device=device)
+        
+        elif isinstance(class_label, torch.Tensor):
+             if class_label.ndim == 0: # single tensor value
+                 labels = torch.full((batch_size,), class_label.item(), dtype=torch.long, device=device)
+             
+             elif class_label.ndim == 1 and class_label.shape[0] == batch_size:
+                 labels = class_label.to(device=device, dtype=torch.long)
+             
+             else:
+                  raise ValueError(f"Invalid shape for class_label tensor: {class_label.shape}. Expected scalar or ({batch_size},).")
+        
+        else:
+            raise TypeError(f"Unsupported type for class_label: {type(class_label)}")
+
+        labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
+        labels_onehot = labels_onehot.to(device)
+
+
+    with torch.no_grad():
+        for h in tqdm(range(latent_H), desc="Generating rows"):
+            for w in range(latent_W):
+                # Get predictions for the current pixel (h, w) based on previous ones
+                # Pass the current state of latents and conditional labels (if any)
+                # PixelCNN should handle causality internally
+                logits = prior(latents, labels_onehot) 
+
+                # extract logits for the specific position we are predicting
+                # logits shape from PixelCNN is (batch, num_embeddings, H, W)
+                logits = logits[:, :, h, w] # shape: (batch_size, num_embeddings)
+
+                # Apply temperature scaling
+                if temperature <= 0:
+                     raise ValueError("Temperature must be positive.")
+                if temperature != 1.0:
+                    logits = logits / temperature
+
+                # --- Apply top-k / top-p filtering ---
+                # (Optional) Apply top-k filtering first
+                if top_k > 0:
+                    # Get the top_k logits and their indices
+                    top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+                    # Create a mask, setting logits not in top-k to -inf
+                    mask = torch.full_like(logits, -float('Inf'))
+                    mask.scatter_(-1, top_k_indices, top_k_logits)
+                    logits = mask
+
+                # Apply top-p (nucleus) filtering
+                if 0 < top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+                    # remove tokens with cumulative probability above the threshold (nucleus)
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    # shift the indices to the right to keep also the first token above the threshold
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0 # Never remove the most probable token
+
+                    # create a mask, setting logits to be removed to -inf
+                    # scatter sorted_indices_to_remove back to original positions
+                    indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+                    logits = logits.masked_fill(indices_to_remove, -float('Inf'))
+
+                # calculate probabilities from the potentially filtered logits
+                probs = F.softmax(logits, dim=-1)
+
+                # sample from the filtered distribution
+                # torch.multinomial expects probabilities, not logits
+                pixel_samples = torch.multinomial(probs, num_samples=1) # shape: (batch_size, 1)
+                pixel_samples = pixel_samples.squeeze(-1) # shape: (batch_size,)
+
+                # update the latents tensor with the sampled index for position (h, w)
+                latents[:, h, w] = pixel_samples
+
+    with torch.no_grad():
+        # **MAJOR CORRECTION:** Map latent indices to embedding vectors
+        codebook = model.quantizer.embeddings.weight # shape: (num_embeddings, embedding_dim)
+        num_embeddings, embedding_dim = codebook.shape
+
+        # check if generated latents are valid indices
+        if latents.max() >= num_embeddings:
+             raise ValueError(f"Generated latent index {latents.max()} is out of bounds for codebook size {num_embeddings}. check PixelCNN output range.")
+
+        # Get the embedding vectors corresponding to the generated indices
+        # Flatten latents for efficient embedding lookup
+        latents_flat = latents.view(-1) # shape: (batch_size * H * W)
+        # Lookup embeddings
+        quantized_vectors_flat = F.embedding(latents_flat, codebook)
+        # Shape: (batch_size * H * W, embedding_dim)
+
+        # Reshape to the grid format expected by the decoder
+        # Common format: (batch_size, embedding_dim, H, W)
+        quantized_vectors = quantized_vectors_flat.view(batch_size, latent_H, latent_W, embedding_dim)
+        # Permute dimensions: (N, H, W, C) -> (N, C, H, W)
+        quantized_vectors = quantized_vectors.permute(0, 3, 1, 2).contiguous()
+
+        # Decode the quantized vectors
+        reconstructions = model.decoder(quantized_vectors)
+
+    return reconstructions, latents
+
+
+
 #%%
 #todo move get_latent_codes inside training because they are tightly coupled!
 # # After training vqvae, we need to grab the trainingset's encodings
@@ -10045,7 +10245,8 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
-# the new generator has issues! need to fix it ! Iget solid colors using it! which is weird!
+# the new generator has issues! 
+# need to fix it ! Iget solid colors using it! which is weird!
 
 prior, ckptname = train_prior(prior=prior,
                               vqvae_model=model,
@@ -10054,17 +10255,17 @@ prior, ckptname = train_prior(prior=prior,
                               num_classes=num_classes, 
                               epochs=120,
                               batchsize=64,
+                              sample_size=80,# for generation
                               lr=0.001,#0.001
                               weight_decay=1e-2,#1e-2
                               use_fp16=use_fp16,
-                              selected_label=9,
-                              sample_size=64,
-                              advanced_sampling=True,
+                              selected_label=None,
+                              advanced_sampling=False,
                               temperature=1,#1
-                              top_k=1,#3 works well
+                              top_k=0,#3 works well
                               top_p=0,#
                               rows=9,
-                              cols=8,
+                              cols=9,
                               device='cuda',
                               generation_device='cuda',
                               figsize=(12,16),
