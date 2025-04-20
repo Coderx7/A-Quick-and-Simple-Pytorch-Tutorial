@@ -9458,19 +9458,19 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
 
 
 @torch.no_grad()
-def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda', seed=66):
+def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda', seed=66):
 
     latent_map = get_discrete_latents_prior(prior=prior, 
-                                              vqvae=vqvae, 
-                                              batch_size=batch_size, 
-                                              num_classes=num_classes, 
-                                              selected_class=selected_class,
-                                              advanced_sampling=advanced_sampling,
-                                              temperature=temperature,
-                                              top_k=top_k,
-                                              top_p=top_p,
-                                              device=device,
-                                              seed=seed)
+                                            vqvae=vqvae, 
+                                            batch_size=batch_size, 
+                                            num_classes=num_classes, 
+                                            selected_class=selected_class,
+                                            advanced_sampling=advanced_sampling,
+                                            temperature=temperature,
+                                            top_k=top_k,
+                                            top_p=top_p,
+                                            device=device,
+                                            seed=seed)
     # print(f'{latent_map.shape=}')
     # convert latent codes to embeddings and reshape for decoding
     # we dont even need to flatten latent_map! because Embedding layer can handle
@@ -9499,8 +9499,8 @@ def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selecte
 # examples during training(that is basically our training set converted into latent codes)
 # so we start off with an empty latents and fill it up 
 @torch.no_grad()
-def get_discrete_latents_prior(prior:PixelCNN, 
-                               vqvae:VQVAE, 
+def get_discrete_latents_prior(vqvae:VQVAE,
+                               prior:PixelCNN, 
                                batch_size=64, 
                                num_classes=10,
                                selected_class=9, 
@@ -9895,7 +9895,8 @@ def get_discrete_latents_prior(prior:PixelCNN,
     return latent_map_prior
 
 
-def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
+def display_generated_samples(vqvae_model:VQVAE, 
+                              prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
                               batch_size=64, 
                               advanced_sampling=True,
@@ -9923,8 +9924,8 @@ def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN,
     # retired, the reconstructions got much better, but generation seemed cropped! looked
     # closer and noticed my bug and fixed it and now images are way better. they are very good
     # a bit deformed which is relaetd to overfitting , but overall it seems alright!
-    generated_image,_ = generate(vqvae_model,
-                               prior_model,
+    generated_image,_ = generate(prior=prior_model,
+                                vqvae=vqvae_model,
                                #labels=labels,
                                num_classes=num_classes,
                                batch_size=batch_size,
