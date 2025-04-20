@@ -9558,7 +9558,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     # since we support conditional generation we need to one_hot our labels
     if prior.make_conditional:
         if isinstance(selected_class,int):
-            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_class
             # we could also do 
             # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
         elif isinstance(selected_class, list) and len(selected_class) == batch_size:
