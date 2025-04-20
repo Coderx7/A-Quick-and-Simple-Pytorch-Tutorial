@@ -9707,8 +9707,9 @@ def train_improved_prior(prior, latent_codes, latent_labels, dataset_name, num_c
     
     return prior, model_checkpoint_name
 
+
 # I wrote a much better explanation of what happens in the debugging section down below
-# todo: add new explanations here as well
+# todo: replace this with the newer version
 def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
     # todo use seed so we get the same images each time! for comparison purposes!
     generator = torch.Generator(device).manual_seed(seed)
@@ -9752,10 +9753,13 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
                 logits = prior(codes,labels)[:, :, i, j] / temperature
                 # convert to probability distribution
                 probs = F.softmax(logits, dim=-1)
-                # sample from the predicted distribution
-                sampled_codes = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
+                # greedy search/sampling doesnt work at all!! I only get solid colors!
+                # pixels_values,_ = probs.max(dim=-1, keepdim=True)
+                # print(f'{pixels_values.shape=}')
+                # sampling based on probs work way better!
+                pixels_values = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
                 # update the latent code map
-                codes[:, i, j] = sampled_codes  
+                codes[:, i, j] = pixels_values  
 
     # print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
@@ -9771,6 +9775,429 @@ def generate(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, tem
     generated = model.decoder(quantized)
     # print(f'{generated.shape=}')
     return generated
+
+
+@torch.no_grad()
+def generate(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
+
+    latent_map = get_discrete_latents_prior(prior=prior, 
+                                              vqvae=vqvae, 
+                                              batch_size=batch_size, 
+                                              num_classes=num_classes, 
+                                              selected_class=selected_class,
+                                              advanced_sampling=advanced_sampling,
+                                              temperature=temperature,
+                                              top_k=top_k,
+                                              top_p=top_p,
+                                              device=device)
+    # print(f'{latent_map.shape=}')
+    # convert latent codes to embeddings and reshape for decoding
+    # we dont even need to flatten latent_map! because Embedding layer can handle
+    # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
+    # quantized = model.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
+    quantized = model.quantizer.embeddings(latent_map)
+    # print(f'{quantized.shape=}')
+    # reshape back to the shape decoder expects, i.e. (b,c,h,w)
+    quantized = quantized.permute(0, 3, 1, 2).contiguous()
+    # print(f'{quantized.shape=}')
+    # decode the quantized representations into images
+    generated = model.decoder(quantized)
+    # print(f'{generated.shape=}')
+    return generated
+
+
+# now lets grab prior_latents, for that we just do what we do when generating a new image
+# I initially tried feeding that to the prior model, but it turned out it was wrong
+# because the purpose of our prior model is not to transform existing latent
+# codes rather its job is to simply generate completely new latent codes from scratch, 
+# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
+# examples during training(that is basically our training set converted into latent codes)
+# so we start off with an empty latents and fill it up 
+@torch.no_grad()
+def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
+    # lets first take care of the models before we forget
+    # about them and face all sorts of weird issues!
+    prior.eval()
+    vqvae.eval()
+    prior.to(device)
+    vqvae.to(device)
+    
+    H,W = vqvae.enc_output_shape
+    # our latents_prior is simply a HxW matrix of integer indexes. so to create one we simply
+    # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
+    # each latent will become a whole image ultimately, when we feed it to our decoder.
+    # we can think of it as a compressed, structured blueprint for the image. 
+    # our prior model (i.e. PixelCNN) learns the 'language' or 'grammar' of these blueprints,
+    # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
+    # when given to our decoder, will give us an image based on the said blue-prnts
+    # 
+    # old:
+    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
+    # generates autoregressively. it predicts the code for position (i, j) based on the
+    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
+    # so we need a blank canvas to fill sequentially and starting with zeros is the 
+    # standard way to provide this initial empty state.
+    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
+    # anything because it was too simplistic, because of that, when I first wrote the early
+    # version of this function, using zeros would only give me solid colors like red! blue!
+    # after some diggings, found a suggestion that told me to use randints, and it actually 
+    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
+    # that actually looked like an object, though badly deformed and pretty low quality in general,
+    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
+    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
+    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
+    # all of this worse! only after that I found about the issue that starting with random 
+    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
+    # have the correct sequential context it was trained on, it expects to see the results of
+    # its own previous predictions when predicting the next step, not random noise.
+    # 
+    # todo call this latent_map_prior
+    # to me it looks much better, I find map way better becasuse its like feature-map,
+    # it implies a 2d shape and loos more intuitive to me (than latent_codes
+    # which is fine but doesnt convey its 2d shape, we only know it becasue of context!)
+    latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+    # print(f'*{selected_class=}')
+    # since we support conditional generation we need to one_hot our labels
+    if prior.make_conditional:
+        if isinstance(selected_class,int):
+            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
+            # we could also do 
+            # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
+        elif isinstance(selected_class, list) and len(selected_class) == batch_size:
+            labels = torch.tensor(selected_class, device=device, dtype=torch.long)
+            # print(f'+{labels.shape=}')
+        else:
+            raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
+        
+        #! dont onehot celeba
+        # only one-hot encode, selected_class if its int, or if its a list, it must only be int
+        if isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
+            labels = F.one_hot(labels, num_classes=num_classes).float()
+            # print(f'{labels.shape=}')
+            # print(f'{labels=}')
+        # print(f'{labels.shape=}')
+    else:
+        labels = None
+    
+    #now we autoregressively fill up our empty latents pixels with proper values predicted by prior
+    # for that we loop using H,W
+    for h in range(H):
+        for w in range(W):
+            # logits shape is (batchsize, embdsz, h, w)
+            logits = prior(latents_prior, labels)
+            # since we are dealing with pixels/codes and doing this in a loop
+            # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
+            # we only grab the logits for current h,w position 
+            # we do this for all samples, this will give us
+            # (batch,embdsz)
+            logits = logits[:,:,h,w]
+            
+            # advanced sampling
+            # initially I went with normal greedy search/sampling but it failed! I could only
+            # get solid colors like pink!, then I went with basic sampling and it got much better but 
+            # the generation left a lot to be desired, then I added this section to see how
+            # it does (tldr, topk sampling does infact improve our results!
+            # but top_p not really, it actually made it worse! but im keeping it
+            # maybe im doing something wrong here!? ok found out and explained it ahead!)
+            # 
+            # update:
+            # as to why having anything other than greedy sampling or simple sampling is waranted
+            # or advantagous here, it comes down to our models imprefect training! 
+            # and what we are actually doing!
+            # that is, our prior model, at each round gives us a list of possible values and
+            # how likely it thinks each one is(i.e. logits/probabalities), now since
+            # we are trying to predict the next latentcode, for our image, we
+            # are left with 2 options. 
+            # the first option is to be greedy and always pick the value the model thinks
+            # is the most likely, this is our first try, and as we already saw doesnt 
+            # work properly! why? because our model is not prefect and what it thinks is 
+            # most likely may not be actually the case. moreover, even if our model was perefect, 
+            # greedy sampling wasnt a good choice either, because it leads to the same outputs
+            # all the time! making our generations very repetitive and unnatural.
+            # images just like language have variation so keep choosing the most likely value
+            # all the time would usually result in unnatural generation.
+            # so this is why sampling acn be rough!
+            # our second option would be to make it more random, so maybe can we solve the previous
+            # issue that the most likely value might not actually be the right one(because it would
+            # be a uniform random selection, and we know all the codes are not as likely as other codes!).
+            # so we simply pick a random value weighted by its probablity(using torch.multinomial() e.g.), 
+            # this way values are chosen randomly, but the chance of each value/code being chosen is 
+            # still proportional to its assigned probability.
+            # values with higher probabilities are more likely to be chosen but its not guaranteed
+            # and lower probability values will also have some chance. so we see we have actually devised 
+            # a good solution which should work! and as we saw, our simple weighted sampling strategy
+            # actually gave us way better results compared to greedy search/sampling!
+            # however as we saw it also leaves a lot to be desired and doesnt always work well either,
+            # it may very well be the worst strategy as well, if the model assigned tiny probablities
+            # to many codes, and if we pick one randomly, the chances are we are picking a code that 
+            # doesnt make sense at all and hence makes a terrible image!(sidenote: can we attribute this to The Long Tail Problem? i've heard this for long tail distributions where it refers to imbalanced data where there are few high confidence classes, with a tail of (many) low confidence classes?! see https://www.youtube.com/playlist?list=PLoROMvodv4rNjRoawgt72BBNwL2V7doGI)
+            # so our solution seems ok overall but the issue lies in tiny probablities! so if we could
+            # solve that part, and strike a balance here that would be great.
+            # we would have some randomness to make things interesting, and at the same time we 
+            # avoid the nonsensical, extremely low probability cases. 
+            # this is where advanced smpling strategies such as temperature scaling, TopK and Top_P (nucleous smapling) come in!
+            # I have explained them below
+            
+            if advanced_sampling:
+                # temperature scaling makes the model more or less confident/random before sampling.
+                # low temperatures make the probability distribution sharper (more peaky),
+                # intuitively it means, when we divide our logits by a small number, the logits
+                # values are less affected, they stay the same(mostly), larger values stay larger,
+                # and the models output will be more deterministic, because it focuses on the
+                # most likely values like normal. This means less randomness/diversity in the 
+                # final generation!(which is the default behavior)
+                # on the other hand, if we use higher values, it makes the probability distribution
+                # flatter(less spiky) and therefore the probabilities more uniform(i.e. the ranges are roughly the same). 
+                # again that is, when logits is divided by a larger value, their magnitudes decrease,
+                # the larger that value, the more values(logits) become smaller, making them closer to eachother
+                # therefore, after some threshold, we'll see basically all values(logits) are roughly in the 
+                # same range, making them essentially as likely to happen! when this happens, and
+                # we go for sampling, any values can be selected(regardless of their initial raw value
+                # whether they were higher and now become lower, or they were lower, and because others 
+                # got decreased, they are now in the same range, and thus as likely to happen!)
+                # and this will lead to more randomness/diversity in the generation process!
+                # and as to why messing with logits like this makes sense, I believe its directly
+                # related to the fact that our models are not prefect, and therefore, its pretty likely
+                # that the right values, get a somewhat lower probablity than the should, and by default
+                # they dont get a chance to be used, so models incompetence hurts us, but when we
+                # do such tricks! we are actually enabling those codes/values to get involved
+                # and play a role and suddenly we see our generation perofrmance gets better!
+                if temperature != 1:
+                    logits = logits/temperature
+
+                # top-k sampling # paper : https://arxiv.org/abs/1805.06087 
+                if top_k > 0:
+                    # first we grab the top values and their indexes, the idea is we
+                    # are trying to get rid of the less lileky candidates and only 
+                    # work with a pool of highly likely or more likely candidates!
+                    top_k_logits, top_k_indexes = torch.topk(logits, top_k, dim=-1)
+                    # we then create a mask and set all logits that are not in top-k to -inf
+                    mask = torch.ones_like(logits) * -float('inf')
+                    # we could also do
+                    # mask = torch.full_like(logits, -float('Inf'))
+                    # and fill the rest of the mask with the actual top values
+                    mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
+                    # now our mask is essentially the top logits with all the rest set to -inf
+                    # so when we later use softmax, -inf becomes nans and doesnt contribute!
+                    # this has the desired outcome that now, when we sample,the pool ofvalues
+                    # is already made of highly likely/relvant choices, hopefully resulting 
+                    # in higher quality selection and thus generation(because we already took
+                    # out low probablity/irrelavent/noisy choices, at least this is the idea! 
+                    # if our model somehow isnt trained properly and produces garbage obviously
+                    # it wont work, it works great if the model confidently predicts acucractly
+                    # most of the time!)
+                    # on a sidenote, this is one of the reasons why a larger spatial size for
+                    # encoders outputs and hence our min_indexes, and then discrete_latents 
+                    # affect the performance this much! the larger the more information is 
+                    # encoded and retained which can be used to more accurately recove image
+                    # details!(again think about it, with larger dims, we have more values, 
+                    # each value(discrete latent value) corresponds to a smaller patch of 
+                    # the image and therefore, more details of the iamge is captured!)
+                    # (so in a nutshell larger size = more codes = finer/smaller patches = more information = more details!)
+                    logits = mask
+
+                # heres another form of sampling known as top-p sampling!
+                # I really didnt have much luck with it, topk, has worked way better
+                # but for the sake of the experiment i add it here! it wasntt worth it so far!
+                # especially when used with topk it can get cumbersome, because topk
+                # can narrow the pool size(especially if we use a small number), and
+                # top_p makes it even narrower which may be why it doesnt work out properly!
+                # or maybe im missing something here!
+                # update1:
+                # found my issue, it was caused by topk=1, where it would only pick the highest
+                # probablities for each sample, and therefore when it came to top_p, and tried 
+                # converting logits to probablities, all entries that were set to -inf in topk section
+                # now became 0, so when we cumsumed the probablities, the whole entries now had 1!
+                # basically all indexes became 1 (because highest entry was 1, and it was added to 0s, 
+                # it would still be 1, and it went on untill all inexes were set to 1.
+                # all hell broke loose, when we did :
+                # sorted_indexes_to_remove = cumulative_probs > top_p
+                # now sorted_indexes_to_remove is all True! cuz every is set as 1!
+                # you can now imagine how it went down! sorting doesnt matter anymore,
+                # indexes_to_remove contains basically every single indexes! and when fed
+                # to scatter to grab the indexes to remove, since theres 1 everywhere, it
+                # selects all indexes to be removed, and the nail on the cofine set all the
+                # logits to -inf, which after taking softmax, turns into 0!
+                # logits = logits.masked_fill(indexes_to_remove, -float('inf')) 
+                # 
+                # making the model useless, initially I thought this shouldnt pose an issue 
+                # cuz even if I used topk=1, it would turn into a greedy search, cuz 1 value/candidate
+                # had the highest value, but I never imagined this case! thank God I found it!
+                #
+                # update2:
+                # ok I did some more research and found out top_p is basically a dynamic 
+                # alternative to top-k!
+                # TODO remve excessive or merge with top-p
+                # update: - is it excessive?
+                # add this to top_p section instead?
+                # 
+                # the idea of just looking at the top k (say, top 10) most likely values
+                # and ignoring everything else completely doesnt always work!
+                # on one hand, doing a weighted sampling from those top values do reduce 
+                # the chance of picking nonsensical/lowprobablity ones, but then again 
+                # it can go especially wrong if the model is either super confident or very uncertain!
+                # either way there are situations that can make our strategy go from less effective to
+                # completely ineffective!
+                # for example, our model rightfully thinks one code is the right one (e.g with 95% probability)
+                # but using topk we are forced to consider k options, even though 9 of them are much less likely.
+                # or another example where our model is very uncertain and our top k=20 values all 
+                # have similar low probabilities but we choose k=10, here we may leave out 10 
+                # perfectly reasonable options just because they didnt make it in the list. 
+                # so specifying the k becomes another point of concern!(one value k may not work
+                # for another image/concept!)
+                #                 
+
+                # this is where top_p comes in. top_p is basically a dynamic alternative to top-k!
+                # that is, in top_p sampling, instead of choosing a fixed number of 
+                # the most likely values/candidates, a set of values is selected so that 
+                # its combined probabilities add up to at least a confidence threshold 
+                # that we specify (e.g. p).
+                # simply put, the whole idea is to capture enough probablities that make us
+                # feel confident the next most likely/right/good candidate is among them. 
+                #
+                # todo remove it or make it cleaer?(probablity mass)
+                # (technically speaking, its capturing enough probablity mass!).
+                # 
+                # in order to make this work, the set needs to be as small as possible, 
+                # otherwise, we will be adding increasingly unlikely candidates that may not 
+                # only not contribute positively, rather add noise or weird/out of palce things! 
+                # defeating the whole point of the strategy! we want just enough candidates from
+                # the useful portion of the probablity distribution that make our result improve!
+                # 
+                # !rephrase - more cohesion with previous section/paragraph
+                # the dynamic nature here is that depending on the model's confidence, on a case
+                # by case case! the number of probablities needed to reach the threshold changes
+                # we can think of this threshold(p) as a probability budget, e.g. 0.9 means
+                # we want values that cover 90% of the probability for example,
+                # if p=0.9, we look at the most likely value and grab its probablity (e.g.0.6),
+                # we havent reached 0.9 so we look at the second most likely candidate, its 0.25 e.g. 
+                # we add them together 0.6+0.25=0.85, we are still <.9, so we keep doing this 
+                # until we reach our confidence threshold, for example our third most likely candidate
+                # had 0.1, we add them together 0.85+0.1=0.95! now our sum is greater than our 
+                # confidence threshold, so we stop.
+                # now what this basically means is our model now believes theres a 95% chance 
+                # that the actual best candidate is one of these three, we are essentially 
+                # ignoring all the other values whose combined probability is only 5% (100% - 95%)
+                # we are betting that the good stuff lies within that top 95% probability mass.
+                
+                # this set is also refered to as a nucleus in some texts,
+                # because it represents the core, central part of the probability distribution
+                # where most of the likelihood is concentrated. (think of it like the nucleus of
+                # an atom the dense center.) it was first introduced in a 2019 paper 
+                # The Curious Case of Neural Text Degeneration by Holtzman et al.
+                # https://arxiv.org/abs/1904.09751, the paper is amazing and I highly recommend it
+
+                #
+                # the basic idea is as follows, we sort our logits from the highest to lowest values
+                # (representing most likely to least likely values), then we start adding the 
+                # probabilities from the top and go down one by one, until we reach a point where
+                # our cumulative sum of probabilities is greater than our confidence threshold. 
+                # we are doing this to find that smallest set that captures our p probability budget
+                # It means we are identifying the boundary. Everything "above" this boundary 
+                # (more probable) is kept. Everything "below" this boundary (less probable 
+                # and not needed to reach the p budget) is discarded.
+                # we are doing this so we can discard all other lower probabalities, leaving us
+                # with bunch of the most likely values/candidates that collectively give us the confidence
+                # they have the right picks in set.
+                # 
+                # so to recap with an example:
+                # suppose our model is pretty confident and we have high probablity predictions:
+                # like p(value1)=0.95, p(value2)=0.02,etc, if p=0.9,the cumsum will be 
+                # [0.95, 0.97, ...] since 0.95 >= 0.9 we stop immediately and only value1
+                # is kept. our dynamic pool size is 1 and top-p behaves like greedy search.
+                # now suppose the other way around, now our model is very uncertain and we
+                # have many small probablities, like for example p(value1)=0.2, p(value2)=0.15,
+                # p(value3)=0.15, p(value4)=0.1, p(value5)=0.1, p(value6)=0.1, p(value7)=0.1,etc 
+                # cumsum will be [0.2, 0.35, 0.50, 0.60, 0.70, 0.80, 0.90, ...], if our 
+                # p=0.9 we need to go all the way to code value7 to reach the 0.9 threshold
+                # so we now have {value1, value2, value3, value4, value5, value6, value7}
+                # The dynamic pool size therefor is now 7. 
+                # 
+                # so as we can see, top-p lets the model decide how many options to consider
+                # based on its own confidence. it keeps adding options starting from the most 
+                # likely, just until it feels it has covered p percent of the likely outcomes,
+                # then stops and samples from that dynamically sized nucleus/set 
+                # this gives a better outcome compared to a fixed top-k.
+                
+                # so as we see, top_p solves the topk issues!
+                # if the model is very confident the set may only contain that one token.
+                # if the model is very uncertain (lots of small probablities),
+                # the set will include more values until the cumulative probability
+                # reaches top_p, allowing for more diversity when needed.
+                # 
+                # it solves the problem of potentially cutting off reasonable options when
+                # using a fixed k in topk sampling, when the distribution is flat, or 
+                # keeping too many bad options when the distribution is sharp. 
+                # However, it relies heavily on the probabilities being well-calibrated by the model.
+                
+                if 0 < top_p < 1.0: # The Curious Case of Neural Text Degeneration by Holtzman et al. : https://arxiv.org/abs/1904.09751
+                    
+                    assert top_k!=1,('cant use top_p with top_k=1, when using top_p,'
+                                     'you must use a high top_k, otherwise top_p wont work!')
+                    # sort the logits to easily find the most likely options.
+                    sorted_logits, sorted_indexes = torch.sort(logits, descending=True, dim=-1)
+                    # print(f'{sorted_logits=}')
+                    # calculate the cumulative sum of probabilities.
+                    # The i-th element here represents the total probability mass covered
+                    # by the top i most likely options.
+                    # e.g., [0.5, 0.7, 0.85, 0.92, ...] means P(top1)=0.5, P(top1=0.5)+P(top2=0.2)=0.7,
+                    # etc.
+                    cumulative_probs = torch.cumsum(sorted_logits.softmax(dim=-1), dim=-1)
+                    # print(f'{cumulative_probs=}')
+                    # we want to discard tokens after the cumulative probability exceeds
+                    # our confidence top_p. we find all indices where cumulative_probs > top_p
+                    sorted_indexes_to_remove = cumulative_probs > top_p
+                    # print(f'{sorted_indexes_to_remove=}')
+                    # shift the indexes to the right to keep also the first value above the 
+                    # threshold
+                    # crucial shift! We want to keep the first token that pushes the sum
+                    # over the threshold p. the line above marks this token for removal too.
+                    # so, we shift the removal mask one position to the right. The first token
+                    # (most probable) is now definitely kept, the second token is marked for
+                    # removal only if the *first* token's probability alone was > top_p, and so on.
+                    sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
+                    # never remove the most probable value
+                    # Step 6: Ensure the most probable token (index 0) is *never* removed,
+                    # even if its probability alone exceeds top_p. This guarantees we always
+                    # have at least one option.
+                    sorted_indexes_to_remove[..., 0] = 0 
+
+                    # create a mask, setting logits to be removed to -inf
+                    # scatter sorted_indexes_to_remove back to original positions
+                    # scatter the removal mask back to the original token order.
+                    # We need to know which *original* tokens (before sorting) should be removed.
+                    indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, 
+                                                                         index=sorted_indexes,# Use the mapping from sorted back to original
+                                                                         src=sorted_indexes_to_remove)
+                    # print(f'{indexes_to_remove=}')
+                    # apply the mask. Set the logits of tokens marked for removal to -inf.
+                    # When softmax is applied later, these will have zero probability and won't be sampled.
+                    logits = logits.masked_fill(indexes_to_remove, -float('inf'))
+                    # print(f'{logits=}')
+
+            
+            # now we convert it to probablities so we can sample from it
+            probs = F.softmax(logits, dim=-1)
+            # greedy search/sampling doesnt work at all!! I only get solid colors!
+            # pixels_values,_ = probs.max(dim=-1, keepdim=True)
+            # print(f'{pixels_values.shape=}')
+            # lets sample from it based on the probablity of each entry
+            # since we are filling pixel values, one value is enough
+            # note that replacement=False has no effect here because num_samples=1
+            # that is we can't sample the same element twice if we are only picking one!
+            # just wanted to make that clear!
+            # todo: pixelvalies is not accurate, choose a better name like latent_values?!
+            # but when I use a simple sampling strategy it starts working! and waaay better!
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
+            # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
+            # and get (64,) so when we assign it below all is good and we dont get expand error!
+            # now lets fill in the empty places in latents_prior
+            latents_prior[:,h,w] = pixels_values.squeeze(1)
+            
+    return latents_prior
+
+
+
 
 def display_generated_samples(vqvae_model:VQVAE, prior_model:PixelCNN, 
                               dataset, num_classes=10, selected_label=9,
