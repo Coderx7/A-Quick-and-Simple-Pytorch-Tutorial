@@ -206,7 +206,7 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
     imgs = imgs.detach().cpu().numpy().transpose(0,2,3,1)
-    
+    print(f'{len(labels)=}')
     if normalized:
         #unnormalized the image
         #normalization is imgs-mean/std
@@ -8848,93 +8848,93 @@ class MaskedAttentionBlock(nn.Module):
 
         return self.gamma * attn_out + x
 
-# class ResidualBlock(nn.Module):
-#     """Gated Residual Block with Conditional BatchNorm"""
-#     def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
-#         super().__init__()
-#         self.block = nn.Sequential(
-#             MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
-#             nn.BatchNorm2d(out_channels),
-#             nn.ReLU(),
-#             nn.Dropout2d(dropout_rate),
-#             MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
-#             nn.BatchNorm2d(out_channels)
-#         )
-#         self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+class ResidualBlock(nn.Module):
+    """Gated Residual Block with Conditional BatchNorm"""
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
+            MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
 
-#     def forward(self, x):
-#         return F.relu(self.block(x) + self.skip(x))
+    def forward(self, x):
+        return F.relu(self.block(x) + self.skip(x))
 
-# class ImprovedPixelCNN(nn.Module):
-#     def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
-#         super().__init__()
-#         self.num_embds = num_embds
-#         self.embedding_size = embedding_size
-#         self.num_class = num_class
-#         self.make_conditional = make_conditional
-#         # indecex dimensions required for attention
-#         self.H = H
-#         self.W = W
-#         self.embedding = nn.Embedding(num_embds, embedding_size)
-#         self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+class ImprovedPixelCNN(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
+        super().__init__()
+        self.num_embds = num_embds
+        self.embedding_size = embedding_size
+        self.num_class = num_class
+        self.make_conditional = make_conditional
+        # indecex dimensions required for attention
+        self.H = H
+        self.W = W
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
         
-#         self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
-#         self.initial_conv = nn.Sequential(
-#             MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
-#             nn.BatchNorm2d(128),
-#             nn.ReLU(),
-#           )
+        self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
+        self.initial_conv = nn.Sequential(
+            MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+          )
 
-#         # Define blocks with their respective output channel sizes:
-#         self.res_blocks = nn.ModuleList([
-#             ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-#             ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-#             # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
-#             ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
-#             ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-#             # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
-#             ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-#             ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
-#         ])
+        # Define blocks with their respective output channel sizes:
+        self.res_blocks = nn.ModuleList([
+            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+            # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
+            ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
+            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+            # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
+            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+            ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
+        ])
 
-#         # Corrected skip connections: one per block, matching output channels.
-#         self.skip_convs = nn.ModuleList([
-#             nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
-#             nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
-#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
-#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
-#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
-#             nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
-#         ])
+        # Corrected skip connections: one per block, matching output channels.
+        self.skip_convs = nn.ModuleList([
+            nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
+            nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
+            nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
+            nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
+        ])
 
-#         self.final_layers = nn.Sequential(
-#             nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
-#             nn.BatchNorm2d(512),
-#             nn.ReLU(),
-#             nn.Dropout2d(dropout_rate),
-#             nn.Conv2d(512, 256, kernel_size=1),
-#             nn.BatchNorm2d(256),
-#             nn.ReLU(),
-#             nn.Conv2d(256, num_embds, kernel_size=1)
-#         )
+        self.final_layers = nn.Sequential(
+            nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
+            nn.Conv2d(512, 256, kernel_size=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Conv2d(256, num_embds, kernel_size=1)
+        )
 
-#     def forward(self, input_indices, labels=None):
-#         # Embed and prepare conditional input.
-#         input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
-#         if self.make_conditional and labels is not None:
-#             labels = self.fc_label_embedding(labels.float())
-#             labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
-#             input_indices = torch.cat([input_indices, labels], dim=1)
+    def forward(self, input_indices, labels=None):
+        # Embed and prepare conditional input.
+        input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
+        if self.make_conditional and labels is not None:
+            labels = self.fc_label_embedding(labels.float())
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            input_indices = torch.cat([input_indices, labels], dim=1)
 
-#         # print(f'{input_indices.shape=}')
-#         output = self.initial_conv(input_indices)
-#         skips = []
-#         for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
-#             output = res_block(output)
-#             skips.append(skip_conv(output))
-#         combined = torch.cat(skips, dim=1)
-#         logits = self.final_layers(combined)
-#         return logits
+        # print(f'{input_indices.shape=}')
+        output = self.initial_conv(input_indices)
+        skips = []
+        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
+            output = res_block(output)
+            skips.append(skip_conv(output))
+        combined = torch.cat(skips, dim=1)
+        logits = self.final_layers(combined)
+        return logits
 
 
 #########################
@@ -8950,10 +8950,7 @@ def train_prior(prior:PixelCNN,
                 use_fp16=False,
                 selected_label=9,
                 sample_size=64,
-                advanced_sampling=True,
                 temperature=1,
-                top_k=1,
-                top_p=0,
                 rows=9,
                 cols=8,
                 checkpoint_dir_path='./weights',
@@ -9343,10 +9340,7 @@ def train_prior(prior:PixelCNN,
                                   num_classes=num_classes,
                                   selected_label=selected_label,
                                   batch_size=sample_size,
-                                  advanced_sampling=advanced_sampling,
                                   temperature=temperature,
-                                  top_k=top_k,
-                                  top_p=top_p,
                                   device=generation_device,
                                   rows=rows,
                                   cols=cols,
@@ -9390,19 +9384,20 @@ def train_prior(prior:PixelCNN,
 
 # I wrote a much better explanation of what happens in the debugging section down below
 # todo: replace this with the newer version
-def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
-    # todo use seed so we get the same images each time! for comparison purposes!
-    generator = torch.Generator(device).manual_seed(seed)
-    
+def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
+    vqvae_model.eval()
     prior.eval()
     # it must match our latent space shape from our vqvae model
-    # print(f'{model.enc_output_shape=}')
-    H, W = model.enc_output_shape
+    # print(f'{vqvae_model.enc_output_shape=}')
+    H, W = vqvae_model.enc_output_shape
     # print(f'{H=},{W=}')
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
-    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
-    # generates autoregressively. it predicts the code for position (i, j) based on the
+    # todo use seed so we get the same images each time! for comparison purposes!
+    generator = torch.Generator(device).manual_seed(seed)
+    
+    # we start with zeros because the PixelCNN generates autoregressively. 
+    # it predicts the code for position (i, j) based on the
     # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
     # so we need a blank canvas to fill sequentially and starting with zeros is the 
     # standard way to provide this initial empty state.
@@ -9420,7 +9415,7 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
     # have the correct sequential context it was trained on, it expects to see the results of
     # its own previous predictions when predicting the next step, not random noise.
     codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
-    # codes = torch.randint(0, model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
+    # codes = torch.randint(0, vqvae_model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
     labels = F.one_hot(labels,num_classes=num_classes).to(device)
     # print(f'{labels.shape=}')
     
@@ -9429,7 +9424,8 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
             for j in range(W):
                 # predict logits for the current latent position
                 # higher temps means more diversity in output!
-                # (i.e. it controls randomness in our output, lower temp=less randomness in ouput)
+                # (i.e. it controls randomness in our output, 
+                # lower temp=less randomness in ouput)
                 logits = prior(codes,labels)[:, :, i, j] / temperature
                 # convert to probability distribution
                 probs = F.softmax(logits, dim=-1)
@@ -9445,56 +9441,486 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
     # convert latent codes to embeddings and reshape for decoding
     # we dont even need to flatten codes! because Embedding layer can handle
     # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
-    # quantized = model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
-    quantized = model.quantizer.embeddings(codes)
-    # print(f'{quantized.shape=}')
+    # quantized_embeddings = vqvae_model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    quantized_embeddings = vqvae_model.quantizer.embeddings(codes)
+    # print(f'{quantized_embeddings.shape=}')
     # reshape back to the shape decoder expects, i.e. (b,c,h,w)
-    quantized = quantized.permute(0, 3, 1, 2).contiguous()
-    # print(f'{quantized.shape=}')
+    quantized_embeddings = quantized_embeddings.permute(0, 3, 1, 2).contiguous()
+    # print(f'{quantized_embeddings.shape=}')
     # decode the quantized representations into images
-    generated = model.decoder(quantized)
+    generated = vqvae_model.decoder(quantized_embeddings)
     # print(f'{generated.shape=}')
-    return generated, codes
+    return generated
 
-@torch.no_grad()
-def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, 
-             selected_class=9, advanced_sampling=False, temperature=1,
-             top_k=0, top_p=0, device='cuda', seed=66):
+def display_generated_samples(vqvae_model:VQVAE, 
+                              prior_model:PixelCNN, 
+                              dataset, 
+                              num_classes=10, 
+                              selected_label=9,
+                              batch_size=64, 
+                              temperature=1,
+                              device='cuda', 
+                              rows=8, cols=8, 
+                              figsize=(12,16),
+                              seed=66, 
+                              fname=None,
+                              title=''):
+
+    if 'cifar' in dataset:
+        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
+                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
+
+    elif dataset =='mnist':
+        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
+                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
+    else:#celeba
+        class_names = {i:'N/A' for i in range(num_classes)}
+
+    msg = class_names[selected_label] if selected_label else "All Classes!"
+    print(f'Generating images of {msg}')
     
+    # todo: create proper label for celeba!
+    if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+    else:
+        sample_count = batch_size//num_classes
+        labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
+        label_texts = [class_names[i]
+                       for i in range(num_classes) # outer loop for each class
+                       for _ in range(sample_count)] # inner loop for num_samples for each class
+
+    # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+    # I would get weird generations! when I icnreased the image size form 32 to 64 and
+    # retired, the reconstructions got much better, but generation seemed cropped! looked
+    # closer and noticed my bug and fixed it and now images are way better. they are very good
+    # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+    generated_image = generate(vqvae_model=vqvae_model,
+                               prior=prior_model,
+                               labels=labels,
+                               num_classes=num_classes,
+                               batch_size=batch_size,
+                               # when using conditional, using smaller values 
+                               # for temperature, give us weireder images/really 
+                               # simplestic images! like with way less details!
+                               # update: it seems using smaller values for temp
+                               # makes the overall probs more uniform, making all
+                               # smaller neurons fire as likely as any larger ones
+                               # probablity wise! and those small probablity neurons
+                               # tend to work on lower abstractions? (imagine a photoshop layer
+                               # where the final image is made of several layers, adding details
+                               # retouches, etc to the image, at least this is the feeling 
+                               # i get from these images. 
+                               # todo work on explanation!)
+                               temperature=temperature,
+                               device=device,
+                               seed=seed)
+
+    # extract epoch from fname and use it to mark each image
+    if fname:
+        epoch = os.path.splitext(fname)[0].split('_')[-1]
+        title = f'{title} Epoch {int(epoch)}'
+
+    view_images(generated_image, label_texts, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname, title=title) 
+
+
+#!edit add more explanation
+# another way to generate images, instead of using prior model
+# we directly sample from code frequency, it shows if our model
+# has good features or not (whether the problem lies in prior model/its training
+# or vqvae features itself. the images may not look good! more explanation ahead)
+def generate_simple(model:VQVAE, latent_codes, batch_size=1):
+    # compute code frequencies from training data
+    # instead of autoregressively get predictions 
+    # for each position using prior! 
+    counts = torch.bincount(latent_codes.flatten())
+    probs = counts / counts.sum()
+    # sample indexes from the frequency distribution
+    H, W = latent_codes.shape[1:]
+    latent_map = torch.multinomial(probs, batch_size * H * W, replacement=True)
+    latent_map = latent_map.view(batch_size, H, W).to(device)
+    # print(f'{latent_map.shape=}')
+    # decode the latent_map
+    quantized_embedding_map = model.quantizer.embeddings(latent_map)  # (batch_size, H, W, embd_size)
+    # print(f'{quantized_embedding_map.shape=}')
+    quantized_embedding_map = quantized_embedding_map.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
+    # print(f'{quantized_embedding_map.shape=}')
+    generated_image = model.decoder(quantized_embedding_map)
+    # print(f'{generated_image.shape=}')
+    return generated_image
+
+
+# this is an improved version, I explained this in details later in debugging section
+# so I comment this so we dont get ahead of ourselves
+# torch.no_grad()
+# def generate2(model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
+#               class_label=None, num_classes=10, top_k=0, top_p=0.9, device='cuda'):
+
+#     prior.eval()
+#     model.eval()
+#     prior.to(device)
+#     model.to(device)
+
+#     shape = model.enc_output_shape
+
+#     H,W = shape
+
+#     # create empty latent map
+#     latents = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+
+#     labels_onehot = None
+#     if prior.make_conditional:
+#         if class_label is None:
+#             # labels = torch.randint(0, num_classes, (batch_size,), device=device)
+#             labels = torch.range(0,num_classes,dtype=torch.long).repeat_interleave(batch_size//num_classes)
+        
+#         elif isinstance(class_label, int):
+#             labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
+        
+#         else:
+#             raise Exception(f"Unknown type: {type(class_label)=}")
+
+#         labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
+#         labels_onehot = labels_onehot.to(device)
+
+#     for h in range(H):
+#         for w in range(W):
+#             logits = prior(latents, labels_onehot) 
+#             logits = logits[:, :, h, w] 
+            
+#             if temperature>0:
+#                 logits = logits / temperature
+            
+#             if top_k>0:
+#                 top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+#                 mask = torch.full_like(logits, -float('inf'))
+#                 mask.scatter_(-1, top_k_indices, top_k_logits)
+#                 logits = mask
+
+#             if 0<top_p<1.0:
+#                 sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+#                 cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+#                 sorted_indices_to_remove = cumulative_probs > top_p
+#                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+#                 sorted_indices_to_remove[..., 0] = 0 
+#                 indices_to_remove = sorted_indices_to_remove.scatter(-1, 
+#                                                                      sorted_indices,
+#                                                                      sorted_indices_to_remove)
+#                 logits = logits.masked_fill(indices_to_remove, -float('inf'))
+
+#             probs = F.softmax(logits, dim=-1)
+#             pixel_samples = torch.multinomial(probs, num_samples=1) 
+#             pixel_samples = pixel_samples.squeeze(-1) 
+#             latents[:, h, w] = pixel_samples
+
+#     quantized = model.quantizer.embeddings(latents)
+#     quantized = quantized.permute(0, 3, 1, 2).contiguous()
+#     reconstructions = model.decoder(quantized)
+#     return reconstructions, latents
+
+
+
+#%%
+#todo move get_latent_codes inside training because they are tightly coupled!
+# # After training vqvae, we need to grab the trainingset's encodings
+# # and use these encodings to train our prior model
+# latent_codes,latent_labels = get_discrete_latent_codes(model, dataloader_train)
+
+# train our PixelCNN prior
+# embdsize=256 results in a very decent generation 
+# compared to 128 even with 32x32 imgsize
+# 
+# for celeba use the nonconditional version because it comes with 40 attributes for
+# each individual image. we can choose to incorporate them or at least condition our
+# models on one of these attributes, but for now we just ignore them and choose the
+# unconditional version
+# ok the unconditional generation works great, but when we start using the labels on celeba, 
+# it will make the trainig harder, and images start worse than the unconditional version
+# most probably because of the way we are incorporating the labels in our archiecture
+# since its a multilabel case, a much better fusion strategy is needed. there are many 
+# ways we can go about it, from fusing at multiple levels in our architecture so the
+# labels semantic are transfered properly throughout the features in the model, to simply
+# using several layers on embeddings to get better representation/or using summing/etc the
+# list goes on!
+#TODO: check why the generation seems random here despite having used seed!
+conditional = True
+use_fp16 = True
+num_classes = 40 if dataset=='celeba' else 10
+
+#TODO improve prior training function like vqvae trainig!
+#! test fp16 training and see if gradient clipping made it ok or moving loss 
+# - no gradient clipping isnt necessary it seems!
+#! under autocast, if so why?!
+# - outside of autocast, loss always nans, with smaller lr(1e-4,1e-5) its still inf
+# - even with low lr(1e-5) and wd down to 1e-5/1e-7 (from 1e-2) its still inf!
+# - only when we explictly wrap loss in autocast(enabled=False) and set logits.float()
+#   we get rid of infs!
+# todo next, create more diverse generation for celeba and also for classes 
+#! like for each class, n samples ge generated, so we can asses all classes at each epoch
+#! check generate-without reshaping is ok? 
+prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
+
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader=dataloader_train,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=64,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=None,
+                              temperature=1,#1
+                              sample_size=80,# for generation
+                              rows=10,
+                              cols=8,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/',
+                              recons_dir_path='./results/',
+                              )
+
+#sidenote: 
+# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
+# sidenote: starting with smaller lr=(1e-3) overfitted badly, but the generation was
+# waaaaay better. I increased embdsize for prior though, need to check 
+# it with higher lr and see if it gets better if it doesnt oevrfit badly!
+# note: when I changed the model from 32x32 to 64x64 in my second test, I didnt
+# rerun the get_latent_codes, I guess this is the reason why I kept getting weird
+# output all these times!
+# check if this is the case using a second round of tests!
+#%%
+# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
+# ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
+# instead of 32x32 and it would mess up the generation! see git log info)
+# when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
+# better than than before!(when we used 32x32 versions!)
+
+#!todo remove from here
+# these blocks use our initial version of pixel cnn, and i also didnt save any hyperparameters
+# for them, so they're just weights I dont plan on getting to work! early versions didnt
+# work properly until i improved the architecture (the architecture is roughly the same
+# though I uses residual connections, it should be in previous commits, so if needs be
+# can use that, but I dont plan on doing it! lets remove them altogether!)
+# ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
+# cifar10 unconditional
+# ckptname = './weights/old/vqvae_23_13_38_2025_03_25.ckpt'
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
+# I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
+# better generation usually! so try both checkpoints (the last one and the best one) and 
+# compare the results
+#todo down to here!
+
+# with extra info (model_config, train loss, etc)
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
+# Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
+# get that in early epochs. the smalles training loss/bpd has a much better result
+# than the our best val/bpd values! makes me wonder if having a validation set even
+# matters!
+# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
+# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
+
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+# not good. I lowered the dropout ratio and it I believe it make it worse than before!
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
+# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# for celeba because the dataset is much larger, we have far b etter generations!
+# obviously having a better vqvae and prior models with better training can yield
+# much better result. but for us this siffuces and shows given more data, with the
+# same architecture, we can achieve pretty good results.
+# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
+
+#embd256 
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
+# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
+
+# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
+# clean and git push to privae repo first
+
+# ok increasing the embedding for vqvae model resultted in way better generations!
+# both loss and BPD dropped from 5 to 1!! and the gap between training and val became
+# way less steep! so we learned the vqvae is crucial to getting great reconstructions
+# and simple reconstruction results in vqvae doesnt mean theres an issue in prior models
+# secotion if our loss doesnt decrease! it may very well be vqvae needs to be tuned (buffed)
+# more! in our case it was to simply use larger embedding dim (256)!
+# I need to train others with the new embd_size for vqvae to see how they perform :)
+# test these 3 models to see how they fair against each other
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
+# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
+#
+# like before with the increased embd, the generation is near prefect!(unconditional)
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
+# 
+# conditional
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
+
+#fp16/ema vqvae
+# cifa10-embd256-64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.pt'
+
+
+#fp32/eva vqvae
+#cifa10-embd256-64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
+
+
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
+
+prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+# prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+#%%
+# Generate new image
+# class_names = dict([(i,'N/A') for i in range(40)])
+# if 'cifar' in dataset:
+#     num_classes=10
+#     class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+#                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+
+# elif dataset =='mnist':
+#     num_classes=10
+#     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
+#                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
+# else:
+#     num_classes=40
+#     class_names = {i:str(i) for i in range(40)}
+
+seed=12
+batch_size = 80
+# # num_classes=40
+selected_label = 9
+# print(f'Generating images of {class_names[selected_label]}')
+# labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+# # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+# # I would get weird generations! when I icnreased the image size form 32 to 64 and
+# # retired, the reconstructions got much better, but generation seemed cropped! looked
+# # closer and noticed my bug and fixed it and now images are way better. they are very good
+# # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+# generated_image = generate(model,
+#                            prior,
+#                            labels=labels,
+#                            num_classes=num_classes,
+#                            batch_size=batch_size,
+#                            # when using conditional, using smaller values 
+#                            # for temperature, give us weireder images/really 
+#                            # simplestic images! like with way less details!
+#                            temperature=1,
+#                            seed=seed)
+# view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=num_classes,
+                          selected_label=selected_label,
+                          batch_size=batch_size,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=seed)
+                          
+#%%
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=64)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+# generated_image, latents = generate2(prior,
+#                                     model,
+#                                     batch_size=64,
+#                                     temperature=1,
+#                                     num_classes=num_classes,
+#                                     class_label=9,
+#                                     top_p=.95,
+#                                 device='cuda')
+
+# print(f'{generated_image.shape=}')
+# view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,title='')
+#%%
+# debugging section. I wrote this part when I faced a lot of issues early on
+# I couldnt get the model to generate anything! all I could get was noise or 
+# just pure solid colors! (in fact, I only got solid colors at first regardless
+# of what I did, then I searched and was told to check the prior model, it could
+# be faulty, to do that the first thing i did was to create generate_simple() to
+# see if I get the same behavior, if so then its latents themselves, so my vqvae 
+# had to have issues, if not it was the prior! from there I went on and found the
+# following tips, they helped but not by much when I had more nuanced issues in both
+# vqvae and prior. they both worked, kindof, and it took me a lot of time to know what
+# was wrong!
+# after I sorted out my isuese, i learned these new debugging tips that come handy!
+# so here it is:
+#
+# we can visualize latents to see if they display random patterns or some actual patterns!
+# we can use real images, conver them to latents and try to generate an image using them
+# and compare them to prior_latents which we get from prior model,
+# this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
+# or whether they show similar spatial structures or patterns? 
+# if latents from our prior model (latent_map_prior) look drastically different 
+# (e.g., all zeros, random noise, weird repeating blocks)
+# while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
+# it hasn't learned the correct distribution of latent codes.
+@torch.no_grad()
+def get_discrete_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
     vqvae.eval()
     vqvae.to(device)
-    
-    latent_map = get_discrete_latents_prior(vqvae=vqvae, 
-                                            prior=prior,
-                                            batch_size=batch_size, 
-                                            num_classes=num_classes, 
-                                            selected_class=selected_class,
-                                            advanced_sampling=advanced_sampling,
-                                            temperature=temperature,
-                                            top_k=top_k,
-                                            top_p=top_p,
-                                            device=device,
-                                            seed=seed)
-    
-    # print(f'{latent_map.shape=}')
-    # convert latent codes to embeddings and reshape for decoding
-    # we dont even need to flatten latent_map! because Embedding layer can handle
-    # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
-    # quantized_embeddings_vector = vqvae.quantizer.embeddings(latent_map.flatten()).view(batch_size, H, W, -1)
-    quantized_embeddings_map = vqvae.quantizer.embeddings(latent_map)
-    # print(f'{quantized_embeddings_map.shape=}')
-    # reshape back to the shape decoder expects, i.e. (b,c,h,w)
-    quantized_embeddings_map = quantized_embeddings_map.permute(0, 3, 1, 2).contiguous()
-    # print(f'{quantized_embeddings_map.shape=}')
-    # decode the quantized representations into images
-    generated_image = vqvae.decoder(quantized_embeddings_map)
-    # print(f'{generated_image.shape=}')
-    # 
-    # from futre: 
-    # return both generated image and the latentmap it came from
-    # its great for debugging
-    return generated_image, latent_map
+    image_tensor = image_tensor.to(device)
+    # I guess its a good idea to add an encode/quantize method to vavae to
+    # make this easier!
+    # todo add enocde/quantize method to vqvae, and a separate decode() as well
+    # add batch
+    if image_tensor.ndim<4:
+        image_tensor.unsqueeze_(0)
+    encodings = vqvae.encoder(image_tensor)
+    # now convert to quantized indexes which are our latents!
+    loss, quantized_vectors, perplexity, latents = vqvae.quantizer(encodings)
+    return latents
 
+imgs, labels = next(iter(dataloader_test))
+discrete_latents_real = get_discrete_latents(model,imgs[0],device='cuda')
+print(f'{discrete_latents_real.shape=}')
+
+# now lets grab prior_latents, for that we just do what we do when generating a new image
+# I initially tried feeding that to the prior model, but it turned out it was wrong
+# because the purpose of our prior model is not to transform existing latent
+# codes rather its job is to simply generate completely new latent codes from scratch, 
+# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
+# examples during training(that is basically our training set converted into latent codes)
+# so we start off with an empty latents and fill it up 
 # now lets grab prior_latents, for that we just do what we do when generating a new image
 # I initially tried feeding that to the prior model, but it turned out it was wrong
 # because the purpose of our prior model is not to transform existing latent
@@ -9534,26 +9960,6 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
     # when given to our decoder, will give us an image based on the said blue-prnts
     # 
-    # old:
-    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
-    # generates autoregressively. it predicts the code for position (i, j) based on the
-    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
-    # so we need a blank canvas to fill sequentially and starting with zeros is the 
-    # standard way to provide this initial empty state.
-    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
-    # anything because it was too simplistic, because of that, when I first wrote the early
-    # version of this function, using zeros would only give me solid colors like red! blue!
-    # after some diggings, found a suggestion that told me to use randints, and it actually 
-    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
-    # that actually looked like an object, though badly deformed and pretty low quality in general,
-    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
-    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
-    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
-    # all of this worse! only after that I found about the issue that starting with random 
-    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
-    # have the correct sequential context it was trained on, it expects to see the results of
-    # its own previous predictions when predicting the next step, not random noise.
-    # 
     # todo call this latent_map_prior
     # to me it looks much better, I find map way better becasuse its like feature-map,
     # it implies a 2d shape and loos more intuitive to me (than latent_codes
@@ -9573,7 +9979,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
         
         elif not selected_class:
             # lets make a grid of classes, nxm where each row belongs to a class
-            # labels = torch.stack([torch.full(size=(batch_size//num_classes), fill_value=i, device=device, dtype=torch.long) for i in range(num_classes)]).flatten()
+            # labels = torch.stack([torch.full(size=(batch_size//num_classes),fill_value=i,device=device,dtype=torch.long) for i in range(num_classes)]).flatten()
             # or use repeat_interleave to repeat each class m times
             # create class indexes (0,1,2,...)
             class_indexes = torch.arange(num_classes, device=device, dtype=torch.long)
@@ -9917,864 +10323,6 @@ def get_discrete_latents_prior(vqvae:VQVAE,
             latent_map_prior[:,h,w] = pixels_values.squeeze(1)
             
     return latent_map_prior
-
-
-def display_generated_samples(vqvae_model:VQVAE, 
-                              prior_model:PixelCNN, 
-                              dataset, 
-                              num_classes=10, 
-                              selected_label=9,
-                              batch_size=64, 
-                              advanced_sampling=False,
-                              temperature=1,
-                              top_k=0,
-                              top_p=1, 
-                              device='cuda', 
-                              rows=8, cols=8, figsize=(12,16),seed=66, fname=None,title=''):
-
-    if 'cifar' in dataset:
-        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
-                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
-
-    elif dataset =='mnist':
-        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
-                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
-    else:#celeba
-        class_names = {i:'N/A' for i in range(num_classes)}
-
-    print(f'Generating images of {class_names[selected_label] if selected_label else "All Classes!"}')
-    # todo: create proper label for celeba!
-    if selected_label:
-        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
-    else:
-        labels = [class_names[i] 
-                  for i in range(num_classes) # outer loop for each class
-                  for _ in range(batch_size//num_classes)] # inner loop for num_samples for each class
-
-
-    # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
-    # I would get weird generations! when I icnreased the image size form 32 to 64 and
-    # retired, the reconstructions got much better, but generation seemed cropped! looked
-    # closer and noticed my bug and fixed it and now images are way better. they are very good
-    # a bit deformed which is relaetd to overfitting , but overall it seems alright!
-    generated_image,_ = generate(vqvae=vqvae_model,
-                                prior=prior_model,
-                               #labels=labels,
-                               num_classes=num_classes,
-                               selected_class=selected_label,
-                               batch_size=batch_size,
-                               advanced_sampling=advanced_sampling,
-                               # when using conditional, using smaller values 
-                               # for temperature, give us weireder images/really 
-                               # simplestic images! like with way less details!
-                               # update: it seems using smaller values for temp
-                               # makes the overall probs more uniform, making all
-                               # smaller neurons fire as likely as any larger ones
-                               # probablity wise! and those small probablity neurons
-                               # tend to work on lower abstractions? (imagine a photoshop layer
-                               # where the final image is made of several layers, adding details
-                               # retouches, etc to the image, at least this is the feeling 
-                               # i get from these images. 
-                               # todo work on explanation!)
-                               temperature=temperature,
-                               top_k=top_k,#3 works well it seems
-                               top_p=top_p,# either set this or set topk, topk=1,withtop p usually fails!(0.9 seems ok)
-                               device=device,
-                               seed=seed)
-    
-    # extract epoch from fname and use it to mark each image
-    if fname:
-        epoch = os.path.splitext(fname)[0].split('_')[-1]
-        title = f'{title} Epoch {int(epoch)}'
-     
-    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname, title=title) 
-
-
-#!edit add more explanation
-#todo use topk/topp on this and see how it affects it
-# another way to generate images, instead of using prior model
-# we directly sample from code frequency, it shows if our model
-# has good features or not (whether the problem lies in prior model/its training
-# or vqvae features itself. the images may not look good! more explanation ahead)
-def generate_simple(model, latent_codes, batch_size=1):
-    # compute code frequencies from training data
-    # instead of autoregressively get predictions 
-    # for each position using prior! 
-    counts = torch.bincount(latent_codes.flatten())
-    probs = counts / counts.sum()
-    # sample indexes from the frequency distribution
-    H, W = latent_codes.shape[1:]
-    latent_map = torch.multinomial(probs, batch_size * H * W, replacement=True)
-    latent_map = latent_map.view(batch_size, H, W).to(device)
-    # print(f'{latent_map.shape=}')
-    # decode the latent_map
-    quantized_embedding_map = model.quantizer.embeddings(latent_map)  # (batch_size, H, W, embd_size)
-    # print(f'{quantized_embedding_map.shape=}')
-    quantized_embedding_map = quantized_embedding_map.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
-    # print(f'{quantized_embedding_map.shape=}')
-    generated_image = model.decoder(quantized_embedding_map)
-    # print(f'{generated_image.shape=}')
-    return generated_image
-
-
-torch.no_grad()
-def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=1.0,
-                      class_label=None, num_classes=10, top_k=0, top_p=0.9, device='cuda'):
-
-    prior.eval()
-    model.eval()
-    prior.to(device)
-    model.to(device)
-
-    shape = model.enc_output_shape
-        
-    H,W = shape
-
-    # create empty latent map
-    latents = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
-
-    labels_onehot = None
-    if prior.make_conditional:
-        if class_label is None:
-            # labels = torch.randint(0, num_classes, (batch_size,), device=device)
-            labels = torch.range(0,num_classes,dtype=torch.long).repeat_interleave(batch_size//num_classes)
-        
-        elif isinstance(class_label, int):
-            labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
-        
-        else:
-            raise TypeError(f"Unsupported type for class_label: {type(class_label)}")
-
-        labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
-        labels_onehot = labels_onehot.to(device)
-
-    for h in range(H):
-        for w in range(W):
-            logits = prior(latents, labels_onehot) 
-            logits = logits[:, :, h, w] 
-            
-            if temperature <= 0:
-                    raise ValueError("Temperature must be positive.")
-            
-            if temperature != 1.0:
-                logits = logits / temperature
-            
-            if top_k > 0:
-                top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
-                mask = torch.full_like(logits, -float('Inf'))
-                mask.scatter_(-1, top_k_indices, top_k_logits)
-                logits = mask
-
-            if 0 < top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-                sorted_indices_to_remove = cumulative_probs > top_p
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0 
-
-                indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
-                logits = logits.masked_fill(indices_to_remove, -float('Inf'))
-
-            probs = F.softmax(logits, dim=-1)
-
-            pixel_samples = torch.multinomial(probs, num_samples=1) 
-            pixel_samples = pixel_samples.squeeze(-1) 
-
-            latents[:, h, w] = pixel_samples
-
-    quantized = model.quantizer.embeddings(latents)
-    quantized = quantized.permute(0, 3, 1, 2).contiguous()
-    reconstructions = model.decoder(quantized)
-
-    return reconstructions, latents
-
-
-
-#%%
-#todo move get_latent_codes inside training because they are tightly coupled!
-# # After training vqvae, we need to grab the trainingset's encodings
-# # and use these encodings to train our prior model
-# latent_codes,latent_labels = get_discrete_latent_codes(model, dataloader_train)
-
-# train our PixelCNN prior
-# embdsize=256 results in a very decent generation 
-# compared to 128 even with 32x32 imgsize
-# 
-# for celeba use the nonconditional version because it comes with 40 attributes for
-# each individual image. we can choose to incorporate them or at least condition our
-# models on one of these attributes, but for now we just ignore them and choose the
-# unconditional version
-# ok the unconditional generation works great, but when we start using the labels on celeba, 
-# it will make the trainig harder, and images start worse than the unconditional version
-# most probably because of the way we are incorporating the labels in our archiecture
-# since its a multilabel case, a much better fusion strategy is needed. there are many 
-# ways we can go about it, from fusing at multiple levels in our architecture so the
-# labels semantic are transfered properly throughout the features in the model, to simply
-# using several layers on embeddings to get better representation/or using summing/etc the
-# list goes on!
-#TODO: check why the generation seems random here despite having used seed!
-conditional = True
-use_fp16 = True
-num_classes = 40 if dataset=='celeba' else 10
-
-#TODO improve prior training function like vqvae trainig!
-#! test fp16 training and see if gradient clipping made it ok or moving loss 
-# - no gradient clipping isnt necessary it seems!
-#! under autocast, if so why?!
-# - outside of autocast, loss always nans, with smaller lr(1e-4,1e-5) its still inf
-# - even with low lr(1e-5) and wd down to 1e-5/1e-7 (from 1e-2) its still inf!
-# - only when we explictly wrap loss in autocast(enabled=False) and set logits.float()
-#   we get rid of infs!
-# todo next, create more diverse generation for celeba and also for classes 
-#! like for each class, n samples ge generated, so we can asses all classes at each epoch
-#! check generate-without reshaping is ok? 
-prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
-                 num_class=num_classes,
-                 make_conditional=conditional,
-                 dropout_rate=0.1,).to(device)
-
-
-prior, ckptname = train_prior(prior=prior,
-                              vqvae_model=model,
-                              dataloader=dataloader_train,
-                              dataset_name=dataset,# for logging purposes only!
-                              num_classes=num_classes, 
-                              epochs=120,
-                              batchsize=64,
-                              sample_size=80,# for generation
-                              lr=0.001,#0.001
-                              weight_decay=1e-2,#1e-2
-                              use_fp16=use_fp16,
-                              selected_label=None,
-                              advanced_sampling=False,
-                              temperature=1,#1
-                              top_k=0,
-                              top_p=0,
-                              rows=10,
-                              cols=8,
-                              device='cuda',
-                              generation_device='cuda',
-                              figsize=(12,16),
-                              seed=66,
-                              checkpoint_dir_path='./weights/prior/emb256/',
-                              recons_dir_path='./results/',
-                              )
-
-#sidenote: 
-# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
-# sidenote: starting with smaller lr=(1e-3) overfitted badly, but the generation was
-# waaaaay better. I increased embdsize for prior though, need to check 
-# it with higher lr and see if it gets better if it doesnt oevrfit badly!
-# note: when I changed the model from 32x32 to 64x64 in my second test, I didnt
-# rerun the get_latent_codes, I guess this is the reason why I kept getting weird
-# output all these times!
-# check if this is the case using a second round of tests!
-#%%
-# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
-# ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
-# instead of 32x32 and it would mess up the generation! see git log info)
-# when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
-# better than than before!(when we used 32x32 versions!)
-
-#!todo remove from here
-# these blocks use our initial version of pixel cnn, and i also didnt save any hyperparameters
-# for them, so they're just weights I dont plan on getting to work! early versions didnt
-# work properly until i improved the architecture (the architecture is roughly the same
-# though I uses residual connections, it should be in previous commits, so if needs be
-# can use that, but I dont plan on doing it! lets remove them altogether!)
-# ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
-# cifar10 unconditional
-# ckptname = './weights/old/vqvae_23_13_38_2025_03_25.ckpt'
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
-# I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
-# better generation usually! so try both checkpoints (the last one and the best one) and 
-# compare the results
-#todo down to here!
-
-# with extra info (model_config, train loss, etc)
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
-# Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
-# get that in early epochs. the smalles training loss/bpd has a much better result
-# than the our best val/bpd values! makes me wonder if having a validation set even
-# matters!
-# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
-# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
-
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
-# not good. I lowered the dropout ratio and it I believe it make it worse than before!
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
-# for celeba because the dataset is much larger, we have far b etter generations!
-# obviously having a better vqvae and prior models with better training can yield
-# much better result. but for us this siffuces and shows given more data, with the
-# same architecture, we can achieve pretty good results.
-# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
-# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
-
-#embd256 
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
-
-# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
-# clean and git push to privae repo first
-
-# ok increasing the embedding for vqvae model resultted in way better generations!
-# both loss and BPD dropped from 5 to 1!! and the gap between training and val became
-# way less steep! so we learned the vqvae is crucial to getting great reconstructions
-# and simple reconstruction results in vqvae doesnt mean theres an issue in prior models
-# secotion if our loss doesnt decrease! it may very well be vqvae needs to be tuned (buffed)
-# more! in our case it was to simply use larger embedding dim (256)!
-# I need to train others with the new embd_size for vqvae to see how they perform :)
-# test these 3 models to see how they fair against each other
-# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
-#
-# like before with the increased embd, the generation is near prefect!(unconditional)
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
-# 
-# conditional
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
-
-#fp16/ema vqvae
-# cifa10-embd256-64x64
-ckptname = './vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16.ckpt'
-ckptname = './vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.pt'
-
-
-#fp32/eva vqvae
-#cifa10-embd256-64x64
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
-
-
-print(f'{dataset=}')
-print(f'{device=}\n')
-ckpt = torch.load(ckptname, map_location=device, weights_only=False)
-model_config = ckpt["model_config"]
-dropout_rate = model_config.pop('dropout_rate', 0.1)
-# I didnt store extra information for some earlier experiments
-# so this is to account for them
-loss = ckpt.pop('loss',float('inf'))
-bpd = ckpt.pop('bpd',float('inf'))
-dataset = ckpt.pop('dataset', dataset)
-
-prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
-prior.load_state_dict(ckpt["state_dict"])
-
-print(f'{prior.__class__.__name__} loaded!')
-for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
-    print(f'{k:<16} : {v}')
-
-print(f'Epoch       : {ckpt["epoch"]}')
-print(f'Dataset     : {dataset.upper()}')
-print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
-print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
-#%%
-# Generate new image
-# class_names = dict([(i,'N/A') for i in range(40)])
-# if 'cifar' in dataset:
-#     num_classes=10
-#     class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
-#                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
-
-# elif dataset =='mnist':
-#     num_classes=10
-#     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
-#                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
-# else:
-#     num_classes=40
-#     class_names = {i:str(i) for i in range(40)}
-
-seed=12
-batch_size = 80
-# # num_classes=40
-selected_label = None
-# print(f'Generating images of {class_names[selected_label]}')
-# labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
-# # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
-# # I would get weird generations! when I icnreased the image size form 32 to 64 and
-# # retired, the reconstructions got much better, but generation seemed cropped! looked
-# # closer and noticed my bug and fixed it and now images are way better. they are very good
-# # a bit deformed which is relaetd to overfitting , but overall it seems alright!
-# generated_image = generate(model,
-#                            prior,
-#                            labels=labels,
-#                            num_classes=num_classes,
-#                            batch_size=batch_size,
-#                            # when using conditional, using smaller values 
-#                            # for temperature, give us weireder images/really 
-#                            # simplestic images! like with way less details!
-#                            temperature=1,
-#                            seed=seed)
-# view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
-display_generated_samples(vqvae_model=model,
-                          prior_model=prior,
-                          dataset=dataset,
-                          num_classes=num_classes,
-                          selected_label=selected_label,
-                          batch_size=batch_size,
-                          advanced_sampling=False,
-                          temperature=1,
-                          top_k=0,
-                          top_p=0,
-                          rows=10,
-                          cols=8,
-                          figsize=(12,16),
-                          seed=seed)
-                          
-#%%
-latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
-generated_image1 = generate_simple(model, latent_codes,batch_size=64)
-# print(f'{generated_image1.shape=}')
-view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
-
-#%%
-generated_image, latents = sample_from_prior(prior,
-                                    model,
-                                    batch_size=64,
-                                    temperature=1,
-                                    num_classes=num_classes,
-                                    class_label=9,
-                                    top_p=.95,
-                                device='cuda')
-
-print(f'{generated_image.shape=}')
-view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,title='')
-#%%
-# debugging section. I wrote this part when I faced a lot of issues early on
-# I couldnt get the model to generate anything! all I could get was noise or 
-# just pure solid colors! (in fact, I only got solid colors at first regardless
-# of what I did, then I searched and was told to check the prior model, it could
-# be faulty, to do that the first thing i did was to create generate_simple() to
-# see if I get the same behavior, if so then its latents themselves, so my vqvae 
-# had to have issues, if not it was the prior! from there I went on and found the
-# following tips, they helped but not by much when I had more nuanced issues in both
-# vqvae and prior. they both worked, kindof, and it took me a lot of time to know what
-# was wrong!
-# after I sorted out my isuese, i learned these new debugging tips that come handy!
-# so here it is:
-#
-# we can visualize latents to see if they display random patterns or some actual patterns!
-# we can use real images, conver them to latents and try to generate an image using them
-# and compare them to prior_latents which we get from prior model,
-# this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
-# or whether they show similar spatial structures or patterns? 
-# if latents from our prior model (latent_map_prior) look drastically different 
-# (e.g., all zeros, random noise, weird repeating blocks)
-# while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
-# it hasn't learned the correct distribution of latent codes.
-@torch.no_grad()
-def get_discrete_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
-    vqvae.eval()
-    vqvae.to(device)
-    image_tensor = image_tensor.to(device)
-    # I guess its a good idea to add an encode/quantize method to vavae to
-    # make this easier!
-    # todo add enocde/quantize method to vqvae, and a separate decode() as well
-    # add batch
-    if image_tensor.ndim<4:
-        image_tensor.unsqueeze_(0)
-    encodings = vqvae.encoder(image_tensor)
-    # now convert to quantized indexes which are our latents!
-    loss, quantized_vectors, perplexity, latents = vqvae.quantizer(encodings)
-    return latents
-
-imgs, labels = next(iter(dataloader_test))
-discrete_latents_real = get_discrete_latents(model,imgs[0],device='cuda')
-print(f'{discrete_latents_real.shape=}')
-
-# now lets grab prior_latents, for that we just do what we do when generating a new image
-# I initially tried feeding that to the prior model, but it turned out it was wrong
-# because the purpose of our prior model is not to transform existing latent
-# codes rather its job is to simply generate completely new latent codes from scratch, 
-# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
-# examples during training(that is basically our training set converted into latent codes)
-# so we start off with an empty latents and fill it up 
-@torch.no_grad()
-def get_discrete_latents_prior(prior:PixelCNN, vqvae:VQVAE, batch_size=64, num_classes=10, selected_class=9, advanced_sampling=False, temperature=1, top_k=1, top_p=1, device='cuda'):
-    # lets first take care of the models before we forget
-    # about them and face all sorts of weird issues!
-    prior.eval()
-    vqvae.eval()
-    prior.to(device)
-    vqvae.to(device)
-    
-    H,W = vqvae.enc_output_shape
-    # our latents_prior is simply a HxW matrix of integer indexes. so to create one we simply
-    # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
-    # each latent will become a whole image ultimately, when we feed it to our decoder.
-    # we can think of it as a compressed, structured blueprint for the image. 
-    # our prior model (i.e. PixelCNN) learns the 'language' or 'grammar' of these blueprints,
-    # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
-    # when given to our decoder, will give us an image based on the said blue-prnts
-    # 
-    # old:
-    # we start with zeros (or some other fixed placeholder value) because the PixelCNN 
-    # generates autoregressively. it predicts the code for position (i, j) based on the
-    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
-    # so we need a blank canvas to fill sequentially and starting with zeros is the 
-    # standard way to provide this initial empty state.
-    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
-    # anything because it was too simplistic, because of that, when i first wrote the early
-    # version of this function, using zeros would only give me solid colors like red! blue!
-    # after some diggings, found a suggestion that told me to use randints, and it actually 
-    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
-    # that actually looked like an object, though badly deformed and pretty low quality in general,
-    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
-    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
-    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
-    # all of this worse! only after that I found about the issue that starting with random 
-    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
-    # have the correct sequential context it was trained on, it expects to see the results of
-    # its own previous predictions when predicting the next step, not random noise.
-    latents_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
-    print(f'*{selected_class=}')
-    # since we support conditional generation we need to one_hot our labels
-    if prior.make_conditional:
-        if isinstance(selected_class,int):
-            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_label
-            # we could also do 
-            # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
-        elif isinstance(selected_class, list) and len(selected_class) == batch_size:
-            labels = torch.tensor(selected_class, device=device, dtype=torch.long)
-            print(f'+{labels.shape=}')
-        else:
-            raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
-        
-        #! dont onehot celeba
-        # only one-hot encode, selected_class if its int, or if its a list, it must only be int
-        if isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
-            labels = F.one_hot(labels, num_classes=num_classes).float()
-            # print(f'{labels.shape=}')
-            # print(f'{labels=}')
-        print(f'{labels.shape=}')
-    else:
-        labels = None
-    
-    #now we autoregressively fill up our empty latents pixels with proper values predicted by prior
-    # for that we loop using H,W
-    for h in range(H):
-        for w in range(W):
-            # logits shape is (batchsize, embdsz, h, w)
-            logits = prior(latents_prior, labels)
-            # since we are dealing with pixels/codes and doing this in a loop
-            # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
-            # we only grab the logits for current h,w position 
-            # we do this for all samples, this will give us
-            # (batch,embdsz)
-            logits = logits[:,:,h,w]
-            
-            # advanced sampling
-            # initially I went with normal greedy search/sampling but it failed! I could only
-            # get solid colors like pink!, then I went with basic sampling and it got much better but 
-            # the generation left a lot to be desired, then I added this section to see how
-            # it does (tldr, topk sampling does infact improve our results!
-            # but top_p not really, it actually made it worse! but im keeping it
-            # maybe im doing something wrong here!? ok found out and explained it ahead!)
-            # 
-            # update:
-            # as to why having anything other than greedy sampling or simple sampling is waranted
-            # or advantagous here, it comes down to our models imprefect training! 
-            # and what we are actually doing!
-            # that is, our prior model, at each round gives us a list of possible values and
-            # how likely it thinks each one is(i.e. logits/probabalities), now since
-            # we are trying to predict the next latentcode, for our image, we
-            # are left with 2 options. 
-            # the first option is to be greedy and always pick the value the model thinks
-            # is the most likely, this is our first try, and as we already saw doesnt 
-            # work properly! why? because our model is not prefect and what it thinks is 
-            # most likely may not be actually the case. moreover, even if our model was perefect, 
-            # greedy sampling wasnt a good choice either, because it leads to the same outputs
-            # all the time! making our generations very repetitive and unnatural.
-            # images just like language have variation so keep choosing the most likely value
-            # all the time would usually result in unnatural generation.
-            # so this is why sampling acn be rough!
-            # our second option would be to make it more random, so maybe can we solve the previous
-            # issue that the most likely value might not actually be the right one(because it would
-            # be a uniform random selection, and we know all the codes are not as likely as other codes!).
-            # so we simply pick a random value weighted by its probablity(using torch.multinomial() e.g.), 
-            # this way values are chosen randomly, but the chance of each value/code being chosen is 
-            # still proportional to its assigned probability.
-            # values with higher probabilities are more likely to be chosen but its not guaranteed
-            # and lower probability values will also have some chance. so we see we have actually devised 
-            # a good solution which should work! and as we saw, our simple weighted sampling strategy
-            # actually gave us way better results compared to greedy search/sampling!
-            # however as we saw it also leaves a lot to be desired and doesnt always work well either,
-            # it may very well be the worst strategy as well, if the model assigned tiny probablities
-            # to many codes, and if we pick one randomly, the chances are we are picking a code that 
-            # doesnt make sense at all and hence makes a terrible image!(sidenote: can we attribute this to The Long Tail Problem? i've heard this for long tail distributions where it refers to imbalanced data where there are few high confidence classes, with a tail of (many) low confidence classes?! see https://www.youtube.com/playlist?list=PLoROMvodv4rNjRoawgt72BBNwL2V7doGI)
-            # so our solution seems ok overall but the issue lies in tiny probablities! so if we could
-            # solve that part, and strike a balance here that would be great.
-            # we would have some randomness to make things interesting, and at the same time we 
-            # avoid the nonsensical, extremely low probability cases. 
-            # this is where advanced smpling strategies such as temperature scaling, TopK and Top_P (nucleous smapling) come in!
-            # I have explained them below
-            
-            if advanced_sampling:
-                # temperature scaling makes the model more or less confident/random before sampling.
-                # low temperatures make the probability distribution sharper (more peaky),
-                # intuitively it means, when we divide our logits by a small number, the logits
-                # values are less affected, they stay the same(mostly), larger values stay larger,
-                # and the models output will be more deterministic, because it focuses on the
-                # most likely values like normal. This means less randomness/diversity in the 
-                # final generation!(which is the default behavior)
-                # on the other hand, if we use higher values, it makes the probability distribution
-                # flatter(less spiky) and therefore the probabilities more uniform(i.e. the ranges are roughly the same). 
-                # again that is, when logits is divided by a larger value, their magnitudes decrease,
-                # the larger that value, the more values(logits) become smaller, making them closer to eachother
-                # therefore, after some threshold, we'll see basically all values(logits) are roughly in the 
-                # same range, making them essentially as likely to happen! when this happens, and
-                # we go for sampling, any values can be selected(regardless of their initial raw value
-                # whether they were higher and now become lower, or they were lower, and because others 
-                # got decreased, they are now in the same range, and thus as likely to happen!)
-                # and this will lead to more randomness/diversity in the generation process!
-                # and as to why messing with logits like this makes sense, I believe its directly
-                # related to the fact that our models are not prefect, and therefore, its pretty likely
-                # that the right values, get a somewhat lower probablity than the should, and by default
-                # they dont get a chance to be used, so models incompetence hurts us, but when we
-                # do such tricks! we are actually enabling those codes/values to get involved
-                # and play a role and suddenly we see our generation perofrmance gets better!
-                if temperature != 1:
-                    logits = logits/temperature
-
-                # top-k sampling # paper : https://arxiv.org/abs/1805.06087 
-                if top_k > 0:
-                    # first we grab the top values and their indexes, the idea is we
-                    # are trying to get rid of the less lileky candidates and only 
-                    # work with a pool of highly likely or more likely candidates!
-                    top_k_logits, top_k_indexes = torch.topk(logits, top_k, dim=-1)
-                    # we then create a mask and set all logits that are not in top-k to -inf
-                    mask = torch.ones_like(logits) * -float('inf')
-                    # we could also do
-                    # mask = torch.full_like(logits, -float('Inf'))
-                    # and fill the rest of the mask with the actual top values
-                    mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
-                    # now our mask is essentially the top logits with all the rest set to -inf
-                    # so when we later use softmax, -inf becomes nans and doesnt contribute!
-                    # this has the desired outcome that now, when we sample,the pool ofvalues
-                    # is already made of highly likely/relvant choices, hopefully resulting 
-                    # in higher quality selection and thus generation(because we already took
-                    # out low probablity/irrelavent/noisy choices, at least this is the idea! 
-                    # if our model somehow isnt trained properly and produces garbage obviously
-                    # it wont work, it works great if the model confidently predicts acucractly
-                    # most of the time!)
-                    # on a sidenote, this is one of the reasons why a larger spatial size for
-                    # encoders outputs and hence our min_indexes, and then discrete_latents 
-                    # affect the performance this much! the larger the more information is 
-                    # encoded and retained which can be used to more accurately recove image
-                    # details!(again think about it, with larger dims, we have more values, 
-                    # each value(discrete latent value) corresponds to a smaller patch of 
-                    # the image and therefore, more details of the iamge is captured!)
-                    # (so in a nutshell larger size = more codes = finer/smaller patches = more information = more details!)
-                    logits = mask
-
-                # heres another form of sampling known as top-p sampling!
-                # I really didnt have much luck with it, topk, has worked way better
-                # but for the sake of the experiment i add it here! it wasntt worth it so far!
-                # especially when used with topk it can get cumbersome, because topk
-                # can narrow the pool size(especially if we use a small number), and
-                # top_p makes it even narrower which may be why it doesnt work out properly!
-                # or maybe im missing something here!
-                # update1:
-                # found my issue, it was caused by topk=1, where it would only pick the highest
-                # probablities for each sample, and therefore when it came to top_p, and tried 
-                # converting logits to probablities, all entries that were set to -inf in topk section
-                # now became 0, so when we cumsumed the probablities, the whole entries now had 1!
-                # basically all indexes became 1 (because highest entry was 1, and it was added to 0s, 
-                # it would still be 1, and it went on untill all inexes were set to 1.
-                # all hell broke loose, when we did :
-                # sorted_indexes_to_remove = cumulative_probs > top_p
-                # now sorted_indexes_to_remove is all True! cuz every is set as 1!
-                # you can now imagine how it went down! sorting doesnt matter anymore,
-                # indexes_to_remove contains basically every single indexes! and when fed
-                # to scatter to grab the indexes to remove, since theres 1 everywhere, it
-                # selects all indexes to be removed, and the nail on the cofine set all the
-                # logits to -inf, which after taking softmax, turns into 0!
-                # logits = logits.masked_fill(indexes_to_remove, -float('inf')) 
-                # 
-                # making the model useless, initially I thought this shouldnt pose an issue 
-                # cuz even if I used topk=1, it would turn into a greedy search, cuz 1 value/candidate
-                # had the highest value, but I never imagined this case! thank God I found it!
-                #
-                # update2:
-                # ok I did some more research and found out top_p is basically a dynamic 
-                # alternative to top-k!
-                # TODO remve excessive or merge with top-p
-                # update: - is it excessive?
-                # add this to top_p section instead?
-                # 
-                # the idea of just looking at the top k (say, top 10) most likely values
-                # and ignoring everything else completely doesnt always work!
-                # on one hand, doing a weighted sampling from those top values do reduce 
-                # the chance of picking nonsensical/lowprobablity ones, but then again 
-                # it can go especially wrong if the model is either super confident or very uncertain!
-                # either way there are situations that can make our strategy go from less effective to
-                # completely ineffective!
-                # for example, our model rightfully thinks one code is the right one (e.g with 95% probability)
-                # but using topk we are forced to consider k options, even though 9 of them are much less likely.
-                # or another example where our model is very uncertain and our top k=20 values all 
-                # have similar low probabilities but we choose k=10, here we may leave out 10 
-                # perfectly reasonable options just because they didnt make it in the list. 
-                # so specifying the k becomes another point of concern!(one value k may not work
-                # for another image/concept!)
-                #                 
-
-                # this is where top_p comes in. top_p is basically a dynamic alternative to top-k!
-                # that is, in top_p sampling, instead of choosing a fixed number of 
-                # the most likely values/candidates, a set of values is selected so that 
-                # its combined probabilities add up to at least a confidence threshold 
-                # that we specify (e.g. p).
-                # simply put, the whole idea is to capture enough probablities that make us
-                # feel confident the next most likely/right/good candidate is among them. 
-                #
-                # todo remove it or make it cleaer?(probablity mass)
-                # (technically speaking, its capturing enough probablity mass!).
-                # 
-                # in order to make this work, the set needs to be as small as possible, 
-                # otherwise, we will be adding increasingly unlikely candidates that may not 
-                # only not contribute positively, rather add noise or weird/out of palce things! 
-                # defeating the whole point of the strategy! we want just enough candidates from
-                # the useful portion of the probablity distribution that make our result improve!
-                # 
-                # !rephrase - more cohesion with previous section/paragraph
-                # the dynamic nature here is that depending on the model's confidence, on a case
-                # by case case! the number of probablities needed to reach the threshold changes
-                # we can think of this threshold(p) as a probability budget, e.g. 0.9 means
-                # we want values that cover 90% of the probability for example,
-                # if p=0.9, we look at the most likely value and grab its probablity (e.g.0.6),
-                # we havent reached 0.9 so we look at the second most likely candidate, its 0.25 e.g. 
-                # we add them together 0.6+0.25=0.85, we are still <.9, so we keep doing this 
-                # until we reach our confidence threshold, for example our third most likely candidate
-                # had 0.1, we add them together 0.85+0.1=0.95! now our sum is greater than our 
-                # confidence threshold, so we stop.
-                # now what this basically means is our model now believes theres a 95% chance 
-                # that the actual best candidate is one of these three, we are essentially 
-                # ignoring all the other values whose combined probability is only 5% (100% - 95%)
-                # we are betting that the good stuff lies within that top 95% probability mass.
-                
-                # this set is also refered to as a nucleus in some texts,
-                # because it represents the core, central part of the probability distribution
-                # where most of the likelihood is concentrated. (think of it like the nucleus of
-                # an atom the dense center.) it was first introduced in a 2019 paper 
-                # The Curious Case of Neural Text Degeneration by Holtzman et al.
-                # https://arxiv.org/abs/1904.09751, the paper is amazing and I highly recommend it
-
-                #
-                # the basic idea is as follows, we sort our logits from the highest to lowest values
-                # (representing most likely to least likely values), then we start adding the 
-                # probabilities from the top and go down one by one, until we reach a point where
-                # our cumulative sum of probabilities is greater than our confidence threshold. 
-                # we are doing this to find that smallest set that captures our p probability budget
-                # It means we are identifying the boundary. Everything "above" this boundary 
-                # (more probable) is kept. Everything "below" this boundary (less probable 
-                # and not needed to reach the p budget) is discarded.
-                # we are doing this so we can discard all other lower probabalities, leaving us
-                # with bunch of the most likely values/candidates that collectively give us the confidence
-                # they have the right picks in set.
-                # 
-                # so to recap with an example:
-                # suppose our model is pretty confident and we have high probablity predictions:
-                # like p(value1)=0.95, p(value2)=0.02,etc, if p=0.9,the cumsum will be 
-                # [0.95, 0.97, ...] since 0.95 >= 0.9 we stop immediately and only value1
-                # is kept. our dynamic pool size is 1 and top-p behaves like greedy search.
-                # now suppose the other way around, now our model is very uncertain and we
-                # have many small probablities, like for example p(value1)=0.2, p(value2)=0.15,
-                # p(value3)=0.15, p(value4)=0.1, p(value5)=0.1, p(value6)=0.1, p(value7)=0.1,etc 
-                # cumsum will be [0.2, 0.35, 0.50, 0.60, 0.70, 0.80, 0.90, ...], if our 
-                # p=0.9 we need to go all the way to code value7 to reach the 0.9 threshold
-                # so we now have {value1, value2, value3, value4, value5, value6, value7}
-                # The dynamic pool size therefor is now 7. 
-                # 
-                # so as we can see, top-p lets the model decide how many options to consider
-                # based on its own confidence. it keeps adding options starting from the most 
-                # likely, just until it feels it has covered p percent of the likely outcomes,
-                # then stops and samples from that dynamically sized nucleus/set 
-                # this gives a better outcome compared to a fixed top-k.
-                
-                # so as we see, top_p solves the topk issues!
-                # if the model is very confident the set may only contain that one token.
-                # if the model is very uncertain (lots of small probablities),
-                # the set will include more values until the cumulative probability
-                # reaches top_p, allowing for more diversity when needed.
-                # 
-                # it solves the problem of potentially cutting off reasonable options when
-                # using a fixed k in topk sampling, when the distribution is flat, or 
-                # keeping too many bad options when the distribution is sharp. 
-                # However, it relies heavily on the probabilities being well-calibrated by the model.
-                
-                if 0 < top_p < 1.0: # The Curious Case of Neural Text Degeneration by Holtzman et al. : https://arxiv.org/abs/1904.09751
-                    
-                    assert top_k!=1,('cant use top_p with top_k=1, when using top_p,'
-                                     'you must use a high top_k, otherwise top_p wont work!')
-                    # sort the logits to easily find the most likely options.
-                    sorted_logits, sorted_indexes = torch.sort(logits, descending=True, dim=-1)
-                    # print(f'{sorted_logits=}')
-                    # calculate the cumulative sum of probabilities.
-                    # The i-th element here represents the total probability mass covered
-                    # by the top i most likely options.
-                    # e.g., [0.5, 0.7, 0.85, 0.92, ...] means P(top1)=0.5, P(top1=0.5)+P(top2=0.2)=0.7,
-                    # etc.
-                    cumulative_probs = torch.cumsum(sorted_logits.softmax(dim=-1), dim=-1)
-                    # print(f'{cumulative_probs=}')
-                    # we want to discard tokens after the cumulative probability exceeds
-                    # our confidence top_p. we find all indices where cumulative_probs > top_p
-                    sorted_indexes_to_remove = cumulative_probs > top_p
-                    # print(f'{sorted_indexes_to_remove=}')
-                    # shift the indexes to the right to keep also the first value above the 
-                    # threshold
-                    # crucial shift! We want to keep the first token that pushes the sum
-                    # over the threshold p. the line above marks this token for removal too.
-                    # so, we shift the removal mask one position to the right. The first token
-                    # (most probable) is now definitely kept, the second token is marked for
-                    # removal only if the *first* token's probability alone was > top_p, and so on.
-                    sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
-                    # never remove the most probable value
-                    # Step 6: Ensure the most probable token (index 0) is *never* removed,
-                    # even if its probability alone exceeds top_p. This guarantees we always
-                    # have at least one option.
-                    sorted_indexes_to_remove[..., 0] = 0 
-
-                    # create a mask, setting logits to be removed to -inf
-                    # scatter sorted_indexes_to_remove back to original positions
-                    # scatter the removal mask back to the original token order.
-                    # We need to know which *original* tokens (before sorting) should be removed.
-                    indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, 
-                                                                         index=sorted_indexes,# Use the mapping from sorted back to original
-                                                                         src=sorted_indexes_to_remove)
-                    # print(f'{indexes_to_remove=}')
-                    # apply the mask. Set the logits of tokens marked for removal to -inf.
-                    # When softmax is applied later, these will have zero probability and won't be sampled.
-                    logits = logits.masked_fill(indexes_to_remove, -float('inf'))
-                    # print(f'{logits=}')
-
-            
-            # now we convert it to probablities so we can sample from it
-            probs = F.softmax(logits, dim=-1)
-            # lets sample from it based on the probablity of each entry
-            # since we are filling pixel values, one value is enough
-            # note that replacement=False has no effect here because num_samples=1
-            # that is we can't sample the same element twice if we are only picking one!
-            # just wanted to make that clear!
-            # greedy search/sampling doesnt work at all!! I only get solid colors!
-            # pixels_values,_ = probs.max(dim=-1, keepdim=True)
-            # print(f'{pixels_values.shape=}')
-            # todo: pixelvalies is not accurate, choose a better name like latent_values?!
-            # but when I use a simple sampling strategy it starts working! and waaay better!
-            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False )
-            # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
-            # and get (64,) so when we assign it below all is good and we dont get expand error!
-            # now lets fill in the empty places in latents_prior
-            latents_prior[:,h,w] = pixels_values.squeeze(1)
-            
-    return latents_prior
 
 # now lets grab our latents_prior
 latents_prior = get_discrete_latents_prior(prior,model, batch_size=1, num_classes=num_classes, selected_class=9)
