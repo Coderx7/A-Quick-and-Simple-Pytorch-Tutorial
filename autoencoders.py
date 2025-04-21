@@ -8680,9 +8680,9 @@ class GatedActivation(nn.Module):
         super().__init__()
         
     def forward(self, x):
-        # Split the channels in half
+        # split the channels in half
         a, b = torch.chunk(x, 2, dim=1)
-        # Apply gated activation: tanh(a) ⊙ sigmoid(b)
+        # apply gated activation: tanh(a) ⊙ sigmoid(b)
         return torch.tanh(a) * torch.sigmoid(b)
 
 
@@ -8848,93 +8848,93 @@ class MaskedAttentionBlock(nn.Module):
 
         return self.gamma * attn_out + x
 
-class ResidualBlock(nn.Module):
-    """Gated Residual Block with Conditional BatchNorm"""
-    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
-        super().__init__()
-        self.block = nn.Sequential(
-            MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
-            nn.Dropout2d(dropout_rate),
-            MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
-            nn.BatchNorm2d(out_channels)
-        )
-        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+# class ResidualBlock(nn.Module):
+#     """Gated Residual Block with Conditional BatchNorm"""
+#     def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+#         super().__init__()
+#         self.block = nn.Sequential(
+#             MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+#             nn.BatchNorm2d(out_channels),
+#             nn.ReLU(),
+#             nn.Dropout2d(dropout_rate),
+#             MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+#             nn.BatchNorm2d(out_channels)
+#         )
+#         self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
 
-    def forward(self, x):
-        return F.relu(self.block(x) + self.skip(x))
+#     def forward(self, x):
+#         return F.relu(self.block(x) + self.skip(x))
 
-class ImprovedPixelCNN(nn.Module):
-    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
-        super().__init__()
-        self.num_embds = num_embds
-        self.embedding_size = embedding_size
-        self.num_class = num_class
-        self.make_conditional = make_conditional
-        # indecex dimensions required for attention
-        self.H = H
-        self.W = W
-        self.embedding = nn.Embedding(num_embds, embedding_size)
-        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+# class ImprovedPixelCNN(nn.Module):
+#     def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
+#         super().__init__()
+#         self.num_embds = num_embds
+#         self.embedding_size = embedding_size
+#         self.num_class = num_class
+#         self.make_conditional = make_conditional
+#         # indecex dimensions required for attention
+#         self.H = H
+#         self.W = W
+#         self.embedding = nn.Embedding(num_embds, embedding_size)
+#         self.fc_label_embedding = nn.Linear(num_class, embedding_size)
         
-        self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
-        self.initial_conv = nn.Sequential(
-            MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-          )
+#         self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
+#         self.initial_conv = nn.Sequential(
+#             MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
+#             nn.BatchNorm2d(128),
+#             nn.ReLU(),
+#           )
 
-        # Define blocks with their respective output channel sizes:
-        self.res_blocks = nn.ModuleList([
-            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-            # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
-            ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
-            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-            # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
-            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-            ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
-        ])
+#         # Define blocks with their respective output channel sizes:
+#         self.res_blocks = nn.ModuleList([
+#             ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+#             ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
+#             # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
+#             ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
+#             ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+#             # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
+#             ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
+#             ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
+#         ])
 
-        # Corrected skip connections: one per block, matching output channels.
-        self.skip_convs = nn.ModuleList([
-            nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
-            nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
-            nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
-        ])
+#         # Corrected skip connections: one per block, matching output channels.
+#         self.skip_convs = nn.ModuleList([
+#             nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
+#             nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
+#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
+#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
+#             nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
+#             nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
+#         ])
 
-        self.final_layers = nn.Sequential(
-            nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout2d(dropout_rate),
-            nn.Conv2d(512, 256, kernel_size=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Conv2d(256, num_embds, kernel_size=1)
-        )
+#         self.final_layers = nn.Sequential(
+#             nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
+#             nn.BatchNorm2d(512),
+#             nn.ReLU(),
+#             nn.Dropout2d(dropout_rate),
+#             nn.Conv2d(512, 256, kernel_size=1),
+#             nn.BatchNorm2d(256),
+#             nn.ReLU(),
+#             nn.Conv2d(256, num_embds, kernel_size=1)
+#         )
 
-    def forward(self, input_indices, labels=None):
-        # Embed and prepare conditional input.
-        input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
-        if self.make_conditional and labels is not None:
-            labels = self.fc_label_embedding(labels.float())
-            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
-            input_indices = torch.cat([input_indices, labels], dim=1)
+#     def forward(self, input_indices, labels=None):
+#         # Embed and prepare conditional input.
+#         input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
+#         if self.make_conditional and labels is not None:
+#             labels = self.fc_label_embedding(labels.float())
+#             labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+#             input_indices = torch.cat([input_indices, labels], dim=1)
 
-        # print(f'{input_indices.shape=}')
-        output = self.initial_conv(input_indices)
-        skips = []
-        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
-            output = res_block(output)
-            skips.append(skip_conv(output))
-        combined = torch.cat(skips, dim=1)
-        logits = self.final_layers(combined)
-        return logits
+#         # print(f'{input_indices.shape=}')
+#         output = self.initial_conv(input_indices)
+#         skips = []
+#         for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
+#             output = res_block(output)
+#             skips.append(skip_conv(output))
+#         combined = torch.cat(skips, dim=1)
+#         logits = self.final_layers(combined)
+#         return logits
 
 
 #########################
@@ -9456,23 +9456,14 @@ def generate_old(model:VQVAE, prior:PixelCNN, labels, num_classes, batch_size=1,
     # print(f'{generated.shape=}')
     return generated, codes
 
-# @torch.no_grad()
+@torch.no_grad()
 def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10, 
              selected_class=9, advanced_sampling=False, temperature=1,
-             top_k=1, top_p=0, device='cuda', seed=66):
+             top_k=0, top_p=0, device='cuda', seed=66):
     
     vqvae.eval()
     vqvae.to(device)
     
-    # generated_image, latent_map = generate_old(model=vqvae,
-    #                           prior=prior,
-    #                           labels=torch.ones(size=(batch_size,),dtype=torch.long,device=device)*selected_class,
-    #                           batch_size=batch_size,
-    #                           num_classes=num_classes,
-    #                           temperature=temperature,
-    #                           device=device,
-    #                           seed=seed)
-    print(f'{batch_size=}')
     latent_map = get_discrete_latents_prior(vqvae=vqvae, 
                                             prior=prior,
                                             batch_size=batch_size, 
@@ -9504,7 +9495,6 @@ def generate(vqvae:VQVAE, prior:PixelCNN, batch_size=64, num_classes=10,
     # its great for debugging
     return generated_image, latent_map
 
-import math
 # now lets grab prior_latents, for that we just do what we do when generating a new image
 # I initially tried feeding that to the prior model, but it turned out it was wrong
 # because the purpose of our prior model is not to transform existing latent
@@ -9935,20 +9925,20 @@ def display_generated_samples(vqvae_model:VQVAE,
                               num_classes=10, 
                               selected_label=9,
                               batch_size=64, 
-                              advanced_sampling=True,
+                              advanced_sampling=False,
                               temperature=1,
-                              top_k=1,
-                              top_p=0, 
+                              top_k=0,
+                              top_p=1, 
                               device='cuda', 
-                              rows=9, cols=8, figsize=(12,16),seed=66, fname=None):
+                              rows=8, cols=8, figsize=(12,16),seed=66, fname=None,title=''):
 
     if 'cifar' in dataset:
-        class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
-                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
+                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
 
     elif dataset =='mnist':
-        class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
-                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
+        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
+                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
     else:#celeba
         class_names = {i:'N/A' for i in range(num_classes)}
 
@@ -9960,8 +9950,8 @@ def display_generated_samples(vqvae_model:VQVAE,
         labels = [class_names[i] 
                   for i in range(num_classes) # outer loop for each class
                   for _ in range(batch_size//num_classes)] # inner loop for num_samples for each class
-                  
-        
+
+
     # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
     # I would get weird generations! when I icnreased the image size form 32 to 64 and
     # retired, the reconstructions got much better, but generation seemed cropped! looked
@@ -9993,8 +9983,11 @@ def display_generated_samples(vqvae_model:VQVAE,
                                seed=seed)
     
     # extract epoch from fname and use it to mark each image
-    epoch = os.path.splitext(fname)[0].split('_')[-1]
-    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname,title=f'Epoch {int(epoch)}') 
+    if fname:
+        epoch = os.path.splitext(fname)[0].split('_')[-1]
+        title = f'{title} Epoch {int(epoch)}'
+     
+    view_images(generated_image, labels, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname, title=title) 
 
 
 #!edit add more explanation
@@ -10003,113 +9996,51 @@ def display_generated_samples(vqvae_model:VQVAE,
 # we directly sample from code frequency, it shows if our model
 # has good features or not (whether the problem lies in prior model/its training
 # or vqvae features itself. the images may not look good! more explanation ahead)
-def generate_simple(model, latent_codes, topk, topp, batch_size=1):
+def generate_simple(model, latent_codes, batch_size=1):
     # compute code frequencies from training data
     # instead of autoregressively get predictions 
     # for each position using prior! 
     counts = torch.bincount(latent_codes.flatten())
     probs = counts / counts.sum()
-    # sample indices from the frequency distribution
-    H, W = latent_codes.shape[1:] #7x7
-    if topk>0:
-        # use topk/top_p to see how it affects it
-        top_k_logits, top_k_indexes = torch.topk(probs, topk, dim=-1)
-        # we then create a mask and set all logits that are not in top-k to -inf
-        mask = torch.ones_like(probs) * -float('inf')
-        # we could also do
-        # mask = torch.full_like(logits, -float('Inf'))
-        # and fill the rest of the mask with the actual top values
-        mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
-        probs = mask
-    
-    if 0<topp<1.0:
-        assert topk!=1,('cant use top_p with top_k=1, when using top_p, you must use a high top_k, otherwise top_p wont work!')
-        sorted_probs, sorted_indexes = torch.sort(probs, descending=True, dim=-1)
-        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-        sorted_indexes_to_remove = cumulative_probs > topp
-        sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
-        sorted_indexes_to_remove[..., 0] = 0 
-        indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, index=sorted_indexes,src=sorted_indexes_to_remove)
-        probs = probs.masked_fill(indexes_to_remove, -float('inf'))
-        
+    # sample indexes from the frequency distribution
+    H, W = latent_codes.shape[1:]
     latent_map = torch.multinomial(probs, batch_size * H * W, replacement=True)
     latent_map = latent_map.view(batch_size, H, W).to(device)
     # print(f'{latent_map.shape=}')
     # decode the latent_map
     quantized_embedding_map = model.quantizer.embeddings(latent_map)  # (batch_size, H, W, embd_size)
     # print(f'{quantized_embedding_map.shape=}')
-    quantized_embedding_map = quantized.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
+    quantized_embedding_map = quantized_embedding_map.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
     # print(f'{quantized_embedding_map.shape=}')
     generated_image = model.decoder(quantized_embedding_map)
     # print(f'{generated_image.shape=}')
     return generated_image
 
 
+torch.no_grad()
+def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=1.0,
+                      class_label=None, num_classes=10, top_k=0, top_p=0.9, device='cuda'):
 
-
-from tqdm.auto import tqdm # Use auto version for notebook/script compatibility
-
-def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=1.0, class_label=None,
-                      num_classes=10, shape=None, top_k=0, top_p=0.9, device='cuda'):
-    """
-    Generate samples from the trained prior model.
-
-    Args:
-        prior: Trained PixelCNN prior model.
-        model: Trained VQVAE model for decoding latent codes. **MUST have a way to access the codebook, e.g., model.quantizer.embedding.weight**
-        batch_size: Number of samples to generate.
-        temperature: Temperature for sampling (higher = more diverse, lower = more conservative).
-        class_label: Class label(s) for conditional generation (None for unconditional). Can be int or list/tensor.
-        num_classes: Number of classes in the dataset (required if prior is conditional).
-        shape: Shape of latent space (height, width). If None, uses prior.input_shape.
-        top_k: If > 0, only sample from the top k most likely tokens. Applied before top_p.
-        top_p: If < 1.0, only sample from the smallest set of tokens whose cumulative probability exceeds p (nucleus sampling).
-        device: Device to generate samples on ('cuda' or 'cpu').
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
-            - Tensor of generated samples (batch_size, channels, height, width).
-            - Tensor of generated latent codes (batch_size, latent_height, latent_width).
-    """
     prior.eval()
     model.eval()
     prior.to(device)
     model.to(device)
 
-    if shape is None:
-        shape = model.enc_output_shape
+    shape = model.enc_output_shape
         
-    latent_H, latent_W = shape
+    H,W = shape
 
-    # create empty latent codes
-    latents = torch.zeros(size=(batch_size, latent_H, latent_W), dtype=torch.long, device=device)
+    # create empty latent map
+    latents = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
 
     labels_onehot = None
     if prior.make_conditional:
         if class_label is None:
-            # if prior is conditional but no label given, sample uniformly or raise error?
-            # option 1: Sample random labels
             # labels = torch.randint(0, num_classes, (batch_size,), device=device)
-            # option 2: Raise error
-            raise ValueError("Prior is conditional, but 'class_label' was not provided.")
+            labels = torch.range(0,num_classes,dtype=torch.long).repeat_interleave(batch_size//num_classes)
         
         elif isinstance(class_label, int):
             labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
-        
-        elif isinstance(class_label, (list, tuple)):
-             if len(class_label) != batch_size:
-                 raise ValueError(f"Length of class_label list ({len(class_label)}) must match batch_size ({batch_size})")
-             labels = torch.tensor(class_label, dtype=torch.long, device=device)
-        
-        elif isinstance(class_label, torch.Tensor):
-             if class_label.ndim == 0: # single tensor value
-                 labels = torch.full((batch_size,), class_label.item(), dtype=torch.long, device=device)
-             
-             elif class_label.ndim == 1 and class_label.shape[0] == batch_size:
-                 labels = class_label.to(device=device, dtype=torch.long)
-             
-             else:
-                  raise ValueError(f"Invalid shape for class_label tensor: {class_label.shape}. Expected scalar or ({batch_size},).")
         
         else:
             raise TypeError(f"Unsupported type for class_label: {type(class_label)}")
@@ -10117,86 +10048,44 @@ def sample_from_prior(prior: PixelCNN, model: VQVAE, batch_size=64, temperature=
         labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
         labels_onehot = labels_onehot.to(device)
 
+    for h in range(H):
+        for w in range(W):
+            logits = prior(latents, labels_onehot) 
+            logits = logits[:, :, h, w] 
+            
+            if temperature <= 0:
+                    raise ValueError("Temperature must be positive.")
+            
+            if temperature != 1.0:
+                logits = logits / temperature
+            
+            if top_k > 0:
+                top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+                mask = torch.full_like(logits, -float('Inf'))
+                mask.scatter_(-1, top_k_indices, top_k_logits)
+                logits = mask
 
-    with torch.no_grad():
-        for h in tqdm(range(latent_H), desc="Generating rows"):
-            for w in range(latent_W):
-                # Get predictions for the current pixel (h, w) based on previous ones
-                # Pass the current state of latents and conditional labels (if any)
-                # PixelCNN should handle causality internally
-                logits = prior(latents, labels_onehot) 
+            if 0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
-                # extract logits for the specific position we are predicting
-                # logits shape from PixelCNN is (batch, num_embeddings, H, W)
-                logits = logits[:, :, h, w] # shape: (batch_size, num_embeddings)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0 
 
-                # Apply temperature scaling
-                if temperature <= 0:
-                     raise ValueError("Temperature must be positive.")
-                if temperature != 1.0:
-                    logits = logits / temperature
+                indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+                logits = logits.masked_fill(indices_to_remove, -float('Inf'))
 
-                # --- Apply top-k / top-p filtering ---
-                # (Optional) Apply top-k filtering first
-                if top_k > 0:
-                    # Get the top_k logits and their indices
-                    top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
-                    # Create a mask, setting logits not in top-k to -inf
-                    mask = torch.full_like(logits, -float('Inf'))
-                    mask.scatter_(-1, top_k_indices, top_k_logits)
-                    logits = mask
+            probs = F.softmax(logits, dim=-1)
 
-                # Apply top-p (nucleus) filtering
-                if 0 < top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            pixel_samples = torch.multinomial(probs, num_samples=1) 
+            pixel_samples = pixel_samples.squeeze(-1) 
 
-                    # remove tokens with cumulative probability above the threshold (nucleus)
-                    sorted_indices_to_remove = cumulative_probs > top_p
-                    # shift the indices to the right to keep also the first token above the threshold
-                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                    sorted_indices_to_remove[..., 0] = 0 # Never remove the most probable token
+            latents[:, h, w] = pixel_samples
 
-                    # create a mask, setting logits to be removed to -inf
-                    # scatter sorted_indices_to_remove back to original positions
-                    indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
-                    logits = logits.masked_fill(indices_to_remove, -float('Inf'))
-
-                # calculate probabilities from the potentially filtered logits
-                probs = F.softmax(logits, dim=-1)
-
-                # sample from the filtered distribution
-                # torch.multinomial expects probabilities, not logits
-                pixel_samples = torch.multinomial(probs, num_samples=1) # shape: (batch_size, 1)
-                pixel_samples = pixel_samples.squeeze(-1) # shape: (batch_size,)
-
-                # update the latents tensor with the sampled index for position (h, w)
-                latents[:, h, w] = pixel_samples
-
-    with torch.no_grad():
-        # **MAJOR CORRECTION:** Map latent indices to embedding vectors
-        codebook = model.quantizer.embeddings.weight # shape: (num_embeddings, embedding_dim)
-        num_embeddings, embedding_dim = codebook.shape
-
-        # check if generated latents are valid indices
-        if latents.max() >= num_embeddings:
-             raise ValueError(f"Generated latent index {latents.max()} is out of bounds for codebook size {num_embeddings}. check PixelCNN output range.")
-
-        # Get the embedding vectors corresponding to the generated indices
-        # Flatten latents for efficient embedding lookup
-        latents_flat = latents.view(-1) # shape: (batch_size * H * W)
-        # Lookup embeddings
-        quantized_vectors_flat = F.embedding(latents_flat, codebook)
-        # Shape: (batch_size * H * W, embedding_dim)
-
-        # Reshape to the grid format expected by the decoder
-        # Common format: (batch_size, embedding_dim, H, W)
-        quantized_vectors = quantized_vectors_flat.view(batch_size, latent_H, latent_W, embedding_dim)
-        # Permute dimensions: (N, H, W, C) -> (N, C, H, W)
-        quantized_vectors = quantized_vectors.permute(0, 3, 1, 2).contiguous()
-
-        # Decode the quantized vectors
-        reconstructions = model.decoder(quantized_vectors)
+    quantized = model.quantizer.embeddings(latents)
+    quantized = quantized.permute(0, 3, 1, 2).contiguous()
+    reconstructions = model.decoder(quantized)
 
     return reconstructions, latents
 
@@ -10245,8 +10134,6 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
                  make_conditional=conditional,
                  dropout_rate=0.1,).to(device)
 
-# the new generator has issues! 
-# need to fix it ! Iget solid colors using it! which is weird!
 
 prior, ckptname = train_prior(prior=prior,
                               vqvae_model=model,
@@ -10262,10 +10149,10 @@ prior, ckptname = train_prior(prior=prior,
                               selected_label=None,
                               advanced_sampling=False,
                               temperature=1,#1
-                              top_k=0,#3 works well
-                              top_p=0,#
-                              rows=9,
-                              cols=9,
+                              top_k=0,
+                              top_p=0,
+                              rows=10,
+                              cols=8,
                               device='cuda',
                               generation_device='cuda',
                               figsize=(12,16),
@@ -10273,22 +10160,6 @@ prior, ckptname = train_prior(prior=prior,
                               checkpoint_dir_path='./weights/prior/emb256/',
                               recons_dir_path='./results/',
                               )
-
-# prior = ImprovedPixelCNN(num_embds=model.embd_num, 
-#                          embedding_size=256,
-#                          num_class=10,
-#                          make_conditional=True,
-#                          dropout_rate=0.1,).to(device)
-
-# prior, checkpoint_path = train_improved_prior(prior,
-#                                             latent_codes,
-#                                             latent_labels,
-#                                             dataset_name=dataset,
-#                                             num_classes=10,
-#                                             epochs=120,
-#                                             batchsize=64,
-#                                             lr=3e-4,
-#                                             weight_decay=1e-2)
 
 #sidenote: 
 # starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
@@ -10384,7 +10255,6 @@ ckptname = './vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.p
 ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
 
 
-
 print(f'{dataset=}')
 print(f'{device=}\n')
 ckpt = torch.load(ckptname, map_location=device, weights_only=False)
@@ -10409,42 +10279,57 @@ print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
 print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
-class_names = dict([(i,'N/A') for i in range(40)])
-if 'cifar' in dataset:
-    num_classes=10
-    class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
-                   5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+# class_names = dict([(i,'N/A') for i in range(40)])
+# if 'cifar' in dataset:
+#     num_classes=10
+#     class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+#                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
 
-elif dataset =='mnist':
-    num_classes=10
-    class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
-                   5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
-else:
-    num_classes=40
-    class_names = {i:str(i) for i in range(40)}
+# elif dataset =='mnist':
+#     num_classes=10
+#     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
+#                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
+# else:
+#     num_classes=40
+#     class_names = {i:str(i) for i in range(40)}
 
 seed=12
-batch_size = 64
-# num_classes=40
-selected_label = 9
-print(f'Generating images of {class_names[selected_label]}')
-labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
-# due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
-# I would get weird generations! when I icnreased the image size form 32 to 64 and
-# retired, the reconstructions got much better, but generation seemed cropped! looked
-# closer and noticed my bug and fixed it and now images are way better. they are very good
-# a bit deformed which is relaetd to overfitting , but overall it seems alright!
-generated_image = generate(model,
-                           prior,
-                           labels=labels,
-                           num_classes=num_classes,
-                           batch_size=batch_size,
-                           # when using conditional, using smaller values 
-                           # for temperature, give us weireder images/really 
-                           # simplestic images! like with way less details!
-                           temperature=1,
-                           seed=seed)
-view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
+batch_size = 80
+# # num_classes=40
+selected_label = None
+# print(f'Generating images of {class_names[selected_label]}')
+# labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+# # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+# # I would get weird generations! when I icnreased the image size form 32 to 64 and
+# # retired, the reconstructions got much better, but generation seemed cropped! looked
+# # closer and noticed my bug and fixed it and now images are way better. they are very good
+# # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+# generated_image = generate(model,
+#                            prior,
+#                            labels=labels,
+#                            num_classes=num_classes,
+#                            batch_size=batch_size,
+#                            # when using conditional, using smaller values 
+#                            # for temperature, give us weireder images/really 
+#                            # simplestic images! like with way less details!
+#                            temperature=1,
+#                            seed=seed)
+# view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=num_classes,
+                          selected_label=selected_label,
+                          batch_size=batch_size,
+                          advanced_sampling=False,
+                          temperature=1,
+                          top_k=0,
+                          top_p=0,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=seed)
+                          
 #%%
 latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
 generated_image1 = generate_simple(model, latent_codes,batch_size=64)
@@ -10457,12 +10342,12 @@ generated_image, latents = sample_from_prior(prior,
                                     batch_size=64,
                                     temperature=1,
                                     num_classes=num_classes,
-                                    class_label=9,  # Optional: specific class to generate
-                                    top_p=1,  # Use nucleus sampling
+                                    class_label=9,
+                                    top_p=.95,
                                 device='cuda')
 
 print(f'{generated_image.shape=}')
-view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,title=class_names[selected_label])
+view_images(generated_image,torch.ones(generated_image.size(0),1),rows=8,cols=8,title='')
 #%%
 # debugging section. I wrote this part when I faced a lot of issues early on
 # I couldnt get the model to generate anything! all I could get was noise or 
