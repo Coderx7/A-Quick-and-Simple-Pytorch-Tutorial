@@ -9383,6 +9383,18 @@ def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes
     # print(f'{generated.shape=}')
     return generated
 
+def get_class_names(dataset, num_classes):
+    if 'cifar' in dataset:
+        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
+                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
+
+    elif dataset =='mnist':
+        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
+                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
+    else:#celeba
+        class_names = {i:'N/A' for i in range(num_classes)}
+    return class_names
+
 def display_generated_samples(vqvae_model:VQVAE, 
                               prior_model:PixelCNN, 
                               dataset, 
@@ -9397,15 +9409,7 @@ def display_generated_samples(vqvae_model:VQVAE,
                               fname=None,
                               title=''):
 
-    if 'cifar' in dataset:
-        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
-                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
-
-    elif dataset =='mnist':
-        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
-                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
-    else:#celeba
-        class_names = {i:'N/A' for i in range(num_classes)}
+    class_names = get_class_names(dataset, num_classes)
 
     msg = class_names[selected_label] if selected_label else "All Classes!"
     print(f'Generating images of {msg}')
@@ -9894,7 +9898,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
                                selected_class=9, 
                                advanced_sampling=False,
                                temperature=1,
-                               top_k=1,
+                               top_k=0,
                                top_p=0,
                                device='cuda',
                                seed=66):
@@ -9906,7 +9910,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     prior.to(device)
     vqvae.to(device)
     #!todo check validity
-    generator = torch.Generator(device).manual_seed(seed)
+    generator = torch.Generator(device).manual_seed(seed) if seed else None
     
     H,W = vqvae.enc_output_shape
     # print(f'{H=}, {W=}')
@@ -10283,7 +10287,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
     return latent_map_prior
 
 # now lets grab our latents_prior
-latents_prior = get_discrete_latents_prior(prior,model, batch_size=1, num_classes=num_classes, selected_class=9)
+latents_prior = get_discrete_latents_prior(model, prior, batch_size=1, num_classes=num_classes, selected_class=9)
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
 
@@ -10346,7 +10350,7 @@ def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='
     # feed discrete_latents as is, and get the quantized_vector
     # then we only need to permute at the end, cuz the shapes would
     # be fine, no need to extra reshape!
-    quantized_vectors = vqvae.quantizer.embeddings(discrete_latents.view(-1))
+    # quantized_vectors = vqvae.quantizer.embeddings(discrete_latents.view(-1))
     # we could also use F.embedding() and use the embeddings weight
     # to grab the vectors but since we have access to embeddings 
     # module in quantizer, we simply use that!
@@ -10361,17 +10365,19 @@ def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='
     # it to (batchsize, H,W,embedding_size) early on in quantizer to get
     # the discrete version of it! so we now have to reshape into bhwc
     # and then into the correct bchw!
-    batch_size, H, W = discrete_latents.shape
-    quantized_vectors = quantized_vectors.view(batch_size, H, W, -1)
+    # batch_size, H, W = discrete_latents.shape
+    # quantized_vectors = quantized_vectors.view(batch_size, H, W, -1)
+    # actually we dont need to do all that! embeddins accept all tensor shapes!
+    quantized_embeddings_map = vqvae.quantizer.embeddings(discrete_latents)
     # now move the embedding channel from last dim to second dim (dim=1), 
     # and it has to be continuous! so they use the same contiguous memory chunk!
-    quantized_vectors = quantized_vectors.permute(0, 3, 1, 2).contiguous()
-    # we can now decode the quantized vectors!
-    reconstructed_imgs = vqvae.decoder(quantized_vectors)
+    quantized_embeddings_map = quantized_embeddings_map.permute(0, 3, 1, 2).contiguous()
+    # we can now decode the quantized embeddings!
+    reconstructed_imgs = vqvae.decoder(quantized_embeddings_map)
     return reconstructed_imgs
 
-def compare_real_vs_prior(prior: PixelCNN, 
-                          vqvae: VQVAE,
+def compare_real_vs_prior(vqvae: VQVAE,
+                          prior: PixelCNN,
                           dataset_name,
                           imgs,
                           labels, 
@@ -10385,8 +10391,8 @@ def compare_real_vs_prior(prior: PixelCNN,
                           device='cuda',
                           figsize=(6,8),
                           save_figure=True,
-                          save_dir='./'
-                          ):
+                          save_dir='./',
+                          seed=66):
     prior.eval()
     vqvae.eval()
     prior.to(device)
@@ -10402,7 +10408,8 @@ def compare_real_vs_prior(prior: PixelCNN,
     # use the label from the real image, so we can compare them
     selected_class = labels[:num_samples].tolist()
     # print(f'{selected_class=}')
-    latents_prior = get_discrete_latents_prior(prior, vqvae, 
+    latents_prior = get_discrete_latents_prior(vqvae=vqvae,
+                                               prior=prior, 
                                                batch_size=batch_size,
                                                num_classes=num_classes, 
                                                selected_class=selected_class,
@@ -10410,7 +10417,8 @@ def compare_real_vs_prior(prior: PixelCNN,
                                                temperature=temperature,
                                                top_k=top_k,
                                                top_p=top_p,
-                                               device=device)
+                                               device=device,
+                                               seed=seed)
     img_prior_recon = decode_discrete_latents(vqvae, latents_prior, device=device)
     
     num_embeddings = model.quantizer.num_embd
@@ -10440,9 +10448,11 @@ def compare_real_vs_prior(prior: PixelCNN,
             axes[i,j].axis('off')
             show_image_tensor(axes[i, j+1], recons[i], f"{title2}({label})")
             j+=2
+    
     cfg_used = f'{temperature=:.2f} | {top_k=} | {top_p=:.2f}'
     fig.suptitle(f"Real vs. Prior Generation Comparison\nDataset: {dataset_name.upper()}\n{cfg_used}", fontsize=14)
     plt.tight_layout()
+    
     # save the fig for further analysis
     if save_figure and save_dir:
         if not os.path.exists(save_dir):
@@ -10460,25 +10470,26 @@ print(f'@{labels.shape=}')
 #                5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
 
 # torch.set_printoptions(profile='full')
-compare_real_vs_prior(prior,
-                      model,
-                      dataset,
-                      imgs, 
-                      labels,
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
                       batch_size=4,
                       num_classes=num_classes,
-                      class_names=class_names,
+                      class_names=get_class_names(dataset,num_classes),
                       advanced_sampling=False,
                       temperature=1,
-                      top_k=3,#3 seems to be a good spot for my currentcifar10 model
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
                       #for testing top_p either leave top_k=0, or make sure its a 
                       # larger number so the pool is not so small top_p cant do much!
                       # this actually was my bug that prevented me from usingtop_p
-                      top_p=1,
+                      top_p=0,
                       device=device,
                       figsize=(12,16),
                       save_figure=True,
-                      save_dir='./results/debugging')
+                      save_dir='./results/debugging',
+                      seed=None)
 
 #TODO use more advanced generation technique and see if it really affects the outcome
 #TODO currently looking at the prior generations, we can see they are from the same 
