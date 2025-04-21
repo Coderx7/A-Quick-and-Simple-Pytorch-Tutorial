@@ -7520,8 +7520,11 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
         # temporary test to see how many samples may be insuffiecient to train 
         # a vqvae properly from scratch, we use Subset() to specify and grab the
         # number of suitable samples we want for our test
-        dataset_train = torch.utils.data.Subset(dataset_train, list(range(train_samplesize)))
-        dataset_test = torch.utils.data.Subset(dataset_test, list(range(test_samplesize)))
+        # 
+        # note, incase the specificed samplesize exceeds the whole dataset, use dataset max size
+        # otherwise select the samplesize normally!
+        dataset_train = torch.utils.data.Subset(dataset_train, list(range(min(train_samplesize, len(dataset_train)))))
+        dataset_test = torch.utils.data.Subset(dataset_test, list(range(min(test_samplesize, len(dataset_test)))))
     
     dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
     dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
@@ -7854,8 +7857,8 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
                         'enc_output_shape':model.enc_output_shape,
                         'img_size':img_size,
                         'limited_samples':limited_samples,
-                        'train_samplesize':train_samplesize,
-                        'test_samplesize':test_samplesize,
+                        'train_samplesize':len(dataloader_train.dataset),
+                        'test_samplesize':len(dataloader_test.dataset),
                         'use_fp16':use_fp16,
                         'model_config':{
                           'beta':model.beta,
@@ -7880,8 +7883,8 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
                     'enc_output_shape':model.enc_output_shape,
                     'img_size':img_size,
                     'limited_samples':limited_samples,
-                    'train_samplesize':train_samplesize,
-                    'test_samplesize':test_samplesize,
+                    'train_samplesize':len(dataloader_train.dataset),
+                    'test_samplesize':len(dataloader_test.dataset),
                     'use_fp16':use_fp16,
                     'model_config':{
                       'beta':model.beta,
@@ -8218,6 +8221,7 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 
 # using fp32 version 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
+# 
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
