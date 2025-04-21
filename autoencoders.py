@@ -9489,25 +9489,22 @@ def generate_simple(model:VQVAE, latent_codes, batch_size=1):
 
 # this is an improved version, I explained this in details later in debugging section
 # so I comment this so we dont get ahead of ourselves
+# on a second though, I think having it for now is better until i run my experiments
 torch.no_grad()
-def generate2(model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
+def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
               class_label=None, num_classes=10, top_k=0, top_p=0.9, device='cuda'):
 
     prior.eval()
-    model.eval()
+    vqvae_model.eval()
     prior.to(device)
-    model.to(device)
+    vqvae_model.to(device)
 
-    shape = model.enc_output_shape
-
-    H,W = shape
+    H, W = vqvae_model.enc_output_shape
 
     # create empty latent map
-    latents = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+    codes = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
 
-    labels_onehot = None
     if prior.make_conditional:
-        
         if class_label is None:
             # labels = torch.randint(0, num_classes, (batch_size,), device=device)
             labels = torch.arange(num_classes,dtype=torch.long).repeat_interleave(batch_size//num_classes)
@@ -9515,7 +9512,7 @@ def generate2(model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
             batch_size_new = batch_size if labels.size(0)==batch_size else labels.size(0)
             print(f'WARNING Batch_size is changed to {batch_size_new} from initial ({batch_size}) so labels can match samples!')
             # create empty latent map with new size
-            latents = torch.zeros(size=(batch_size_new, H, W), dtype=torch.long, device=device)
+            codes = torch.zeros(size=(batch_size_new, H, W), dtype=torch.long, device=device)
 
         elif isinstance(class_label, int):
             labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
@@ -9524,15 +9521,19 @@ def generate2(model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
             raise Exception(f"Unknown type: {type(class_label)=}")
 
         # print(f'{labels.shape=} {labels=}')
-        labels_onehot = F.one_hot(labels, num_classes=num_classes).float()
-        # print(f'{labels_onehot.shape=}')
-        labels_onehot = labels_onehot.to(device)
+        labels = F.one_hot(labels, num_classes=num_classes).float()
+        # print(f'{labels.shape=}')
+        labels = labels.to(device)
 
     for h in range(H):
         for w in range(W):
-            logits = prior(latents, labels_onehot) 
+            logits = prior(codes, labels) 
             logits = logits[:, :, h, w] 
             
+            # from future me!:
+            # see my extensive explanation later in debugging section about these
+            # techniques for now we are just using them(I learned about them later
+            # on and I added this again later!)
             if temperature>0:
                 logits = logits / temperature
             
@@ -9556,13 +9557,12 @@ def generate2(model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
             probs = F.softmax(logits, dim=-1)
             pixel_samples = torch.multinomial(probs, num_samples=1) 
             pixel_samples = pixel_samples.squeeze(-1) 
-            latents[:, h, w] = pixel_samples
+            codes[:, h, w] = pixel_samples
 
-    quantized = model.quantizer.embeddings(latents)
-    quantized = quantized.permute(0, 3, 1, 2).contiguous()
-    reconstructions = model.decoder(quantized)
-    return reconstructions, latents
-
+    quantized_embeddings = vqvae_model.quantizer.embeddings(codes)
+    quantized_embeddings = quantized_embeddings.permute(0, 3, 1, 2).contiguous()
+    reconstructions = vqvae_model.decoder(quantized_embeddings)
+    return reconstructions, codes
 
 #%%
 #todo move get_latent_codes inside training because they are tightly coupled!
@@ -9733,7 +9733,7 @@ prior, ckptname = train_prior(prior=prior,
 #fp32/ema vqvae
 #cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511
 ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
-# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
 
 
 print(f'{dataset=}')
@@ -9771,7 +9771,7 @@ else:
 seed=12
 batch_size = 80
 #num_classes=40
-selected_label = None
+selected_label = 1
 # print(f'Generating images of {class_names[selected_label]}')
 # labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
 # # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
@@ -9809,8 +9809,8 @@ generated_image1 = generate_simple(model, latent_codes,batch_size=64)
 view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
 
 #%%
-selected_label = 9
-generated_image, latents = generate2(model=model,
+selected_label = 1
+generated_image, latents = generate2(vqvae_model=model,
                                     prior=prior,
                                     batch_size=80,
                                     temperature=1,
