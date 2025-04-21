@@ -9325,7 +9325,7 @@ def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes
     assert labels.size(0) == batch_size, 'classes count must batch batches!'
     
     # todo use seed so we get the same images each time! for comparison purposes!
-    generator = torch.Generator(device).manual_seed(seed)
+    generator = torch.Generator(device).manual_seed(seed) if seed else None
     
     # we start with zeros because the PixelCNN generates autoregressively. 
     # it predicts the code for position (i, j) based on the
