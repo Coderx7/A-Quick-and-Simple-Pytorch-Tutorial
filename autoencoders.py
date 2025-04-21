@@ -206,7 +206,6 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
     imgs = imgs.detach().cpu().numpy().transpose(0,2,3,1)
-    print(f'{len(labels)=}')
     if normalized:
         #unnormalized the image
         #normalization is imgs-mean/std
@@ -6210,7 +6209,7 @@ class Quantizer(nn.Module):
         #     print("!!! WARNING: NaNs/Infs in initial self.embeddings !!!")
         # # -----------------------DEBUG---------------------
 
-                
+
         # using exponential moving average to update the embedding
         # vectors instead of an auxillary loss can seemingly improve
         # the convergence a lot and prevents low preprelxity (more about this in a moment!)
@@ -8690,7 +8689,7 @@ class GatedActivation(nn.Module):
         return torch.tanh(a) * torch.sigmoid(b)
 
 
-# Improved residual block with gated activation
+# improved residual block with gated activation
 class GatedResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
         super().__init__()
@@ -8742,7 +8741,6 @@ class Print(nn.Module):
         print(f'{outputs.shape=}')
         return outputs
 
-
 class GatedConv2d(nn.Module):
     """Gated Masked Convolution Layer"""
     def __init__(self, mask_type, in_channels, out_channels, kernel_size, padding, dilation=1):
@@ -8787,7 +8785,6 @@ class AttentionBlock(nn.Module):
         attn_out = torch.bmm(value, attn.permute(0, 2, 1))
         attn_out = attn_out.view(batch_size, C, H, W)
         return self.gamma * attn_out + x
-
 class MaskedAttentionBlock(nn.Module):
     """Self-Attention with Causal Masking for Autoregressive Models"""
     def __init__(self, channels, H, W): # Need spatial dims for mask
@@ -8852,7 +8849,8 @@ class MaskedAttentionBlock(nn.Module):
 
         return self.gamma * attn_out + x
 
-class ResidualBlock(nn.Module):
+# this is the test block that got suddenly used for later models!
+class ResidualBlock0(nn.Module):
     """Gated Residual Block with Conditional BatchNorm"""
     def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
         super().__init__()
@@ -8868,77 +8866,6 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         return F.relu(self.block(x) + self.skip(x))
-
-class ImprovedPixelCNN(nn.Module):
-    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1, H=8,W=8):
-        super().__init__()
-        self.num_embds = num_embds
-        self.embedding_size = embedding_size
-        self.num_class = num_class
-        self.make_conditional = make_conditional
-        # indecex dimensions required for attention
-        self.H = H
-        self.W = W
-        self.embedding = nn.Embedding(num_embds, embedding_size)
-        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
-        
-        self.conv_input_size = self.embedding_size * 2 if make_conditional else self.embedding_size
-        self.initial_conv = nn.Sequential(
-            MaskedConv2d('A', self.conv_input_size, 128, kernel_size=11, padding=5),#k=11,p=5 ->8x8
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-          )
-
-        # Define blocks with their respective output channel sizes:
-        self.res_blocks = nn.ModuleList([
-            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-            ResidualBlock(128, 128, dropout_rate=dropout_rate, dilation=1),
-            # MaskedAttentionBlock(128,H=H,W=W),#16x16 for 64x64 imgsz
-            ResidualBlock(128, 256, dropout_rate=dropout_rate, dilation=1), 
-            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-            # MaskedAttentionBlock(256,H=H,W=W),#16x16 for 64x64 imgsz
-            ResidualBlock(256, 256, dropout_rate=dropout_rate, dilation=1),
-            ResidualBlock(256, 512, dropout_rate=dropout_rate, dilation=1),
-        ])
-
-        # Corrected skip connections: one per block, matching output channels.
-        self.skip_convs = nn.ModuleList([
-            nn.Conv2d(128, 64, kernel_size=1),  # For Block 1 (128 -> 128)
-            nn.Conv2d(128, 64, kernel_size=1),  # For Block 2 (128, 128)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 3 (128 -> 256)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 4 (256 -> 256)
-            nn.Conv2d(256, 64, kernel_size=1),  # For Block 5 (256, 256)
-            nn.Conv2d(512, 64, kernel_size=1)   # For Block 6 (256 -> 512)
-        ])
-
-        self.final_layers = nn.Sequential(
-            nn.Conv2d(64 * len(self.skip_convs), 512, kernel_size=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout2d(dropout_rate),
-            nn.Conv2d(512, 256, kernel_size=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Conv2d(256, num_embds, kernel_size=1)
-        )
-
-    def forward(self, input_indices, labels=None):
-        # Embed and prepare conditional input.
-        input_indices = self.embedding(input_indices).permute(0, 3, 1, 2)
-        if self.make_conditional and labels is not None:
-            labels = self.fc_label_embedding(labels.float())
-            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1).expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
-            input_indices = torch.cat([input_indices, labels], dim=1)
-
-        # print(f'{input_indices.shape=}')
-        output = self.initial_conv(input_indices)
-        skips = []
-        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
-            output = res_block(output)
-            skips.append(skip_conv(output))
-        combined = torch.cat(skips, dim=1)
-        logits = self.final_layers(combined)
-        return logits
 
 
 #########################
@@ -9715,39 +9642,45 @@ prior, ckptname = train_prior(prior=prior,
 # ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
 # cifar10 unconditional
 # ckptname = './weights/old/vqvae_23_13_38_2025_03_25.ckpt'
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
 # I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
 # better generation usually! so try both checkpoints (the last one and the best one) and 
 # compare the results
 #todo down to here!
 
+# 
+# note
+# starting from here, we have used the second ResBlock defnition, I need to retrain!!
+# 
+# 
+# 
 # with extra info (model_config, train loss, etc)
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
 # Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
 # get that in early epochs. the smalles training loss/bpd has a much better result
 # than the our best val/bpd values! makes me wonder if having a validation set even
 # matters!
-# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
-# ckptname = './weights/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
+# ckptname = './weights/prior/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
 
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
 # not good. I lowered the dropout ratio and it I believe it make it worse than before!
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
-# ckptname = './weights/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
 # for celeba because the dataset is much larger, we have far b etter generations!
 # obviously having a better vqvae and prior models with better training can yield
 # much better result. but for us this siffuces and shows given more data, with the
 # same architecture, we can achieve pretty good results.
-# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
-# ckptname = './weights/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
 
 #embd256 
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
-# ckptname = './weights/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
 
 # train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
 # clean and git push to privae repo first
@@ -9760,14 +9693,14 @@ prior, ckptname = train_prior(prior=prior,
 # more! in our case it was to simply use larger embedding dim (256)!
 # I need to train others with the new embd_size for vqvae to see how they perform :)
 # test these 3 models to see how they fair against each other
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
-# ckptname = './weights/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
 #
 # like before with the increased embd, the generation is near prefect!(unconditional)
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
-# ckptname = './weights/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
 # 
 # conditional
 # ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
@@ -9779,9 +9712,14 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.pt'
 
 
-#fp32/eva vqvae
+#fp32/ema vqvae
 #cifa10-embd256-64x64
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
+
+################# using old resblock #################
+#fp32/ema vqvae
+#cifa10-embd256-64x64
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610'
 
 
 print(f'{dataset=}')
@@ -9809,23 +9747,16 @@ print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
 print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
 #%%
 # Generate new image
-# class_names = dict([(i,'N/A') for i in range(40)])
-# if 'cifar' in dataset:
-#     num_classes=10
-#     class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
-#                    5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
-
-# elif dataset =='mnist':
-#     num_classes=10
-#     class_names = {0:'zeros', 1:'ones', 2:'twos', 3:'threes', 4:'fours',
-#                    5:'fives', 6:'sixes', 7:'sevens', 8:'eigths',9:'nines'}
-# else:
-#     num_classes=40
-#     class_names = {i:str(i) for i in range(40)}
+if 'cifar' in dataset:
+    num_classes=10
+elif dataset =='mnist':
+    num_classes=10
+else:
+    num_classes=40
 
 seed=12
 batch_size = 80
-# # num_classes=40
+#num_classes=40
 selected_label = 9
 # print(f'Generating images of {class_names[selected_label]}')
 # labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
