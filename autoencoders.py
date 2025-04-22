@@ -8173,7 +8173,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
 # ckpt_name = './weights/vqvae/vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
 # ckpt_name = './weights/vqvae/vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
-# with model_config and extra information
+# with model_config and extra information -samplesize are not accurate when limitedsamples=False
 # with embds=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
@@ -8182,22 +8182,22 @@ dataloader_train,dataloader_test = train_vqvae(model,
 # performs very very good ! increased embdsz actually results in way smaller loss
 # abd BPD! I noticed the perplexity is much much lower though! but the generation
 # nonetheless is much much better!
-# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
-ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
 
 # limited cifar10 - 8000 samples
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07.ckpt'
 
 # ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_01_22 - 2025_04_06.ckpt'#3epochs-nolimit
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_51_05 - 2025_04_06.ckpt'#e99-nolimit-embd256
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_12_58_51 - 2025_04_06.ckpt'#e14-nolimit-embd256
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_02_15 - 2025_04_06.ckpt'#99e-nolimit-embd256
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_12 - 2025_04_06.ckpt'#e1-nolimit256
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_38 - 2025_04_06.ckpt'#41e
-ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_51_05 - 2025_04_06.ckpt'#e99-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_12_58_51 - 2025_04_06.ckpt'#e14-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_02_15 - 2025_04_06.ckpt'#99e-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_12 - 2025_04_06.ckpt'#e1-nolimit256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_38 - 2025_04_06.ckpt'#41e
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 
 # using fp16
 # experimenting with fp16 and see if our implementation is ok and we get expected result
@@ -8213,7 +8213,7 @@ ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
 #
 # fp16 with ema
 # right off the bat the perplexity is 3x better (15vs45) and loss is 10x better!
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
 
 # todo compare embedding/codebook utilization (histogram) for fp16/fp32 and fp16/fp32 ema versions
 # todo and see which one does a better job of utilizing codebooks
@@ -8224,7 +8224,7 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
@@ -9307,6 +9307,9 @@ def train_prior(prior:PixelCNN,
     plt.legend()
     plt.show()
     
+    # save training log as well
+    plt.savefig(checkpoint_path.replace('.ckpt','_log.jpg'))
+    
     print('training prior model complete!')
     # pd.DataFrame(losses_epoch).plot()
     # plt.plot()
@@ -9421,9 +9424,10 @@ def display_generated_samples(vqvae_model:VQVAE,
     else:
         sample_count = batch_size//num_classes
         labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
-        label_texts = [class_names[i]
-                       for i in range(num_classes) # outer loop for each class
-                       for _ in range(sample_count)] # inner loop for num_samples for each class
+        # label_texts = [class_names[i]
+        #                for i in range(num_classes) # outer loop for each class
+        #                for _ in range(sample_count)] # inner loop for num_samples for each class
+        label_texts = [class_names[labels[i].item()] for i in range(labels.size(0))]
 
     # number of samples and labels must match, if after our shenanigans on labels
     # the new label size doesnt match the batchsize we obviously will fail, so we
@@ -9592,7 +9596,7 @@ def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.
 # list goes on!
 #TODO: check why the generation seems random here despite having used seed!
 conditional = True
-use_fp16 = True
+use_fp16 = False
 num_classes = 40 if dataset=='celeba' else 10
 
 #TODO improve prior training function like vqvae trainig!
@@ -9734,10 +9738,26 @@ prior, ckptname = train_prior(prior=prior,
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
 
 ################# using old resblock #################
+#cifa10-embd256-64x64 - no fp16 in either vqvae or prior
+# the convergence is fast, lower initial loss=3.4, 
+# we achieve 1.6 at 31 epochs! - Epoch: 119/120  | Loss: 1.174580 | Val-Loss: 4.225377 | BPD: 1.694561 |  BPD_VAL: 6.095931 | LR:0.000000
+# to me it seems the result is way better than when I used fp16, I had my doubt so 
+# thats why im retraining them again to make sure (also since I messed up with the 
+# resblock mistake!)
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_e75.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_best.pt'
+
+#cifa10-embd256-64x64 - now with fp16 in prior
+# ckptname = './weights/prior/emb256/'
+# ckptname = './weights/prior/emb256/'
+# ckptname = './weights/prior/emb256/'
+
 #fp32/ema vqvae
-#cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
+#cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511 after 120 epochs
+# I noticed the convergence rate is way slower compared to non-ema training. 
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
 
 
 print(f'{dataset=}')
@@ -9775,7 +9795,7 @@ else:
 seed=12
 batch_size = 80
 #num_classes=40
-selected_label = 1
+selected_label = None
 # print(f'Generating images of {class_names[selected_label]}')
 # labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
 # # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
@@ -9804,8 +9824,8 @@ display_generated_samples(vqvae_model=model,
                           rows=10,
                           cols=8,
                           figsize=(12,16),
-                          seed=seed)
-                          
+                          seed=None)
+
 #%%
 latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
 generated_image1 = generate_simple(model, latent_codes,batch_size=64)
@@ -9813,7 +9833,7 @@ generated_image1 = generate_simple(model, latent_codes,batch_size=64)
 view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
 
 #%%
-selected_label = 1
+selected_label = None
 generated_image, latents = generate2(vqvae_model=model,
                                     prior=prior,
                                     batch_size=80,
@@ -9821,16 +9841,17 @@ generated_image, latents = generate2(vqvae_model=model,
                                     num_classes=num_classes,
                                     class_label=selected_label,
                                     top_p=1,
-                                device='cuda')
+                                    device='cuda')
 
 # print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
 if selected_label:
         labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
-        label_texts = [str(selected_label) for _ in range(batch_size)]
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
 else:
     sample_count = batch_size//num_classes
-    labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
-    label_texts = ['N/A' for _ in range(labels.size(0))]
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
     
 view_images(generated_image,label_texts,rows=10,cols=8,title='')
 #%%
@@ -10699,13 +10720,13 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 
 #%% old dbeugging stuff
 
-
-
+#! use a discrete latent code not latentcodes from training!
 
 # check to see if our codebook has collapsed
-# if only a few codes are used here (e.g. 1-2 codes dominate), our VQ-VAE codebook has collapsed
-# despite the perplexity of 180 (which may be misleading if embd_num is large).
-counts = torch.bincount(latent_codes.flatten())
+# if only a few codes are used here (e.g. 1-2 codes dominate), 
+# our VQ-VAE codebook has collapsed despite the perplexity of 180
+# (which may be misleading if embd_num is large).
+counts = torch.bincount(latents_prior.flatten())
 print("Top 10 codes:", torch.topk(counts, 10).indices)
 print("Code usage ratio:", len(counts.nonzero()) / model.embd_num)
 
@@ -10735,7 +10756,7 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 dominant_code = torch.argmax(counts).item()
 print("Dominant code embedding:", model.quantizer.embeddings.weight[dominant_code])
 # lets force decode this code:
-test_codes = torch.full((3, 32, 32), dominant_code, device=device)
+test_codes = torch.full((3, 64, 64), dominant_code, device=device)
 quantized = model.quantizer.embeddings(test_codes)
 generated_image = model.decoder(quantized.permute(0, 3, 1, 2))
 view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
