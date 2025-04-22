@@ -9305,11 +9305,14 @@ def train_prior(prior:PixelCNN,
     
     plt.tight_layout()
     plt.legend()
-    plt.show()
-    
+
     # save training log as well
+    # note plt.show() displays the plot and then clears it! so
+    # we add savefig before calling plt.show()!
     plt.savefig(checkpoint_path.replace('.ckpt','_log.jpg'))
     
+    plt.show()
+   
     print('training prior model complete!')
     # pd.DataFrame(losses_epoch).plot()
     # plt.plot()
@@ -9596,7 +9599,7 @@ def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.
 # list goes on!
 #TODO: check why the generation seems random here despite having used seed!
 conditional = True
-use_fp16 = False
+use_fp16 = True
 num_classes = 40 if dataset=='celeba' else 10
 
 #TODO improve prior training function like vqvae trainig!
@@ -9738,6 +9741,12 @@ prior, ckptname = train_prior(prior=prior,
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
 
 ################# using old resblock #################
+#fp32/ema vqvae
+#cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511 after 120 epochs
+# I noticed the convergence rate is way slower compared to non-ema training. 
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
+
 #cifa10-embd256-64x64 - no fp16 in either vqvae or prior
 # the convergence is fast, lower initial loss=3.4, 
 # we achieve 1.6 at 31 epochs! - Epoch: 119/120  | Loss: 1.174580 | Val-Loss: 4.225377 | BPD: 1.694561 |  BPD_VAL: 6.095931 | LR:0.000000
@@ -9749,15 +9758,10 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_best.pt'
 
 #cifa10-embd256-64x64 - now with fp16 in prior
-# ckptname = './weights/prior/emb256/'
-# ckptname = './weights/prior/emb256/'
-# ckptname = './weights/prior/emb256/'
-
-#fp32/ema vqvae
-#cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511 after 120 epochs
-# I noticed the convergence rate is way slower compared to non-ema training. 
-# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
-# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e34.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e49.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_best.pt'
 
 
 print(f'{dataset=}')
