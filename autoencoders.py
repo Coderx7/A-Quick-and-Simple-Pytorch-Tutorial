@@ -8182,7 +8182,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
 # performs very very good ! increased embdsz actually results in way smaller loss
 # abd BPD! I noticed the perplexity is much much lower though! but the generation
 # nonetheless is much much better!
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
@@ -8224,7 +8224,7 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ck
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
@@ -9599,7 +9599,7 @@ def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.
 # list goes on!
 #TODO: check why the generation seems random here despite having used seed!
 conditional = True
-use_fp16 = True
+use_fp16 = False
 num_classes = 40 if dataset=='celeba' else 10
 
 #TODO improve prior training function like vqvae trainig!
@@ -9747,7 +9747,7 @@ prior, ckptname = train_prior(prior=prior,
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
 
-#cifa10-embd256-64x64 - no fp16 in either vqvae or prior
+#cifa10-embd256-64x64 - no fp16 in either vqvae or prior (ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt')
 # the convergence is fast, lower initial loss=3.4, 
 # we achieve 1.6 at 31 epochs! - Epoch: 119/120  | Loss: 1.174580 | Val-Loss: 4.225377 | BPD: 1.694561 |  BPD_VAL: 6.095931 | LR:0.000000
 # to me it seems the result is way better than when I used fp16, I had my doubt so 
@@ -9758,10 +9758,27 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_best.pt'
 
 #cifa10-embd256-64x64 - now with fp16 in prior
-# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
+# it seems the prior being run in fp16 doesnt change thing draastically!
+# as we get nearly identical loss! 
+# Epoch: 119/120  | Loss: 1.172177 | Val-Loss: 4.195325 | BPD: 1.691094 |  BPD_VAL: 6.052574 | LR:0.000000
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e34.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e49.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_best.pt'
+#
+# now lets try with a different vqvae weight, such as the one with fp32 ema!
+# to see if ema doing us dirty or it might be ema with fp16! 
+# vqvae ckpt used: './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+# FP32 PRIOR with FP32 VQVAE with EMA 
+# it seems ok! but loss is much larger compared to before using EMA!
+# Epoch: 119/120  | Loss: 1.632218 | Val-Loss: 4.519560 | BPD: 2.354793 |  BPD_VAL: 6.520347 | LR:0.000000
+
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525_best.pt'
+
+
+# using FP32 Prior and FP16 and EMA VQVAE
+
 
 
 print(f'{dataset=}')
@@ -9844,7 +9861,7 @@ generated_image, latents = generate2(vqvae_model=model,
                                     temperature=1,
                                     num_classes=num_classes,
                                     class_label=selected_label,
-                                    top_p=1,
+                                    top_p=0.95,
                                     device='cuda')
 
 # print(f'{generated_image.shape=}')
