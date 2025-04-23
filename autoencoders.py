@@ -9418,8 +9418,8 @@ def get_class_names(dataset, num_classes) -> list[str]:
         class_names = ['zero','one','two', 'three', 'four','five', 'six', 'seven', 'eigth','nine']
     
     elif dataset == 'tinyimagenet':
-        imagenet_classes_url = 'https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt'
-        imagenet_classes_path = './data/tiny-imagenet-200/imagenet_classes.txt'
+        imagenet_classes_url = 'https://gist.githubusercontent.com/Coderx7/165133f7b390c2b672b3a599b89e64a4/raw/785ca406ad88fb2e36434454e453580958840e8e/tinyimagenet_labels.txt'
+        imagenet_classes_path = './data/tiny-imagenet-200/tinyimagenet_labels.txt'
         
         if not os.path.exists(imagenet_classes_path):
             response = requests.get(imagenet_classes_url)
@@ -9436,7 +9436,7 @@ def get_class_names(dataset, num_classes) -> list[str]:
         
     return class_names
 
-# get_class_names('tinyimagenet',200)
+print(get_class_names('tinyimagenet', 200))
 
 def display_generated_samples(vqvae_model:VQVAE, 
                               prior_model:PixelCNN, 
@@ -9863,8 +9863,8 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
 # tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
-ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445.ckpt'
-# ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445_best.pt'
+ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821.ckpt'
+#ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821_best.pt'
 
 
 
