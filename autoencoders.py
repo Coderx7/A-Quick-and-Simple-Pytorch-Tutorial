@@ -140,6 +140,7 @@
 # lets start!
 
 import datetime
+import requests
 import numpy as np 
 import pandas as pd
 import torch
@@ -9409,16 +9410,30 @@ def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes
     # print(f'{generated.shape=}')
     return generated
 
-def get_class_names(dataset, num_classes):
+def get_class_names(dataset, num_classes) -> list[str]:
     if 'cifar' in dataset:
-        class_names = {0:'airplane', 1:'car', 2:'bird', 3:'cat', 4:'deer',
-                    5:'dog', 6:'frog', 7:'horse', 8:'ship',9:'truck'}
+        class_names = ['airplane','car','bird','cat','deer','dog','frog','horse','ship','truck']
 
     elif dataset =='mnist':
-        class_names = {0:'zero', 1:'one', 2:'two', 3:'three', 4:'four',
-                    5:'five', 6:'sixe', 7:'seven', 8:'eigth',9:'nine'}
+        class_names = ['zero','one','two', 'three', 'four','five', 'six', 'seven', 'eigth','nine']
+    
+    elif dataset == 'tinyimagenet':
+        imagenet_classes_url = 'https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt'
+        imagenet_classes_path = './data/tiny-imagenet-200/imagenet_classes.txt'
+        
+        if not os.path.exists(imagenet_classes_path):
+            response = requests.get(imagenet_classes_url)
+            # if download failed raise exception
+            response.raise_for_status()
+            with open(imagenet_classes_path, 'w', encoding='utf-8') as file:
+                file.write(response.text)
+
+        with open(imagenet_classes_path, "r", encoding='utf-8') as f:
+            class_names = [s.strip() for s in f.readlines()]
+
     else:#celeba
-        class_names = {i:'N/A' for i in range(num_classes)}
+        class_names = ['N/A' for _ in range(num_classes)]
+        
     return class_names
 
 def display_generated_samples(vqvae_model:VQVAE, 
@@ -9437,21 +9452,31 @@ def display_generated_samples(vqvae_model:VQVAE,
 
     class_names = get_class_names(dataset, num_classes)
 
-    msg = class_names[selected_label] if selected_label else "All Classes!"
-    print(f'Generating images of {msg}')
+    # msg = class_names[selected_label] if selected_label else "All Classes!"
+    # print(f'Generating images of {msg}')
     
     # todo: create proper label for celeba!
-    if selected_label:
+    if isinstance(selected_label, int):
         labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
         label_texts = [class_names[selected_label] for _ in range(batch_size)]
-    else:
+        
+    elif isinstance(selected_label, list) and all(isinstance(item, int) for item in selected_label):
+        # list of ints! basically a list of labels!
+        labels = torch.tensor(selected_label,dtype=torch.long)
+    
+    elif not selected_label:
         sample_count = batch_size//num_classes
+        if sample_count<1:
+            raise Exception(f'sample count of {sample_count} is not valid, choose a larger batchsize({batch_size} or select fewer labels!)')
         labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
         # label_texts = [class_names[i]
         #                for i in range(num_classes) # outer loop for each class
         #                for _ in range(sample_count)] # inner loop for num_samples for each class
         label_texts = [class_names[labels[i].item()] for i in range(labels.size(0))]
 
+    else:
+        raise Exception(f'selected label {selected_label} not supported!')
+    
     # number of samples and labels must match, if after our shenanigans on labels
     # the new label size doesnt match the batchsize we obviously will fail, so we
     # set the new batchsize(sample count) to labels size!
@@ -9824,8 +9849,10 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
-# tinyimagenet fp32 prior / f16/ema vqvae
-ckptname =''
+# tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
+ckptname ='./weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_122431/'
+# ckptname ='./weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_122431/'
+
 
 
 print(f'{dataset=}')
