@@ -9342,6 +9342,7 @@ def train_prior(prior:PixelCNN,
 
 # I wrote a much better explanation of what happens in the debugging section down below
 # todo: replace this with the newer version
+@torch.no_grad()
 def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
     vqvae_model.eval()
     prior.eval()
@@ -9376,24 +9377,23 @@ def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes
     # codes = torch.randint(0, vqvae_model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
     labels = F.one_hot(labels,num_classes=num_classes).to(device)
     # print(f'{labels.shape=}')
-    
-    with torch.no_grad():
-        for i in range(H):
-            for j in range(W):
-                # predict logits for the current latent position
-                # higher temps means more diversity in output!
-                # (i.e. it controls randomness in our output, 
-                # lower temp=less randomness in ouput)
-                logits = prior(codes,labels)[:, :, i, j] / temperature
-                # convert to probability distribution
-                probs = F.softmax(logits, dim=-1)
-                # greedy search/sampling doesnt work at all!! I only get solid colors!
-                # pixels_values,_ = probs.max(dim=-1, keepdim=True)
-                # print(f'{pixels_values.shape=}')
-                # sampling based on probs work way better!
-                pixels_values = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
-                # update the latent code map
-                codes[:, i, j] = pixels_values  
+        
+    for i in range(H):
+        for j in range(W):
+            # predict logits for the current latent position
+            # higher temps means more diversity in output!
+            # (i.e. it controls randomness in our output, 
+            # lower temp=less randomness in ouput)
+            logits = prior(codes,labels)[:, :, i, j] / temperature
+            # convert to probability distribution
+            probs = F.softmax(logits, dim=-1)
+            # greedy search/sampling doesnt work at all!! I only get solid colors!
+            # pixels_values,_ = probs.max(dim=-1, keepdim=True)
+            # print(f'{pixels_values.shape=}')
+            # sampling based on probs work way better!
+            pixels_values = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
+            # update the latent code map
+            codes[:, i, j] = pixels_values  
 
     # print(f'{codes.shape=}')
     # convert latent codes to embeddings and reshape for decoding
@@ -9430,11 +9430,13 @@ def get_class_names(dataset, num_classes) -> list[str]:
 
         with open(imagenet_classes_path, "r", encoding='utf-8') as f:
             class_names = [s.strip() for s in f.readlines()]
-
+        # print(f'{class_names=}')
     else:#celeba
         class_names = ['N/A' for _ in range(num_classes)]
         
     return class_names
+
+# get_class_names('tinyimagenet',200)
 
 def display_generated_samples(vqvae_model:VQVAE, 
                               prior_model:PixelCNN, 
@@ -9462,8 +9464,9 @@ def display_generated_samples(vqvae_model:VQVAE,
         
     elif isinstance(selected_label, list) and all(isinstance(item, int) for item in selected_label):
         # list of ints! basically a list of labels!
-        labels = torch.tensor(selected_label,dtype=torch.long)
-    
+        labels = torch.tensor(selected_label, dtype=torch.long)
+        label_texts = [class_names[labels[i].item()] for i in range(labels.size(0))]
+        
     elif not selected_label:
         sample_count = batch_size//num_classes
         if sample_count<1:
@@ -9646,10 +9649,20 @@ def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.
 conditional = True
 use_fp16 = False
 
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
 if dataset == 'celeba':
     num_classes = 40
 elif dataset == 'tinyimagenet':
     num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
 else:#mnist,cifar10
     num_classes = 10
 
@@ -9675,15 +9688,15 @@ prior, ckptname = train_prior(prior=prior,
                               dataset_name=dataset,# for logging purposes only!
                               num_classes=num_classes, 
                               epochs=120,
-                              batchsize=64,
+                              batchsize=batch_size,
                               lr=0.001,#0.001
                               weight_decay=1e-2,#1e-2
                               use_fp16=use_fp16,
-                              selected_label=None,
+                              selected_label=selected_label,
                               temperature=1,#1
-                              sample_size=80,# for generation
-                              rows=10,
-                              cols=8,
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
                               device='cuda',
                               generation_device='cuda',
                               figsize=(12,16),
@@ -9850,8 +9863,8 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
 # tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
-ckptname ='./weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_122431/'
-# ckptname ='./weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_122431/'
+ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_130445_best.pt'
 
 
 
