@@ -7461,6 +7461,20 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_sample
         dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, download=True,transform=tr_train)
         dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, download=True,transform=tr_test)
     
+    elif dataset_name == 'tinyimagenet':
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.ImageFolder('./data/tiny-imagenet-200/train/', transform=tr_train)
+        dataset_test = datasets.ImageFolder('./data/tiny-imagenet-200/val/', transform=tr_test)
+        
     elif dataset_name == 'celeba':
         tr_train = tf.Compose([
             tf.Resize(size),
@@ -7908,6 +7922,8 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
         ax.set_xlabel("Epochs")  # Label x-axis
         ax.set_ylabel("Value")  # Label y-axis
         ax.set_title(label)  # Set title
+        # save the plot to disk
+        plt.savefig(checkpoint_path.replace(f'.ckpt','_{label}.jpg'))
         plt.show()
         
     # return dataloaders that were used to train the model for later stages that may need it
@@ -8020,7 +8036,7 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=6
         # plt.show()
     
 # dataset = 'anime'
-dataset = 'cifar10'
+dataset = 'tinyimagenet'
 batch_size = 128
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                                                 batch_size=batch_size,
@@ -8043,7 +8059,7 @@ view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}')
 # is that the images will be discolored, almost black and white, becoming monocolors
 # lots of yellow, brownish colors, and needless to say images are very blury
 # test with limited samples and you'll see what I mean!
-dataset = 'cifar10' #anime # celeba #cifar10
+dataset = 'tinyimagenet' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
@@ -8227,6 +8243,10 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
+
+# tiny imagenet:
+# fp16-ema
+# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
 
 
 # train prior with this new vqvae(ema enabled) and see how much it affects the end result 
