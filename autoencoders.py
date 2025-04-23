@@ -9436,7 +9436,7 @@ def get_class_names(dataset, num_classes) -> list[str]:
         
     return class_names
 
-print(get_class_names('tinyimagenet', 200))
+# print(get_class_names('tinyimagenet', 200))
 
 def display_generated_samples(vqvae_model:VQVAE, 
                               prior_model:PixelCNN, 
@@ -9470,7 +9470,7 @@ def display_generated_samples(vqvae_model:VQVAE,
     elif not selected_label:
         sample_count = batch_size//num_classes
         if sample_count<1:
-            raise Exception(f'sample count of {sample_count} is not valid, choose a larger batchsize({batch_size} or select fewer labels!)')
+            raise Exception(f'sample count of {sample_count} is not valid, choose a larger batchsize(>{batch_size} or select fewer labels!)')
         labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
         # label_texts = [class_names[i]
         #                for i in range(num_classes) # outer loop for each class
@@ -9863,8 +9863,20 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
 # tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
-ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821.ckpt'
-#ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_134821_best.pt'
+# the loss decreased very slowly and I got bored and ended at 87, it seems due to large
+# number of classes and little data, it cant perform properly with our simplestic choices
+# of hyper parameters, since vqvae by itself isnt that powerful (we still need a few tricks
+# and other techniques to enhance the generation quality) it doesnt make sense to spend a lot f time
+# because the return is not much! we go vqvae2 and you'll see how much imporvement we
+# get and later on, when it comes to newer architectures in future chapters we'll see much
+# better models and outcomes.
+# Epoch: 87/120  | Loss: 2.561929 | Val-Loss: 3.332404 | BPD: 3.696083 |  BPD_VAL: 4.807643 | LR:0.000278
+# a quick test with unconditional version didnt show any signifcant change from the
+# conditional version we trained just now, so the labels dont play much role in the actual
+# qualkity of generation, rather they contribute to generating the right image, which in our case here
+# is irelavent as we couldnt have managed to genarate well formed images so far!
+ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059.ckpt'
+#ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059_best.pt'
 
 
 
@@ -9897,8 +9909,12 @@ if 'cifar' in dataset:
     num_classes=10
 elif dataset =='mnist':
     num_classes=10
-else:
+elif dataset == 'tinyimagenet':
+    num_classes=200
+elif dataset == 'celeba':
     num_classes=40
+else:
+    raise Exception(f"invalid dataset({dataset})!")
 
 seed=12
 batch_size = 80
@@ -10419,6 +10435,7 @@ def get_discrete_latents_prior(vqvae:VQVAE,
 latents_prior = get_discrete_latents_prior(model, prior, batch_size=1, num_classes=num_classes, selected_class=9)
 print(f'{latents_prior.shape=}')
 # now lets visualize them both and compare them against each other: 
+
 
 #%%
 from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
