@@ -8034,7 +8034,7 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=6
     else:
         print(f'gif created successfully!')
         # plt.show()
-    
+
 # dataset = 'anime'
 dataset = 'tinyimagenet'
 batch_size = 128
@@ -8042,7 +8042,7 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
                                                                                 batch_size=batch_size,
                                                                                 size=(64,64))
 (imgs, labels) = next(iter(dataloader_test))
-view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}')
+view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}',figsize=(10,13))
 #%%
 # we first start with mnist to see if our implementation is ok 
 # (sidenote: I actually faced quit a lot of issues and switching to mnist helped a lot. 
@@ -8245,9 +8245,9 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
 # tiny imagenet:
-# fp16-ema
-# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
-
+# fp16-ema Epoch: 99/100 | Loss: 0.0116 | Recons-Error: 0.0083 | VQ-Loss: 0.0033 | Perplexity: 50.7330 | LR: 0.000010
+ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527_best.pt'
 
 # train prior with this new vqvae(ema enabled) and see how much it affects the end result 
 # I guess with this improvement, our simple_generator should work somehow aswell
@@ -9620,7 +9620,13 @@ def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.
 #TODO: check why the generation seems random here despite having used seed!
 conditional = True
 use_fp16 = False
-num_classes = 40 if dataset=='celeba' else 10
+
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+else:#mnist,cifar10
+    num_classes = 10
 
 #TODO improve prior training function like vqvae trainig!
 #! test fp16 training and see if gradient clipping made it ok or moving loss 
@@ -9818,7 +9824,8 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
-
+# tinyimagenet fp32 prior / f16/ema vqvae
+ckptname =''
 
 
 print(f'{dataset=}')
