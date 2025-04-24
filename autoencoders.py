@@ -9894,10 +9894,12 @@ ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_
 
 
 #celeba Fp32 /vqvae FP32/EMA (vqvae_CELEBA_64x64_20250424_080220.ckpt)
-# 
-ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/'
-
-
+# Epoch: 87/120  | Loss: 2.258522 | Val-Loss: 2.627086 | BPD: 3.258359 |  BPD_VAL: 3.790084 | LR:0.000278
+# I have a feeling using ema, it messes up our generation quality!
+# at 20/30 epchs I remeber having a much better formed samples!
+# our debugging section shows somewhat fine results, but I need to check ema once again!
+ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857_best.pt'
 
 
 
