@@ -8060,7 +8060,7 @@ view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}',figsize=(10,13))
 # is that the images will be discolored, almost black and white, becoming monocolors
 # lots of yellow, brownish colors, and needless to say images are very blury
 # test with limited samples and you'll see what I mean!
-dataset = 'tinyimagenet' #anime # celeba #cifar10
+dataset = 'celeba' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
@@ -8118,7 +8118,7 @@ use_ema=True
 # however at the end, it seems to catch up and gives us the same
 # loss and perplexity (sometimes better even)
 # its faster in training (52 mins vs 100 mins)
-use_fp16=True
+use_fp16=False
 
 model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
 model.to(device)
@@ -8249,6 +8249,14 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # fp16-ema Epoch: 99/100 | Loss: 0.0116 | Recons-Error: 0.0083 | VQ-Loss: 0.0033 | Perplexity: 50.7330 | LR: 0.000010
 ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527_best.pt'
+
+# CELEBA - Fp32/EMA 
+# Epoch: 99/100 | Loss: 0.0029 | Val-Loss: 0.0029 | Recons-Error: 0.0017 | VQ-Loss: 0.0012 | Perplexity: 35.4168 | LR: 0.000010
+ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220_best.pt'
+
+
+
 
 # train prior with this new vqvae(ema enabled) and see how much it affects the end result 
 # I guess with this improvement, our simple_generator should work somehow aswell
@@ -8892,7 +8900,8 @@ class ResidualBlock0(nn.Module):
 #########################
 def train_prior(prior:PixelCNN, 
                 vqvae_model:VQVAE, # vqvae is only used for generation during training to see how well we are doing!
-                dataloader,
+                dataloader_train,
+                dataloader_val,
                 dataset_name:str, 
                 num_classes=None,
                 epochs=50,
@@ -8947,20 +8956,22 @@ def train_prior(prior:PixelCNN,
     
     # after training vqvae, we need to grab the training set's encodings
     # and use these encodings to train our prior model
-    latent_codes, latent_labels = get_discrete_latent_codes(vqvae_model, dataloader)
+    latent_codes_train, latent_labels_train = get_discrete_latent_codes(vqvae_model, dataloader_train)
+    latent_codes_val, latent_labels_val = get_discrete_latent_codes(vqvae_model, dataloader_val)
 
     # combine latent codes and labels for conditional training
-    dataset = torch.utils.data.TensorDataset(latent_codes, latent_labels)
+    dataset_train = torch.utils.data.TensorDataset(latent_codes_train, latent_labels_train)
+    dataset_val = torch.utils.data.TensorDataset(latent_codes_val, latent_labels_val)
 
     # dataloader_train = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
     # we can also split our latents into train/val and better keep track of our training
     # but I noticed for our simple case, its really not needed
     
-    val_split = 0.1 
-    dataset_size = len(dataset)
-    val_size = int(val_split * dataset_size)
-    train_size = dataset_size - val_size
-    dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size])
+    # val_split = 0.1 
+    # dataset_size = len(dataset_train)
+    # val_size = int(val_split * dataset_size)
+    # train_size = dataset_size - val_size
+    # dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size])
     
     dataloader_train = torch.utils.data.DataLoader(
         dataset_train, 
@@ -9684,7 +9695,8 @@ prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
 
 prior, ckptname = train_prior(prior=prior,
                               vqvae_model=model,
-                              dataloader=dataloader_train,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
                               dataset_name=dataset,# for logging purposes only!
                               num_classes=num_classes, 
                               epochs=120,
