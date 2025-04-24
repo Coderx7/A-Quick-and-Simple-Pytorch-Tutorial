@@ -7924,7 +7924,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
         ax.set_ylabel("Value")  # Label y-axis
         ax.set_title(label)  # Set title
         # save the plot to disk
-        plt.savefig(checkpoint_path.replace(f'.ckpt','_{label}.jpg'))
+        plt.savefig(checkpoint_path.replace('.ckpt',f'_{label}.jpg'))
         plt.show()
         
     # return dataloaders that were used to train the model for later stages that may need it
@@ -8252,6 +8252,8 @@ ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqv
 
 # CELEBA - Fp32/EMA 
 # Epoch: 99/100 | Loss: 0.0029 | Val-Loss: 0.0029 | Recons-Error: 0.0017 | VQ-Loss: 0.0012 | Perplexity: 35.4168 | LR: 0.000010
+# I guess ema messes the weights in a way that when training prior, it creates ugly generations
+# and it takes much linger to reach something presentable! I need to check this again!
 ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220_best.pt'
 
@@ -9889,6 +9891,14 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # is irelavent as we couldnt have managed to genarate well formed images so far!
 ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059.ckpt'
 #ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059_best.pt'
+
+
+#celeba Fp32 /vqvae FP32/EMA (vqvae_CELEBA_64x64_20250424_080220.ckpt)
+# 
+ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/'
+
+
+
 
 
 
