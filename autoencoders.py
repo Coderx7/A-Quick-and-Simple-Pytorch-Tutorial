@@ -8474,9 +8474,24 @@ class MaskedConv2d(nn.Conv2d):
         
         _, _, h, w = self.weight.size()
         center_h, center_w = h // 2, w // 2
-        
+        # ok, to create an autoregressive model, we need to consume data from
+        # one side to the other, from left to right forexample, like reading/writing
+        # text in english. since text are sequences its easy to implement this.
+        # however here we are dealing with images, which are 2D! how can we go about 
+        # it now? if we reshape our image into a vector, we can practically
+        # treat it as a sequence and read from left to right! however this is not
+        # efficient nor is it effective! 
+        # for one, unlike texts, pixel values are usually highly corrolated with the neighboring
+        # pixels around them, not just the ones on the left or right sides of them!
+        # so it would benifit us if we could account for this.
+        # we can use convolution operation and enforce an autoregressive behavior with it
+        # people usually use a raster scan move, which in simple terms means, 
+        # go from left to right of the image, one row at a time, and then go to 
+        # second row. like how the process images in rendering! 
+        # to do this effectively, we can alter a convolutional kernel to do this
+        # for us automatically.
         # we need to create two masks, A, and B like the paper.
-        # the idea is, where are trying to create an autoregressive cnn layer
+        # the idea is, we are trying to create an autoregressive cnn layer
         # where a pixel can not see its current value or future one, only the 
         # previous values, and the current and future values are predicted using
         # previous values (hence the name autoregressive)
@@ -8544,7 +8559,10 @@ class MaskedConv2d(nn.Conv2d):
         return self._conv_forward(x, self.weight * self.mask, self.bias)
         # this was wrong and caused in total failure of the model, i would get
         # sold colors, like red, blue, whenever i wanted to decode and generate
-        # an image!
+        # an image! because it changes the weights value! we dont change the kernels
+        # weights, we just mask them from influencing the process at different stages!
+        # if we change their value, we basically mess eveything up making the kernel 
+        # practically useless! (therefore the implementation given in uvadlc url (given below) is wrong!())
         # self.weight.data *= self.mask  # Apply mask
         # return super().forward(x)
 #sidenote: 
@@ -10962,7 +10980,7 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 # however, when separated, each only contfibute to their respective embedding layer, increasing
 # the chances of learning different representations/encoding different ideas/concepts
 # that wouldnt be possible or as efficient if used a shared embedding layer/codebook
-# the issue I have with this idea is that, there is nothing to enforce these three separate 
+# the issue I have with this idea is that, there is nothing explicit here to enforce these three separate 
 # codebooks to learn different things! and they may very well learn the same thing.
 # update: 
 # it seems if we have separate parameters for each latent code, as we said before,
@@ -10989,7 +11007,106 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 # side quest!:
 # see https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial12/Autoregressive_Image_Modeling.html
 # explain and implemet that version of pixel cnn!!
+# now before I end this chapter, I'd like to talk about pixelcnn++ which came to solve
+# the first versions issue. 
+# previously we would mask the top row and the right side for mask a and then do this
+# again with the exception of allowing middle pixel as well for mask b, however as it
+# turned out, this strategy doesnt properly work and in fact introduces blind spots in
+# the upper right side of the pixel recieptive field when we sequentially apply these
+# masked convolutions! 
+# image: ./pixelCNN_blindspot.png
+# as its stated in the paper(https://arxiv.org/pdf/1606.05328): 
+# ... In Figure 1 (top right), we show the progressive growth of the effective receptive field
+# of a 3×3 masked filter over the input image. Note that a significant portion of the input 
+# image is ignored by the masked convolutional architecture. 
+# This ‘blind spot’ can cover as much as a quarter of the potential receptive field 
+# (e.g., when using 3x3 filters), meaning that none of the content to the right of the 
+# current pixel would be taken into account.
+# In this work, we remove the blind spot by combining two convolutional network stacks: 
+# one that conditions on the current row so far (horizontal stack) and one that conditions
+# on all rows above (vertical stack). The arrangement is illustrated in Figure 1 
+# (bottom right). The vertical stack, which does not have any masking, allows the receptive
+# field to grow in a rectangular fashion without any blind spot, and we combine the outputs
+# of the two stacks after each layer. Every layer in the horizontal stack takes as input 
+# the output of the previous layer as well as that of the vertical stack. If we had
+# connected the output of the horizontal stack into the vertical stack, it would be able to
+# use information about pixels that are below or to the right of the current pixel which
+# # would break the conditional distribution.
+# Figure 2 shows a single layer block of a Gated PixelCNN. We combine Wf and Wg in a single
+# (masked) convolution to increase parallelization. As proposed in [30] we also use a residual
+# connection [11] in the horizontal stack. We have experimented with adding a residual connection
+# in the vertical stack, but omitted it from the final model as it did not improve the results
+# in our initial experiments. Note that the (n×1) and (n×n) masked convolutions in Figure 2
+# can also be implemented by (⌈n/2⌉ × 1) and (⌈n/2⌉ × n) convolutions followed by a shift
+# in pixels by padding and cropping.
+# so to cut a long story short, we now use a horizontal and vertical stack of pixels. 
 # 
+# Mask
+class vertical_stack_conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, first_conv=False):
+        super().__init__(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size)
+        
+        self.mask = torch.ones_like(self.weight)
+        print(f'{self.mask.shape=}')
+        # k=3//2
+        # 1 1 1 
+        # 1 1 1
+        # 0 0 0
+        self.mask[:,:,kernel_size//2+1:,:] = 0
+        
+        # for first conv, mask the center row as well
+        # k=3//2
+        # 1 1 1 
+        # 0 0 0
+        # 1 1 1
+        if first_conv:
+            self.mask[:,:,kernel_size//2,:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class horizontal_stack_conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, first_conv=False):
+        super().__init__(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size)
+        
+        self.mask = torch.ones_like(self.weight)
+        print(f'{self.mask.shape=}')
+        self.mask[:,:,kernel_size//2+1:,:] = 0
+        
+        # for first conv, mask the center row as well
+        # k=3//2
+        # 1 0 0 
+        # 1 1 1
+        # 1 1 1 
+        if first_conv:
+            self.mask[:,:,0,kernel_size//2:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+img_zeros = torch.zeros(size=(1,1,11,11))
+img_zeros.requires_grad_(True)
+
+def display_receptive_field(img:torch.Tensor):
+    # grab the center pixel of the image
+    out = img[0, : , img.size(2)//2, img.size(3)//2].clone().sum()
+    out.backward(retain_graph=True)
+    img_grad = img.grad.abs()
+    img.grad.fill_(0)
+    
+    img_grad_np = img_grad.cpu().squeeze(0).view(*img.shape[2:]).numpy()
+    
+    
+    
+    
+    plt.imshow(img_grad_np>0)
+    plt.show()
+
+display_receptive_field(img_zeros)
+    
+    
+    
+
 
 #%%
 # # Contractive Autoencoder
