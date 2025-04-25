@@ -7950,7 +7950,7 @@ def view_reconstructions(model:VQVAE, dataloader, fname=None):
 import re
 # to create gifs, we need our images to be ordered!
 # we cant use sorted(), because it cant sort properly 
-# when we have numbers, it will go frm 3 to 30!
+# when we have numbers, it will go from 3 to 30!
 # and 4 to 40, etc because it compares character by character!
 # so we need to write a custom filter based on numbers!
 def numerical_sort_key(filename, _re=re.compile(r'(\d+)')):
@@ -8060,7 +8060,7 @@ view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}',figsize=(10,13))
 # is that the images will be discolored, almost black and white, becoming monocolors
 # lots of yellow, brownish colors, and needless to say images are very blury
 # test with limited samples and you'll see what I mean!
-dataset = 'celeba' #anime # celeba #cifar10
+dataset = 'cifar10' #anime # celeba #cifar10
 img_size=(64,64)# larger image sizes, result in more detailed generations!
 # whether to use limited samples (for testing purposes)
 # to see how the model performs with different number of samples!
@@ -8109,6 +8109,9 @@ beta=0.25 #0.25
 # without it, we need at least 40~50 epochs to get to a similar loss
 # at epoch 5 we are already seeing near prefect reconstructions with loss
 # as low as 0.0067! (way lower than what we get after 100 epochs normally!)
+# sidenote: EMA might make prior model somewhat messedup/ but I need more tests
+# to prove that, not sure if its only related to ema! but be careful with it! 
+# see my notes at the prior model weights section
 use_ema=True
 # use mixed-precision for faster training and smaller vram usage
 # note when we enable fp16, the convergence speed is lower, e.g.
@@ -8118,7 +8121,7 @@ use_ema=True
 # however at the end, it seems to catch up and gives us the same
 # loss and perplexity (sometimes better even)
 # its faster in training (52 mins vs 100 mins)
-use_fp16=False
+use_fp16=True
 
 model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
 model.to(device)
@@ -8173,7 +8176,13 @@ dataloader_train,dataloader_test = train_vqvae(model,
 # ok it seems our estimate is correct. 32x32 gives somewhat identifiable non-autoregressive 
 # generations, not complete noise! trying with 64x64 to see how it goes again
 # I cant replicate this anymore! I dont know why I cant get meanigful generations out of
-# simple_generation function! 
+# simple_generation function! ok I guess I might have found why simple_generation
+# did that and not anymore, if we use a different vqvae mode than the one we trained
+# our prior with, we might see those cartoonish images we saw once. I trained
+# afp32 vqvae forceleba, trained it for 70 epochs, with a loss=0.023, but used
+# a prior that was trained on the fp16/ema enabled vqvae that achieved 0.0022!
+# (a 10x smaller loss) and noticed while id get solid greens for normal generation
+# Id get caricature like generations in simple_generation()!
 
 # no model_config/extra information
 # ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
@@ -8241,23 +8250,25 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # fp32 with ema enabled - trains smoothly with default configs 
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
 # tiny imagenet:
 # fp16-ema Epoch: 99/100 | Loss: 0.0116 | Recons-Error: 0.0083 | VQ-Loss: 0.0033 | Perplexity: 50.7330 | LR: 0.000010
-ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527_best.pt'
 
 # CELEBA - Fp32/EMA 
 # Epoch: 99/100 | Loss: 0.0029 | Val-Loss: 0.0029 | Recons-Error: 0.0017 | VQ-Loss: 0.0012 | Perplexity: 35.4168 | LR: 0.000010
 # I guess ema messes the weights in a way that when training prior, it creates ugly generations
 # and it takes much linger to reach something presentable! I need to check this again!
-ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220_best.pt'
 
-
+# CELEBA - FP32/NO-EMA
+# Epoch: 77/100 | Loss: 0.0234 | Recons-Error: 0.0032 | VQ-Loss: 0.0201 | Perplexity: 6.8012 | LR: 0.000138
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_192142/vqvae_CELEBA_64x64_20250424_192142.ckpt'
 
 
 # train prior with this new vqvae(ema enabled) and see how much it affects the end result 
@@ -8718,7 +8729,6 @@ class GatedActivation(nn.Module):
         a, b = torch.chunk(x, 2, dim=1)
         # apply gated activation: tanh(a) ⊙ sigmoid(b)
         return torch.tanh(a) * torch.sigmoid(b)
-
 
 # improved residual block with gated activation
 class GatedResidualBlock(nn.Module):
@@ -9837,9 +9847,9 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 
 #cifa10-embd256-64x64 - now with fp16 in prior
 # it seems the prior being run in fp16 doesnt change thing draastically!
-# as we get nearly identical loss! 
+# as we get nearly identical loss! messedup generation
 # Epoch: 119/120  | Loss: 1.172177 | Val-Loss: 4.195325 | BPD: 1.691094 |  BPD_VAL: 6.052574 | LR:0.000000
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e34.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e49.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_best.pt'
@@ -9851,8 +9861,7 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # # (vqvae ckpt used: 'vqvae_CIFAR10_64x64_20250414_183623.ckpt')
 # it seems ok! but loss is much larger compared to before using EMA!
 # Epoch: 119/120  | Loss: 1.632218 | Val-Loss: 4.519560 | BPD: 2.354793 |  BPD_VAL: 6.520347 | LR:0.000000
-
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525_best.pt'
 
 # using FP32 Prior and FP16 VQVAE and EMA VQVAE
@@ -9863,7 +9872,7 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # the generation seems more messedup somehow! while ema does amazing for reconstruction
 # it seems in prior trainig its not as effective as not using ema for some reason! I still
 # need more experiments to say my final verdict!
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237_e28.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237_best.pt'
 
@@ -9873,7 +9882,7 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # Epoch: 119/120  | Loss: 1.845117 | Val-Loss: 4.642205 | BPD: 2.661940 |  BPD_VAL: 6.697286 | LR:0.000000
 # the generation seems roughly the same at least at a quick glance, 
 # need to compare this one with previous one better!
-ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
 
 # tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
@@ -9889,7 +9898,7 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # conditional version we trained just now, so the labels dont play much role in the actual
 # qualkity of generation, rather they contribute to generating the right image, which in our case here
 # is irelavent as we couldnt have managed to genarate well formed images so far!
-ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059.ckpt'
 #ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059_best.pt'
 
 
@@ -9898,7 +9907,7 @@ ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_
 # I have a feeling using ema, it messes up our generation quality!
 # at 20/30 epchs I remeber having a much better formed samples!
 # our debugging section shows somewhat fine results, but I need to check ema once again!
-ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857_best.pt'
 
 
@@ -10868,9 +10877,7 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 # if col 5 is looks good both models are working well together!
 
 #%% old dbeugging stuff
-
 #! use a discrete latent code not latentcodes from training!
-
 # check to see if our codebook has collapsed
 # if only a few codes are used here (e.g. 1-2 codes dominate), 
 # our VQ-VAE codebook has collapsed despite the perplexity of 180
@@ -10910,7 +10917,7 @@ quantized = model.quantizer.embeddings(test_codes)
 generated_image = model.decoder(quantized.permute(0, 3, 1, 2))
 view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 #%%
-# Case 2: the generate_simple() works but PixelCNN fails
+# the generate_simple() works but PixelCNN fails
 # issue is PixelCNN isnt learning the code distribution.
 # to solve this, we need to simplify the prior i.e. use a smaller PixelCNN or train longer.
 # add dropout to prevent overfitting and or check input normalization.
@@ -10938,7 +10945,51 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 #side notes for debugging: 
 # make sure the final layer uses nn.Sigmoid() for [0, 1] images
 # verify quantized_z_ex includes gradients (quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach())
-#
+##
+# notes: 
+# the paper used a very large spatial dim for latents, 21x21, while we used 16x16
+# we already know larger fmapsize(latent size) means better quality. 
+# also the paper used heirarchial vqvae, to get even more comparessed representations
+# at different levels.they first train a vqvae, then train a second vqvae on the output
+# of the first qvae, an this second one creates only 3 latent codes! (only 3 numbers!)
+# each of these three codes is an index chosen from a codebook containing K=512 possible
+# embedding vectors. they use three separate codebooks/embedding layers, one for each 
+# of the three latent variables and they represent a very high-level, "global" summary
+# of the input 21x21 grid.
+# the idea behind creating separate embedding layers for each latent variable  is that
+# this approach might make them learn different things, because if one embedding layer is
+# shared, then e1,e2,e3 whould contribute to the same embedding layer, 
+# however, when separated, each only contfibute to their respective embedding layer, increasing
+# the chances of learning different representations/encoding different ideas/concepts
+# that wouldnt be possible or as efficient if used a shared embedding layer/codebook
+# the issue I have with this idea is that, there is nothing to enforce these three separate 
+# codebooks to learn different things! and they may very well learn the same thing.
+# update: 
+# it seems if we have separate parameters for each latent code, as we said before,
+# their gradients are isolated (only gradients from the first latent position update
+# respective emebdding layer, etc) so it is possible for them to diverge and learn 
+# different things. a single shared embedding layer structurally can not do this 
+# index k always means the same thing.(each embedding layer has different initial values
+# and during backprop, gets optimized differently, potentially directing it toward learning
+# smeting different from the other two!) moreover pixelcnn may use them differently!
+# so this is why they used 3 different codebooks to enforce entaglement of some sort!
+# but then again theres no gaurantee it works all the time, but having said all this,
+# theres a possibility for that, and I guess authors knew what they were talking about and 
+# probably already tested the shared embedding layer before! but I havent tried it yet (note that when
+# I say shared embeddings, we could use 1 512 embedding layer or use 3*512 so we match
+# the representational capacity of the model in both cases. its a good idea to do an experiment
+# on it todo: test this!)
+
+# which uses pixelcnn as decoder which accepts both of these vqvaes
+# as input and produces the final image. we didnt do that, I initially wanted to implement 
+# and train this, but I have already spent a lot of time on vqvae/pixelcnn and this
+# doesnt seem worth the time as we already coevered basically everything. we now know
+# having a heirachy lke this imrpoves the result, further.
+# moreover
+# side quest!:
+# see https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial12/Autoregressive_Image_Modeling.html
+# explain and implemet that version of pixel cnn!!
+# 
 
 #%%
 # # Contractive Autoencoder
