@@ -244,7 +244,8 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
         # since mnist images are 1 channeled(i.e grayscale), matplotlib
         # only accepts these kinds of images without any channesl i.e 
         # instead of the shape 28x28x1, it wants 28x28,for color images
-        # the squeeze and cmap will be ignored
+        # the squeeze and cmap will be ignored(in newer version of matplotlib 
+        # this seems to be fixed so squeeze() can be omitted!)
         ax.imshow(imgs[i].squeeze(), cmap='Greys_r')
         lbl = labels[i]
         lbl = lbl.item() if isinstance(lbl,torch.Tensor) else lbl
@@ -8037,7 +8038,7 @@ def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=6
         # plt.show()
 
 # dataset = 'anime'
-dataset = 'tinyimagenet'
+dataset = 'cifar10'
 batch_size = 128
 dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
                                                                                 batch_size=batch_size,
@@ -11041,71 +11042,176 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 # in pixels by padding and cropping.
 # so to cut a long story short, we now use a horizontal and vertical stack of pixels. 
 # 
-# Mask
-class vertical_stack_conv(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, first_conv=False):
-        super().__init__(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size)
+# 
+class vertical_masked_conv(nn.Conv2d):
+    def __init__(self, in_channels=1, out_channels=3, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels, 
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
         
+        _,_, H, W = self.weight.shape
         self.mask = torch.ones_like(self.weight)
-        print(f'{self.mask.shape=}')
+        print(f'{self.mask.shape=}') #shape: (3, 1, 3, 3)
         # k=3//2
-        # 1 1 1 
+        # 1 1 1
         # 1 1 1
         # 0 0 0
-        self.mask[:,:,kernel_size//2+1:,:] = 0
+        self.mask[:,:,H//2+1:,:] = 0
         
         # for first conv, mask the center row as well
         # k=3//2
-        # 1 1 1 
-        # 0 0 0
         # 1 1 1
+        # 0 0 0
+        # 0 0 0
         if first_conv:
-            self.mask[:,:,kernel_size//2,:] = 0
+            self.mask[:,:,H//2,:] = 0
         
     def forward(self, input):
         return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
 
-class horizontal_stack_conv(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, first_conv=False):
-        super().__init__(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size)
+class horizontal_masked_conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels,
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
         
+        _,_, H, W = self.weight.shape
         self.mask = torch.ones_like(self.weight)
-        print(f'{self.mask.shape=}')
-        self.mask[:,:,kernel_size//2+1:,:] = 0
-        
-        # for first conv, mask the center row as well
-        # k=3//2
-        # 1 0 0 
-        # 1 1 1
+        # print(f'{self.mask.shape=}')
+        # always mask rows below the center
+        # h=3//2
         # 1 1 1 
+        # 1 1 1
+        # 0 0 0
+        self.mask[:, :, H//2+1:, :] = 0
+        # now if its the first conv, mask 
+        # the center row as well but allow 
+        # the column 0 only
+        # w=3//2
+        # 1 1 1 
+        # 1 0 0
+        # 0 0 0 
         if first_conv:
-            self.mask[:,:,0,kernel_size//2:] = 0
+            self.mask[:, :, H//2, W//2:] = 0
         
     def forward(self, input):
         return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
 
-img_zeros = torch.zeros(size=(1,1,11,11))
-img_zeros.requires_grad_(True)
-
-def display_receptive_field(img:torch.Tensor):
+def show_receptive_field(img:torch.Tensor, out:torch.Tensor, msg='',figsize=(6,4)):
     # grab the center pixel of the image
-    out = img[0, : , img.size(2)//2, img.size(3)//2].clone().sum()
+    b,c,h,w = out.shape
+    # print(f'img.shape:{tuple(img.shape)}\nout.shape:{tuple(out.shape)}')
+    # lets calculate a simple loss on our output tensor, we use l1 loss for
+    # simplicity which is basically summing all the elements
+    # we then do a backward pass, up to the input image
+    # so we can see the effect of gradients overlayed on the image itself
+    # we then treat the gradients as a separet image and display it
+    # this is the gist of this function
+    # enabe gradients for images (whch is false by default because we dont want to 
+    # update our inputs! however for our case, we want to see if we have blind spots!
+    # so we need to calculate gradients for each pixel to see whether they participate
+    # in the process or not!)
+    img.requires_grad_(True)
+    out = out[0, : , h//2, w//2].clone().sum()
+    # retain graph so after backward the gradients for input image is not discarded
     out.backward(retain_graph=True)
+    # grab the absolute values for displaying purposes
     img_grad = img.grad.abs()
-    img.grad.fill_(0)
+    # we dont need the gradients anymore so lets zero them out
+    img.grad.zero_()
     
-    img_grad_np = img_grad.cpu().squeeze(0).view(*img.shape[2:]).numpy()
+    # convert and normalize the image gradients so we can easily display it in matplotlib 
+    img_grad_np = img_grad.cpu().squeeze(0).permute(1,2,0).numpy()
+    img_grad_np /= img_grad_np.max()
+    img_grad_np = img_grad_np.clip(0,1)
+    # print(f'{img_grad_np.shape=}')
     
+    eps = 1e-6
+    show_center = (abs(img_grad_np[h//2,w//2])<=eps)
+    # print(f'{img_grad_np[h//2,w//2]=}')
+    # print(f'{show_center=}')
+    # if show_center.any():
+    # create an rgba image and make the center pixel red
+    # this allows us to have a beautiful display of the gradients
+    # throughout the image(actually it shows the reach of gradients
+    # basically where on image we have gradients and where we dont have any
+    # which implies that region does not have any interaction with our kernels
+    # or the flow of information doesnt happen there! basically its a blind spot
+    # for our model!)
+    h,w,c = img_grad_np.shape
+    # we use rgba because the transperancy channel allows us to 
+    # have a separate channel for color that goes over the actual 
+    # gradient image 
+    center_pixel = np.zeros(shape=(h,w,4))
+    # set rgba channels (set red and alpha channels)
+    center_pixel[h//2, w//2] = np.array([1.0, 0.0, 0.0, 1.0])
     
+    fig = plt.figure(figsize=figsize)
+    axes = fig.subplots(1,2)
+    fig.suptitle(msg)
     
-    
-    plt.imshow(img_grad_np>0)
+    for ax,im,title in zip(axes, [img_grad_np, img_grad_np>0], ["Weighted receptive field",
+                                                                "Binary receptive field"]):
+        ax.imshow(im)
+        ax.set_title(title)
+        ax.axis('off')
+
+    # overlay the center_pixel so we can see the red center!
+    for ax in axes:
+        ax.imshow(center_pixel)
+    plt.tight_layout()
     plt.show()
 
-display_receptive_field(img_zeros)
-    
-    
-    
+img_zeros = torch.zeros(size=(1,1,11,11))
+
+show_receptive_field(img_zeros, img_zeros,msg='img_zero',figsize=(6,4))
+#%%
+# now lets see how applying these layers affect our input, 
+# note that we use both horizontal andvectical layers together
+# and use their outputs to get the final result.
+# since these are the first layers, we set first_conv=True 
+# for both of them
+hc = horizontal_masked_conv(1,1,3,first_conv=True)
+# we set the weights and biases to all 1s and zeros respectively
+# so we get a beautiful display of gradients, we are basically
+# reseting their values at the default so each operation only
+# shows the full magnitude of gradients (disable them and you'll see
+# the gradients wont be as solid everywhere)
+hc.weight.data.fill_(1)
+hc.bias.data.fill_(0)
+hc_output = hc(img_zeros)
+show_receptive_field(img_zeros, hc_output,'horizontal masked conv output')
+vc = vertical_masked_conv(1,1,3,first_conv=True)
+vc.weight.data.fill_(1)
+vc.bias.data.fill_(0)
+vc_output = vc(img_zeros)
+show_receptive_field(img_zeros, vc_output,'vertical masked conv output')
+
+#%%
+# now lets imagine we apply them on a few layers,
+# for simplicity sake, we reuse these layers a few times
+# instead of creating new layers!
+# note we need to set the first_conv to false otherwise
+# we only get the right half of the image (if all layers 
+# are set to first_conv=True)
+hc = horizontal_masked_conv(1, 1, 3, first_conv=False)
+hc.weight.data.fill_(1)
+hc.bias.data.fill_(0)
+vc = vertical_masked_conv(1, 1, 3, first_conv=False)
+vc.weight.data.fill_(1)
+vc.bias.data.fill_(0)
+
+for i in range(4):
+    # note vertical and horizontal convs together count as one layer!
+    # beacuse we need to merge their outputs together!
+    vc_output = vc(vc_output)
+    hc_output = hc(hc_output) + vc_output
+    show_receptive_field(img_zeros, hc_output,msg=f"Layer {i+2}")
+
 
 
 #%%
