@@ -11303,11 +11303,11 @@ class ResidualBlockVH(nn.Module):
         
         # in original pixelcnn, vertical and horizontal convs recieve the same input
         # and then later on merged their outputs together! so we do the same here!
-        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
+        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True),
                                    nn.BatchNorm2d(out_channels),
                                    nn.ReLU(True))
 
-        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
+        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True),
                                     nn.BatchNorm2d(out_channels),
                                     nn.ReLU(True),)
 
