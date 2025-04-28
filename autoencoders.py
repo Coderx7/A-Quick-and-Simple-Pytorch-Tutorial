@@ -11131,6 +11131,7 @@ def show_receptive_field(img:torch.Tensor, out:torch.Tensor, msg='',figsize=(6,4
     # print(f'{img_grad_np.shape=}')
     
     eps = 1e-6
+    # not needed remove it!
     show_center = (abs(img_grad_np[h//2,w//2])<=eps)
     # print(f'{img_grad_np[h//2,w//2]=}')
     # print(f'{show_center=}')
@@ -11170,7 +11171,7 @@ img_zeros = torch.zeros(size=(1,1,11,11))
 
 show_receptive_field(img_zeros, img_zeros,msg='img_zero',figsize=(6,4))
 #%%
-# now lets see how applying these layers affect our input, 
+# now lets see how applying these layers affect our input,
 # note that we use both horizontal andvectical layers together
 # and use their outputs to get the final result.
 # since these are the first layers, we set first_conv=True 
@@ -11193,8 +11194,8 @@ show_receptive_field(img_zeros, vc_output,'vertical masked conv output')
 
 #%%
 # now lets imagine we apply them on a few layers,
-# for simplicity sake, we reuse these layers a few times
-# instead of creating new layers!
+# for simplicity's sake, we reuse these layers a few times
+# instead of creating new ones!
 # note we need to set the first_conv to false otherwise
 # we only get the right half of the image (if all layers 
 # are set to first_conv=True)
@@ -11211,6 +11212,326 @@ for i in range(4):
     vc_output = vc(vc_output)
     hc_output = hc(hc_output) + vc_output
     show_receptive_field(img_zeros, hc_output,msg=f"Layer {i+2}")
+
+#%%
+# now lets compare it with our masked convolution and see if it really is as the paper
+# says! 
+mca = MaskedConv2d('A',1,1,3)
+mca.weight.data.fill_(1)
+mca.bias.data.fill_(0)
+mca_output = mca(img_zeros)
+show_receptive_field(img_zeros, mca_output,'Masked conv A output')
+mcb = MaskedConv2d('B',1,1,3)
+mcb.weight.data.fill_(1)
+mcb.bias.data.fill_(0)
+mcb_output = mca(img_zeros)
+show_receptive_field(img_zeros, mcb_output,'Masked conv B output')
+#%%
+for i in range(4):
+    # note vertical and horizontal convs together count as one layer!
+    # beacuse we need to merge their outputs together!
+    mcb_output = mcb(mcb_output)
+    # hc_output = hc(hc_output) + vc_output
+    show_receptive_field(img_zeros, mcb_output, msg=f"Layer {i+2}")
+
+# and yup! we have blind spot on the right side! so using the new method we should
+# be able to improve our results!
+#%% now that we are here, lets give it a spin and see how it performs if we use pixelcnn++!
+class VerticalMaskedConv(nn.Conv2d):
+    def __init__(self, in_channels=1, out_channels=3, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels, 
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        # since we dont want our mask to be updated 
+        # we register it as buffer like before
+        self.register_buffer("mask", torch.ones_like(self.weight))
+        # print(f'{self.mask.shape=}') #shape: (3, 1, 3, 3)
+        # k=3//2
+        # 1 1 1
+        # 1 1 1
+        # 0 0 0
+        self.mask[:,:,H//2+1:,:] = 0
+        # for first conv, mask the center row as well
+        # k=3//2
+        # 1 1 1
+        # 0 0 0
+        # 0 0 0
+        if first_conv:
+            self.mask[:,:,H//2,:] = 0
+
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class HorizontalMaskedConv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels,
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        self.register_buffer("mask", torch.ones_like(self.weight))
+        # print(f'{self.mask.shape=}')
+        # always mask rows below the center
+        # h=3//2
+        # 1 1 1 
+        # 1 1 1
+        # 0 0 0
+        self.mask[:, :, H//2+1:, :] = 0
+        # now if its the first conv, mask 
+        # the center row as well but allow 
+        # the column 0 only
+        # w=3//2
+        # 1 1 1 
+        # 1 0 0
+        # 0 0 0 
+        if first_conv:
+            self.mask[:, :, H//2, W//2:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class ResidualBlockVH(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, dropout_rate=0.0):
+        super().__init__()
+        padding = kernel_size // 2
+        
+        # in original pixelcnn, vertical and horizontal convs recieve the same input
+        # and then later on merged their outputs together! so we do the same here!
+        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(True))
+
+        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
+                                    nn.BatchNorm2d(out_channels),
+                                    nn.ReLU(True),)
+
+        # a linear transformation before merging vout with hout so 
+        # we get a bit of more flexibility
+        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+
+        # 1x1 convolution for the main path after combining V and H
+        self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
+                                      nn.BatchNorm2d(out_channels),
+                                      nn.ReLU(),
+                                      nn.Dropout2d(dropout_rate,True),)
+
+        # skipcon to add information between blocks, in order to prevent
+        # a huge number of channels, lets make them all to prduce 64 channels only
+        self.skip_conv = nn.Conv2d(out_channels, 128, kernel_size=1)
+        
+        # to account for varying input-output channels, we apply a linear transformation
+        # on x_h so we can easily add the context to x_h from previous block
+        # see the code below and you'll see why
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+        
+    def forward(self, x_v, x_h):
+        # we always first use vertical convolution 
+        # and then horizontal convolution!
+        # x_v and x_h come from first vertical and 
+        # horziontal conv layers, and then we process 
+        # them further in our resblocks
+        # print(f'{x_v.shape=} {x_h.shape=}')
+        
+        v_out = self.vconv(x_v)
+        h_out = self.hconv(x_h)
+        # to add more flexibility (like gatedpixelcnn) 
+        # we apply a linear projection to vertical output
+        # before adding it to horizontal conv output!
+        # this acts as some kind of adaptor so to speak
+        # that is, it gives different channels in v_out
+        # a weight so in theory, when we add vout and hout
+        # channels in vout can have varying participation level with hout!
+        # so we are basically introducing some learnable 
+        # parameters to specificallt control the channel-wise
+        # mixing and weighting between the two
+        # (metaforically speaking, its like somone reads a news
+        # for tomorrows forcast, and based on the importance of 
+        # the events scheduled for tommorw, assigns specific hours
+        # to specific events, so everything goes smoothly (imagine
+        # we'll be having rain later that day, so outdoor activities
+        # indoor activities can be sorted out efficiently after that!)
+        # in practice however this maynot always hold, but since itw as
+        # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
+        v_proj = self.v_projection(v_out)
+        # combine the two streams so we dont have any blind spots!
+        vh_out = v_proj + h_out
+        # skip connection between resblocks, this is what we ultimately
+        # feed to final convs and get our final logits as it contains the
+        # essence of our input.
+        # basically we calculate vh_hout for each block at different levels
+        # and then sum them all, or concatthem all and feed the result
+        # to final conv block to get logits
+        skip = self.skip_conv(vh_out)
+        
+        # and finally to have a residual connection
+        # in our block instead of simply adding hout
+        # with x_h we simply add vh_out to x_h
+        # this acts as a context, and since 
+        # our horziontal conv must always have info 
+        # about vertical conv, this fullfills our goal
+        # the nonlinearity to here is to get a higher 
+        # representation and get the most out of it!
+        # we are going to use this as the next x_h for
+        # the next block in line! this will ultimately 
+        # be fed to our next skip we saw before, so our skip
+        # will contain a wealth of information at each stage!
+        vh_out_processed = self.out_conv(vh_out)
+        # print(f'-----START-------\n'
+        #       f'x_v:             {tuple(x_v.shape)}\n'
+        #       f'x_h:             {tuple(x_h.shape)}\n'
+        #       f'vh_out:          {tuple(vh_out.shape)}\n'
+        #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
+        #     )
+        h_out_residual = vh_out_processed + self.channel_adapter(x_h)
+        # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
+        return v_out, h_out_residual, skip
+
+class PixelCNN2(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        self.input_shape = []
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.dropout_rate = dropout_rate
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        # the first layer/block must be type A, the rest are B
+        # basically mask A blocks the current pixel and all future pixels, 
+        # while mask B allows the current pixel but blocks future ones.
+        self.initial_vconv = nn.Sequential(VerticalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(),
+                                          #nn.Dropout2d(dropout_rate)
+                                          )
+        self.initial_hconv = nn.Sequential(HorizontalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(),
+                                          #nn.Dropout2d(dropout_rate)
+                                          )
+        
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([ResidualBlockVH(128, 128, dropout_rate=0),
+                                         ResidualBlockVH(128, 128, dropout_rate=0),
+                                         ResidualBlockVH(128, 256, dropout_rate=0),
+                                         ResidualBlockVH(256, 256, dropout_rate=0),
+                                         ResidualBlockVH(256, 512, dropout_rate=0),
+                                         ResidualBlockVH(512, 512, dropout_rate=0),
+                                        ])
+        
+        # last layers after concatenating skip connections
+        # grab the outchannels dynamically from the skipcon
+        # itself so we dont hardcode anything here!
+        skip_chs = self.res_blocks[0].skip_conv.out_channels
+        self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            # print(f'{labels.shape=}')
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        voutput = self.initial_vconv(input_indices)
+        houtput = self.initial_hconv(input_indices)
+        
+        # skip_connections_sum = []
+        skipcons = []
+        for res_block in self.res_blocks:
+            # print(f'{voutput.shape=} {houtput.shape=}')
+            voutput, houtput, skipcon = res_block(voutput, houtput)
+            # naively summing all skipconnections
+            # skip_connections_sum = skip_connections_sum+skipcon
+            # append them so we can later on concat them (usually gives best reuslt!)
+            skipcons.append(skipcon)
+        
+        # combine skip connections
+        combined = torch.cat(skipcons, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
+
+pc2 = PixelCNN2(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
+indexes = torch.randint(0,16,size=(2,32,32))
+out = pc2(indexes)
+print(f'{out.shape=}')
+# show_receptive_field(indexes, out)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
