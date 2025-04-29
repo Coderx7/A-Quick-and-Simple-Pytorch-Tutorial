@@ -11500,8 +11500,6 @@ class PixelCNN2(nn.Module):
         for res_block in self.res_blocks:
             # print(f'{voutput.shape=} {houtput.shape=}')
             voutput, houtput, skipcon = res_block(voutput, houtput)
-            # naively summing all skipconnections
-            # skip_connections_sum = skip_connections_sum+skipcon
             # append them so we can later on concat them (usually gives best reuslt!)
             skipcons.append(skipcon)
         
@@ -11615,20 +11613,107 @@ prior, ckptname = train_prior(prior=prior,
                               recons_dir_path='./results/pixelcnn2/',
                               )
 
-# Fp32 prior using fp32/no ema vqvae
-ckptname = './weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250428_180146/'
+#%%
+# now lets test it 
+# Fp32 prior using fp32/ema vqvae (vqvae_CIFAR10_64x64_20250414_183623.ckpt)
+# ckptname = './weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250428_180146/'
+# 
+# FP32 prior using FP32/ema vqvae - improved skipcon 
+# after the skipcon update we much lower loss:
+# get Epoch: 119/120  | Loss: 2.056710 | Val-Loss: 3.174122 | BPD: 2.967206 |  BPD_VAL: 4.579289 | LR:0.000000
+# however the overal loss and BPD is larger than our maskedconv version. this could be
+# attributed to larger architecture and it needing more training/finetuning.
+# unlike previous version, we really didnt spend anytime on hyperparameters, etc just swapped
+# the maskedconv layer with the verticalhorizontal version and whatever changes was necessary
+# to get it to work in our original pixelcnn. 
+# I'm happy with the result and I just wanted to verify the outcome, 
+# its not massively better, but seems its much better especially when we using top_p, 
+# it seems the autoregressive nature has really improved and images at least to me look much
+# better formed, although they are still blury which may probably improve
+# our result if we spend more time tuning hyperparameters. this is evident in our generations below
+# 
+ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951.ckpt'
+# ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951_best.pt'
+
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=10,
+                          selected_label=None,
+                          batch_size=80,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=None)
+
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=80)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+batch_size=80
+selected_label = None
+generated_image, latents = generate2(vqvae_model=model,
+                                    prior=prior,
+                                    batch_size=80,
+                                    temperature=1,
+                                    num_classes=num_classes,
+                                    class_label=None,
+                                    top_p=0.95,
+                                    device='cuda')
+
+# print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
+if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+else:
+    sample_count = batch_size//num_classes
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
+
+timestamp = datetime.datetime.now().strftime("YY_MM_DD_HH_MM_SS")
+view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
+
+#%%
+imgs, labels = next(iter(dataloader_train))
+print(f'{labels.shape=}')
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
+                      batch_size=4,
+                      num_classes=num_classes,
+                      class_names=get_class_names(dataset,num_classes),
+                      # using topp is the way to go gives the best results
+                      # first disable advanced sampling and see the default
+                      # genertaion performance then enable adavanced_sampling
+                      # and see the difference
+                      advanced_sampling=True,
+                      temperature=1,
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
+                      #for testing top_p either leave top_k=0, or make sure its a 
+                      # larger number so the pool is not so small top_p cant do much!
+                      # this actually was my bug that prevented me from usingtop_p
+                      top_p=1,
+                      device=device,
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging/pixelcnn2',
+                      seed=None)
 
 
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,
+                             figsize=(12,8),
+                             num_indexes_per_bins=1)
 
-
-
-
-
-
-
-
-
-
+# overall this change resulted in way improved generation due to autoregressive improvement
+# we made using our masked conv. it was a very good addition!
 
 
 
