@@ -9857,7 +9857,9 @@ prior, ckptname = train_prior(prior=prior,
 # we achieve 1.6 at 31 epochs! - Epoch: 119/120  | Loss: 1.174580 | Val-Loss: 4.225377 | BPD: 1.694561 |  BPD_VAL: 6.095931 | LR:0.000000
 # to me it seems the result is way better than when I used fp16, I had my doubt so 
 # thats why im retraining them again to make sure (also since I messed up with the 
-# resblock mistake!)
+# resblock mistake!
+# sidenote: these weights seem to have been corrupted, I get messedup generations (completely
+# bluish images, might be messedup bn statistics?! check)
 ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_e75.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_best.pt'
@@ -11541,11 +11543,7 @@ elif dataset == 'tinyimagenet':
 else:#mnist,cifar10
     num_classes = 10
 
-# update skipcon to have houtputresidual instead of vhout!
 
-#pixelcnn seems to work much better than pixelcnn2! it converges very slowly
-# like at 120 epchs it reaches a loss=2.5! while for pixelcnn it achieves
-# 2.24 at epoch 22!
 prior = PixelCNN2(num_embds=model.embd_num, embedding_size=256,
                  num_class=num_classes,
                  make_conditional=conditional,
@@ -11596,6 +11594,8 @@ prior, ckptname = train_prior(prior=prior,
 # 
 ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951.ckpt'
 # ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951_best.pt'
+
+
 
 print(f'{dataset=}')
 print(f'{device=}\n')
@@ -11710,9 +11710,9 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 # other with sigmoid, and then add the two to get the final vout/hout
 # 
 class GatedMaskedConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dropout_rate=0, first_conv=False):
         super().__init__()
-
+        self.dropout_rate = dropout_rate
         # since we antto split the channels, we make the outchannles twice the normalsize
         # so after splitting everything sorts out
         self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding, first_conv=first_conv),
@@ -11722,6 +11722,7 @@ class GatedMaskedConv(nn.Module):
         self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
                                     nn.BatchNorm2d(out_channels),
                                     nn.ReLU(True),)
+        
         self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
         self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
         
@@ -11731,7 +11732,6 @@ class GatedMaskedConv(nn.Module):
         vs1, vs2 = torch.chunk(vout, chunks=2, dim=1)
         # apply tanh,sigmoid to each and multiply them
         vout_mult = vs1.tanh() * vs2.sigmoid()
-        
         # now calculate horizontal stack
         hout = self.hconv(x_h)
         # add vout to hout
@@ -11743,12 +11743,259 @@ class GatedMaskedConv(nn.Module):
         hout_residual = self.h_projection(hout_mult) + x_h
         return vout_mult, hout_residual
 
+class GatedResidualBlockVH(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, dropout_rate=0.0):
+        super().__init__()
+        padding = kernel_size // 2
+        
+        # in original pixelcnn, vertical and horizontal convs recieve the same input
+        # and then later on merged their outputs together! so we do the same here!
+        self.initial_conv = GatedMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True)
+
+        # a linear transformation before merging vout with hout so 
+        # we get a bit of more flexibility
+        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+
+        # 1x1 convolution for the main path after combining V and H
+        self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
+                                      nn.BatchNorm2d(out_channels),
+                                      nn.ReLU(),
+                                      nn.Dropout2d(dropout_rate),)
+
+        # skipcon to add information between blocks, in order to prevent
+        # a huge number of channels, lets make them all to prduce 64 channels only
+        self.skip_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
+                                       nn.BatchNorm2d(64),)
+        
+        # to account for varying input-output channels, we apply a linear transformation
+        # on x_h so we can easily add the context to x_h from previous block
+        # see the code below and you'll see why
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+
+    def forward(self, x_v, x_h):
+        # we always first use vertical convolution 
+        # and then horizontal convolution!
+        # x_v and x_h come from first vertical and 
+        # horziontal conv layers, and then we process 
+        # them further in our resblocks
+        # print(f'{x_v.shape=} {x_h.shape=}')
+        
+        v_out, h_out = self.self.initial_conv(x_v,x_h)
+        # to add more flexibility (like gatedpixelcnn) 
+        # we apply a linear projection to vertical output
+        # before adding it to horizontal conv output!
+        # this acts as some kind of adaptor so to speak
+        # that is, it gives different channels in v_out
+        # a weight so in theory, when we add vout and hout
+        # channels in vout can have varying participation level with hout!
+        # so we are basically introducing some learnable 
+        # parameters to specificallt control the channel-wise
+        # mixing and weighting between the two
+        # (metaforically speaking, its like somone reads a news
+        # for tomorrows forcast, and based on the importance of 
+        # the events scheduled for tommorw, assigns specific hours
+        # to specific events, so everything goes smoothly (imagine
+        # we'll be having rain later that day, so outdoor activities
+        # indoor activities can be sorted out efficiently after that!)
+        # in practice however this maynot always hold, but since itw as
+        # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
+        # v_proj = self.v_projection(v_out)
+        # combine the two streams so we dont have any blind spots!
+        vh_out = v_out + h_out
+        # skip connection between resblocks, this is what we ultimately
+        # feed to final convs and get our final logits as it contains the
+        # essence of our input.
+        # basically we calculate vh_hout for each block at different levels
+        # and then sum them all, or concatthem all and feed the result
+        # to final conv block to get logits
+        # update: using the final hout_residual gave us the best performance
+        # as it more closely resembels our processed context in a block so far!
+        # skip = self.skip_conv(vh_out)
+        
+        # and finally to have a residual connection
+        # in our block instead of simply adding hout
+        # with x_h we simply add vh_out to x_h
+        # this acts as a context, and since 
+        # our horziontal conv must always have info 
+        # about vertical conv, this fullfills our goal
+        # the nonlinearity to here is to get a higher 
+        # representation and get the most out of it!
+        # we are going to use this as the next x_h for
+        # the next block in line! this will ultimately 
+        # be fed to our next skip we saw before, so our skip
+        # will contain a wealth of information at each stage!
+        vh_out_processed = self.out_conv(vh_out)
+        # print(f'-----START-------\n'
+        #       f'x_v:             {tuple(x_v.shape)}\n'
+        #       f'x_h:             {tuple(x_h.shape)}\n'
+        #       f'vh_out:          {tuple(vh_out.shape)}\n'
+        #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
+        #     )
+        h_out_residual = vh_out_processed + self.channel_adapter(x_h)
+        # use processed hout that contains the context information 
+        # to create our featurepyramid, this greatly improves our 
+        # result and is more aligned with our original pixelcnn so 
+        # the comparison between them should now be ok(we couldnt get
+        # even close to our original pixelcnn performance until I
+        # changed skipcon to use houtresidual which is our final output
+        # containig all contexual information processed so far!)
+        # this change alone greatly improves our result, enhances/speeds 
+        # up our convergence speed and quality of generations!
+        skip = self.skip_conv(h_out_residual)
+        # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
+        return v_out, h_out_residual, skip
+
+class PixelCNN2Gated(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        self.input_shape = []
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.dropout_rate = dropout_rate
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        self.initial_vconv = GatedMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True)
+       
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([GatedResidualBlockVH(128, 128, dropout_rate=0),
+                                         GatedResidualBlockVH(128, 128, dropout_rate=0),
+                                         GatedResidualBlockVH(128, 256, dropout_rate=0),
+                                         GatedResidualBlockVH(256, 256, dropout_rate=0),
+                                         GatedResidualBlockVH(256, 512, dropout_rate=0),
+                                         GatedResidualBlockVH(512, 512, dropout_rate=0),
+                                        ])
+        
+        # last layers after concatenating skip connections
+        # grab the outchannels dynamically from the skipcon
+        # itself so we dont hardcode anything here!
+        skip_chs = self.res_blocks[0].skip_conv[0].out_channels
+        self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            # print(f'{labels.shape=}')
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        voutput,houtput = self.initial_vconv(input_indices, input_indices)
+        
+        # skip_connections_sum = []
+        skipcons = []
+        for res_block in self.res_blocks:
+            # print(f'{voutput.shape=} {houtput.shape=}')
+            voutput, houtput, skipcon = res_block(voutput, houtput)
+            # append them so we can later on concat them (usually gives best reuslt!)
+            skipcons.append(skipcon)
+        
+        # combine skip connections
+        combined = torch.cat(skipcons, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
 
 
+pc2 = PixelCNN2Gated(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
+indexes = torch.randint(0,16,size=(2,32,32))
+out = pc2(indexes)
+print(f'{out.shape=}')
+# show_receptive_field(indexes, out)
+#%%
+conditional = True
+use_fp16 = False
 
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
+else:#mnist,cifar10
+    num_classes = 10
 
+# update skipcon to have houtputresidual instead of vhout!
 
+prior = PixelCNN2Gated(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
 
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=batch_size,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=selected_label,
+                              temperature=1,#1
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2',
+                              recons_dir_path='./results/pixelcnn2/',
+                              )
 
 
 
