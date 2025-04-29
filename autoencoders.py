@@ -8610,6 +8610,9 @@ class ResidualBlock(nn.Module):
                                       # who would have thought!!!!
                                       nn.BatchNorm2d(out_channels)
                                       )
+        #todo: this is not used remove it and remove it from weights state_dicts that
+        # were previoiusly trained! so during loading checkpoints we dont face any issues
+        self.bn = nn.BatchNorm2d(out_channels)
     
     def forward(self, x):
         residual = x
@@ -9940,7 +9943,7 @@ dataset = ckpt.pop('dataset', dataset)
 
 prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
 prior.load_state_dict(ckpt["state_dict"])
-# prior.eval()
+prior.eval()
 
 print(f'{prior.__class__.__name__} loaded!')
 for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
@@ -11518,47 +11521,6 @@ out = pc2(indexes)
 print(f'{out.shape=}')
 # show_receptive_field(indexes, out)
 #%%
-# while we are implementing this, it might be a good idea to also implement the gated version
-# as we have alaready implemented everything. gatedmasked convolution block is simply
-# our vertical and horizontal layers with a bit of processing involved, notably
-# using tanh and sigmoid activations on their outputs respectively
-# basically we split the vout/hout output in half, process one half with tanh and the 
-# other with sigmoid, and then add the two to get the final vout/hout
-# 
-class GatedMaskedConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
-        super().__init__()
-
-        # since we antto split the channels, we make the outchannles twice the normalsize
-        # so after splitting everything sorts out
-        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding, first_conv=first_conv),
-                                   nn.BatchNorm2d(out_channels*2),
-                                   nn.ReLU(True))
-
-        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
-                                    nn.BatchNorm2d(out_channels),
-                                    nn.ReLU(True),)
-        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
-        self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
-        
-    def forward(self, x_v, x_h):
-        vout = self.vconv(x_v)
-        #split the vout into two sets of channels
-        vs1, vs2 = torch.chunk(vout, chunks=2, dim=1)
-        # apply tanh,sigmoid to each and multiply them
-        vout_mult = vs1.tanh() * vs2.sigmoid()
-        
-        # now calculate horizontal stack
-        hout = self.hconv(x_h)
-        # add vout to hout
-        vh = self.v_projection(vout_mult) + hout
-        # now split the vh
-        vh1,vh2 = torch.chunk(vh,chunks=2,dim=1)
-        hout_mult = vh1.tanh() * vh2.sigmoid()
-        # a final projection and residual 
-        hout_residual = self.h_projection(hout_mult) + x_h
-        return vout_mult, hout_residual
-
 conditional = True
 use_fp16 = False
 
@@ -11635,6 +11597,31 @@ prior, ckptname = train_prior(prior=prior,
 ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951.ckpt'
 # ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951_best.pt'
 
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
+
+prior = PixelCNN2(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+
+
 display_generated_samples(vqvae_model=model,
                           prior_model=prior,
                           dataset=dataset,
@@ -11679,7 +11666,7 @@ view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_t
 
 #%%
 imgs, labels = next(iter(dataloader_train))
-print(f'{labels.shape=}')
+print(f'{labels.shape=}') 
 compare_real_vs_prior(vqvae=model,
                       prior=prior,
                       dataset_name=dataset,
@@ -11714,6 +11701,47 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 
 # overall this change resulted in way improved generation due to autoregressive improvement
 # we made using our masked conv. it was a very good addition!
+#%%
+# while we are implementing this, it might be a good idea to also implement the gated version
+# as we have alaready implemented everything. gatedmasked convolution block is simply
+# our vertical and horizontal layers with a bit of processing involved, notably
+# using tanh and sigmoid activations on their outputs respectively
+# basically we split the vout/hout output in half, process one half with tanh and the 
+# other with sigmoid, and then add the two to get the final vout/hout
+# 
+class GatedMaskedConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__()
+
+        # since we antto split the channels, we make the outchannles twice the normalsize
+        # so after splitting everything sorts out
+        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding, first_conv=first_conv),
+                                   nn.BatchNorm2d(out_channels*2),
+                                   nn.ReLU(True))
+
+        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
+                                    nn.BatchNorm2d(out_channels),
+                                    nn.ReLU(True),)
+        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        
+    def forward(self, x_v, x_h):
+        vout = self.vconv(x_v)
+        #split the vout into two sets of channels
+        vs1, vs2 = torch.chunk(vout, chunks=2, dim=1)
+        # apply tanh,sigmoid to each and multiply them
+        vout_mult = vs1.tanh() * vs2.sigmoid()
+        
+        # now calculate horizontal stack
+        hout = self.hconv(x_h)
+        # add vout to hout
+        vh = self.v_projection(vout_mult) + hout
+        # now split the vh
+        vh1,vh2 = torch.chunk(vh,chunks=2,dim=1)
+        hout_mult = vh1.tanh() * vh2.sigmoid()
+        # a final projection and residual 
+        hout_residual = self.h_projection(hout_mult) + x_h
+        return vout_mult, hout_residual
 
 
 
