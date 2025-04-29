@@ -8610,14 +8610,9 @@ class ResidualBlock(nn.Module):
                                       # who would have thought!!!!
                                       nn.BatchNorm2d(out_channels)
                                       )
-        self.bn = nn.BatchNorm2d(out_channels)
     
     def forward(self, x):
         residual = x
-        # x = F.relu(self.bn1(self.conv1(x)))
-        # x = self.bn2(self.conv2(x))
-        # output = x+self.skip(residual)
-        # output = F.relu(output)
         # remove the bn from residual
         # add the residual and block and then add a bn and a relu at the end!
         output = self.block(x) + self.skip(residual)
@@ -11236,6 +11231,11 @@ for i in range(4):
 
 # and yup! we have blind spot on the right side! so using the new method we should
 # be able to improve our results!
+# TODO: explain better: 
+# note that what we see here is a theoratical receptive field
+# not effective receptive field, as it becomes much smaller in a real network.
+# however it shows a curcial defect of our previous approach and helps us utilize more
+# information properly!
 #%% now that we are here, lets give it a spin and see how it performs if we use pixelcnn++!
 class VerticalMaskedConv(nn.Conv2d):
     def __init__(self, in_channels=1, out_channels=3, kernel_size=3, stride=1, padding=1, first_conv=False):
@@ -11319,11 +11319,12 @@ class ResidualBlockVH(nn.Module):
         self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
                                       nn.BatchNorm2d(out_channels),
                                       nn.ReLU(),
-                                      nn.Dropout2d(dropout_rate,True),)
+                                      nn.Dropout2d(dropout_rate),)
 
         # skipcon to add information between blocks, in order to prevent
         # a huge number of channels, lets make them all to prduce 64 channels only
-        self.skip_conv = nn.Conv2d(out_channels, 128, kernel_size=1)
+        self.skip_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
+                                       nn.BatchNorm2d(64),)
         
         # to account for varying input-output channels, we apply a linear transformation
         # on x_h so we can easily add the context to x_h from previous block
@@ -11332,7 +11333,7 @@ class ResidualBlockVH(nn.Module):
             self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
         else:
             self.channel_adapter = nn.Identity()
-        
+
     def forward(self, x_v, x_h):
         # we always first use vertical convolution 
         # and then horizontal convolution!
@@ -11361,16 +11362,18 @@ class ResidualBlockVH(nn.Module):
         # indoor activities can be sorted out efficiently after that!)
         # in practice however this maynot always hold, but since itw as
         # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
-        v_proj = self.v_projection(v_out)
+        # v_proj = self.v_projection(v_out)
         # combine the two streams so we dont have any blind spots!
-        vh_out = v_proj + h_out
+        vh_out = v_out + h_out
         # skip connection between resblocks, this is what we ultimately
         # feed to final convs and get our final logits as it contains the
         # essence of our input.
         # basically we calculate vh_hout for each block at different levels
         # and then sum them all, or concatthem all and feed the result
         # to final conv block to get logits
-        skip = self.skip_conv(vh_out)
+        # update: using the final hout_residual gave us the best performance
+        # as it more closely resembels our processed context in a block so far!
+        # skip = self.skip_conv(vh_out)
         
         # and finally to have a residual connection
         # in our block instead of simply adding hout
@@ -11392,6 +11395,16 @@ class ResidualBlockVH(nn.Module):
         #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
         #     )
         h_out_residual = vh_out_processed + self.channel_adapter(x_h)
+        # use processed hout that contains the context information 
+        # to create our featurepyramid, this greatly improves our 
+        # result and is more aligned with our original pixelcnn so 
+        # the comparison between them should now be ok(we couldnt get
+        # even close to our original pixelcnn performance until I
+        # changed skipcon to use houtresidual which is our final output
+        # containig all contexual information processed so far!)
+        # this change alone greatly improves our result, enhances/speeds 
+        # up our convergence speed and quality of generations!
+        skip = self.skip_conv(h_out_residual)
         # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
         return v_out, h_out_residual, skip
 
@@ -11420,12 +11433,12 @@ class PixelCNN2(nn.Module):
         # while mask B allows the current pixel but blocks future ones.
         self.initial_vconv = nn.Sequential(VerticalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
                                           nn.BatchNorm2d(128),
-                                          nn.ReLU(),
+                                          nn.ReLU(True),
                                           #nn.Dropout2d(dropout_rate)
                                           )
         self.initial_hconv = nn.Sequential(HorizontalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
                                           nn.BatchNorm2d(128),
-                                          nn.ReLU(),
+                                          nn.ReLU(True),
                                           #nn.Dropout2d(dropout_rate)
                                           )
         
@@ -11442,7 +11455,7 @@ class PixelCNN2(nn.Module):
         # last layers after concatenating skip connections
         # grab the outchannels dynamically from the skipcon
         # itself so we dont hardcode anything here!
-        skip_chs = self.res_blocks[0].skip_conv.out_channels
+        skip_chs = self.res_blocks[0].skip_conv[0].out_channels
         self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
                                           nn.BatchNorm2d(512),
                                           nn.ReLU(),
@@ -11548,8 +11561,62 @@ class GatedMaskedConv(nn.Module):
         hout_residual = self.h_projection(hout_mult) + x_h
         return vout_mult, hout_residual
 
+conditional = True
+use_fp16 = False
 
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
+else:#mnist,cifar10
+    num_classes = 10
 
+# update skipcon to have houtputresidual instead of vhout!
+
+#pixelcnn seems to work much better than pixelcnn2! it converges very slowly
+# like at 120 epchs it reaches a loss=2.5! while for pixelcnn it achieves
+# 2.24 at epoch 22!
+prior = PixelCNN2(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
+
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=batch_size,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=selected_label,
+                              temperature=1,#1
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2',
+                              recons_dir_path='./results/pixelcnn2/',
+                              )
+
+# Fp32 prior using fp32/no ema vqvae
+ckptname = './weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250428_180146/'
 
 
 
