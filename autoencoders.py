@@ -11720,11 +11720,17 @@ class GatedMaskedConv(nn.Module):
                                    nn.ReLU(True))
 
         self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
-                                    nn.BatchNorm2d(out_channels),
+                                    nn.BatchNorm2d(out_channels*2),
                                     nn.ReLU(True),)
         
-        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        self.v_projection = nn.Conv2d(out_channels, out_channels*2, kernel_size=1)
         self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+        
         
     def forward(self, x_v, x_h):
         vout = self.vconv(x_v)
@@ -11735,12 +11741,21 @@ class GatedMaskedConv(nn.Module):
         # now calculate horizontal stack
         hout = self.hconv(x_h)
         # add vout to hout
-        vh = self.v_projection(vout_mult) + hout
+        v_project = self.v_projection(vout_mult)
+        vh = v_project + hout
         # now split the vh
         vh1,vh2 = torch.chunk(vh,chunks=2,dim=1)
         hout_mult = vh1.tanh() * vh2.sigmoid()
+        
+        # print(f'----------START---------')
+        # print(f'x_h       :{tuple(x_h.shape)}')
+        # print(f'x_h       :{tuple(x_h.shape)}')
+        # print(f'v_project :{tuple(v_project.shape)}')
+        # print(f'hout      :{tuple(hout.shape)}')
+        # print(f'hout_mult :{tuple(hout_mult.shape)}')
+        
         # a final projection and residual 
-        hout_residual = self.h_projection(hout_mult) + x_h
+        hout_residual = self.h_projection(hout_mult) + self.channel_adapter(x_h)
         return vout_mult, hout_residual
 
 class GatedResidualBlockVH(nn.Module):
@@ -11783,7 +11798,7 @@ class GatedResidualBlockVH(nn.Module):
         # them further in our resblocks
         # print(f'{x_v.shape=} {x_h.shape=}')
         
-        v_out, h_out = self.self.initial_conv(x_v,x_h)
+        v_out, h_out = self.initial_conv(x_v,x_h)
         # to add more flexibility (like gatedpixelcnn) 
         # we apply a linear projection to vertical output
         # before adding it to horizontal conv output!
@@ -11993,8 +12008,8 @@ prior, ckptname = train_prior(prior=prior,
                               generation_device='cuda',
                               figsize=(12,16),
                               seed=66,
-                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2',
-                              recons_dir_path='./results/pixelcnn2/',
+                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2gated',
+                              recons_dir_path='./results/pixelcnn2gated/',
                               )
 
 
