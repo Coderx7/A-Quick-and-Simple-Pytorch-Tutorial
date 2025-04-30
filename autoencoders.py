@@ -11863,6 +11863,8 @@ class GatedResidualBlockVH(nn.Module):
         # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
         return v_out, h_out_residual, skip
 
+# I decrease the number of channels for a few layers here so it roughly has the same
+# parameter count as the previous ones so they are comparable
 class PixelCNN2Gated(nn.Module):
     def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
         super().__init__()
@@ -11891,8 +11893,8 @@ class PixelCNN2Gated(nn.Module):
                                          GatedResidualBlockVH(128, 128, dropout_rate=0),
                                          GatedResidualBlockVH(128, 256, dropout_rate=0),
                                          GatedResidualBlockVH(256, 256, dropout_rate=0),
-                                         GatedResidualBlockVH(256, 512, dropout_rate=0),
-                                         GatedResidualBlockVH(512, 512, dropout_rate=0),
+                                         GatedResidualBlockVH(256, 384, dropout_rate=0),
+                                         GatedResidualBlockVH(384, 384, dropout_rate=0),
                                         ])
         
         # last layers after concatenating skip connections
@@ -11958,7 +11960,8 @@ class PixelCNN2Gated(nn.Module):
 pc2 = PixelCNN2Gated(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
 indexes = torch.randint(0,16,size=(2,32,32))
 out = pc2(indexes)
-print(f'{out.shape=}')
+param_cnt = sum(p.numel() for p in pc2.parameters() if p.requires_grad)
+print(f'pc2gated output: {tuple(out.shape)} paramcount: {param_cnt:,}')
 # show_receptive_field(indexes, out)
 #%%
 conditional = True
@@ -12012,10 +12015,7 @@ prior, ckptname = train_prior(prior=prior,
                               recons_dir_path='./results/pixelcnn2gated/',
                               )
 
-
-
-
-
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250430_093930/'
 
 
 #%%
