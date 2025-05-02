@@ -11517,11 +11517,13 @@ class PixelCNN2(nn.Module):
         logits = self.final_layers(combined)
         return logits
 
+#%%
 pc2 = PixelCNN2(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
 indexes = torch.randint(0,16,size=(2,32,32))
 out = pc2(indexes)
 print(f'{out.shape=}')
 # show_receptive_field(indexes, out)
+
 #%%
 conditional = True
 use_fp16 = False
@@ -11587,7 +11589,7 @@ prior, ckptname = train_prior(prior=prior,
 # the maskedconv layer with the verticalhorizontal version and whatever changes was necessary
 # to get it to work in our original pixelcnn. 
 # I'm happy with the result and I just wanted to verify the outcome, 
-# its not massively better, but seems its much better especially when we using top_p, 
+# it seems its much better especially when we using top_p, 
 # it seems the autoregressive nature has really improved and images at least to me look much
 # better formed, although they are still blury which may probably improve
 # our result if we spend more time tuning hyperparameters. this is evident in our generations below
@@ -11817,18 +11819,24 @@ class GatedResidualBlockVH(nn.Module):
         # indoor activities can be sorted out efficiently after that!)
         # in practice however this maynot always hold, but since itw as
         # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
-        # v_proj = self.v_projection(v_out)
+        v_proj = self.v_projection(v_out)
         # combine the two streams so we dont have any blind spots!
-        vh_out = v_out + h_out
+        vh_out = v_proj #+ h_out
         # skip connection between resblocks, this is what we ultimately
         # feed to final convs and get our final logits as it contains the
         # essence of our input.
         # basically we calculate vh_hout for each block at different levels
         # and then sum them all, or concatthem all and feed the result
         # to final conv block to get logits
+        # 
         # update: using the final hout_residual gave us the best performance
         # as it more closely resembels our processed context in a block so far!
-        # skip = self.skip_conv(vh_out)
+        # this is crucial here, unlike our previous model, if we use h_out_residual
+        # instead of vh_out, we only get solid blues for output in generation 
+        # I noticed its the addition to h_out thats causing the solid blues!
+        # if we just use v_project for vh_out theres no issues (note that in
+        # maskedgatedconv v and h stream are already merged!)
+        skip = self.skip_conv(vh_out)
         
         # and finally to have a residual connection
         # in our block instead of simply adding hout
@@ -11859,7 +11867,8 @@ class GatedResidualBlockVH(nn.Module):
         # containig all contexual information processed so far!)
         # this change alone greatly improves our result, enhances/speeds 
         # up our convergence speed and quality of generations!
-        skip = self.skip_conv(h_out_residual)
+        # note! for gatedmaskedconv this causes solid blues in generation!
+        # skip = self.skip_conv(h_out_residual)
         # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
         return v_out, h_out_residual, skip
 
@@ -11885,16 +11894,16 @@ class PixelCNN2Gated(nn.Module):
         
         self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
         
-        self.initial_vconv = GatedMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True)
+        self.initial_vconv = GatedMaskedConv(self.conv_input_size, 96, kernel_size=7, padding=3, first_conv=True)
        
         # we can use larger dilation for increased receptive field and improved performance
         # but so far no luck! we'll sticking to the dilation=1 (default)
-        self.res_blocks = nn.ModuleList([GatedResidualBlockVH(128, 128, dropout_rate=0),
+        self.res_blocks = nn.ModuleList([GatedResidualBlockVH(96, 96, dropout_rate=0),
+                                         GatedResidualBlockVH(96, 96, dropout_rate=0),
+                                         GatedResidualBlockVH(96, 128, dropout_rate=0),
                                          GatedResidualBlockVH(128, 128, dropout_rate=0),
                                          GatedResidualBlockVH(128, 256, dropout_rate=0),
                                          GatedResidualBlockVH(256, 256, dropout_rate=0),
-                                         GatedResidualBlockVH(256, 384, dropout_rate=0),
-                                         GatedResidualBlockVH(384, 384, dropout_rate=0),
                                         ])
         
         # last layers after concatenating skip connections
@@ -11955,8 +11964,7 @@ class PixelCNN2Gated(nn.Module):
         # for sampling in generation process
         logits = self.final_layers(combined)
         return logits
-
-
+    
 pc2 = PixelCNN2Gated(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
 indexes = torch.randint(0,16,size=(2,32,32))
 out = pc2(indexes)
@@ -12015,7 +12023,7 @@ prior, ckptname = train_prior(prior=prior,
                               recons_dir_path='./results/pixelcnn2gated/',
                               )
 
-ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250430_093930/'
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250430_100634/vqvae_prior_CIFAR10_embd256_Conditional_20250430_100634.ckpt'
 
 
 #%%
