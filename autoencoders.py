@@ -10997,7 +10997,9 @@ view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
 # probably already tested the shared embedding layer before! but I havent tried it yet (note that when
 # I say shared embeddings, we could use 1 512 embedding layer or use 3*512 so we match
 # the representational capacity of the model in both cases. its a good idea to do an experiment
-# on it todo: test this!)
+# on it todo: test this! ok, having distinct embedding layers makes a difference,
+# each can learn different things, in fact in newer architecture this property is used
+# in llms as well (like moe in llms (having seaprate ffns instead of one largeone)))
 
 # which uses pixelcnn as decoder which accepts both of these vqvaes
 # as input and produces the final image. we didnt do that, I initially wanted to implement 
@@ -11789,7 +11791,7 @@ class GatedResidualBlockVH(nn.Module):
         # we get a bit of more flexibility
         self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
         self.bn_vp = nn.BatchNorm2d(out_channels)
-        self.bn_h = nn.BatchNorm2d(out_channels)
+        # self.bn_h = nn.BatchNorm2d(out_channels)
         
         # 1x1 convolution for the main path after combining V and H
         self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
@@ -12061,9 +12063,118 @@ prior, ckptname = train_prior(prior=prior,
                               checkpoint_dir_path='./weights/prior/emb256/pixelcnn2gated',
                               recons_dir_path='./results/pixelcnn2gated/',
                               )
+# initially I had a lot of issues ofr training so in order to figure out what was wrong
+# I trained MNIST, and in doing so foundout the signals were messed up and basically 
+# the absolute majority of the the images didnt get a proper signal (see visualization of failed trainings
+# when we added vout and hout together!) after I excluded the hout in the blocks, it started
+# training properly. its still not good compared to previous versions, but at least it works now
+# 
+#%%
+# MNIST FP32/Prior- FP32 VQVAE
+# Epoch: 119/120  | Loss: 0.660181 | Val-Loss: 1.320644 | BPD: 0.952440 |  BPD_VAL: 1.905287 | LR:0.000000
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_135854/vqvae_prior_MNIST_embd256_Conditional_20250504_135854.ckpt'
 
-ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250430_100634/vqvae_prior_CIFAR10_embd256_Conditional_20250430_100634.ckpt'
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
 
+prior = PixelCNN2Gated(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+
+
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=10,
+                          selected_label=None,
+                          batch_size=80,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=None)
+
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=80)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+batch_size=80
+selected_label = None
+generated_image, latents = generate2(vqvae_model=model,
+                                    prior=prior,
+                                    batch_size=80,
+                                    temperature=1,
+                                    num_classes=num_classes,
+                                    class_label=None,
+                                    top_p=0.95,
+                                    device='cuda')
+
+# print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
+if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+else:
+    sample_count = batch_size//num_classes
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
+
+timestamp = datetime.datetime.now().strftime("YY_MM_DD_HH_MM_SS")
+view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
+
+#%%
+imgs, labels = next(iter(dataloader_train))
+print(f'{labels.shape=}') 
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
+                      batch_size=4,
+                      num_classes=num_classes,
+                      class_names=get_class_names(dataset,num_classes),
+                      # using topp is the way to go gives the best results
+                      # first disable advanced sampling and see the default
+                      # genertaion performance then enable adavanced_sampling
+                      # and see the difference
+                      advanced_sampling=True,
+                      temperature=1,
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
+                      #for testing top_p either leave top_k=0, or make sure its a 
+                      # larger number so the pool is not so small top_p cant do much!
+                      # this actually was my bug that prevented me from usingtop_p
+                      top_p=1,
+                      device=device,
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging/pixelcnn2',
+                      seed=None)
+
+
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,
+                             figsize=(12,8),
+                             num_indexes_per_bins=1)
 
 #%%
 # # Contractive Autoencoder
