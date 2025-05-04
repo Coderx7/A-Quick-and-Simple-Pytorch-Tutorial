@@ -11791,7 +11791,7 @@ class GatedResidualBlockVH(nn.Module):
         # we get a bit of more flexibility
         self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
         self.bn_vp = nn.BatchNorm2d(out_channels)
-        # self.bn_h = nn.BatchNorm2d(out_channels)
+        self.bn_h = nn.BatchNorm2d(out_channels)
         
         # 1x1 convolution for the main path after combining V and H
         self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
@@ -11822,7 +11822,9 @@ class GatedResidualBlockVH(nn.Module):
         v_proj = self.v_projection(vout)
         # problematic, remerging the vout/hout
         # will ruine the signals! because we just did that!
+        # update: seems adding a relu/bn slightly im[proves the results]
         vh_out = F.relu(self.bn_vp(v_proj)) #+ hout
+        # vh_out = v_proj #+ hout
         # some processing for the final output
         vh_out_processed = self.out_conv(vh_out)
         # a residual connection for x_v, cuz doing x_h will ruin the signal aswell
@@ -12073,6 +12075,14 @@ prior, ckptname = train_prior(prior=prior,
 # MNIST FP32/Prior- FP32 VQVAE
 # Epoch: 119/120  | Loss: 0.660181 | Val-Loss: 1.320644 | BPD: 0.952440 |  BPD_VAL: 1.905287 | LR:0.000000
 ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_135854/vqvae_prior_MNIST_embd256_Conditional_20250504_135854.ckpt'
+
+
+# MNIST -the exact same config as before except I removed relu/bn on vout+proj)
+# to test this, makesure to disable relu/bn for vproj otherwise you cant load this properly
+# the loss is worse, so having the relu/bn on vproj helps positively! the generation is also worse than previous experiment
+# Epoch: 119/120  | Loss: 0.685328 | Val-Loss: 1.228615 | BPD: 0.988719 |  BPD_VAL: 1.772517 | LR:0.000000
+# ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_151925/vqvae_prior_MNIST_embd256_Conditional_20250504_151925.ckpt'
+
 
 print(f'{dataset=}')
 print(f'{device=}\n')
