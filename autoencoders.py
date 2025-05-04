@@ -8202,7 +8202,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
 
 # with model_config and extra information -samplesize are not accurate when limitedsamples=False
 # with embds=256
-# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
+ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
 
@@ -8240,7 +8240,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
 #
 # fp16 with ema
 # right off the bat the perplexity is 3x better (15vs45) and loss is 10x better!
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
 
 # todo compare embedding/codebook utilization (histogram) for fp16/fp32 and fp16/fp32 ema versions
 # todo and see which one does a better job of utilizing codebooks
@@ -8248,10 +8248,10 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CI
 # using fp32 version 
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
 # 
-# fp32 with ema enabled - trains smoothly with default configs 
+# fp32 with ema enabled - trains smoothly with default configs ----***(used for pixelcnn2)
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
@@ -11703,7 +11703,19 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 
 # overall this change resulted in way improved generation due to autoregressive improvement
 # we made using our masked conv. it was a very good addition!
-#%%
+#%%#
+# https://cvnote.ddlee.cc/2019/08/09/conditional-image-generation-with-pixelcnn-decoders
+# https://neuroverse0.wordpress.com/2020/08/11/pixelrnn-gated-pixelcnn-and-pixelcnn/
+# ref a quick and good intro: https://mrtunguyen.github.io/blog/generative/autoregressive/deeplearning/2020/05/20/Autoregressive-Generative-Models.html
+# important note, nearly all refs Ive seen including this one has gotten gatedpixelcnn 
+# wrong in away! or at least they dont care or know whats going on with their training!
+# the generation is aweful in mnist and if they train it on cifar10 as is, it will be horrendous
+# unless they do what we did!(ignore hstream) and then face garbage output!
+# 
+# I guess I'll ditch gatedmaskedconv for now! I dont see any benifit in it!
+# the outcome is notr eally anybetter than what I ahve already gotten and its a lot of
+# work to get the same output quality basically!
+
 # while we are implementing this, it might be a good idea to also implement the gated version
 # as we have alaready implemented everything. gatedmasked convolution block is simply
 # our vertical and horizontal layers with a bit of processing involved, notably
@@ -11717,13 +11729,24 @@ class GatedMaskedConv(nn.Module):
         self.dropout_rate = dropout_rate
         # since we antto split the channels, we make the outchannles twice the normalsize
         # so after splitting everything sorts out
+        # note the formula for gated convolution is tanh(conv) * sigmoid(conv) 
+        # the conv being w⊙x (w being weight ⊙ convolution operation and x being input
+        # basically the convolution operation on input!)
+        # the sigmoid acts as a gate (by making the second part 0 or 1) the idea is like
+        # lstm gates. so long story short, we dont use relu/bn after our vertical/horizontal
+        # convs. different configurations exists, 1 stream, 2 streams. 
+        # initially I used the two streams, (but it fails, the right side of the image
+        # doesnt get any information when we go as usuall(i.e. add vout and hout)
+        # the loss decreases in an instant, but the generation is absolute nonsense!
+        # but when I only us vout we actually get something that makes a bit sense but
+        # its garbage as well because its extremely slow! ) see mnist example it demonstrates
+        # the issue properly
+        # so for this time im going for a single stream and see how it goes!
         self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding, first_conv=first_conv),
-                                   nn.BatchNorm2d(out_channels*2),
-                                   nn.ReLU(True))
+                                  )
 
         self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
-                                    nn.BatchNorm2d(out_channels*2),
-                                    nn.ReLU(True),)
+                                  )
         
         self.v_projection = nn.Conv2d(out_channels, out_channels*2, kernel_size=1)
         self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
@@ -11732,33 +11755,26 @@ class GatedMaskedConv(nn.Module):
             self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
         else:
             self.channel_adapter = nn.Identity()
-        
+
         
     def forward(self, x_v, x_h):
+        # block diagram https://i.imgur.com/DTseuKt.png
         vout = self.vconv(x_v)
         #split the vout into two sets of channels
-        vs1, vs2 = torch.chunk(vout, chunks=2, dim=1)
+        v1, v2 = torch.chunk(vout, chunks=2, dim=1)
         # apply tanh,sigmoid to each and multiply them
-        vout_mult = vs1.tanh() * vs2.sigmoid()
-        # now calculate horizontal stack
+        v_mult = v1.tanh() * v2.sigmoid()
+        # 2p the hstream
         hout = self.hconv(x_h)
-        # add vout to hout
-        v_project = self.v_projection(vout_mult)
-        vh = v_project + hout
-        # now split the vh
-        vh1,vh2 = torch.chunk(vh,chunks=2,dim=1)
-        hout_mult = vh1.tanh() * vh2.sigmoid()
-        
-        # print(f'----------START---------')
-        # print(f'x_h       :{tuple(x_h.shape)}')
-        # print(f'x_h       :{tuple(x_h.shape)}')
-        # print(f'v_project :{tuple(v_project.shape)}')
-        # print(f'hout      :{tuple(hout.shape)}')
-        # print(f'hout_mult :{tuple(hout_mult.shape)}')
-        
-        # a final projection and residual 
-        hout_residual = self.h_projection(hout_mult) + self.channel_adapter(x_h)
-        return vout_mult, hout_residual
+        # now add it to 1x1projection from vout
+        v_to_h_project = self.v_projection(v_mult)
+        v_to_h = v_to_h_project + hout
+        # now split v_to_h
+        v_h1, v_h2 = torch.chunk(v_to_h, chunks=2, dim=1)
+        h_mult = v_h1.tanh() * v_h2.sigmoid()
+        # project h_mult to 1x1 and add to residual
+        hout_residual = self.h_projection(h_mult) + self.channel_adapter(x_h)
+        return v_mult, hout_residual
 
 class GatedResidualBlockVH(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, dropout_rate=0.0):
@@ -11772,17 +11788,23 @@ class GatedResidualBlockVH(nn.Module):
         # a linear transformation before merging vout with hout so 
         # we get a bit of more flexibility
         self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
-
+        self.bn_vp = nn.BatchNorm2d(out_channels)
+        self.bn_h = nn.BatchNorm2d(out_channels)
+        
         # 1x1 convolution for the main path after combining V and H
         self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
                                       nn.BatchNorm2d(out_channels),
-                                      nn.ReLU(),
+                                      nn.ReLU(True),
                                       nn.Dropout2d(dropout_rate),)
 
-        # skipcon to add information between blocks, in order to prevent
+        # pyramid features to add information between blocks, in order to prevent
         # a huge number of channels, lets make them all to prduce 64 channels only
-        self.skip_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
-                                       nn.BatchNorm2d(64),)
+        self.pyramid_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
+                                       nn.BatchNorm2d(64),
+                                       # usually we dont add a relu! its a skipcon afterall
+                                       # but lets see if it helps!
+                                       #nn.ReLU(True)
+                                       )
         
         # to account for varying input-output channels, we apply a linear transformation
         # on x_h so we can easily add the context to x_h from previous block
@@ -11793,84 +11815,101 @@ class GatedResidualBlockVH(nn.Module):
             self.channel_adapter = nn.Identity()
 
     def forward(self, x_v, x_h):
-        # we always first use vertical convolution 
-        # and then horizontal convolution!
-        # x_v and x_h come from first vertical and 
-        # horziontal conv layers, and then we process 
-        # them further in our resblocks
-        # print(f'{x_v.shape=} {x_h.shape=}')
         
-        v_out, h_out = self.initial_conv(x_v,x_h)
-        # to add more flexibility (like gatedpixelcnn) 
-        # we apply a linear projection to vertical output
-        # before adding it to horizontal conv output!
-        # this acts as some kind of adaptor so to speak
-        # that is, it gives different channels in v_out
-        # a weight so in theory, when we add vout and hout
-        # channels in vout can have varying participation level with hout!
-        # so we are basically introducing some learnable 
-        # parameters to specificallt control the channel-wise
-        # mixing and weighting between the two
-        # (metaforically speaking, its like somone reads a news
-        # for tomorrows forcast, and based on the importance of 
-        # the events scheduled for tommorw, assigns specific hours
-        # to specific events, so everything goes smoothly (imagine
-        # we'll be having rain later that day, so outdoor activities
-        # indoor activities can be sorted out efficiently after that!)
-        # in practice however this maynot always hold, but since itw as
-        # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
-        v_proj = self.v_projection(v_out)
-        # combine the two streams so we dont have any blind spots!
-        vh_out = v_proj #+ h_out
-        # skip connection between resblocks, this is what we ultimately
-        # feed to final convs and get our final logits as it contains the
-        # essence of our input.
-        # basically we calculate vh_hout for each block at different levels
-        # and then sum them all, or concatthem all and feed the result
-        # to final conv block to get logits
-        # 
-        # update: using the final hout_residual gave us the best performance
-        # as it more closely resembels our processed context in a block so far!
-        # this is crucial here, unlike our previous model, if we use h_out_residual
-        # instead of vh_out, we only get solid blues for output in generation 
-        # I noticed its the addition to h_out thats causing the solid blues!
-        # if we just use v_project for vh_out theres no issues (note that in
-        # maskedgatedconv v and h stream are already merged!)
-        skip = self.skip_conv(vh_out)
-        
-        # and finally to have a residual connection
-        # in our block instead of simply adding hout
-        # with x_h we simply add vh_out to x_h
-        # this acts as a context, and since 
-        # our horziontal conv must always have info 
-        # about vertical conv, this fullfills our goal
-        # the nonlinearity to here is to get a higher 
-        # representation and get the most out of it!
-        # we are going to use this as the next x_h for
-        # the next block in line! this will ultimately 
-        # be fed to our next skip we saw before, so our skip
-        # will contain a wealth of information at each stage!
+        vout, hout = self.initial_conv(x_v,x_h)
+        v_proj = self.v_projection(vout)
+        # problematic, remerging the vout/hout
+        # will ruine the signals! because we just did that!
+        vh_out = F.relu(self.bn_vp(v_proj)) #+ hout
+        # some processing for the final output
         vh_out_processed = self.out_conv(vh_out)
-        # print(f'-----START-------\n'
-        #       f'x_v:             {tuple(x_v.shape)}\n'
-        #       f'x_h:             {tuple(x_h.shape)}\n'
-        #       f'vh_out:          {tuple(vh_out.shape)}\n'
-        #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
-        #     )
-        h_out_residual = vh_out_processed + self.channel_adapter(x_h)
-        # use processed hout that contains the context information 
-        # to create our featurepyramid, this greatly improves our 
-        # result and is more aligned with our original pixelcnn so 
-        # the comparison between them should now be ok(we couldnt get
-        # even close to our original pixelcnn performance until I
-        # changed skipcon to use houtresidual which is our final output
-        # containig all contexual information processed so far!)
-        # this change alone greatly improves our result, enhances/speeds 
-        # up our convergence speed and quality of generations!
-        # note! for gatedmaskedconv this causes solid blues in generation!
+        # a residual connection for x_v, cuz doing x_h will ruin the signal aswell
+        # as we will amplify its signal too much!
+        h_out_residual = vh_out_processed + self.channel_adapter(x_v)
+        # feature_pyramid capturing the final processed output of this block
+        processed_output = self.pyramid_conv(h_out_residual)
+        return vout, hout, processed_output
+        # # we always first use vertical convolution 
+        # # and then horizontal convolution!
+        # # x_v and x_h come from first vertical and 
+        # # horziontal conv layers, and then we process 
+        # # them further in our resblocks
+        # # print(f'{x_v.shape=} {x_h.shape=}')
+        
+        # v_out, h_out = self.initial_conv(x_v,x_h)
+        # # to add more flexibility (like gatedpixelcnn) 
+        # # we apply a linear projection to vertical output
+        # # before adding it to horizontal conv output!
+        # # this acts as some kind of adaptor so to speak
+        # # that is, it gives different channels in v_out
+        # # a weight so in theory, when we add vout and hout
+        # # channels in vout can have varying participation level with hout!
+        # # so we are basically introducing some learnable 
+        # # parameters to specificallt control the channel-wise
+        # # mixing and weighting between the two
+        # # (metaforically speaking, its like somone reads a news
+        # # for tomorrows forcast, and based on the importance of 
+        # # the events scheduled for tommorw, assigns specific hours
+        # # to specific events, so everything goes smoothly (imagine
+        # # we'll be having rain later that day, so outdoor activities
+        # # indoor activities can be sorted out efficiently after that!)
+        # # in practice however this maynot always hold, but since itw as
+        # # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
+        # v_proj = self.v_projection(v_out)
+        # # combine the two streams so we dont have any blind spots!
+        # vh_out = v_proj #+ h_out
+        # # skip connection between resblocks, this is what we ultimately
+        # # feed to final convs and get our final logits as it contains the
+        # # essence of our input.
+        # # basically we calculate vh_hout for each block at different levels
+        # # and then sum them all, or concatthem all and feed the result
+        # # to final conv block to get logits
+        # # 
+        # # update: using the final hout_residual gave us the best performance
+        # # as it more closely resembels our processed context in a block so far!
+        # # this is crucial here, unlike our previous model, if we use h_out_residual
+        # # instead of vh_out, we only get solid blues for output in generation 
+        # # I noticed its the addition to h_out thats causing the solid blues!
+        # # if we just use v_project for vh_out theres no issues (note that in
+        # # maskedgatedconv v and h stream are already merged!) even using hout
+        # # makes it crash! using vh_out like this leaves a lot to be desired! a lot!
+        # # the qualiy is not good at all! 
+        # # skip = self.skip_conv(vh_out)
+        
+        # # and finally to have a residual connection
+        # # in our block instead of simply adding hout
+        # # with x_h we simply add vh_out to x_h
+        # # this acts as a context, and since 
+        # # our horziontal conv must always have info 
+        # # about vertical conv, this fullfills our goal
+        # # the nonlinearity to here is to get a higher 
+        # # representation and get the most out of it!
+        # # we are going to use this as the next x_h for
+        # # the next block in line! this will ultimately 
+        # # be fed to our next skip we saw before, so our skip
+        # # will contain a wealth of information at each stage!
+        # vh_out_processed = self.out_conv(vh_out)
+        # # print(f'-----START-------\n'
+        # #       f'x_v:             {tuple(x_v.shape)}\n'
+        # #       f'x_h:             {tuple(x_h.shape)}\n'
+        # #       f'vh_out:          {tuple(vh_out.shape)}\n'
+        # #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
+        # #     )
+        # h_out_residual = vh_out_processed #+ self.channel_adapter(x_h)
+        # # use processed hout that contains the context information 
+        # # to create our featurepyramid, this greatly improves our 
+        # # result and is more aligned with our original pixelcnn so 
+        # # the comparison between them should now be ok(we couldnt get
+        # # even close to our original pixelcnn performance until I
+        # # changed skipcon to use houtresidual which is our final output
+        # # containig all contexual information processed so far!)
+        # # this change alone greatly improves our result, enhances/speeds 
+        # # up our convergence speed and quality of generations!
+        # # note! for gatedmaskedconv this causes solid blues in generation!
         # skip = self.skip_conv(h_out_residual)
-        # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
-        return v_out, h_out_residual, skip
+        # # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
+        # return v_out, h_out_residual, skip
+
 
 # I decrease the number of channels for a few layers here so it roughly has the same
 # parameter count as the previous ones so they are comparable
@@ -11909,7 +11948,7 @@ class PixelCNN2Gated(nn.Module):
         # last layers after concatenating skip connections
         # grab the outchannels dynamically from the skipcon
         # itself so we dont hardcode anything here!
-        skip_chs = self.res_blocks[0].skip_conv[0].out_channels
+        skip_chs = self.res_blocks[0].pyramid_conv[0].out_channels
         self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
                                           nn.BatchNorm2d(512),
                                           nn.ReLU(),
