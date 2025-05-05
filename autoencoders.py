@@ -8201,7 +8201,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
 # ckpt_name = './weights/vqvae/vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
 
 # with model_config and extra information -samplesize are not accurate when limitedsamples=False
-# with embds=256
+# with embds=256 (sidenote: used for training gatedpixelcnn)
 ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
 # ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
@@ -8251,7 +8251,7 @@ ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt
 # fp32 with ema enabled - trains smoothly with default configs ----***(used for pixelcnn2)
 # convergence is way faster with ema, and I mean by a lot! ~100x faster!!
 # the perplexity is also very high around 33 (while without ema it was around 14/15!)
-# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
 # ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
 
@@ -12016,7 +12016,7 @@ print(f'pc2gated output: {tuple(out.shape)} paramcount: {param_cnt:,}')
 # show_receptive_field(indexes, out)
 #%%
 conditional = True
-use_fp16 = False
+use_fp16 = True
 
 batch_size = 64
 sample_size = 80    # for generation
@@ -12065,15 +12065,19 @@ prior, ckptname = train_prior(prior=prior,
                               checkpoint_dir_path='./weights/prior/emb256/pixelcnn2gated',
                               recons_dir_path='./results/pixelcnn2gated/',
                               )
+
 # initially I had a lot of issues ofr training so in order to figure out what was wrong
 # I trained MNIST, and in doing so foundout the signals were messed up and basically 
 # the absolute majority of the the images didnt get a proper signal (see visualization of failed trainings
 # when we added vout and hout together!) after I excluded the hout in the blocks, it started
 # training properly. its still not good compared to previous versions, but at least it works now
 # 
+
 #%%
-# MNIST FP32/Prior- FP32 VQVAE
+# MNIST FP32/Prior- FP32 VQVAE (vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt)
 # Epoch: 119/120  | Loss: 0.660181 | Val-Loss: 1.320644 | BPD: 0.952440 |  BPD_VAL: 1.905287 | LR:0.000000
+# the generation looks ok, the debugging section also shows proper reconstructions and latents close to
+# original sample.
 ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_135854/vqvae_prior_MNIST_embd256_Conditional_20250504_135854.ckpt'
 
 
@@ -12082,6 +12086,19 @@ ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Cond
 # the loss is worse, so having the relu/bn on vproj helps positively! the generation is also worse than previous experiment
 # Epoch: 119/120  | Loss: 0.685328 | Val-Loss: 1.228615 | BPD: 0.988719 |  BPD_VAL: 1.772517 | LR:0.000000
 # ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_151925/vqvae_prior_MNIST_embd256_Conditional_20250504_151925.ckpt'
+
+
+# the cifar10 doesnt look good, it doesnt give us anything meaningful, images are deformed
+# to the point some classes dont even look anything but blobs of colors! this doesnt look
+# good at all suitable for cifar10. I like the previous methods better unless we start
+# debugging it and see whats going haywire! which I dont like we spent too much time on this
+# already and its not our focus!
+# at epoch 80 we can see some classes have faint objects, like ships, dogs, trucks!
+# our loss keeps decreasing, but its very slow! cinoared to previous architectures
+# so given more epochs we should getbetter result
+# Epoch: 119/120  | Loss: 2.700160 | Val-Loss: 3.029902 | BPD: 3.895507 |  BPD_VAL: 4.371224 | LR:0.000000
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557.ckpt'
+
 
 
 print(f'{dataset=}')
