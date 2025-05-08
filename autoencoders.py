@@ -3,7 +3,7 @@
 #!edit add original papers for reference
 # in this part, we are going to learn about autoencoders and 
 # how we can implement them in Pytorch. 
-# Autoencoders are a kind of networks that map their input
+# Autoencoders are a type of network that map their input
 # to a new representation. this is usually refered to as 
 # compressing the input into a latent space representation,
 # this means, they accept the data, and then downsample it
@@ -12,20 +12,25 @@
 # reach to the original size, and then try to reconstruct the
 # input(so our input image acts as a label as well!). 
 
-# sidenote2: # !EDIT this - rewrite it 
+# sidenote2: 
 # in other words, the encoder actually 'encodes' the input data with large dimensions, 
-# into a latent (hidden) representation space (usually called z),
+# into a latent (i.e. hidden) representation space (usually called z),
 # with much smaller dimensions than the original dimensions of the data
 # This type of design is typically referred to as a 'bottleneck',
-# as the encoder needs to learn an efficient and unique representation,
-# to compress data from the original higher-dimensional space into this lower-dimensional space.
+# as the encoder needs to learn an efficient yet rich representation,
+# to compress data from the original higher dimensional space into this lower dimensional space.
+# note that its not mandatory to downsample all the way to a vector(i.e lose spatial dimentionality),
+# althogh this has been the case for many classical works and networks, the bottleneck
+# design dictates to go to a lower dimension and then back up, like an hour-glass
+# design. we'll cover this in more detail and see what implications it has as we
+# familarize ourseleves with more complex architectures
 
 # !EDIT this - rewrite it 
-# sidenote: 
-# its like a typical network we have already seen, a typical CNN,
+# sidenote2: 
+# its like a typical network we have already seen, a typical cnn,
 # it takes in an image (e.g. a 3d tensor of size(28,28,1)), 
 # and converts it to a much more compact and denser representation at the end
-# (eg. 1d tensor of size 100). This dense representation is then
+# (e.g. 1d tensor of size 100). This dense representation is then
 # used by a classifier (can be a single fc layer, or multiple layers/ablock/etc)
 # to classify the image.
 # now the encoder does pretty much the same thing, 
@@ -35,8 +40,7 @@
 # the difference is that, instead of a classifer at the end, 
 # theres another network that does something else (in our case reconstructiong the input data
 # from that dense representation) so as you can see this is not something weird!
-# 
-# 
+#  
 # 
 # during this process of reconstructing the input data
 # from the compressed representation, the new representation is
@@ -158,7 +162,7 @@ import matplotlib.pyplot as plt
 # We mentioned couple of examples/usecases for autoencoders, but why do we have to
 # shrink the size in the encoder part ? why do we gradually reduce the input size until
 # we reach a feature vector of some size? 
-# shrinking the size gradually, acts as a imposing a constraint on the input
+# shrinking the size gradually, acts as imposing a constraint on the input
 # by doing so, we are forcing the network to choose the important features in 
 # our input data, the features that has the essence of our input data and can later
 # be used to reconstruct the input. This is why the new resuling representation works 
@@ -231,9 +235,9 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     
     max_plots = rows*cols
     # make sure we don't face an error for trying to
-    # creating more subplots than available
+    # create more subplots than available
     if imgs.shape[0]<max_plots:
-        num_plots = imgs.shape[0] 
+        num_plots = imgs.shape[0]
     else:
         num_plots = max_plots
         print(f'Warning, number of images({imgs.shape[0]}) exceed figures plots({max_plots}). '
@@ -299,7 +303,7 @@ view_images(imgs=randns,
 
 # good! we are ready for the actual implementation
 #%% 
-# The first autoencoder weare going to implement is the simplest one, 
+# The first autoencoder we are going to implement is the simplest one, 
 # a linear autoencoder.
 # creating an autoencoder is just like any other module we have seen so far, simply
 # inherit from nn.Module and define the needed layers and call them in the forward()
@@ -308,7 +312,7 @@ class LinearAutoEncoder(nn.Module):
     def __init__(self, embedingsisze=32):
         super().__init__()
         # lets define our autoencoder we have two parts, an encoder 
-        # and a decoder. 
+        # and a decoder.
         # the encoder shrinks the input gradually until it becomes
         # a certain size, and the decoder accepts that as input and
         # gradually upsamples it to reach the actual input size. 
@@ -367,6 +371,7 @@ def train(model, dataloader, optimizer, scheduler, epochs, device):
 def test(model,device,rows,cols):
     imgs, labels = next(iter(dataloader_test))
     imgs = imgs.to(device)
+    model.eval()
     outputs = model(imgs)
     view_images(outputs, labels,rows=rows,cols=cols)
 #%%
@@ -529,9 +534,10 @@ plot_embedding_clusters(model_mlp_ae, dataloader_train, use_pca=False)
 # if we used embedding_dim=2 in our previous examples, we would get a drastically different image
 # try that and see the difference. 
 # TODO: note explain why tsne is a better choice here when our feature dim >2D
+# sidenote:
 # note that we use PCA, when we are dealing with linear relationships
 # which is not the case here (we are not doing a simple linear transformation here)
-# it would also tend to produce more overlapping clusters,(apposed to distinct/wellseparated ones)
+# pca also tends to produce more overlapping clusters,(opposed to distinct/wellseparated ones)
 # when the data has complex, non-linear relationships (which is our case try use_pca=True))
 # because of this, tsne is the right choice here as its specifically designed 
 # for highdimensioal data. (it preserves local structures in high-dimensional data 
@@ -549,6 +555,18 @@ plot_embedding_clusters(model_mlp_ae, dataloader_train, use_pca=False)
 # tsne hyperparameters like perplexity and learning rate, control 
 # the balance between preserving local and global structures.
 # so tuning them can improve the visualization.
+
+# ? or this
+# Note that PCA is typically used for data with linear relationships, 
+# which is not the case here, we are not just doing a simple linear transformation. 
+# PCA also tends to produce more overlapping clusters, especially when the data has complex,
+# non-linear relationships (as in our case, try use_pca=True).
+# Thats why t-SNE is the better choice here. Its specifically designed for high-dimensional data,
+# preserving local structures—meaning it keeps nearby points in high-dimensional space close 
+# together in the lower-dimensional (2D) projection. It’s widely used for visualizing clusters 
+# in such data, and compared to PCA, it generally produces more distinct and well-separated clusters.
+# Also, PCA focuses more on preserving global structure (i.e. overall variance), which makes it less
+# effective at capturing local relationships—and that can make clusters look less distinct in 2D.
 
 #%%
 # While our mlp model is more powerful than the previous model, it is not suitable for data such as images
@@ -627,12 +645,12 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 optimizer = optim.Adam(model_c.parameters(), lr =0.001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 model_c = model_c.to(device)
-train(model_c, dataloader_train, optimizer, scheduler, 20, device)    
+train(model_c, dataloader_train, optimizer, scheduler, 20, device)
 test(model_c, device,rows=13,cols=10)
 # As an excersize try to replace all ConvTranspose2d Layers with Conv2d+Upsample
 # and see how the outputs turn out !
 #%% 
-# Now lets create more powerful Convolutional AutoEncoders. the vanial convolutional autoencoder
+# Now lets create more powerful Convolutional AutoEncoders. the vanila convolutional autoencoder
 # is not that powerful. therefore we can use several variants such as:
 # denoising autoencoder, Sparse autoencoder, variational autoencoder
 
@@ -679,8 +697,9 @@ imgs,labels = next(iter(dataloader_test))
 # contain only valid values (values betwen 0-1). thats why we clamp the data afterward.
 
 # sidenote:
-# we said both of these methods(uniform and normal distributions) allow us to add noise, but they produce different types of noise,
-# and you may ask, why would we want to choose one over the other? or whats the difference between them? 
+# we said both of these methods(uniform and normal distributions) allow us to add noise, 
+# but they produce different types of noise, and you may ask, why would we want to choose
+# one over the other? or whats the difference between them? 
 # choosing between these two distributions, has different implications. 
 # like for example, uniform noise is evenly spread across a range, while  
 # Gaussian noise tends to cluster around the mean with some outliers.
@@ -705,7 +724,7 @@ imgs,labels = next(iter(dataloader_test))
 # in electronic systems or subtle variations in lighting. Gaussian noise is thus 
 # more natural and resembles real-world noise.
 # 
-# and finally to answer the question of which one to use: use whatever suites the job!
+# and finally to answer the question of which one to use,we use whatever suites the job!
 # we usually use gaussian noise by default unless theres a reason to use uniform or other
 # types of noise.
 # Gaussian noise was and still is the most widely used type of noise in denoising autoencoders.
@@ -716,28 +735,36 @@ imgs,labels = next(iter(dataloader_test))
 # 
 # sidenote3:
 # it should be obvious that if we use real world noise instead of gaussian noise, we may
-# see a good improvement. but catching real world noise is not always an easy task, and
+# see a good improvement. but catching real world noise is not always an easy, and
 # gausian noise does a pretty good job, so thats why we dont see a lot of papers doing it
 # however, there are several cases that do such as : 
 # DnCNN: Beyond a Gaussian Denoiser: Residual Learning of Deep CNN for Image Denoising 2017
 # CBDNet: Toward Convolutional Blind Denoising of Real Photographs 2019
 # RIDNet: Real Image Denoising with Feature Attention 2019
 # etc 
-# there are more papers that tried to use realworld noise. but how do you capture real world noise?
-# to capture real world noise, we take photos or videos in noisy conditions 
+# there are more papers that tried to use realworld noise. but in case we wanted to do that 
+# how would we go about it and capture real world noise?
+# for images, to capture real world noise, we take photos or videos in noisy conditions 
 # (low-light conditions or with high ISO settings where noise is more pronounced).
-# we capture several images of a static scene (e.g., a blank wall or a dark room) 
+# we capture several images of a "static" scene (e.g. a blank wall or a dark room) 
 # using the same camera settings. we then take the mean image to estimate the clean signal.
 # and subtract it from each individual image and save result which is the noise for each sample.
-# the steps nearly the same for audio or prety much anything else. 
+# (I'd like to emphasise on the static part! as otherwise it will contain other information
+# about the scene which will obviously interfere and fail this method! (remember we want to 
+# capture noise! so the image must be as simple as possible).
+# the steps are nearly the same for audio or prety much anything else. 
 # for example for audio: 
 # we record audio in environments where the noise is present (e.g., a busy street, a crowded room).
 # record as many samples as we need in the said environment,
 # use a filtering or signal processing (spectral analysis) to isolate the noise component and 
-# save the noise samples.
-# and then during training, use these noise samples and add them to clean data. 
+# save the noise samples or even better, record the environment sound alone, when the main sound
+# source is not present, (like record the street without anyone speaking into the microphone,
+# or record a crowded room or ecord the hum of an air conditioner or a computer fan directly, 
+# stuff like that!) and then during training, use these noise samples and add them to clean data. 
 # note that clean data may not be that clean, (unless you make sure it is, either synthetically generated
 # or generated in a noise free environment whatever the case is)
+# and thats how we go about it. as you can see its a lengthy and pretty involved task, hence why
+# nearly everyone opts to use normal noise instead!
 
 #%%
 imgs = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
@@ -748,17 +775,17 @@ view_images(imgs,labels)
 # where our goal is to remove subtle noise, we can use more intense noise as well, but 
 # but the likelihood of removing fine details in the images during the denoising process 
 # increases drastically.
-# The noise threshold determines the level at which noise is separated from the true signal.
-# so smaller thresholds are used when the noise level is low. this ensures that the denoising 
+# The noise threshold determines the level at which noise is separated from the true signal
+# so smaller thresholds are used when the noise level is low, this ensures the denoising 
 # process doesnt mistakenly remove fine image details or important structures, 
 # which could otherwise be interpreted as noise and removed consequently.
 # For autoencoders, introducing smaller noise levels during training 
-# (e.g., Gaussian noise scaled with small thresholds like 0.1) can improve the denoising
+# (e.g. Gaussian noise scaled with small thresholds like 0.1) can improve the denoising
 # performance on low-noise images.
-# we use larger noise thresholds (e.g., 0.5) for other usecases such as data-augmentation, 
+# we use larger noise thresholds (e.g. 0.5) for other usecases such as data-augmentation, 
 # but not excessivly large (e.g. .7, 0.9, 1.0).
-# larger values (e.g., 1.0+) are usually used for specific usecase like for example to test the robustness
-# of our models against heavily corrupted samples.
+# larger values (e.g. 1.0+) are usually used for specific usecase like for example to test
+# the robustness of our models against heavily corrupted samples.
 # 
 # sidenote2: 
 # What we described here is known as noise scaling and its usually done 
@@ -767,8 +794,8 @@ view_images(imgs,labels)
 # 
 # When we scale the noise by a factor like 0.5, we are controlling the magnitude
 # of the noise values, not the percentage of the image that is affected. 
-# To make this a bit more clear lets step back a bit, and see how we create random values
-# and what implications follow. 
+# To make this a bit more clear lets take a step back, and see how we create random values
+# and what implications follow/it entails. 
 # 
 # To create a random value, we usually either use a uniform distribution or a normal distribution
 # (we briefly talked about them in basic pytorch introduction chapter, 
@@ -788,25 +815,23 @@ view_images(imgs,labels)
 # 
 # when we add this scaled noise to the original image, this means every pixel in the image
 # is affected by the noise, but the strength of the noise depends on the scaling factor.
-
 # The scaling factor (noise_intensity_threshold) determines how much the noise affects
 # the image, i.e.if we use a smaller value (e.g., 0.1), the noise will be subtle and less noticeable
 # and the image remains mostly intact, with only slight variations introduced by the noise.
 # (i.e. noise_intensity_threshold = 0.1 adds very faint noise)
 # whereas if we use a larger value (e.g., 0.5 or 1.0) the noise will be much stronger and
 # more noticeable, and the image becomes significantly affected/distorted, with more pronounced 
-# variations.(i.e. noise_intensity_threshold = 0.5 adds moderate noise,
-# while noise_intensity_threshold = 1.0 adds a strong noise)
-
+# variations(i.e. noise_intensity_threshold = 0.5 adds moderate noise, while noise_intensity_threshold = 1.0 
+# adds a strong noise)
 # so the scaling of the noise does not affect the percentage of the image that is noisy.
-# rather,Every pixel in the image is affected by the noise and the scaling factor 
+# rather,every pixel in the image is affected by the noise and the scaling factor 
 # only determines how much each pixel is altered, not how many pixels are altered.
 # For example: If noise_intensity_threshold = 0.5, every pixel in the image will have 
 # noise added, but the noise values will range between 0 and 0.5.
 # If noise_threshold = 1.0, every pixel will still have noise added, but the noise values 
 # will range between 0 and 1.0.
 # we can visualize this effect easily as well
-# grab an image and apply different levels of noise threshold/intensity
+# lets grab an image and apply different levels of noise threshold/intensity
 imgs = next(iter(dataloader_train))[0][0].unsqueeze(0)
 noise_thresholds = [0.1, 0.2, 0.5, 0.7, 1.0, 2.0]
 fig, axes = plt.subplots(1, len(noise_thresholds), figsize=(16,4))
