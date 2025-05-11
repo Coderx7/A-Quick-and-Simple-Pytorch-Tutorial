@@ -957,19 +957,78 @@ view_images(new_noise_free_imgs,labels)
 plot_embedding_clusters(model, dataloader_train, use_pca=False)
 #%%
 # sparse autoencoder: these kinds of autoencoders simply use a regularizer term so that
-# the features are more sparse! usually l1 loss is used! 
-#  In the previous examples, the representations were only constrained by the size of the
+# the features are more sparse! usually l1 loss is used!(more on this later)
+# In the previous examples, the representations were only constrained by the size of the
 # hidden layers. In such a situation, what typically happens is that the hidden layer is
-# learning an approximation of PCA (principal component analysis).
+# learning an approximation of PCA (principal component analysis).(see note below)
 # But another way to constrain the representations to be compact is to add a sparsity 
 # contraint on the activity of the hidden representations, so fewer units would "fire" 
 # at a given time.
-# in order to have sparsity, we need to have overcomplete representations. so lets 
-# we implement a sparse autoencoder in this section and see how it performs. 
+# 
+# update:
+# previously I had said/writen, in order to have sparsity, we needed to have overcomplete
+# representations, this was wrong, we dont "need" to have an overcomplete representation 
+# (i.e. our hidden layer has more neurons than input) for sparsity to be a thing, rather
+# it becomes most useful and interesting when its applied to overcomplete representations.
+# because it allows the network to learn a rich set/basis/collection/dictionary of features but only activate a small 
+# subset for any particular input. we can apply a sparsity constraint to an undercomplete 
+# autoencoder(i.e. fewer neurons in our hidden layer than input (basically a bottleneck layer!))
+# but the primary compression is already happening due to the bottleneck.() 
+# The main benefit of sparse autoencoders shines when they are overcomplete, as they can
+# learn more features than the input dimension without simply learning an identity function
+# (which a non-regularized overcomplete autoencoder might do).
+# (that is if we just have an overcomplete autoencoder without any regularization (like sparsity),
+# it can easily cheat by learning the identity function. for example imagine our input is 100 
+# dimensions and our hidden layer is 500, then it could simply copy the 100 input values to 
+# the first 100 neurons and set the other 400 neurons to zero, and then the decoder would just
+# copy those first 100 neurons back to the output! the reconstruction loss would be perfect,
+# but the hidden layer wouldn't have learned anything meaningful about the data. it just learned
+# to be a cheat its way out by copying the input! this is why sparsity shines here, as now
+# the network has the capacity to learn a large set/dictionary of diverse set of features. 
+# like for example some neurons might learn to detect horizontal edges, others vertical edges, 
+# specific curves, textures, small circles, etc, basically a much richer set/dictionary than we could 
+# learn with only few neurons in an undercomplete case, again imagine we apply sparsity
+# constraint (L1 penalty e.g.) on these 500 neurons in our hidden layer. this will force
+# most of these 500 neurons to be zero (actually very close to zero) for any given input
+# now to reconstruct a specific input image (for example a picture of a cat), our autoencoder
+# can't simply copy it instead it now needs to find a small combination of its 500 learned features 
+# that best represents the cat. for cat, the model may activate neurons corresponding to fur texture,
+# pointed ear shape, whisker, and the likes, while neurons for other features that represent other
+# objects like "car tire" or fin, mirror, etc  remain silent)
+# So its more accurate to say sparsity is particularly effective and usually designed with overcomplete
+# representations.
+# 
+# so lets implement a sparse autoencoder in this section and see how it performs. 
 # as I said earlier, aside from the normal reconstruction loss, we need a new regularizer
-# lets create this regularizer now. 
-# We are going to create a Function object that applies
-# l1penalty we inherit from autograd.Function class for this.
+# lets create this regularizer now. we'll be expanding on this a bit more later on, but for
+# now lets keep it simple, this should suffice it!
+# 
+# sidenote 1:
+# this is only the case if the autoencoder has a single hidden layer and uses linear
+# activation functions and is trained with mse loss,otherwise as we already pointed out,
+# nonlinear ones learn much more complex representations)
+# 
+# sidenote2:
+# initially I used set of features when I was writing this, but later on,
+# I found out dictionary is a much better choice, because it has some conotation/implications
+# like for example dictionary of features (or dictionary learning) is a term we
+# often see being used (especially so) when talking about sparse representations.
+# The analogy for that is that we have a large dictionary of "words" (the features/
+# basis vectors/atoms) and we want to represent a "sentence" (the input signal) using
+# only a few words from that dictionary. 
+# also dictionaries are usually larger than needed to span the space so it also implies
+# overcompleteness. also te "words" in the dictionary are like basis elements that can 
+# be combined. 
+# todo remove/edit this
+# the goal is to find a sparse linear combination of dictionary elements to represent the 
+# input so while set of features is good, "dictionary of features" is a bit more specific
+# to this context of overcomplete, sparsely used basis elements. 
+# both convey the core idea, but "dictionary" aligns more closely with the established 
+# terminology in fields like sparse coding. for our explanation, "rich set of features" 
+# works great.
+#
+# we are going to create a Function object that applies l1-penalty .
+# we inherit from autograd.Function class for this.
 # good exlanation 
 # andrew ng standford classnotes 2011: https://web.stanford.edu/class/cs294a/sparseAutoencoder_2011new.pdf
 # a good video worth watching: https://www.youtube.com/watch?v=7mRfwaGGAPg
@@ -1254,10 +1313,9 @@ main(use_functional=False)
 # the same storage as self.shared_weight, the shared weight is implicitly updated as well.)
 # 
 # recap of recap!:d
-# so using .data to share weights allows value synchronization but in doing so bypasses 
-# the autograd system, which leads to:
-# gradients not being computed for self.shared_weight.
-# unlike functional form, we will have independent gradients for self.encoder.weight and
+# so using .data to share weights allows value synchronization but in doing so it bypasses 
+# the autograd system aswell which leads to our gradients not being computed for self.shared_weight
+# and unlike functional form, we will have independent gradients for self.encoder.weight and
 # self.decoder.weight.
 # 
 # this way, gradients for self.shared_weight are effectively distributed between
@@ -1278,9 +1336,9 @@ main(use_functional=False)
 # when it comes to implementation details.  
 # its either sparsity on parameters(weights) or sparsity on representations(activations)
 #  
-# each of these types serve different purposes and are achieved differently
+# each of these types serves different purposes and are achieved differently.
 # sparsity on parameters (parameter/weight sparsity) as the name suggests targets
-# the weights of the network and aims to set many of the wights to exactly zero. 
+# the weights of the network and aims to set many of the weights to exactly zero or very close to it.
 # this is done by using L1 regularization as an additional penalty term 
 # alongside the reconstruction loss (e.g. MSE loss) in our loss function.
 # L1 regurlarization term penalizes the absolute values of the weights and
@@ -1293,7 +1351,7 @@ main(use_functional=False)
 # and mechanisms differ.
 # we will see this in a moment when we talk about sparsity on representation(more explanation in a moment)  
 
-# this will result in a model with fewer effective connections which help 
+# this, in theory, will result in a model with fewer effective connections which help 
 # the model to generalize better by focusing only on the important
 # features instead of memorizing everything. it also helps save memory since 
 # fewer weights need to be stored, and will also reduce computation overhead
@@ -1302,12 +1360,17 @@ main(use_functional=False)
 # simpler now and naturally focuses on the most important connections, making it
 # easier to identify which features or patterns(relationships/connections) the 
 # model relies on. 
+# (note we said, in theory, as in practice, the majority of weights dont end up exactly zero!
+# their value will be near zero, meaning thier contribution still present is minimal. 
+# to actually achieve this behavior in this context, we need a more involved process, for example a separate
+# pruning stage is needed to get rid of the near-zero weights, and rebalance the network
+# to use remaining weights. so when we say that, look at the bigger picture and get the idea!)
 # 
 #!edit sidenote2: 
 # This is why, we can say, in many cases sparsity effectively performs implicit 
 # feature selection. (by eliminating irrelevant or redundant features. (e.g. weights connected to unimportant
 # input features may be pruned, which highlights the critical variables that influence 
-# the models predictions.)
+# the models predictions)
 
 # therefore parameter sparsity is very useful for things like model compression,
 # where we want our models to be light and efficient.
@@ -1345,7 +1408,6 @@ main(use_functional=False)
 # if its output value is close to 1, or as being "inactive" if its output value is
 # close to 0. We would like to constrain the neurons to be inactive most of the
 # time)
-# 
 # the sparse Autoencoder proposed by Andrew NG() 
 # is able to learn a sparse representation and it is well known that l1 regularization
 # encourages sparsity on parameters.
@@ -1353,59 +1415,45 @@ main(use_functional=False)
 #
 # ok to recap what we have just covered:
 # in sparsity on activations the goal is to make the neuron activations sparse, 
-# ensuring that only a small subset of neurons in a layer are active (i.e., non-zero)
+# that is only a small subset of neurons in a layer get to be active (i.e. non-zero)
 # for a given input.
 # This is achieved by adding a sparsity term like KL divergence to the
 # loss function, which encourages neurons to have low average activation
 # (which using sigmoid means fire only for a few samples in the batch (explained more in detail ahead!)).
 # 
-# Neurons with sparse activations often end up with weights that are specialized
+# we also learned neurons with sparse activations often end up with weights that are specialized
 # for certain inputs or patterns, but this doesn’t necessarily mean the weights 
 # themselves are sparse.for example, a single neuron may have dense weights 
 # (non-zero connections to many input features) but activate only for specific 
 # patterns in the input.
 #
-# in sparsity on parameters however, the goal is to directly make the weights sparse,
+# In sparsity on parameters however, the goal is to directly make the "weights" sparse,
 # setting many of them to exactly zero(or very close to zero making them practically inactive(i.e. zero!)), 
-# regardless of the activations.
+# regardless of the activations.(more accurately pushing many of them towards zero, as many in practice do not endup zero, but very close to it!)
 # This is achieved by explicitly penalizing the absolute values of weights (using L1 regularization).
 # furthermore, sparse weights can indirectly lead to sparse activations because if many 
 # connections are pruned (set to zero), the input to some neurons will also 
-# reduce. However, this is not guaranteed nor is it the primary goal of sparsity on parameters.
+# be reduced. However, this is not guaranteed nor is it the primary goal of sparsity on parameters.
 # their primary goal is to lead to fewer effective connections in the model.
-#
-# moreover, sparsity on activations targets the outputs (neurons' responses), 
-# while sparsity on parameters targets the weights (connections).
-# Sparsity on activations may result in some weights becoming redundant 
-# (effectively sparse), but it doesn't explicitly enforce this while 
+# 
+# recap2:merge or remove the repeteated explanation here
+# we mentioned that sparsity on activations may result in some weights becoming redundant 
+# (effectively sparse) but it doesn't explicitly enforce weight sparsity while 
 # sparsity on parameters directly enforces zero weights but may or may not result in
 # sparse activations.
-#
-# sparsity on activations helps in learning compact, meaningful representations, 
-# especially useful in dimensionality reduction and feature extraction tasks.
-# sparsity on parameters on the other hand reduces model size, computational cost, 
-# and memory usage, making it suitable for resource-constrained environments like 
-# mobile or edge devices.
+# we also noted that sparsity on activations can help in learning compact and meaningful 
+# representations which is especially useful in dimensionality reduction and feature-
+# extraction while sparsity on parameters on the other hand can reduce model size, 
+# computational cost and memory usage making it suitable for resource-constrained 
+# environments like mobile or edge devices.
 # though today we have other means to make models suitable for such environments, 
 # post trainig quantizations and pruning are two examples we will also cover in a 
 # later chapter inshaallah)
-#
-# can sparsity on activations imply sparsity on parameters?
-# sometimes yes it does. in cases where the sparsity on activations heavily 
-# constrains the neurons, weights connected to consistently inactive neurons 
-# may become unnecessary and could be pruned or driven to zero. 
-# This can lead to sparsity in parameters as a secondary effect.
-# its worth reiterating that this is not always the case and sparse activations 
-# may still use dense weights, especially when those weights are necessary to 
-# achieve selective neuron activation.
-# therefore while sparsity on activations and sparsity on parameters can influence 
-# each other, they are quite different and are used to achieve different goals.
 
 # TODO summarize our explanation - its too long!!! 
-
 # now that we know a bit about how this works, lets implement these cases here 
 # we will be implementing both the sparsity on parameter and activations. 
-# using l1 regurlarization,  gradient sparsity and we also implement kl divergence
+# using l1 regurlarization, gradient sparsity and we also implement kl divergence
 # version as well which should give us the best result
 
 #TODO this is ugly as hell, use proper keywords, and better merge this with the actual
@@ -1421,7 +1469,7 @@ def sparse_loss_function(model, outputs_enc, reconstructed_imgs, imgs, penalty_t
     3: sparsity using kl divergence
     """
     
-    # in all losses we have the basic reconstruction loss, for sparsity
+    # in all losses here we have the basic reconstruction loss, for sparsity
     # we add an additional term.
     criterion = nn.MSELoss()
     reconstruction_loss = criterion(reconstructed_imgs, imgs)
@@ -1610,7 +1658,7 @@ def calculate_sparsity(model, tolerance=1e-5):
     total_weights_cnt = sum(p.numel() for p in model.parameters() if p.requires_grad)
     # treat values within our tolerence as zero
     # (i.e. values too close to zero are treated as zero)
-    # we do this because of floating point number funkiness! (we dont get exact matches)
+    # we do this because of floating point number imprecisness! (we dont get exact matches)
     zero_weights_cnt = sum(torch.sum(torch.abs(param) < tolerance).item() for param in model.parameters())
     sparsity_percentage = (zero_weights_cnt / total_weights_cnt) * 100
     return sparsity_percentage
@@ -1634,6 +1682,7 @@ def plot_weight_distribution(model):
                        for p in model.parameters() 
                        if p.requires_grad)    
     all_weights = np.concatenate(all_weights)
+    # the range affects our plot so we choose a number that better shows the behavior
     plt.hist(all_weights, bins=100, range=(-0.4, 0.4))
     plt.title("Weight Distribution")
     plt.xlabel("Weight Value")
@@ -1815,7 +1864,7 @@ print(f'{w_decoders_transposed.shape=}')
 w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[1].out_features, 1, 28, 28)
 # note that the decoder weights (in terms of original data) will be smoothed encoders weights
 # (also in terms of original data)
-# info from : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
+# good intro : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
 # end of the page, in the ppt slide image
 
 print(f'{init_weights_encoder.shape=}')
