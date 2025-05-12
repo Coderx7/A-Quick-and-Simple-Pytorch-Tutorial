@@ -19,8 +19,15 @@
 # This type of design is typically referred to as a 'bottleneck',
 # as the encoder needs to learn an efficient yet rich representation,
 # to compress data from the original higher dimensional space into this lower dimensional space.
+# this bottleneck structure creates what we call an undercomplete representation
+# (because the hidden layer has much fewer dimensions than input) which in turn makes 
+# it use/capture the essense/main bases of the input in order to be able to
+# reconstruct it. without capturing this essential information, our decoder wont
+# be able to accurately reconstruct the original data from the compressed
+# representation.
+# 
 # note that its not mandatory to downsample all the way to a vector(i.e lose spatial dimentionality),
-# althogh this has been the case for many classical works and networks, the bottleneck
+# although this has been the case for many classical works and networks, the bottleneck
 # design dictates to go to a lower dimension and then back up, like an hour-glass
 # design. we'll cover this in more detail and see what implications it has as we
 # familarize ourseleves with more complex architectures
@@ -74,7 +81,55 @@
 # lets start
 
 # before we start lets get familiar with couple of concepts 
-
+#
+# sidenote: 
+# add a small reminder/refresher about undercomplte/overcomplete
+# heres a quick refresher about overcomplte/undercomplete terms we will be
+# facing ahead, 
+# if you recall, in linear algebra a basis for an ndimensional vector space
+# is a set of n linearly independent vectors. this is a "complete" set to 
+# span that space. that is we can represent any vector in that space as a unique 
+# linear combination of these basis vectors.
+#
+# so when we use "undercomplete", we simply mean we have fewer elements/parameters/features
+# or basically degrees of freedom available than what would be needed to fully 
+# capture the original complexity of the thing we are trying to represent or model.
+# simply put it means we are working with a restricted or reduced set of descriptors.
+# which has some implications such as we are dealing with loss of information obviously
+# and compression (which is usually what we are after) which in turn implies focusing on essential
+# building blocks/factors in input (otherwise the compression wouldnt be successful cuz we 
+# dont need redundant/noisy/useless features obviously) and more importantly, if
+# we are representing something from a larger space an undercomplete set of basis 
+# vectors will only span a subspace of that original space! that is if we for example
+# have an ndimensional space but only M basis vectors where M<N, these M vectors can
+# only span an M-dimensional subspace. we cant represent every point in the original
+# N-dimensional space. its like writting a 100 words summary of a 1000 page novel!
+# our summary is an undercomplete representation of the novel, we may be able to
+# get the novel main points across but not the whole thing in detail obviously!
+# (unless its a crappy novel with lots of useless/noisy fillers you get the idea)
+# 
+# now the overcompleteness should be self exlanatory, unlike the undercomplete, it 
+# means we have more elements/parameters/features or basically degrees of freedom 
+# available than the minimum required to represent the thing we are trying to model or represent.
+# this means there's redundancy in our descriptive system! which has some important 
+# implications, like we have redundancy in our representation! that is the same thing can 
+# be represented in multiple ways, our representation is not unique. this by itself
+# means we have more freedom/more flexibility in doing things! which if we rephrase it
+# in neural networks jargon, means our model now has more ways to capture 
+# little details in input and basically provide robustness! also since there are many
+# ways to represent something, we can find a representation where only a few of
+# the overcomplete elements are actively used (we come back to this in sparse autoencoders section a head).
+# that is for example if we have an N-dimensional space and we use M vectors where M>N
+# to try and form a basis, this set of vectors must be linearly dependent. it's an 
+# "overcomplete" set for spanning that N-dimensional space. we have more vectors than 
+# we strictly need. like for example in Farsi (any languages really) we have many synonyms 
+# and ways to express the same idea. this vocabulary can be seen as "overcomplete" for
+# conveying basic concepts, allowing for different nuance/style/emphasis.
+# and finally this might be more computationally intensive to work with.  this should 
+# suffice us, we dont dig deeper because up ahead we'll be covering more complex architectures
+# and I'll be explaining more when we get there.
+# 
+#
 # note :
 # https://www.statisticshowto.datasciencecentral.com/posterior-distribution-probability/
 # Posterior probability is the probability an event will happen after all evidence or 
@@ -970,7 +1025,7 @@ plot_embedding_clusters(model, dataloader_train, use_pca=False)
 # representations, this was wrong, we dont "need" to have an overcomplete representation 
 # (i.e. our hidden layer has more neurons than input) for sparsity to be a thing, rather
 # it becomes most useful and interesting when its applied to overcomplete representations.
-# because it allows the network to learn a rich set/basis/collection/dictionary of features but only activate a small 
+# because it allows the network to learn a rich set/dictionary of features but only activate a small 
 # subset for any particular input. we can apply a sparsity constraint to an undercomplete 
 # autoencoder(i.e. fewer neurons in our hidden layer than input (basically a bottleneck layer!))
 # but the primary compression is already happening due to the bottleneck.() 
@@ -1008,24 +1063,19 @@ plot_embedding_clusters(model, dataloader_train, use_pca=False)
 # activation functions and is trained with mse loss,otherwise as we already pointed out,
 # nonlinear ones learn much more complex representations)
 # 
-# sidenote2:
+# sidenote2(only a simple anecdote maybe):
 # initially I used set of features when I was writing this, but later on,
-# I found out dictionary is a much better choice, because it has some conotation/implications
+# I found out dictionary is a much better choice, because it has a very good connotation/implications
 # like for example dictionary of features (or dictionary learning) is a term we
-# often see being used (especially so) when talking about sparse representations.
-# The analogy for that is that we have a large dictionary of "words" (the features/
-# basis vectors/atoms) and we want to represent a "sentence" (the input signal) using
-# only a few words from that dictionary. 
-# also dictionaries are usually larger than needed to span the space so it also implies
-# overcompleteness. also te "words" in the dictionary are like basis elements that can 
-# be combined. 
-# todo remove/edit this
-# the goal is to find a sparse linear combination of dictionary elements to represent the 
-# input so while set of features is good, "dictionary of features" is a bit more specific
-# to this context of overcomplete, sparsely used basis elements. 
-# both convey the core idea, but "dictionary" aligns more closely with the established 
-# terminology in fields like sparse coding. for our explanation, "rich set of features" 
-# works great.
+# usually see pop up when talking about sparse representations(especially so).
+# and the analogy for that goes like this, we have a large dictionary of words (i.e. the features/
+# basis vectors) and we want to represent a sentence (i.e. the input signal) using
+# only a few words from that dictionary also dictionaries are usually larger than
+# needed to span the space so it also implies overcompleteness. moreover the words in 
+# the dictionary are like basis elements that can be combined and finally the goal 
+# is to find a sparse linear combination of dictionary elements to represent the 
+# input which dictionary (of features) makes a much better choice therefore!
+# 
 #
 # we are going to create a Function object that applies l1-penalty .
 # we inherit from autograd.Function class for this.
