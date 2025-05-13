@@ -2053,52 +2053,61 @@ for e in range(epochs):
 
 
 # intori shoro konim
-# I guess if we started the introduction with intuitions it would be better
-# When talking about VAEs, we come accross two view points.
-# (there are two common themes when you search for vae explantions)
+# I guess if we started the introduction with intuitions it would be better so lets do just that!
+# When reading about VAEs, we come accross two different view points.
+# (there are two common themes when you search for vae explantions in general)
 # one that involves the underlying differences between VAEs and other types of autoencoders, 
 # and the other, a somewhat higher level prespective which is more involved 
-# in terms of how it works from distribution point of view. 
+# in terms of how the architecture works from distribution point of view. 
 # I'll be explaining these two common view points, and hopefully at the end
-# we will have an in-depth and rigiours understanding of VAE fundamentals and their inner workings
-# this should give us a much better understanding that should come in handy later in 
-# our researches. 
-# 
+# we will have an in-depth and rigiours understanding of VAE fundamentals and 
+# their inner workings. this should give us a much better understanding that 
+# should come in handy later in our researches in the field at least I hope so!
+# I have rewritten parts of this article neumerous times, each time adding new information
+# that in my opinion made the whole picture more accurate and understandable
+# I however might have gone overboard by reiterating certain things over and over
+# yet I havent been able to properly edit this so I include every bit that matters
+# for the time being.
+#
 # TLDR-brief introduction:
 # The Variational Auto Encoders(VAE) are different with conventional autoencoders in that,
 # the encoder does not create a single latent vector representation, instead, it creates
 # two! 
 # one for mean and another for standard deviation. these are in fact parameters that are 
-# used to sample from a normal/gaussian distribution from which we get the latent vector from 
-# which the decoder accepts as input and tries to reconstructs the input from.
+# used to sample from a normal/gaussian distribution from which we get the actual latent
+# vector and the decoder accepts as input and tries to reconstructs the input from.
 # The encoder creates different mean/stds for each class by which we can generate
-# samples similar to said classes. more importantly, because of the way VAE is built, its
-# possible to go from one class to another in a gradual manner, which means we can actually
-# have new variations in input that does not exist in the dataset explicitly.
+# samples similar to said classes. more importantly, because of the way a VAE is built,
+# its possible to go from one class to another in a gradual manner, which means we can
+# actually have new variations in input that do not exist in the dataset explicitly [by themselevs].
 # with this overal and coarse introduction of the VAE out of the way, lets get to the finer
 # details!
 # 
-# In depth explanation: 
+# In depth explanation:
 # VAEs, clustering of latent representation/spaces? 
 # Where does a VAE concept comes from? 
-# from an application point of view, initially we wanted to create 
-# random images just like the ones in our datasets this was usually to create 
+# 
+# As we initially briefly pointed out, we can view VAEs from different standpoints, 
+# lets talk about just that and start by asking ourselevs where does a VAE concept comes from?
+# From an application point of view, initially we wanted to create 
+# random images just like the ones in our datasets, this was usually to create 
 # synthetic data for training purposes, or extracting somewhat meaningful features
 # or pretraining our model before doing the actual training 
-# (back in the day most of the time as training was very hard 
-# due to vanishing/exploding gradient issues at the time. its still used as 
-# well especially in llm domain! though not for the mentioned issues, but 
-# having a basic knowledge base for further manipulation)
-# a bit later we found that, creating random data(images mostly at first) isnt 
+# this was especially the case back in the day, most of the time, as training was
+# very hard due to vanishing/exploding gradient issues at the time. its still used as 
+# well especially in LLM domain! though not for the mentioned issues, but 
+# having a basic knowledge base for further manipulation.
+# A bit later we found that, creating random data(images mostly at first) isnt 
 # really that attractive, and we can actually do much more and much better, 
-# for one, what about experimenting with controling the generation process 
-# and attemping to create all sorts of things?!
+# for one, we could be experimenting with controling the generation process 
+# and attemping to create all sorts of things!
 # this becomes especially useful/important if we can change or alter the data we 
-# already have! for example, imagine adding beard to your image, retouch it, see how
-# you look with glasses on, etc all sorts of things, as you can imagine, this is a 
-# lot more useful, and has a lot of real-world applications.
+# already have! for example, imagine adding/removing different aspects to/from your
+# image, retouching it, editing it anyway you like. for example, see how
+# you look with glasses on, have a beard, certain clothing, a different season, place, etc. all kinds of possibilities,
+# as you can imagine, this is a lot more useful and has a lot of real-world applications.
 # VAEs and the likes (conditional VAEs, other types of generative models for that matter)
-# have come for this goal!(sort of!)
+# have come for this goal(sort of!)
 
 #!EDIT
 # what does make VAE especial you may ask? 
@@ -2114,28 +2123,30 @@ for e in range(epochs):
 # the same image we find in our dataset. 
 # to this end, we would like to be able to generate variations on an input image, variations
 # from the whole dataset, that does not explicitly show up in one image, 
-# it would be great if we could, combine different features from different classes, 
+# it would be great if we could combine different features from different classes, 
 # and still have a pretty realistic outcome. 
 # this means from a technical prespective, to be able to move smoothly in the latent space,
 # and be able to sample from any part of it. 
-# sampling like this means, we could generate completely novel images that dont exist explicitly
+# sampling like this means, we could generate completely new images that dont exist explicitly
 # in our dataset, depending on where we sample from in our latent space, between which latent clusters.
 #   
 # our latent space therefore needs to be continuous otherwise, if it has
 # gaps between clusters or in other words, discontinuities, and we try to generate a 
 # variation from there part, the decoder will simply generate an unrealistic output, 
 # because it does not know how to deal with that region of the latent space 
-# since during training, it never saw encoded vectors coming from that region of latent space.
+# since during training, it never saw encoded vectors coming from that region!
 # this is why having a 'continuous' latent space is crucial here. 
 # This is what that differntiates VAEs from conventional autoencoders (basically any generative 
-# model for that matter). this is the core idea behind a VAE.
+# model for that matter). this is the core idea behind a VAE, having a smooth continuous latent space
+# where we can freely sample from!
 #
 #! sidenote: edit this and add a plot to make it concrete
-# you can think of continuous in its raw form, imagine it and contrast it against the discrete!
+# to have a better mental image, you can think of continuous in its raw form, imagine it and contrast it against the discrete!
 # like, imagine if we have a 2d plot, and we plot different samples, lets say dogs, in point a 
 # and point b, a cat in point c, a car in point e, etc when we say we want a continuouse space,
 # it means, all the points between point a and point b, should be valid points, and result in
-# dogs as well(thats interpolating gives us valid samples all the way from a to b)! in descrete mode, its dog a, nothing, and then suddenly dog b, likewise, from 
+# dogs as well(thats interpolating gives us valid samples all the way from a to b)! 
+# in descrete mode, its dog a, nothing, and then suddenly dog b, likewise, from 
 # point b to c we should see inifint points from b up to c,which shows us dogs, all the way
 # to a cat (as we get close to c, dogs look more like cats, until ultimately its just our cat
 # we plotted in point c! sampling allows us to do this! does it now make sense?)
@@ -2154,10 +2165,10 @@ for e in range(epochs):
 # during training, the encoder doesnt just output a single latent vector, instead, 
 # it predicts two vectors, the mean(μ) and standard deviation(σ) of a Gaussian distribution
 # for each input(x_i).
-# The latent representation vector z_i, is then sampled from this distribution. 
+# The latent representation vector(z_i), is then sampled from this distribution. 
 # (in practice however we need to use a process called the reparameterization trick 
-# to get around a technical detail we will be getting into in a moment other than that
-# this is pretty much it!).
+# to get around a technical detail we will be getting into other than that this is 
+# pretty much it!)
 # This ensures that the latent space is smooth and continuous, as each point in the 
 # latent space corresponds to a valid potential data point.
 # 
@@ -2210,38 +2221,39 @@ for e in range(epochs):
 # this happens because, as we previously mentioned, the latent space is smooth and continuous and 
 # the decoder has also learned to generalize across the entire latent space, instead of just memorizing
 # specific points in said latent space. add these to the fact that each point in the 
-# latent space also corresponds to a valid potential data point, and you get the ability to roam that sapce
+# latent space also corresponds to a valid potential data point, and we get the ability to roam that sapce
 # and sample from it! all forms of variations can be achieved using this, gradually moving from one thing
-# in one subspace toward another thing(subspace), and yet have a somewhat sensible output is what this gives us!
+# in one subspace toward another thing(subspace), and yet have a somewhat sensible output. 
+# is what this gives us!
 # 
-# (sidenote: in practice however, this is extremely hard to achieve for anything mildly complex! we have much
-# better chocies than vae, but from theorectical point of view, this is what we expect given the
-# concept and whats involved. (the training can be notouuriously hard to get things working, lets not
-# ahead of ourselevs, and for now lets keep building intuition for now))
-# now back to the main point: 
+# (sidenote: in practice however, this is extremely hard to achieve for anything mildly complex! 
+# we have much better chocies than vae, but from theorectical point of view, this is what we 
+# expect given the concept and whats involved. (the training can be notouuriously hard to get
+# things working, lets not get ahead of ourselevs, and for now lets keep building intuition 
+# for now))now back to the main point: 
 
 
 # I find jeremy's phenamonal writeup on vaes to be especially great: 
 # ref https://www.jeremyjordan.me/variational-autoencoders/
 #
-# so a second summary: 
+# so to recap: 
 # our encoder recieves the input and produces two vectors
 # one for mean and another for std(in fact our encoder creates log variance which we
 # then convert to standard deviation to then use for sampling, so technically
 # speaking it creates mu and logvar in the network, but for doing its job it creates std!).
-# this is in contrast to how a traditional autoencoder works.
-# a traditional autoencoder creates a set of atttibutes 
-# in its final representation vector(e.g attributes or features describing
-# concepts such as, eye, smile, beard, gender, has glasses etc) in 
-# an input image of faces.
+# this is in contrast to how a traditional autoencoder works, a traditional autoencoder
+# creates a set of atttibutes in its final representation vector(e.g attributes or features
+# describing concepts such as, eye, smile, beard, gender, has glasses etc) in an input
+# image of faces for example.
 # the idea here is the autoencoder (hopefully) learns descriptive attributes 
 # of the input(in the case of faces this may be skin color, whether or not the person
 # is wearing glasses, is female, etc) to describe an observation(i.e. our input image)
 # in a compressed representation.
 # 
-# for example one such latent vector could be something like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
-# which is basically describing the input image in terms of its latent attributes,
-# each of which are described by a 'single value'.(note this, its important for our discussion)
+# for example one such latent vector could be something like (gender:-0.73, smile:0.99,
+# glasses: 0.002, etc) which is basically describing the input image in terms of its 
+# latent attributes, each of which are described by a 'single value'.(note this, its 
+# important for our discussion)
 #
 # (sidennote:(edit maybe its better if I add them as footnote?! or atleast some of these sidenotes are btter off as footnotes?!)
 # in reality, however, we can not rely on this intuition that a single feature directly
@@ -2249,31 +2261,32 @@ for e in range(epochs):
 # that specifies the existence of a certain feature in the input data, but for the sake of explanation
 # imagine this is the case so we can convey the idea behind it)
 # 
-# However, this may not reflect the variety/dynamic range of our input properly(this may be very limiting), 
-# because the compression by nature limits the amount of attributes we can encode.
+# However, this may not reflect the variety/dynamic range of our input properly(this may
+# be very limiting), because the compression by nature limits the amount of attributes 
+# we can encode.
 # to get a broader range, we would need to have a larger number of attributes, and that
 # would mean less compression, and in turn less desired(varied) output, soon we will 
-# be standing before a decision, to what extend can we compress and what features(diversity)
-# can we have? do we use smaller number of attibutes and be limted?
-# or use a larger number and face more training issues(issues, explain like what edit)?
+# be standing before a crossroad/decision, to what extend can we compress and what 
+# features(diversity) can we have? do we use smaller number of attibutes and be limted?
+# or use a larger number and face more training issues!
 # 
 # therefore we may prefer to represent each latent attribute as a 'range of possible values'
-# instead of simply a 'single one'.
+# instead of simply a 'single' one.
 # this would relax the previous limitation, as it can now encode a broader range of 
-# variation/retain dynamicity! all while the number of attributes per say would remain intact!/unchanged!
+# variation/retain dynamicity! all while the number of attributes per say would remain
+# intact!/unchanged!
 #
-# For instance, suppose we want to assign a value for the smile attribute for the image
+# Suppose for example, we want to assign a value for the smile attribute for the image
 # of mona lisa, what 'single value' should we assign to reflect her smile? its there, but
 # at the same time its very underdefined! as if shes not smiling at all!
 # if we were to use attributes that indicate the existance of a feature in input, her smile,
 # would expectedly get a small value, and be treated as non existant) if we assigne somewhat
 # higher value, then it would mess with the existing established rule/attributes that rightfully
-# detect images that have defined smiles and would lead the network to wrongly classify similar 
+# detect images that have defined smiles and would lead the network to incorrectly classify similar 
 # features as smile!
 # hence why having a range of values would be very benificial to us where we can describe
-# different types of an attribute (here smile e.g.). 
-# we can achieve this by using probabilistic terms in our work.
-# 
+# different types of an attribute (here smile e.g.). we can achieve this by using probabilistic
+# terms in our work.
 # the mean and variance that we produce in a vae encoder, is used exactly for this very 
 # reason. using them, we are learning 'a distrubution' for 'each attribute' and thus 
 # mu and variance specify a range of values for each attribute.
@@ -2286,7 +2299,7 @@ for e in range(epochs):
 # thats why later on, we use these means, variances(actually std) along with an epsilon(act as a random variable)
 # to reconstruct the input image.
 # 
-# this simply means by producing probablity distribution for each latent attribute, 
+# this means by producing probablity distribution for each latent attribute, 
 # "we're essentially/practically enforcing a continuous, smooth latent space representation."
 # This means the decoder should be able to accuractly reconstruct the input by sampling from
 # these latent distributions. This also implies that the values that are close
@@ -2299,7 +2312,7 @@ for e in range(epochs):
 # how much from/how far from the mean the encoding can vary.
 # sampling using mean and std is akin to randomly generating the encodings inside a circle (distribution)
 # which causes the decoder to learn that not only a single point in the latent space 
-# refers to a sample of a calss, but also all nearby points (all the points close to it) do as well!
+# refers to a sample of a calss, but also all nearby points do as well!
 # not only this allows the decodeer to decode single, specific encodings in the latent space 
 # but also the ones that slightly vary too(i.e. the ones close to it), as the decoder is 
 # exposed to a range of variations of the encoding of the same input during training 
@@ -2307,19 +2320,18 @@ for e in range(epochs):
 # different value using the same mu,std (it wont be the same number) although the input 
 # sample is the same.)
 # This exposes the model to a certain degree of local variations, resulting in a smooth latent 
-# space locally(i.e. on a local scale), (that is for similar samples) but at the same time leavs
-# the decodable latent space discontinuous so different classes can form their own subspaces, otherwise if 
-# they all are mushed up, it would become meaningless! and nearly impossible for the decoder to reconstruct
-# accurately (more on this later))
+# space locally (that is for similar samples) but at the same time leaves the decodable
+# latent space discontinuous so different classes can form their own subspaces, 
+# otherwise if they all are mushed up, it would become meaningless! and nearly impossible for 
+# the decoder to reconstruct accurately (more on this later))
 #
-# aside from that/moreover, we'd also want overlap between samples that are not very similar aswell, 
-# in order to interpolate between classes.
-# 
+# aside from that/moreover, we'd also want overlap between samples that are not very 
+# similar aswell in order to interpolate between classes.
 # However, since by default there is no limit/constraint enforcing mean(μ) and std(σ) vectors 
 # to have specific values, the encoder can learn to generate different means μ for different classes, 
 # clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
 # vary much for the same sample (which translates to less uncertainty for the decoder and thus 
-# easier decoding). 
+# easier decoding).
 # This allows the decoder to efficiently/easily reconstruct the training data,
 # but it is not desirable for us, as we discussed before we want the encodings to be as close as 
 # possible yet be still distinct, allowing smooth interpolation between them, creating new samples.
@@ -2339,9 +2351,10 @@ for e in range(epochs):
 # the encoder will therefore be penalized when/if it tries to cluster them apart into specific regions, 
 # away from the origin.
 # 
-# However, in practice, with this change, the decoder will have a very hard time to get reconstructions right!
-# if any atall, simply because the encodings are now simply densely placed randomly, near 
-# the center of the latent space, with little to no regard for similarity among nearby encodings.
+# However, in practice, with this change, the decoder will have a very hard time to get 
+# reconstructions right if any atall! simply because the encodings are now simply densely 
+# placed randomly, near the center of the latent space, with little to no regard for 
+# similarity among nearby encodings.
 # to the decoder, this simply doesnt make much sense! based on our previous intuitions, 
 # nearby points in latent space should resemble similar inputs, but now, after such enforcement,
 # they are being placed at random places! where they have no bussiness being!)
