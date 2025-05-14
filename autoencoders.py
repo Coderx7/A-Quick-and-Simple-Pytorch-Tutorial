@@ -2300,25 +2300,25 @@ for e in range(epochs):
 # to reconstruct the input image.
 # 
 # this means by producing probablity distribution for each latent attribute, 
-# "we're essentially/practically enforcing a continuous, smooth latent space representation."
+# "we're essentially/practically enforcing a continuous, smooth latent space representation"
 # This means the decoder should be able to accuractly reconstruct the input by sampling from
 # these latent distributions. This also implies that the values that are close
-# to eachother, in latent space will correspond to very similar reconstructions.(i.e. 
+# to eachother, in latent space will correspond to very similar reconstructions(i.e. 
 # should result in similar reconstructions)
 # 
-# all of this is is made possible by using the mean and variance produced in the encoder. 
+# all of this is made possible by using the mean and variance produced in the encoder. 
 # the mean controls where the encoding (value) for an input should be centered around, while
 # the standard deviation controls/specifies the (valid) area (of change) around it, i.e. 
 # how much from/how far from the mean the encoding can vary.
 # sampling using mean and std is akin to randomly generating the encodings inside a circle (distribution)
 # which causes the decoder to learn that not only a single point in the latent space 
 # refers to a sample of a calss, but also all nearby points do as well!
-# not only this allows the decodeer to decode single, specific encodings in the latent space 
-# but also the ones that slightly vary too(i.e. the ones close to it), as the decoder is 
+# not only this allows the decoder to decode single specific encodings in the latent space 
+# but also the ones that slightly vary too(i.e. the ones close to it) as the decoder is 
 # exposed to a range of variations of the encoding of the same input during training 
 # (each time we feedforward a specific sample, the sampling process introduces a slightly
 # different value using the same mu,std (it wont be the same number) although the input 
-# sample is the same.)
+# sample is the same)
 # This exposes the model to a certain degree of local variations, resulting in a smooth latent 
 # space locally (that is for similar samples) but at the same time leaves the decodable
 # latent space discontinuous so different classes can form their own subspaces, 
@@ -2327,32 +2327,33 @@ for e in range(epochs):
 #
 # aside from that/moreover, we'd also want overlap between samples that are not very 
 # similar aswell in order to interpolate between classes.
-# However, since by default there is no limit/constraint enforcing mean(μ) and std(σ) vectors 
+# However, since by default there is no constraint enforcing mean(μ) and std(σ) vectors 
 # to have specific values, the encoder can learn to generate different means μ for different classes, 
 # clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
 # vary much for the same sample (which translates to less uncertainty for the decoder and thus 
 # easier decoding).
-# This allows the decoder to efficiently/easily reconstruct the training data,
-# but it is not desirable for us, as we discussed before we want the encodings to be as close as 
-# possible yet be still distinct, allowing smooth interpolation between them, creating new samples.
-# Therefore in order to prevent this, we introduce the KL divergence and use it in
+# This allows the decoder to easily reconstruct the training data, but it is not desirable for us,
+# as we discussed before we want the encodings to be as close as possible yet be still distinct, 
+# allowing smooth interpolation between them, allowing for creating new samples.
+# Therefore in order to prevent this, we introduce the KL divergence term and use it in
 # the loss function. The KL divergence measures how much two probablity distributions diverge
 # (differ) from each other.
 # !edit
 # Minimizing it means the probability distribution parameters (μ and σ) need to closely resemble
 # that of the target distribution(i.e. our original input data).
-# that is they need to be as close as possible (basically resemeble/match? the original data)
+# that is they need to be as close as possible (basically resemeble the original data)
 # 
 # from a visualization point of view, (if we try to visualize the encodings spaces we see) 
-# it encourages the encoder to distribute all encodings (for all types of inputs,), evenly 
+# it encourages the encoder to distribute all encodings (for all types of inputs) evenly 
 # around the center of the latent space (this makes the encodings to be distributed evenly 
-# around the center of latent space (visually speaking) (edit: basically to have mean 0, (which means a normal distribution,
-# which again because natural images follow normal distribution so it makes sense!) hence why they cluster at the center)).
-# the encoder will therefore be penalized when/if it tries to cluster them apart into specific regions, 
-# away from the origin.
+# around the center of latent space (visually speaking) (edit: basically to have mean 0, 
+# (which means a normal distribution, which again because natural images follow normal 
+# distribution so it makes sense!) hence why they cluster at the center)).
+# the encoder will therefore be penalized when/if it tries to cluster them apart into 
+# specific regions, away from the origin.
 # 
 # However, in practice, with this change, the decoder will have a very hard time to get 
-# reconstructions right if any atall! simply because the encodings are now simply densely 
+# reconstructions right if any at all! simply because the encodings are now simply densely 
 # placed randomly, near the center of the latent space, with little to no regard for 
 # similarity among nearby encodings.
 # to the decoder, this simply doesnt make much sense! based on our previous intuitions, 
@@ -2363,31 +2364,226 @@ for e in range(epochs):
 # the reconstruction loss, like standard autoencoders will be made of both the BCE loss(because it treats
 # pixels as probabilities and prevents blurry outputs and usually results in better performance.) 
 # and the kl loss (constraining term). this results in [the generation of] a latent space that 
-# addresses both of our concerns and fullfills them both(edit!), 
-# maintaining the similarity of nearby encodings locally (on the local scale) by clustering,
-# and yet globally, densely packing them near the latent space origin (see visualization).
+# addresses both of our concerns and fullfills them both!, maintaining the similarity of nearby
+# encodings locally (on the local scale) by clustering and yet globally, densely packing them 
+# near the latent space origin (see visualization).
 # 
+
+
 # sidenote:
-# we use BCE because the original paper uses BCE, but some implementations started using MSE
+# we use BCE because the original paper uses BCE, but some implementations started using MSE!
 # BCE is preferred in cases where we are dealing with normalized images between 0 and 1
 # like binary or grayscale images, where the goal is to predict whether a pixel is closer to
-# 0 (black) or 1 (white).(because in BCE each pixel value is seen as probabilities, it makes it especially suitable)
+# 0 (black) or 1 (white).(because in BCE each pixel value is seen as probabilities, it makes 
+# it especially suitable), this is the case here, as the vae paper used grayscale datasets namely
+# MNIST and another face related which I forgot(todo edit: add the datasetname)
+# 
 # MSE however, assumes continuous values, meaning it penalizes small differences more harshly,
 # which may lead to blurry reconstructions. for example if we had an image where a 
 # pixel was 0.9 and the predicted value was 0.8, BCE would penalize the small difference in
 # a way that maintains a sharp reconstruction however, MSE, might have lead to an average of
 # multiple possible outputs, causing blurry reconstructions. (we see this in our trainig)
 # 
-# having this said, you can see MSE being used with color images(especially in GANs), especially the ones that
-# are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
-# it produces smoother but sometimes blurrier reconstructions.)
-# 
+# having this said, ww can see MSE being used with color images(especially in GANs), especially
+# the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
+# it produces smoother but sometimes blurrier reconstructions)
 # so MSE tends to work better for smooth images, while BCE works well when pixel values behave
 # like probabilities (high contrast regions, thresholded images, etc).
 # !EDIT !EDIT !EDIT
 # (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
-# though it might be a good idea to follow and get good result, )
+# though it might be a good idea to follow and get good result!)
 #
+
+# edit read https://arxiv.org/pdf/1906.02691  (very good read)
+# sidenote:
+# we use BCE because the original paper uses BCE, but you can find some implementations that use MSE!
+# The choice may not seem that important/trivial at first but its a fundamental choice that needs careful attention!
+# BCE is preferred here not just because the original paper uses it and it makes sense to accuractly
+# implement the paper, but rather from a technical point of view choosing either loss has different 
+# implications. 
+# in cases where we are dealing with normalized images between 0 and 1 such as binary or 
+# grayscale images which is the case here, (the original paper uses grayscale
+# datasets such as MNIST and Frey Face) we can treat each pixel value as a probablity of being 
+# 0/black or 1/white! and thus going with BCE allows us to predict whether a pixel is closer to 
+# 0/black or 1/white, it makes it especially suitable here. 
+# also BCE penalizes small differences more strongly and this leads to a sharp reconstruction in our case
+# however, MSE, might lead to an average of multiple possible outputs, causing blurry reconstructions.
+# (we see this in our trainig-more in a moment)
+# 
+# sidenote example for mse vs bce 
+# we can get a clear mental image by going over these losses with a simple example, 
+# we know MSE Loss is (y_true - y_pred)^2 (for a single sample(pixel in our case), we only take the
+# mean if there are bunch of them! since we are doing this for a single pixel here we are fine). 
+# now the gradient with respect to our prediction(y_pred) will be -2(y_true - y_pred). 
+# BCE on the other hand is -[y_true * log(y_pred) + (1-y_true) * log(1-y_pred)]
+# if the label is true(y_true=1) bce will be bce=-log(y_pred) and its gradient with respect to
+# y_pred will be y_pred = -1/y_pred (reminder: the derivative of log(u)=1/u)
+# if label is false(y_true=0), bce will be -log(1-y_pred) and its gradient with respect to y_pred
+# will be 1/(1-y_pred) 
+# 
+# now imagine our pixel=1 if our prediction=0.9 (error=0.1) the MSE gradient will be -2(1-0.9)=-0.2
+# but the BCE gradient will be -1/0.9=-1.11
+# if our prediction=0.8 (error=0.2) the MSE gradient will be -2(1-0.8)=-0.4
+# while the BCE gradient will be -1/0.8=-1.25
+# as we can see BCE yields a much stronger gradient signal(and therefore larger loss) compared to mse 
+# especially for small deviations from the correct asnwer.
+# if our prediction was 0.1 (error is high(0.9) which means our model is very confident with 
+# its wrong answer) this impact will be compounded, we'll see the mse gradient becomes -2(1-0.1) =-1.8
+# while the bce gradient becomes several times larger! (-1/0.1=-10.0)!
+# so BCE heavily penalizes predictions that are confidently wrong due to the log term. 
+# (basiaclly the log term log(p) means that if the model predicts a probability very close to 0 
+# while the answer is 1 (i.e. the event that did happen (label=1)) or log(1-p) where it is close to
+# 1 while the answer is 0 (i.e the event that didn't happen (label=0)) the loss is huge. (punishes the model harshly!)
+# this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions our case,
+# this is especially the case for data that is inherently binary or has strong contrasts. 
+# interestingly it works on color images as well as we'll see in our experiments ahead!)
+# This, the very strong push towards the extremes (0 or 1), is what often leads to sharper reconstructions!
+# 
+# Concerning how mse manages to blur the images, remember that averaging is involved and average by nature
+# can lead to bluring! 
+# for example, imagine the underlying data for a pixel is 0.2 or 0.8 with equal probability, and rarely
+# 0.5, if we use MSE loss it might encourage the model to predict 0.5 to minimize the average squared 
+# error across many samples. this will result in an "average" or "blurry" output. so at the very core 
+# of it, this difference comes from the fact how each loss handle distributions and encourages (or doesn't 
+# encourage) outputs at the extremes.
+# 
+#
+# we are not done yet! Having said all of that, we arrive to the core differentiating creteria betwen the two
+# lets view this from a fundamental point of view and hopefully get a crystal clear intuition of whats 
+# causing all this. 
+# 
+# we are creating a generative model, so we are trying to learn a probablity distribution.
+# more precisely, for the reconstruction part of our model, the decoder is trying to learn the probablity 
+# of observing input image x given the latent code z or p(x|z).
+# to define this probablity, we must assume a specific type of probability distribution for the output
+# if we assume each pixel from the original image is drawn from a bernoli distribution, (parameterized
+# by p_i the corrosponding output pixel from the decoder) then maximizing the likelihood (or minimizing the
+# negative log-likelihood) leads to binary cross-entropy loss. 
+# p(x_i|z) = Bernoulli(x_i|p_i)
+# NLL = -log(p(x_i|z)) = -[x_i log(p_i) + (1-x_i)log(1-p_i)] (its bce loss)
+#
+# now if we assume each pixel is drawn from a normal/guassian distribution, then given that a normal/gaussain
+# distribution is defined by a mean and a variance, our decoder needs to output a mean and variance,
+# for each input, if for the simplicities sake, we assume the variance is fixed and is equal to 1,
+# (or we could assume std is constant for all pixels and datapoints so it doesnt need to be learned)
+# the probablity density function for input x_i given mu_i and fixed variance(1) will be :
+# p(x_i|z)=N(x_i|mu_i,variance)=(1/sqrt(npvariance))*exp(-x_i-mu_i)^2/2variance))
+# we want to maximize this likelihood (p(x|z)=prod(p(x_i|z))) (product over all pxels assuming independce)
+# then maximizing likelihood is equavalent to miziing negative likelihood 
+# so : 
+# NLL = -log(Πp(x_i | z) )
+# NLL = - Σ log(p(x_i | z)) (sum over all pixels)
+# NLL = - Σ log((1/sqrt(2πσ²)) * exp(-(x_i - μ_i)² / (2σ²)))
+# subtituing the multiplication to log addition ?(converting probablities to log probablities)
+# NLL = - Σ [log(1/sqrt(2πσ²)) + log(exp(-(x_i - μ_i)²/(2σ²)))]
+# # simpliying and solving the formula (log(exp) cancel each other out, )
+# NLL = - Σ [-log(sqrt(2πσ²)) - (x_i - μ_i)²/(2σ²)]
+# and we get to 
+# NLL = Σ [log(sqrt(2πσ²)) + (x_i - μ_i)²/(2σ²)]
+# 
+# as we can see the term log(sqrt(2πσ²)) is a constant, the term 1/(2σ²) is also a positive constant.
+# Minimizing the NLL is therefore will be equivalent to minimizing:
+# Σ (x_i - μ_i)²
+# This is exactly the Sum of Squared Errors. The Mean Squared Error is just this sum divided by the
+# number of pixels, which is a constant scaling factor that doesn't change where the minimum occurs.
+# So, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
+# that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a Gaussian distribution
+# with mean 0 and some "fixed variance σ²" (we assumed 1).
+#
+#
+# (also concerning the connection between MSE and a gaussian/normal assumption, it comes from the principle
+# of maximum likelihood estimation(MLE).)
+# 
+# lets start from the very begining, 
+# in many modeling scenarios, especially with generative models like VAEs, we're trying to learn a 
+# probability distribution. for the reconstruction part of the vae, the decoder is trying to learn 
+# the probability of observing the input x given the latent code z or p(x|z).
+# to define p(x|z), we need to assume a specific type of probability distribution for the output.
+# if we assume each pixel(x_i) (from the original image) is drawn from a Bernoulli distribution 
+# parameterized by p_i (the corresponding output pixel from the decoder, passed through a sigmoid),
+# then maximizing the likelihood (or minimizing the negative log-likelihood) leads to the Binary-
+# Cross-Entropy (BCE) loss: 
+# p(x_i|z) = Bernoulli(x_i|p_i)
+# NLL = -log(p(x_i|z)) = -[x_i log(p_i) + (1-x_i)log(1-p_i)] (its bce loss)
+# 
+# now, what if we assume each pixel x_i is drawn from a gaussian/normal distribution?
+# we know a gaussian/normal distribution is defined by a mean (μ) and a variance (σ²)
+# let's say our decoder outputs a value μ_i for each pixel, which we interpret as the mean of 
+# this gaussian. for simplicity (in the standard MSE case), we often assume a fixed variance, 
+# say σ² = 1 (or that σ is constant across all pixels and data points, and doesn't need to be 
+# learned). the probability density function (PDF) for x_i given mean μ_i and variance σ² is:
+# p(x_i|z) = N(x_i|μ_i, σ²) = (1/sqrt(2πσ²))*exp(-(x_i-μ_i)²/(2σ²))
+# we want to maximize this likelihood p(x|z) = Π p(x_i|z) (product over all pixels, 
+# assuming independence). Maximizing likelihood is equivalent to minimizing the negative log-likelihood 
+# (NLL):
+# NLL = -log(Πp(x_i | z) )
+# NLL = - Σ log(p(x_i | z)) (sum over all pixels)
+# NLL = - Σ log((1/sqrt(2πσ²)) * exp(-(x_i - μ_i)² / (2σ²)))
+# NLL = - Σ [log(1/sqrt(2πσ²)) + log(exp(-(x_i - μ_i)²/(2σ²)))]
+# NLL = - Σ [-log(sqrt(2πσ²)) - (x_i - μ_i)²/(2σ²)]
+# NLL = Σ [log(sqrt(2πσ²)) + (x_i - μ_i)²/(2σ²)]
+# Now, if we're trying to find the model parameters that minimize this NLL:
+# The term log(sqrt(2πσ²)) is a constant with respect to μ_i (our model's prediction).
+# The term 1/(2σ²) is also a positive constant.
+# Minimizing the NLL is therefore equivalent to minimizing:
+# Σ (x_i - μ_i)²
+# This is exactly the Sum of Squared Errors. The Mean Squared Error is just this sum divided by the
+# number of pixels, which is a constant scaling factor that doesn't change where the minimum occurs.
+# So, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
+# that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a Gaussian distribution
+# with mean 0 and some fixed variance σ².
+#
+# now why does it matter if it's from a Gaussian distribution or not? How is that going to matter at all?
+# if our data's noise actually is Gaussian-like (i.e. small errors are common, large errors are rare,
+# and errors are symmetric around zero), then MSE is a well justified and often optimal loss function.
+# on the other hand if our data's noise characteristics are very different, then MSE is no longer a good fit for the job!
+# for example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
+# MSE will be heavily influenced by these outliers because it squares the error, in this case L1 loss 
+# (Absolute Error), which corresponds to assuming Laplacian noise, is more robust to outliers.
+# also iff our pixel values are truly probabilities or binary (0/1), a Gaussian assumption is fundamentally
+# mismatched. a Gaussian is unbounded, but our data is bounded. A Bernoulli (for binary) or Beta distribution
+# (for continuous [0,1] probabilities) would be more appropriate, which would lead to losses like BCE. 
+# Using MSE here forces the model to fit a Gaussian shape to data that isn't Gaussian, often leading to
+# predictions outside the valid range (e.g. <0 or >1 if not clipped) and the blurriness we discussed 
+# (as it tries to find a "mean" for bimodal data)!
+# 
+# from an interpertation point of view, when we use MSE, we are implicitly saying our decoder is trying
+# to predict the mean of a Gaussian distribution for each pixel.
+# some advanced VAEs actually learn both the mean μ_i and the variance σ_i² for each output pixel. 
+# in this case, the loss function is precisely the Gaussian NLL shown above (without dropping the 
+# log(σ) terms), and the model learns to express its uncertainty about its own reconstructions. 
+# if the model is very certain, it can predict a small σ_i², if uncertain, a larger σ_i².
+# 
+# as we saw, the loss function dictates the gradients used for backpropagation.
+# in MSE the gradient is proportional to (x_i - μ_i) its a "linear" error response.
+# in BCE however, the gradient for p_i when x_i=1 is -1/p_i (if p_i is the sigmoid output) 
+# and tt has a very steep gradient when p_i is small but x_i is 1 (i.e. confidently wrong)
+# These different gradient landscapes mean the model learns differently. A mismatched loss can
+# lead to slower convergence, instability, or suboptimal results because the "guidance" it gets 
+# from the loss isn't well aligned with the true data generation process.
+# 
+# in short, while MSE can be used as a simple, intuitive measure of difference, its deeper
+# justification comes from MLE with a Gaussian noise assumption. Understanding this helps us 
+# choose loss functions more deliberately based on the nature of our data and the probabilistic 
+# model we are trying to build. when the assumption holds, MSE is great. When it doesn't,
+# other loss functions derived from different distributional assumptions (like BCE from Bernoulli)
+# are often better.
+
+
+# 
+# having this said, ww can see MSE being used with color images(especially in GANs), especially
+# the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
+# it produces smoother but sometimes blurrier reconstructions)
+# so MSE tends to work better for smooth images, while BCE works well when pixel values behave
+# like probabilities (high contrast regions, thresholded images, etc).
+# !EDIT !EDIT !EDIT
+# (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
+# though it might be a good idea to follow and get good result!)
+
+
+
+
+
 # this is the equilibrium/fine balance reached by the cluster-forming nature of the
 # reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
 # clusters that the decoder can decode.
