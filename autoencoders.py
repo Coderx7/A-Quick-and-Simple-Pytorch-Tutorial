@@ -2409,11 +2409,19 @@ for e in range(epochs):
 # 0(or black) or 1(or white), therefore going with BCE allows us to predict whether a pixel is
 # closer to 0 or 1, making it especially suitable here.
 # BCE also penalizes small differences more strongly and this leads to a sharp reconstruction in our case
-# MSE on the other hand, has an implicit assumption about the data having a normal/gaussian distribution,
+# MSE on the other hand, assumes continuous values and has an implicit assumption about the data having a normal/gaussian distribution,
 # this has a few implications we get to in a moment. aside from that, MSE loss might lead to a blured reconstruction
 # due to average of multiple possible outputs (we see this in our trainig-more in a moment)
 # note that the original paper uses grayscale datasets such as MNIST and Frey Face and it normalizes
-# the dataset to 0-1 range(practically binarized it making it suitable to be used with BCE) 
+# the dataset to 0-1 range(this still makes the value still continuous so mse can be used, for binarized
+# it has to be strictly 0-1! in either case, we can use both BCE (even if its not binarized) and MSE because
+# its continuous, however its nuasanced which we will get to in a moment)
+#
+# excessive? add this note at the end? or remove because we already talked about it
+# (if we want sharper reconstructions for images and are willing to accept that pixel values
+# are pushed towards extremes, BCE can be a good choice even for continuous [0,1] data,
+# if we believe that a blurry average is a more faithful representation of uncertainty 
+# or if our data truly has continuous variations best captured by a Gaussian, MSE might be preferred)
 # 
 # sidenote example for mse vs bce 
 # we can get an intuitive understanding by going over the two losses with a simple example, 
@@ -2555,10 +2563,35 @@ for e in range(epochs):
 # with mean 0 and some fixed variance σ².
 #
 
+#note2:
+# note that images in 0-1 range are still continuous values, they are not binarized (strictly 0 and 1)
+# to be only used with bce, we can use mse as well if! the thing is, going bce
+# has the effect that pixel values are pushed towards extremes, and can lead to sharper reconstructions(or oversaturation like in vqvae 2 experiments?!)
+# so if its acceptable then bce is ok, otherwise we can use mse! (we can see this behavior in vqvae,
+# if we use bce, we get saturated images! check if this is the case?!)
+
+
 # now why does it matter if it's from a Gaussian distribution or not? How is that going to matter at all?
-# if our data's noise actually is Gaussian-like (i.e. small errors are common, large errors are rare,
+# in short it matters because if not chosen properly it will lead to predictions outside the valid range(<0,>1 if not clipped)
+# and the bluriness in case of mse!
+# detailed explanation:
+# if our data's noise actually is gaussian-like (i.e. small errors are common, large errors are rare,
 # and errors are symmetric around zero), then MSE is a well justified and often optimal loss function.
-# on the other hand if our data's noise characteristics are very different, then MSE is no longer a good fit for the job!
+# on the other hand if our data's noise characteristics are very different, then MSE is no longer a good
+# fit for the job! (note that the errors we are talking about is not the model prediction error, rather 
+# the data related! its our assumption about the data generation process!)
+# so we make an a priori assumption about the distribution of the data itself (or the noise inherent
+# in its observation) when considering p(x|z). this assumption directly dictates the form of the likelihood,
+# and minimizing the negative log-likelihood gives us our loss function.
+# 
+# edit exessive?
+# So, "if our data's noise actually is Gaussian-like" refers to a hypothesis about the world or 
+# the data generation process, not the performance of an un-trained or partially trained model.
+# we choose the loss based on this hypothesis, then train the model, and then we can analyze the 
+# model's actual prediction errors (residuals) to see if they, for example, align with the initial 
+# assumptions (though this is more common in classical statistics than always done explicitly in deep
+# learning).
+
 # for example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
 # MSE will be heavily influenced by these outliers because it squares the error, in this case L1 loss 
 # (Absolute Error), which corresponds to assuming Laplacian noise, is more robust to outliers.
@@ -2569,6 +2602,8 @@ for e in range(epochs):
 # predictions outside the valid range (e.g. <0 or >1 if not clipped) and the blurriness we discussed 
 # (as it tries to find a "mean" for bimodal data)!
 # 
+#
+#
 # from an interpertation point of view, when we use MSE, we are implicitly saying our decoder is trying
 # to predict the mean of a Gaussian distribution for each pixel.
 # some advanced VAEs actually learn both the mean μ_i and the variance σ_i² for each output pixel. 
@@ -2591,9 +2626,8 @@ for e in range(epochs):
 # other loss functions derived from different distributional assumptions (like BCE from Bernoulli)
 # are often better.
 
-
 # 
-# having this said, ww can see MSE being used with color images(especially in GANs), especially
+# we can see MSE being used with color images(especially in GANs), especially
 # the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
 # it produces smoother but sometimes blurrier reconstructions)
 # so MSE tends to work better for smooth images, while BCE works well when pixel values behave
@@ -2603,10 +2637,7 @@ for e in range(epochs):
 # though it might be a good idea to follow and get good result!)
 
 
-
-
-
-# this is the equilibrium/fine balance reached by the cluster-forming nature of the
+# this is this fine balance reached by the cluster-forming nature of the
 # reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
 # clusters that the decoder can decode.
 # This means when randomly generating, if we sample a vector from 
@@ -2804,7 +2835,7 @@ for e in range(epochs):
     # The decoder samples from this simplified Gaussian distribution and uses the latent vector
     # to generate a reconstruction of the input data.
     # Why is this assumption useful?
-    # Using a diagonal covariance matrix (i.e., independent features)
+    # Using a diagonal covariance matrix (i.e. independent features)
     # reduces the complexity of the model. We don't need to estimate the covariances between 
     # features, which would require more parameters and computation.
     # also assuming independence between features makes the latent space easier to interpret, 
