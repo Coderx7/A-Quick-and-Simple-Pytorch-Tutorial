@@ -2475,10 +2475,11 @@ for e in range(epochs):
 # NLL = -log(p(x_i | z)) = -[x_i log(p_i) + (1-x_i)log(1-p_i)] (its bce loss)
 #
 # now if we assume each pixel is drawn from a normal/guassian distribution, then given that a normal/gaussain
-# distribution is defined by a mean and a variance, our decoder needs to output a mean and variance,
-# for each input, if for the simplicities sake, we assume the variance is fixed and is equal to 1,
-# (or we could assume std is constant for all pixels and datapoints so it doesnt need to be learned)
-# the probablity density function for input x_i given \mu_i and fixed variance(σ²=1) will be :
+# distribution is defined by a mean and a variance, if we assume our decoder outputs a μ_i for each pixel(see note*) 
+# which we take/interpret as the mean for this normal distribution, and if for the simplicities sake, we 
+# assume the variance is fixed and is equal to 1, (or we could assume std is constant for all pixels and
+# datapoints so it doesnt need to be learned) the probablity density function for input x_i given
+# \mu_i and fixed variance(σ²=1) will be :
 # p(x_i | z) = N(x_i | μ_i, σ²) = (1/sqrt(2πσ²))*exp(-(x_i-μ_i)²/(2σ²))
 # we want to maximize this likelihood (p(x|z)=prod(p(x_i|z))) (product over all pixels assuming independce)
 # then maximizing likelihood is equivalent to minimizing negative log-likelihood
@@ -2501,6 +2502,14 @@ for e in range(epochs):
 # so, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
 # that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a normal/gaussian distribution
 # with mean 0 and some "fixed variance σ²" (we assumed 1).
+#
+# note*
+# i.e. the value our decoder outputs for each pixel we assume it is actualy a mean,  
+# the decoder outputs the parameters of the probability distribution of the reconstructed data
+# if we accepted that the data is coming from normal/gaussian distribution, then our decoder needs to
+# output parameters required for such distribution, these parameters are the mean and variance. 
+# When we "treat the output as the final image," we are typically taking the mean of this distribution
+# as the reconstruction since we assumed variance is fixed/constant(we assumed it to be 1 but any constant would do aswell).)
 #
 # !edit choose v1 or v2 for this section
 # version 2 :
