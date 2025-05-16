@@ -2444,12 +2444,11 @@ for e in range(epochs):
 # if our prediction was 0.1 (error is high(0.9) which means our model is very confident with 
 # its wrong answer) this impact will be compounded, we'll see the mse gradient becomes -2(1-0.1) =-1.8
 # while the bce gradient becomes several times larger! (-1/0.1=-10.0)!
-# !edit chose 1 of the 3 explanation -  
-# 1.(so BCE heavily penalizes predictions that are confidently wrong due to the log term.) or 
-# 2.(in other words, this makes BCE highly sensitive to the model being very confident but wrong.
-#   This can be good (since it forces quicker correction) but can also sometimes lead to instability 
-#   if learning rates are too high.)
-# 3.(the log term log(p) means that if the model predicts a probability very close to 0 
+# !edit 
+# simply put this makes BCE highly sensitive to the model being very confident yet wrong!
+# this can be good since it forces quicker correction during trainig, but it can also lead to instability
+# if the learning rate is too high.
+# (the log term log(p) means that if the model predicts a probability very close to 0 
 # while the answer is 1 (i.e. the event that did happen (label=1)) or log(1-p) where it is close to
 # 1 while the answer is 0 (i.e the event that didn't happen (label=0)) the loss is huge. (punishes the model harshly!)
 # this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions our case,
