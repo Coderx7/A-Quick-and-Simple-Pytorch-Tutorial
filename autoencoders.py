@@ -2446,12 +2446,14 @@ for e in range(epochs):
 # while the bce gradient becomes several times larger! (-1/0.1=-10.0)!
 # !edit 
 # simply put this makes BCE highly sensitive to the model being very confident yet wrong!
-# this can be good since it forces quicker correction during trainig, but it can also lead to instability
-# if the learning rate is too high.
+# this can be good as it forces quicker correction during trainig, but at the same time, it can also 
+# lead to instability if the learning rate is set too high.
+# 
+# tooltip/extra clarification:
 # (the log term log(p) means that if the model predicts a probability very close to 0 
 # while the answer is 1 (i.e. the event that did happen (label=1)) or log(1-p) where it is close to
 # 1 while the answer is 0 (i.e the event that didn't happen (label=0)) the loss is huge. (punishes the model harshly!)
-# this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions our case,
+# this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions in our case,
 # this is especially the case for data that is inherently binary or has strong contrasts. 
 # interestingly it works on color images as well as we'll see in our experiments)
 # This very strong push towards the extremes (0 or 1), is what often leads to sharper reconstructions!
@@ -2461,6 +2463,7 @@ for e in range(epochs):
 #
 # Concerning how mse manages to blur the images, remember that averaging is involved and average by nature
 # can lead to bluring!
+# !edit add a better example,
 # for example, imagine the underlying data for a pixel is 0.2 or 0.8 with equal probability, and rarely
 # 0.5, if we use MSE loss it might encourage the model to predict 0.5 to minimize the average squared 
 # error across many samples. this will result in an "average" or "blurry" output. so at the very core 
@@ -2523,6 +2526,14 @@ for e in range(epochs):
 # When we "treat the output as the final image," we are typically taking the mean of this distribution
 # as the reconstruction since we assumed variance is fixed/constant(we assumed it to be 1 but any constant will do aswell).)
 #
+# or
+# from an interpertation point of view, when we use MSE, we are implicitly saying our decoder is trying
+# to predict the mean of a Gaussian distribution for each pixel.
+# some advanced VAEs actually learn both the mean μ_i and the variance σ_i² for each output pixel. 
+# in this case, the loss function is precisely the Gaussian NLL shown above (without dropping the 
+# log(σ) terms), and the model learns to express its uncertainty about its own reconstructions. 
+# if the model is very certain, it can predict a small σ_i², if uncertain, a larger σ_i².
+
 # !edit choose v1 or v2 for this section
 # version 2 :
 # (also concerning the connection between MSE and a gaussian/normal assumption, it comes from the principle
@@ -2570,51 +2581,48 @@ for e in range(epochs):
 #note2:
 # note that images in 0-1 range are still continuous values, they are not binarized (strictly 0 and 1)
 # to be only used with bce, we can use mse as well the thing is, going bce
-# has the effect that pixel values are pushed towards extremes, and can lead to sharper reconstructions(or oversaturation like in vqvae 2 experiments?!)
+# has the effect that pixel values are pushed towards extremes, and can lead to sharper reconstructions
+# (or oversaturation like in vqvae 2 experiments?!)
 # so if its acceptable then bce is ok, otherwise we can use mse! (we can see this behavior in vqvae,
 # if we use bce, we get saturated images! check if this is the case?!)
 
-
-# now why does it matter if it's from a Gaussian distribution or not? How is that going to matter at all?
-# in short it matters because if not chosen properly it will lead to predictions outside the valid range(<0,>1 if not clipped)
-# and the bluriness in case of mse!
-# detailed explanation:
-# if our data's noise actually is gaussian-like (i.e. small errors are common, large errors are rare,
-# and errors are symmetric around zero), then MSE is a well justified and often optimal loss function.
-# on the other hand if our data's noise characteristics are very different, then MSE is no longer a good
-# fit for the job! (note that the errors we are talking about is not the model prediction error, rather 
-# the data related! its our assumption about the data generation process!)
-# so we make an a priori assumption about the distribution of the data itself (or the noise inherent
+# why do we care? 
+# in short, because it determines our model's results!
+# If the underlying assumption is wrong(i.e. its is not Gaussian), then MSE is no longer guaranteed to
+# be the MLE, its not gauranteed to work! even worse it may even fail the model!
+# for example, imagine we have a dataset where 99% of errors are small, but 1% are massive, MSE will be
+# dominated by that 1%. The resulting model might be terrible for the 99% of typical cases. 
+# another example is trainig a binary classifier with MSE, we can do it, but it's generally much 
+# less effective than using BCE because BCE's log term heavily penalizes confident wrong answers, 
+# which is crucial for classification. 
+# Even in our own usecase, VAE, the choice between MSE and BCE has a very visible impact on the sharpness/blurriness
+# of generated images.
+# Having all of this said, the "optimality" of MSE being tied to the Gaussian error assumption is a theoretical foundation.
+# whether deviations from this assumption drastically affect the outcome in practice depends on how much
+# the true error distribution deviates, the nature of the data and task, and what aspect of the outcome we care about the most.
+# There are many real-world scenarios where choosing a loss function more aligned
+# with the (assumed) true nature of the data's "noise" or desired output characteristics leads to demonstrably 
+# better practical results (e.g. sharper images, more robust predictions, better classification/etc).
+# Often, especially in deep learning, the choice is also guided by empirical results and desired qualitative outcomes
+# (like sharpness) in addition to strict adherence to probabilistic theory. 
+# However, understanding the theory helps explain why certain loss functions tend to work better for certain types of problems.
+# so we make an an initial assumption about the distribution of the data itself (or the noise inherent
 # in its observation) when considering p(x|z). this assumption directly dictates the form of the likelihood,
 # and minimizing the negative log-likelihood gives us our loss function.
 # 
-# edit exessive?
-# So, "if our data's noise actually is Gaussian-like" refers to a hypothesis about the world or 
-# the data generation process, not the performance of an untrained or partially trained model.
-# we choose the loss based on this hypothesis, then train the model, and then we can analyze the 
-# model's actual prediction errors (residuals) to see if they, for example, align with the initial 
-# assumptions (though this is more common in classical statistics than always done explicitly in deep
-# learning).
-
 # for example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
 # MSE will be heavily influenced by these outliers because it squares the error, in this case L1 loss 
 # (Absolute Error), which corresponds to assuming Laplacian noise, is more robust to outliers.
-# also iff our pixel values are truly probabilities or binary (0/1), a Gaussian assumption is fundamentally
+# also if our pixel values are truly probabilities or binary (0/1), a Gaussian assumption is fundamentally
 # mismatched. a Gaussian is unbounded, but our data is bounded. A Bernoulli (for binary) or Beta distribution
 # (for continuous [0,1] probabilities) would be more appropriate, which would lead to losses like BCE. 
-# Using MSE here forces the model to fit a Gaussian shape to data that isn't Gaussian, often leading to
+# Using MSE here forces the model to fit a Gaussian shape to data that isn't Gaussian, leading to
 # predictions outside the valid range (e.g. <0 or >1 if not clipped) and the blurriness we discussed 
 # (as it tries to find a "mean" for bimodal data)!
 # 
 #
-#
-# from an interpertation point of view, when we use MSE, we are implicitly saying our decoder is trying
-# to predict the mean of a Gaussian distribution for each pixel.
-# some advanced VAEs actually learn both the mean μ_i and the variance σ_i² for each output pixel. 
-# in this case, the loss function is precisely the Gaussian NLL shown above (without dropping the 
-# log(σ) terms), and the model learns to express its uncertainty about its own reconstructions. 
-# if the model is very certain, it can predict a small σ_i², if uncertain, a larger σ_i².
 # 
+# recap:
 # as we saw, the loss function dictates the gradients used for backpropagation.
 # in MSE the gradient is proportional to (x_i - μ_i) its a "linear" error response.
 # in BCE however, the gradient for p_i when x_i=1 is -1/p_i (if p_i is the sigmoid output) 
@@ -2641,7 +2649,7 @@ for e in range(epochs):
 # though it might be a good idea to follow and get good result!)
 
 
-# this is this fine balance reached by the cluster-forming nature of the
+# It is this fine balance reached by the cluster-forming nature of the
 # reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
 # clusters that the decoder can decode.
 # This means when randomly generating, if we sample a vector from 
