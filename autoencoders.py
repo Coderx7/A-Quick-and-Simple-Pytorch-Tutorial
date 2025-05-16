@@ -2397,60 +2397,65 @@ for e in range(epochs):
 # edit read An Introduction to Variational Autoencoders https://arxiv.org/pdf/1906.02691  (very good read)
 #
 # sidenote:
-# Concerning the loss function, I experimented with both BCE and MSE losses and observed different behaviros. 
-# The choice may not seem that important/trivial at first but its a fundamental choice that needs our careful attention!
-# we use BCE because the original paper uses BCE, but you can find some implementations that use MSE!
+# Concerning the loss function, both BCE and MSE losses can and are used.
+# The choice between them may not seem that important/trivial at first but its a fundamental choice that needs our careful attention!
+# We use BCE because the original paper uses BCE, but you can find some implementations that use MSE!
 # BCE is the preferred loss here not just because the original paper uses it and it makes sense to accuractly
 # implement the paper, but rather from a technical point of view choosing one over the other has different 
-# implications and this choice changes based on the data we are dealing with.
+# implications, moreover this choice changes based on the data we are dealing with.
 #
-# in cases where we are dealing with normalized images between 0 and 1 such as binary or 
-# grayscale images we can treat each pixel value as a probablity of being 
-# 0(or black) or 1(or white), therefore going with BCE allows us to predict whether a pixel is
-# closer to 0 or 1, making it especially suitable here.
-# BCE also penalizes small differences more strongly and this leads to a sharp reconstruction in our case
-# MSE on the other hand, assumes continuous values and has an implicit assumption about the data having a normal/gaussian distribution,
-# this has a few implications we get to in a moment. aside from that, MSE loss might lead to a blured reconstruction
-# due to average of multiple possible outputs (we see this in our trainig-more in a moment)
+# In cases where we are dealing with normalized images between 0 and 1 such as binary or 
+# grayscale images we can treat each pixel value as a probablity of being 0 or 1 (i.e. black or white),
+# therefore going with BCE allows us to predict whether a pixel is closer to black(0) or white(1), making it especially suitable here.
+# BCE also penalizes small differences more strongly (when they are at extremes) which leads to a sharp reconstruction in our case
+# MSE on the other hand, assumes continuous values and has an implicit assumption about the data having a normal/gaussian distribution.
+# This has a few implications we'll get to in a moment  but aside from that, MSE loss might lead to a blured reconstruction
+# due to averaging nature of it, taking the average of multiple possible outputs and uses it for pixel value (we see this in our trainig-more in a moment)
 # note that the original paper uses grayscale datasets such as MNIST and Frey Face and it normalizes
-# the dataset to 0-1 range(this still makes the value still continuous so mse can be used, for binarized
+# the dataset to 0-1 range(this still makes the values continuous so mse can be used, for being binarized
 # it has to be strictly 0-1! in either case, we can use both BCE (even if its not binarized) and MSE because
-# its continuous, however its nuasanced which we will get to in a moment)
+# its continuous, however its a bit nuasanced and needs further clarification which we will get to it in a moment)
 #
-# excessive? add this note at the end? or remove because we already talked about it
+# !edit - move to the end of discussion as recap? excessive? add this note at the end? or remove because we already talked about it
 # (if we want sharper reconstructions for images and are willing to accept that pixel values
 # are pushed towards extremes, BCE can be a good choice even for continuous [0,1] data,
 # if we believe that a blurry average is a more faithful representation of uncertainty 
-# or if our data truly has continuous variations best captured by a Gaussian, MSE might be preferred)
-# 
-# sidenote example for mse vs bce 
-# we can get an intuitive understanding by going over the two losses with a simple example, 
-# we know MSE Loss is (y_true - y_pred)^2 (for a single sample(pixel in our case), we only take the
-# mean if there are a bunch of them! since we are doing this for a single pixel here we are fine). 
-# now the gradient with respect to our prediction(y_pred) will be -2(y_true - y_pred). 
+# or if our data truly has continuous variations best captured by a Gaussian, MSE might be a better choice)
+
+
+# Sidenote example for MSE vs BCE 
+# we can develop an intuitive understanding by going over the two losses with a simple example, 
+# recall that MSE Loss is (y_true - y_pred)^2 (for a single sample (pixel in our case), mean is 
+# only involved when there are several samples since we are doing this for a single pixel no average/mean is required). 
+# Now the gradient with respect to our prediction(y_pred) will be -2(y_true - y_pred). 
 # BCE on the other hand is -[y_true * log(y_pred) + (1-y_true) * log(1-y_pred)]
 # if the label is true(y_true=1) bce will be bce=-log(y_pred) and its gradient with respect to
 # y_pred will be y_pred = -1/y_pred (reminder: the derivative of log(u)=1/u)
 # if label is false(y_true=0), bce will be -log(1-y_pred) and its gradient with respect to y_pred
 # will be 1/(1-y_pred) 
 # 
-# now imagine our pixel=1 if our prediction=0.9 (error=0.1) the MSE gradient will be -2(1-0.9)=-0.2
+# Now imagine our pixel=1 if our prediction=0.9 (error=0.1) the MSE gradient will be -2(1-0.9)=-0.2
 # but the BCE gradient will be -1/0.9=-1.11
 # if our prediction=0.8 (error=0.2) the MSE gradient will be -2(1-0.8)=-0.4
 # while the BCE gradient will be -1/0.8=-1.25
-# as we can see BCE yields a much stronger gradient signal(which may result in a larger loss) compared to mse 
+# 
+# As we can see BCE yields a much stronger gradient signal (result in a larger loss) compared to MSE 
 # especially for small deviations from the correct asnwer.
 # if our prediction was 0.1 (error is high(0.9) which means our model is very confident with 
 # its wrong answer) this impact will be compounded, we'll see the mse gradient becomes -2(1-0.1) =-1.8
 # while the bce gradient becomes several times larger! (-1/0.1=-10.0)!
-# so BCE heavily penalizes predictions that are confidently wrong due to the log term.
-# (basiaclly the log term log(p) means that if the model predicts a probability very close to 0 
+# !edit chose 1 of the 3 explanation -  
+# 1.(so BCE heavily penalizes predictions that are confidently wrong due to the log term.) or 
+# 2.(in other words, this makes BCE highly sensitive to the model being very confident but wrong.
+#   This can be good (since it forces quicker correction) but can also sometimes lead to instability 
+#   if learning rates are too high.)
+# 3.(the log term log(p) means that if the model predicts a probability very close to 0 
 # while the answer is 1 (i.e. the event that did happen (label=1)) or log(1-p) where it is close to
 # 1 while the answer is 0 (i.e the event that didn't happen (label=0)) the loss is huge. (punishes the model harshly!)
 # this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions our case,
 # this is especially the case for data that is inherently binary or has strong contrasts. 
-# interestingly it works on color images as well as we'll see in our experiments ahead!)
-# This, the very strong push towards the extremes (0 or 1), is what often leads to sharper reconstructions!
+# interestingly it works on color images as well as we'll see in our experiments)
+# This very strong push towards the extremes (0 or 1), is what often leads to sharper reconstructions!
 # 
 # !edit: add note about the gradient magnitude not being necessarily a sign of larger loss between bce/mse
 # (scale is different so comparision may not be waranted?)
@@ -2487,7 +2492,7 @@ for e in range(epochs):
 # which we take/interpret as the mean for this normal distribution, and if for the simplicities sake, we 
 # assume the variance is fixed and is equal to 1, (or we could assume std is constant for all pixels and
 # datapoints so it doesnt need to be learned) the probablity density function for input x_i given
-# \mu_i and fixed variance(σ²=1) will be :
+# μ_i and fixed variance(σ²=1) will be :
 # p(x_i | z) = N(x_i | μ_i, σ²) = (1/sqrt(2πσ²))*exp(-(x_i-μ_i)²/(2σ²))
 # we want to maximize this likelihood (p(x|z)=prod(p(x_i|z))) (product over all pixels assuming independce)
 # then maximizing likelihood is equivalent to minimizing negative log-likelihood
@@ -2495,7 +2500,7 @@ for e in range(epochs):
 # NLL = -log(Πp(x_i | z) )
 # NLL = - Σ log(p(x_i | z)) (sum over all pixels)
 # NLL = - Σ log((1/sqrt(2πσ²)) * exp(-(x_i - μ_i)² / (2σ²)))
-# subtituing the multiplication to log addition (converting probablities to log probablities)
+# subtituting the multiplication to log addition (converting probablities to log probablities)
 # NLL = - Σ [log(1/sqrt(2πσ²)) + log(exp(-(x_i - μ_i)²/(2σ²)))]
 # # simpliying and solving the formula (log(exp()) cancel each other out, )
 # NLL = - Σ [-log(sqrt(2πσ²)) - (x_i - μ_i)²/(2σ²)]
@@ -2508,7 +2513,7 @@ for e in range(epochs):
 # This is exactly the sum of squared errors. The mean squared error is simply this sum divided by the
 # number of pixels, which is a scaling factor(constant) that doesn't change where the minimum occurs.
 # so, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
-# that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a normal/gaussian distribution
+# that the data (or more accurately, the error x_i - μ_i) is drawn from a normal/gaussian distribution
 # with mean 0 and some "fixed variance σ²" (we assumed 1).
 #
 # note*
@@ -2517,7 +2522,7 @@ for e in range(epochs):
 # if we accepted that the data is coming from normal/gaussian distribution, then our decoder needs to
 # output parameters required for such distribution, these parameters are the mean and variance. 
 # When we "treat the output as the final image," we are typically taking the mean of this distribution
-# as the reconstruction since we assumed variance is fixed/constant(we assumed it to be 1 but any constant would do aswell).)
+# as the reconstruction since we assumed variance is fixed/constant(we assumed it to be 1 but any constant will do aswell).)
 #
 # !edit choose v1 or v2 for this section
 # version 2 :
@@ -2565,7 +2570,7 @@ for e in range(epochs):
 
 #note2:
 # note that images in 0-1 range are still continuous values, they are not binarized (strictly 0 and 1)
-# to be only used with bce, we can use mse as well if! the thing is, going bce
+# to be only used with bce, we can use mse as well the thing is, going bce
 # has the effect that pixel values are pushed towards extremes, and can lead to sharper reconstructions(or oversaturation like in vqvae 2 experiments?!)
 # so if its acceptable then bce is ok, otherwise we can use mse! (we can see this behavior in vqvae,
 # if we use bce, we get saturated images! check if this is the case?!)
@@ -2586,7 +2591,7 @@ for e in range(epochs):
 # 
 # edit exessive?
 # So, "if our data's noise actually is Gaussian-like" refers to a hypothesis about the world or 
-# the data generation process, not the performance of an un-trained or partially trained model.
+# the data generation process, not the performance of an untrained or partially trained model.
 # we choose the loss based on this hypothesis, then train the model, and then we can analyze the 
 # model's actual prediction errors (residuals) to see if they, for example, align with the initial 
 # assumptions (though this is more common in classical statistics than always done explicitly in deep
@@ -2649,7 +2654,7 @@ for e in range(epochs):
 #! add edits from the second part of explanations, where I talka bout posterior distribution(q(z|x)
 # to make the explanations here clearer for everyone.())
 ############################
-    # recap of recap (more technical explanation):
+    # recap2 (more technical explanation):
     # our encoder(denoted as qθ(z∣x) (i.e. given this input data x, what is the
     # probability distribution of the latent variable z (i.e. whats the mu,var)(note its in log form!but anyway lets carry on(add this as footnote))) 
     # will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
@@ -2845,6 +2850,7 @@ for e in range(epochs):
     # it allows for easier training and implementation while still capturing useful underlying 
     # structure in the data.
     
+    
     # As we briefly pointed out before, this sampling process wont work as is, and it 
     # requires a clever trick to work as expected.
     # When training the model, we need to be able to calculate the relationship 
@@ -2881,6 +2887,7 @@ for e in range(epochs):
 #! edit add note to use BCE for reconstruction loss instead of MSE as it has better performance
 # especially for larger datasets
 #
+
 
 # read more  : https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
 # There are other resouces for this as well. its highly recommened to read them: 
