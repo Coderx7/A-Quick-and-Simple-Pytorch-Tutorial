@@ -2050,7 +2050,7 @@ for e in range(epochs):
 # -VAE (Variational Autoencoders)
 # -Creating MNIST Like digits
 # -The Reparametrization Trick
-
+# edit read An Introduction to Variational Autoencoders https://arxiv.org/pdf/1906.02691  (very good read)
 
 # intori shoro konim
 # I guess if we started the introduction with intuitions it would be better so lets do just that!
@@ -2368,33 +2368,20 @@ for e in range(epochs):
 # encodings locally (on the local scale) by clustering and yet globally, densely packing them 
 # near the latent space origin (see visualization).
 # 
+# It is this fine balance reached by the cluster-forming nature of the reconstruction loss, 
+# and the dense packing nature of the KL loss, which forms distinct clusters that the decoder
+# can decode.
+# !edit remove- excessive, already mentioned it
+# This means when randomly generating, if we sample a vector from 
+# the same prior distribution of the encoded vectors, N(0, I),(natural images have
+# normal distribution (unit normal distribution? applies to them as well)) 
+# the decoder will successfully decode it. And if we're interpolating, there are 
+# no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
 
-
-# sidenote:
-# we use BCE because the original paper uses BCE, but some implementations started using MSE!
-# BCE is preferred in cases where we are dealing with normalized images between 0 and 1
-# like binary or grayscale images, where the goal is to predict whether a pixel is closer to
-# 0 (black) or 1 (white).(because in BCE each pixel value is seen as probabilities, it makes 
-# it especially suitable), this is the case here, as the vae paper used grayscale datasets namely
-# MNIST and another face related which I forgot(todo edit: add the datasetname)
 # 
-# MSE however, assumes continuous values, meaning it penalizes small differences more harshly,
-# which may lead to blurry reconstructions. for example if we had an image where a 
-# pixel was 0.9 and the predicted value was 0.8, BCE would penalize the small difference in
-# a way that maintains a sharp reconstruction however, MSE, might have lead to an average of
-# multiple possible outputs, causing blurry reconstructions. (we see this in our trainig)
-# 
-# having this said, ww can see MSE being used with color images(especially in GANs), especially
-# the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
-# it produces smoother but sometimes blurrier reconstructions)
-# so MSE tends to work better for smooth images, while BCE works well when pixel values behave
-# like probabilities (high contrast regions, thresholded images, etc).
-# !EDIT !EDIT !EDIT
-# (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
-# though it might be a good idea to follow and get good result!)
-#
-
-# edit read An Introduction to Variational Autoencoders https://arxiv.org/pdf/1906.02691  (very good read)
+# !edit sidenotes have become too large, maybe its better to incorporate them into a dedicated section and
+# !only keep a very quick/summary? (if so then I may not get the points across!? maybe if I post them
+# !as side chapters would do? )
 #
 # sidenote:
 # Concerning the loss function, both BCE and MSE losses can and are used.
@@ -2421,8 +2408,8 @@ for e in range(epochs):
 # are pushed towards extremes, BCE can be a good choice even for continuous [0,1] data,
 # if we believe that a blurry average is a more faithful representation of uncertainty 
 # or if our data truly has continuous variations best captured by a Gaussian, MSE might be a better choice)
-
-
+#
+#
 # Sidenote example for MSE vs BCE 
 # we can develop an intuitive understanding by going over the two losses with a simple example, 
 # recall that MSE Loss is (y_true - y_pred)^2 (for a single sample (pixel in our case), mean is 
@@ -2491,7 +2478,7 @@ for e in range(epochs):
 #
 # now if we assume each pixel is drawn from a normal/guassian distribution, then given that a normal/gaussain
 # distribution is defined by a mean and a variance, if we assume our decoder outputs a μ_i for each pixel(see note*) 
-# which we take/interpret as the mean for this normal distribution, and if for the simplicities sake, we 
+# which we take/interpret as the mean for this normal distribution, and if for simplicity's sake, we 
 # assume the variance is fixed and is equal to 1, (or we could assume std is constant for all pixels and
 # datapoints so it doesnt need to be learned) the probablity density function for input x_i given
 # μ_i and fixed variance(σ²=1) will be :
@@ -2533,18 +2520,18 @@ for e in range(epochs):
 # in this case, the loss function is precisely the Gaussian NLL shown above (without dropping the 
 # log(σ) terms), and the model learns to express its uncertainty about its own reconstructions. 
 # if the model is very certain, it can predict a small σ_i², if uncertain, a larger σ_i².
-
+# 
 # !edit choose v1 or v2 for this section
 # version 2 :
 # (also concerning the connection between MSE and a gaussian/normal assumption, it comes from the principle
-# of maximum likelihood estimation(MLE).)
+# of maximum likelihood estimation(MLE))
 # lets start from the very begining, 
 # in many modeling scenarios, especially with generative models like VAEs, we're trying to learn a 
 # probability distribution. for the reconstruction part of the vae, the decoder is trying to learn 
 # the probability of observing the input x given the latent code z or p(x|z).
 # to define p(x|z), we need to assume a specific type of probability distribution for the output.
 # if we assume each pixel(x_i) (from the original image) is drawn from a Bernoulli distribution 
-# parameterized by p_i (the corresponding output pixel from the decoder passed through a sigmoid),
+# parameterized by p_i (the corresponding output pixel from the decoder with a sigmoid at the end),
 # then maximizing the likelihood (or minimizing the negative log-likelihood) leads to the Binary-
 # Cross-Entropy (BCE) loss: 
 # p(x_i|z) = Bernoulli(x_i|p_i)
@@ -2577,7 +2564,7 @@ for e in range(epochs):
 # that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a Gaussian distribution
 # with mean 0 and some fixed variance σ².
 #
-
+# 
 #note2:
 # note that images in 0-1 range are still continuous values, they are not binarized (strictly 0 and 1)
 # to be only used with bce, we can use mse as well the thing is, going bce
@@ -2585,7 +2572,7 @@ for e in range(epochs):
 # (or oversaturation like in vqvae 2 experiments?!)
 # so if its acceptable then bce is ok, otherwise we can use mse! (we can see this behavior in vqvae,
 # if we use bce, we get saturated images! check if this is the case?!)
-
+# 
 # why do we care? 
 # in short, because it determines our model's results!
 # If the underlying assumption is wrong(i.e. its is not Gaussian), then MSE is no longer guaranteed to
@@ -2595,13 +2582,13 @@ for e in range(epochs):
 # another example is trainig a binary classifier with MSE, we can do it, but it's generally much 
 # less effective than using BCE because BCE's log term heavily penalizes confident wrong answers, 
 # which is crucial for classification. 
-# Even in our own usecase, VAE, the choice between MSE and BCE has a very visible impact on the sharpness/blurriness
+# Even in our own usecase, VAEs, the choice between MSE and BCE has a very visible impact on the sharpness/blurriness
 # of generated images.
-# Having all of this said, the "optimality" of MSE being tied to the Gaussian error assumption is a theoretical foundation.
+# Having said all that, the optimality of MSE being tied to the Gaussian error assumption is a theoretical foundation.
 # whether deviations from this assumption drastically affect the outcome in practice depends on how much
 # the true error distribution deviates, the nature of the data and task, and what aspect of the outcome we care about the most.
 # There are many real-world scenarios where choosing a loss function more aligned
-# with the (assumed) true nature of the data's "noise" or desired output characteristics leads to demonstrably 
+# with the (assumed) true nature of the data's "noise" or desired output characteristics leads to visibly 
 # better practical results (e.g. sharper images, more robust predictions, better classification/etc).
 # Often, especially in deep learning, the choice is also guided by empirical results and desired qualitative outcomes
 # (like sharpness) in addition to strict adherence to probabilistic theory. 
@@ -2610,7 +2597,7 @@ for e in range(epochs):
 # in its observation) when considering p(x|z). this assumption directly dictates the form of the likelihood,
 # and minimizing the negative log-likelihood gives us our loss function.
 # 
-# for example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
+# For example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
 # MSE will be heavily influenced by these outliers because it squares the error, in this case L1 loss 
 # (Absolute Error), which corresponds to assuming Laplacian noise, is more robust to outliers.
 # also if our pixel values are truly probabilities or binary (0/1), a Gaussian assumption is fundamentally
@@ -2619,9 +2606,7 @@ for e in range(epochs):
 # Using MSE here forces the model to fit a Gaussian shape to data that isn't Gaussian, leading to
 # predictions outside the valid range (e.g. <0 or >1 if not clipped) and the blurriness we discussed 
 # (as it tries to find a "mean" for bimodal data)!
-# 
-#
-# 
+#  
 # recap:
 # as we saw, the loss function dictates the gradients used for backpropagation.
 # in MSE the gradient is proportional to (x_i - μ_i) its a "linear" error response.
@@ -2637,33 +2622,25 @@ for e in range(epochs):
 # model we are trying to build. when the assumption holds, MSE is great. When it doesn't,
 # other loss functions derived from different distributional assumptions (like BCE from Bernoulli)
 # are often better.
-
+# 
 # 
 # we can see MSE being used with color images(especially in GANs), especially
 # the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
 # it produces smoother but sometimes blurrier reconstructions)
 # so MSE tends to work better for smooth images, while BCE works well when pixel values behave
 # like probabilities (high contrast regions, thresholded images, etc).
-# !EDIT !EDIT !EDIT
+# !EDIT 
 # (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
-# though it might be a good idea to follow and get good result!)
+# though it might be a good idea to follow and get good result?!)
 
-
-# It is this fine balance reached by the cluster-forming nature of the
-# reconstruction loss, and the dense packing nature of the KL loss, which forms distinct
-# clusters that the decoder can decode.
-# This means when randomly generating, if we sample a vector from 
-# the same prior distribution of the encoded vectors, N(0, I),(natural images have
-# normal distribution (unit normal distribution? applies to them as well)) 
-# the decoder will successfully decode it. And if we're interpolating, there are 
-# no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
 
 #! add edits from the second part of explanations, where I talka bout posterior distribution(q(z|x)
 # to make the explanations here clearer for everyone.())
 ############################
     # recap2 (more technical explanation):
     # our encoder(denoted as qθ(z∣x) (i.e. given this input data x, what is the
-    # probability distribution of the latent variable z (i.e. whats the mu,var)(note its in log form!but anyway lets carry on(add this as footnote))) 
+    # probability distribution of the latent variable z (i.e. whats the mu,var)
+    # (note its in log form!but anyway lets carry on(add this as footnote))) 
     # will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
     # using these two parameters, we sample our z representation vector(latent vector)
     # which will be used by the decoder to reconstruct the input.
@@ -2679,7 +2656,7 @@ for e in range(epochs):
     # hence the phrase stochastic, because sampling is involved and it changes each time
     # (it changes each time even for the same input because we use a random variable along side thme!)
     #
-
+    #
     # new edit:
     # The decoder (denoted as pϕ(x∣z)) will take a latent vector z,
     # sampled using the mean (mu) and standard deviation (std) from the previous step (encoder's output).
@@ -2725,7 +2702,6 @@ for e in range(epochs):
     # the distribution parameterized by the decoder, given z.
     # Higher log-likelihood means the decoder effectively captures the structure of 
     # x from z while lower values indicates greater reconstruction loss.
-
     # sidenote4:
     # note that in this approach we assume the features in the latent space are independent, 
     # that is, each dimension of z(each feature) contributes independently to the decoded 
@@ -2734,7 +2710,7 @@ for e in range(epochs):
     # relationships between each feature. this simplifies the whole process of sampling 
     # and reconstruction as we will see in a moment)
     # 
-    # it should be obvious/its a given that his assumption may not fully capture the true structure 
+    # it should be obvious/its a given that this assumption may not fully capture the true structure 
     # of the data but its a practical trade-off we are willing to pay in order to have 
     # much better computational efficiency in training the decoder.
     # without this we have to face a huge computation burden and a complex sampling process. 
@@ -2781,12 +2757,11 @@ for e in range(epochs):
     # since theres no correlation between dimensions, no additional transformations 
     # are needed.
     # 
-    # Why is this useful in Variational Autoencoders (VAEs)?
-    # so to cut a long story short, it boils down to 
-    # learning fewer parameters and easier sampling .
-    # its fewer parameters because (only mu and diagonal Sigma is used)(less work for forward/backward passes)
-    # and it avoids overfitting by simplifying the model, especially when working with limited data.
-    # and easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector)
+    # Why is this useful in VAEs?
+    # so to cut a long story short, it boils down to learning fewer parameters and easier sampling.
+    # Its fewer parameters because (only mu and diagonal Sigma is used)(less work for forward/backward passes)
+    # moreover it avoids overfitting by simplifying the model, especially when working with limited data
+    # And its easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector)
     # from it, derived from diagonal variances) and sampling from N(mu, sigma) is done directly.
     # 
     # 
@@ -2832,13 +2807,13 @@ for e in range(epochs):
     # p(x) = (1/((2*pi)^(n/2)*|Sigma|^(1/2)))*exp(-0.5*(x-mu)^T * Sigma^(-1) * (x-mu))
     # Here, x is a vector (e.g., [x1, x2]), mu is the mean vector (e.g., [mu1, mu2]),
     # and Sigma is the covariance matrix.
-    
+    # 
     # recap:
     # the term "multivariate" in "multivariate Gaussian distribution" means that the
     # distribution models more than one variable.
     # it describes both the individual behavior of each variable (via the mean vector mu)
     # and their relationships (via the covariance matrix Sigma).
-
+    # 
     # In simpler terms:
     # in a typical multivariate Gaussian distribution, we would need to define both variances
     # and covariances (how different features are related to each other).
@@ -2856,8 +2831,9 @@ for e in range(epochs):
     # This assumption is common in practice, (especially in VAEs) because
     # it allows for easier training and implementation while still capturing useful underlying 
     # structure in the data.
-    
-    
+
+
+
     # As we briefly pointed out before, this sampling process wont work as is, and it 
     # requires a clever trick to work as expected.
     # When training the model, we need to be able to calculate the relationship 
@@ -2895,6 +2871,10 @@ for e in range(epochs):
 # especially for larger datasets
 #
 
+#! edit this, only use refs, because I have incorporated way more information now
+# it covers all the points discussed in these links if not more!
+# but they still are a great resource that I used myself, just tidy things up
+# I explained kingma and reprarmeterization trick so we dont really need it h ere agian!
 
 # read more  : https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
 # There are other resouces for this as well. its highly recommened to read them: 
@@ -2915,9 +2895,6 @@ for e in range(epochs):
 # if you havent read the links I gave you, go read them all. each single one of them
 # will help you grasp one aspect very good!
 
-# Viewppoint 2! what is VAE and how does it work? why was it created? whats the intuition behind it?
-# explain 
-# 
 
 # sidenote: a much clearer implementation which I wrote for pytorch examples repo at the time: 
 # https://github.com/Coderx7/examples/blob/vae-example-branch/vae/main.py
@@ -3011,6 +2988,7 @@ class deconv(nn.Module):
             out += x  
         return out
 
+# !edit remove or let it be as an impl note?
 # instead of deconv, for getting better result, it doesnt work for me! i keep getting cuda error
 # I guess its because of my choice of kernels! i need to get this to work!
 # class PixelShuffleBlock(nn.Module):
@@ -3028,14 +3006,14 @@ class deconv(nn.Module):
 #             act
 #         )
 #         self.residual_connection = (in_dim == out_dim)
-
+#
 #     def forward(self, x):
 #         out = self.block(x)
 #         if self.residual_connection:
 #             out += x
 #         return out
 
-#since I might disable batchnorm for decoder, I enable bias by default
+# since I might disable batchnorm for decoder, I enable bias by default
 # otherwise id leave it at false!
 class upconv(nn.Module):
     def __init__(self, in_dim, out_dim, kernel_size=3, scale_factor=2, padding=1, 
@@ -3167,25 +3145,26 @@ class VAE(nn.Module):
         # so it becomes variance.
         # 
         # sidenote:
-        # variance(σ^2) must always be positive because it represents squared differences.
-        # we dont directly optimize σ^2 or σ instead we work with log(σ^2) (logvar), 
-        # which ensures that the computed variance (σ^2=exp(logvar)) is always positive,
+        # variance(σ^2) must always be positive because it represents squared differences!
+        # we dont directly optimize variance (σ^2) or σ instead we work with log(σ^2) (logvar), 
+        # we do this to to make sure the computed variance (σ^2=exp(logvar)) is always positive,
         # even if logvar takes negative values. (exp() returns positive)
         # 
-        # The factor 0.5 in exp(0.5*logvar) comes from the mathematical process of 
-        # computing the standard deviation (σ) from log(σ^2):
+        # The 0.5 in exp(0.5*logvar) comes from the mathematical process of computing the 
+        # standard deviation (σ) from log(σ^2) which is:
         # σ = sqrt(σ^2) = exp(0.5 * logvar)
         # 
         # sidenote2:
         # why do we use logvariance instead of variance?
         # because variance (also standard deviation) can take very small or large values, 
         # that can lead to overflow or underflow in floating-point computations, therefore
-        # representing it as log⁡(σ^2) avoids that issue.
+        # we represent it as log⁡(σ^2) to avoid that issue!
         # 
-        # sidenote2:
-        # The standard deviation represents the 'scale' of the distribution 
-        # in the same units as the data.(z = μ+σ⋅ϵ, ϵ∼N(0,I))
-        # note here for sampling we use the standard deviation (σ) not variance!
+        # !edit (obvious? excessive remove?)
+        # sidenote2
+        # The standard deviation represents the 'scale' of the distribution in the same units as
+        # the data (z = μ+σ⋅ϵ, ϵ∼N(0,I))
+        # note that here for sampling we use the standard deviation (σ) not variance!
         # because multiplying by variance (σ^2) wouldn't make sense dimensionally
         # and it would lead to an incorrect scaling.
         # we use variance (σ^2) in the KL divergence term during optimization though
