@@ -2675,7 +2675,7 @@ for e in range(epochs):
     # and 1 in the output, where each number corresponds to the probability of a pixel being 
     # "on" (1) or "off" (0).
 
-    # sidenote:
+    # region sidenote:
     # The information from the original input (784-dimensional vector in our case) can not be
     # perfectly preserved, because the decoder only has access to a compressed summary of the
     # original data represented as the lower-dimensional vector z.
@@ -2831,7 +2831,7 @@ for e in range(epochs):
     # This assumption is common in practice, (especially in VAEs) because
     # it allows for easier training and implementation while still capturing useful underlying 
     # structure in the data.
-
+    #endregion 
 
 
     # As we briefly pointed out before, this sampling process wont work as is, and it 
@@ -3064,9 +3064,7 @@ class VAE(nn.Module):
         #logvariance
         self.fc1_logvar = nn.Linear(bottleneck_size, self.embedding_size) 
 
-        #! calculate the logptheta(x|z) as well?
         #!
-        # mnist?!
         # we can use dropout/bn to have better training!
         # sidenote: 
         # if we start our decoder with a linear layer,
@@ -3319,8 +3317,8 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
 # I just resized cifar10 so the changes is minimal here ))
 epochs = 50
 
-dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=tf.ToTensor())
-dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=tf.ToTensor())
+dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True,transform=tf.ToTensor())
+dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True,transform=tf.ToTensor())
 
 ## uncomment these lines to test with cifar10 
 ## (only do this after you ave experimented with mnist)
@@ -3340,7 +3338,7 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffl
 
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
-embeddingsize = 2#2,10
+embedding_size = 2#2,10
 reduction='mean'#mean
 # to see how it affects our result, when using using reduction='mean'
 # set normalization to False, without normalization we wont learn 
@@ -3350,10 +3348,22 @@ normalize = True #False
 use_mse = False
 interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-model = VAE(embeddingsize, input_channel).to(device)
+print(f'Done!')
+#%%
+model = VAE(embedding_size, input_channel).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+checkpoint_path = f"./weights/vae/vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+
+print(f'Training date:   {datetime.datetime.now().strftime("%Y_%m_%d, %H:%M:%S")}')
+print(f'Checkpoint path: {checkpoint_path}')
+print(f'Input channel:   {input_channel}')
+print(f'Embedding size:  {embedding_size}')
+print(f'Reduction:       {reduction}')
+print(f'Normalize:       {normalize}')
+print(f'Use MSE:         {use_mse}')
+print(f'Device:          {device}')
 
 for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
@@ -3368,27 +3378,42 @@ for e in range(epochs):
                   f'\tloss: {loss.item():.4f}'
                   f'\tlr: {scheduler.get_lr()[-1]}')
     scheduler.step()
-
-#%% 
-# save the model
+# save the final model
 torch.save({"states":model.state_dict(),
             "epochs":epochs,
             "embedding_size":model.embedding_size,
             "reduction":reduction,
             "normalize":normalize,
-            "use_mse":reduction,
+            "use_mse":use_mse,
             "optimizer":optimizer.state_dict(),
             "scheduler":scheduler.state_dict()},
-            f"vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}.pth")
+            checkpoint_path)
 print('model saved!')
-#%%
-# load the model 
-states = torch.load(f"vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}.pth")
+print(f'Training is complete!')
+
+#%% load from checkpoint
+# weight_filename = checkpoint_path
+weight_filename = './weights/vae/vae_2_mean_normalized_bce_20250601_200757.pth'
+embd_sz, reduction, normalization, loss,*_ = weight_filename.split("_")[1:]
+states = torch.load(weight_filename)
+
+embedding_size = states.pop("embedding_size", embd_sz)
+reduction = states.pop("reduction", reduction)
+normalize = states.pop("normalize", normalization=='normalized')
+use_mse = states.pop("use_mse", loss != 'bce')
+
+print(f"Loading Checkpoint  '{weight_filename}'")
+print(f"Embedding_size:     {embedding_size}")
+print(f"Reduction:          {reduction}")
+print(f"Normalize:          {normalize}")
+print(f'Use_MSE:            {use_mse}')
+
+# load the model
+model = VAE(embedding_size, input_channel).to(device)
 model.load_state_dict(state_dict=states['states'])
+model.eval()
 print('weights loaded')
 #%%
-#
-#  
 # now lets write some functions for visualization 
 # and see how our model does
 # 
@@ -3988,7 +4013,6 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # simple data.
 # by addressing these factors holistically, we can prevent posterior collapse 
 # and ensure the model learns meaningful latent representations.
-
 
 class Print(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -12044,7 +12068,7 @@ else:
     labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
     label_texts = [class_names[labels[i]] for i in range(len(labels))]
 
-timestamp = datetime.datetime.now().strftime("YY_MM_DD_HH_MM_SS")
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
 
 #%%
@@ -12544,7 +12568,7 @@ else:
     labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
     label_texts = [class_names[labels[i]] for i in range(len(labels))]
 
-timestamp = datetime.datetime.now().strftime("YY_MM_DD_HH_MM_SS")
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
 
 #%%
