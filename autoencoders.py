@@ -506,17 +506,17 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 # lets also visualize the encodings/features learned by our encoder
-# and see whether/how well these features are separated. 
+# and see how well these features are separated.
 # this kind of visualization specifically becomes intersting when we
 # start implementing other types of autoencoders such as VAE. 
 # when we get there we'll explain this further. 
-# ok, to do this, one way is to use scatter plot and display
-# each sample that way that is, we feed our images to the encoder,
+# to do this, one way is to use scatter plot and display
+# each sample, that way that is, we feed our images to the encoder,
 # grab the feature vector and then display it in a scatterplot.
 # since we are going to use scatter plot, our feature vector must be 2D
 # (that is it needs to have 2 numbers!) if its not, we need to use pca or tsne
 # to project them into 2d.
-def plot_embedding_clusters(model, dataloader_train, title='',use_pca=False):
+def plot_encoder_output_projection(model, dataloader_train, title='',use_pca=False):
     model.eval()
     # grab the device from model parameter
     device = next(model.parameters()).device
@@ -584,7 +584,7 @@ def plot_embedding_clusters(model, dataloader_train, title='',use_pca=False):
     plt.colorbar(scatter, label='Class Label')
     plt.show()
 #%%
-plot_embedding_clusters(model_mlp_ae, dataloader_train, use_pca=False)
+plot_encoder_output_projection(model_mlp_ae, dataloader_train, use_pca=False)
 # 
 # if we used embedding_dim=2 in our previous examples, we would get a drastically different image
 # try that and see the difference. 
@@ -1009,7 +1009,7 @@ view_images(imgs,labels)
 new_noise_free_imgs = model(imgs)
 view_images(new_noise_free_imgs,labels)
 #%%
-plot_embedding_clusters(model, dataloader_train, use_pca=False)
+plot_encoder_output_projection(model, dataloader_train, use_pca=False)
 #%%
 # sparse autoencoder: these kinds of autoencoders simply use a regularizer term so that
 # the features are more sparse! usually l1 loss is used!(more on this later)
@@ -1693,7 +1693,7 @@ for e in range(epochs):
     # result we get
     imgs_list.append((imgs[0],rec_imgs[0]))
 #%%
-plot_embedding_clusters(sae_model, dataloader_train, use_pca=False)
+plot_encoder_output_projection(sae_model, dataloader_train, use_pca=False)
 #%%
 # note that using tied weights we get a better result and much lower loss, as this acts as a regularizer on
 # its own which is not the case when weights are independant and require more trainig/regularization
@@ -3414,18 +3414,20 @@ model.load_state_dict(state_dict=states['states'])
 model.eval()
 print('weights loaded')
 #%%
-# now lets write some functions for visualization 
-# and see how our model does
+# now lets write some functions for visualization and see how our model performs
 # 
-# generate random images by randomly sampling from a simple normal distribution!
+# we can generate random images by randomly sampling from a normal distribution!
+# simply generating some random numbers using randn (i.e. randomly sampling from
+# a normal distribution) in the form of our input, gives us random classes!
+# we can further influence our generation by imposing different means/stds, but
+# we'll see much better ways for steering/controling the generation process a head!
 @torch.no_grad()
 def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,28)):
     c = img_shape[0]
-    # simply randomly sampling from a normal distribution will
-    # give us random classes.
     sample = torch.randn(size=(count, model.embedding_size)).to(device)
-    # we can further influence our generation by imposing different means/stds
-    # sample *= 0.5 + 0.5
+    # play with the numbers and see how it affects the outcome (remember
+    # this acts as sampling we are essentially doing eps*std+mean here)
+    # sample *= 0.01 + 0.1
     model.eval()
     imgs = model.decoder(sample)
     # print(f'{imgs.shape=}')
@@ -3435,10 +3437,11 @@ def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,
     plt.imshow(img, cmap='Greys_r' if c ==1 else None)
     plt.title('randomly sampled generation')
 
-# generate_random_images(model, count=32)
-
-# lets now display the original images next to their reconstruction
-# to see the quality of reconstruction
+generate_random_images(model, count=32)
+#%%
+# good! now lets display the original images next to their reconstruction for the
+# whole testset this hsould give us a good idea how good our modle is trained and
+# is performing
 def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
     img_cnt = len(img_pairs)
     rows = img_cnt//cols +1 if img_cnt>rows*cols else rows
@@ -3504,16 +3507,18 @@ def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28
 # evaluate_on_testset(model, dataloader_test)
 
 #! edit choose better function names! 
-# lets plot the latent space encodings and see
-# how the encoded representations of our data
-# look in the latent space
+# lets plot the latent space encodings and see how the encoded
+# representation look in the latent space, how well separated 
+# they are which shows how well our model is trained! 
+# note that we visualize the first two features here, even if
+# our embedding size is well beyond 2!
 @torch.no_grad()
-def plot_latent_space_encodings(model, batch_size = 10000):
+def plot_2d_latent_space(model, batch_size = 10000):
 
     dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
-                                                batch_size = batch_size,
-                                                num_workers = num_workers,
-                                                pin_memory=True)
+                                                   batch_size=batch_size,
+                                                   num_workers=num_workers,
+                                                   pin_memory=True)
     imgs, labels = next(iter(dataloader_test2))
     imgs = imgs.to(device)
     z_test,*_ = model.encode(imgs)
@@ -3537,9 +3542,18 @@ def plot_latent_space_encodings(model, batch_size = 10000):
     plt.show()
 
 # lets now see how the latent space looks like with tsne
-# the previous version plot_embedding_cluster would look at
-# the encoders output, before they were used to create the
-# latent vector z. hopefully this gives us a better picture
+# the previous version `plot_encoder_output_projection` is identical
+# to this one, but it would look at the encoders output, 
+# before it was used to create the latent vector z.
+# in this version, we use the latent vector z itself(like 
+# the plot_2d_latent_space() but not limited to 2 features!), 
+# so hopefully this gives us a better picture and see if its
+# radically different than the encoders output itself!
+# since they work on different things we choose a different name
+# to reflect that differnce. 
+# also we can do much better and refactor this into one function 
+# but for now this copy/paste is ok!
+#!edit refactor these two functons properly!
 @torch.no_grad()
 def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
     model.eval()
@@ -3584,7 +3598,7 @@ def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
     scatter = plt.scatter(features2d[:, 0], features2d[:, 1], c=all_labels, cmap='tab10', alpha=0.6)
 
     # add class labels to each cluster for better visualization
-    # to do this we need t o calculate the centeroid(i.e. mean) of each cluster
+    # to do this we need to calculate the centeroid(i.e. mean) of each cluster
     # which is basically taking the average of all the points for that cluster
     # and then use plt.text to add class numbers
     
@@ -3608,7 +3622,8 @@ def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
     plt.colorbar(scatter, label='Class Label')
     plt.show()
 
-#! edit fix this with embd>2
+#!edit this only works with embds==2, for anything larger
+# we can pick the two dims and use those to create the grid 
 @torch.no_grad()
 def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28)):
     # lets see if the transition in our latent space is smooth
@@ -3652,13 +3667,12 @@ def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_sh
 img_shape=(1,28,28)
 generate_random_images(model, count=32, img_shape=img_shape)
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape)
-plot_latent_space_encodings(model)
-plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_2d_latent_space(model)
+plot_encoder_output_projection(model, dataloader_train, title='Encoder output projection',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2, img_shape=img_shape)
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=img_shape)
 #%%%
- 
 # now if you try to play with parameters, you'll see its really 
 # hard to get it working! and our results can quickly get either blury
 # or too similar/generic. so lets talk about these issues we are facing 
@@ -4951,8 +4965,8 @@ evaluate_on_testset(model, dataloader_test, **kwargs)
 # I need to fix it!
 generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
 generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
-plot_latent_space_encodings(model)
-plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_2d_latent_space(model)
+plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # lets view some images and generate
 # some only for a specific class
@@ -5450,9 +5464,9 @@ kwargs = {"img_shape":img_shape,
           "kl_anealing":kl_anealing,
           "normalize":normalize}
 check_latent_representation_diversity(model, dataloader_train)
-plot_latent_space_encodings(model)
+plot_2d_latent_space(model)
 evaluate_on_testset(model, dataloader_test, **kwargs)
-plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # fix these two for skipcon version
 if not model.use_skip_con:
@@ -5535,8 +5549,8 @@ if not model.use_skip_con:
 # evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
 # generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
 # generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
-# plot_latent_space_encodings(model)
-# plot_embedding_clusters(model, dataloader_train, title='Encoder embedding',use_pca=False)
+# plot_2d_latent_space(model)
+# plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
 # plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # wont work with skipconnection=True, todo: fix it
 
