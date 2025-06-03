@@ -3127,42 +3127,36 @@ class VAE(nn.Module):
                                     )
     
     # Note: 
-    # In order to deal with the fact that the network will also learn negative values
-    # for σ, we'll have the network learn log(σ) and exponentiate(exp) it 
-    # to get the latent distribution's variance.
+    # In order to deal with the fact that the network could also learn negative values
+    # for σ(if we directly tried to predict σ without constraints), we'll have the 
+    # network learn log(σ^2) and exponentiate(exp) it to get the latent distribution's
+    # variance.
     def reparamtrization_trick(self, mu, logvar):
         # !edit combine them in one paragraph, we have too many sidenotes that we can 
         # !incorporate into the actual text I guess! 
         # torch.exp() converts logvar(log(variance) which our network produces) back to
         # variance (sigma^2) but note that here, we have the multiplication by 0.5 and
-        # then exponentiation.
+        # then exponentiation.(the multiplication by 0.5 before exponentiation is key)
         # this is equivalent to computing the square root of the variance (its 
         # asif we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
         # remember log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5)=0.5.log⁡(𝜎^2)
         # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
-        # so it becomes variance.
+        # so it becomes standard deviation.
         # 
         # sidenote:
         # variance(σ^2) must always be positive because it represents squared differences!
-        # we dont directly optimize variance (σ^2) or σ instead we work with log(σ^2) (logvar), 
-        # we do this to to make sure the computed variance (σ^2=exp(logvar)) is always positive,
-        # even if logvar takes negative values. (exp() returns positive)
-        # 
-        # The 0.5 in exp(0.5*logvar) comes from the mathematical process of computing the 
-        # standard deviation (σ) from log(σ^2) which is:
-        # σ = sqrt(σ^2) = exp(0.5 * logvar)
-        # 
-        # sidenote2:
-        # why do we use logvariance instead of variance?
-        # because variance (also standard deviation) can take very small or large values, 
+        # we dont directly optimize variance (σ^2) or standard deviation (σ) instead we 
+        # work with log(σ^2) (logvar). 
+        # we do this to to make sure the computed variance (σ^2=exp(logvar)) is always 
+        # positive even if logvar takes negative values. (exp() returns positive)
+        # moreover, variance (also standard deviation) can take very small or large values, 
         # that can lead to overflow or underflow in floating-point computations, therefore
         # we represent it as log⁡(σ^2) to avoid that issue!
         # 
-        # !edit (obvious? excessive remove?)
-        # sidenote2
-        # The standard deviation represents the 'scale' of the distribution in the same units as
-        # the data (z = μ+σ⋅ϵ, ϵ∼N(0,I))
-        # note that here for sampling we use the standard deviation (σ) not variance!
+        # sidenote2:
+        # the standard deviation represents the 'scale' of the distribution in the same
+        # units as the data (z = μ+σ⋅ϵ, ϵ∼N(0,I)).
+        # note here for sampling we use the standard deviation (σ) not variance(σ^2)!
         # because multiplying by variance (σ^2) wouldn't make sense dimensionally
         # and it would lead to an incorrect scaling.
         # we use variance (σ^2) in the KL divergence term during optimization though
@@ -3176,10 +3170,11 @@ class VAE(nn.Module):
         eps = torch.randn_like(std)
         # How to sample from a normal distribution with known mean and variance?
         # https://stats.stackexchange.com/questions/16334/ 
-        # (tldr: just add the mu , multiply by the var) . 
+        # (tldr: just add the mu , multiply by the standard deviation std) . 
         
+        # !edit old explanation, already explained before, remove it
         # why we use an epsilon?
-        # you should know by now, if not read the former links I provided.
+        # you should know by now, if not read the former explanations.
         # basically there are 2 main explanations, the first one (Which is not accurate) is
         # because without it, backprop wouldnt work atall, its impossible to backprop!(which 
         # is not really the accurate, its possible and it works, but with a caveat!).
@@ -3189,7 +3184,7 @@ class VAE(nn.Module):
         # we then shift this new sample with the mean and std we have and effectively
         # reach the very same result. that is we add our mu and scale it by std 
         # (since our eps has 0 mean and std 1, adding it with mu, and scaling it by std
-        # will make it N(mum std) which is what we want. our expression also now can be
+        # will make it N(mu, std) which is what we want. our expression also now can be
         # easily backpropagated. 
         # also you need to know that, it is also said this reparameterization trick 
         # is only done for numerical stability and actually the basic way can be done as well!
