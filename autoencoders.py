@@ -514,8 +514,8 @@ from sklearn.preprocessing import StandardScaler
 # each sample, that way that is, we feed our images to the encoder,
 # grab the feature vector and then display it in a scatterplot.
 # since we are going to use scatter plot, our feature vector must be 2D
-# (that is it needs to have 2 numbers!) if its not, we need to use pca or tsne
-# to project them into 2d.
+# (that is it needs to have 2 numbers!) if its not, we need to use pca 
+# or tsne to project them into 2d.
 def plot_encoder_output_projection(model, dataloader_train, title='',use_pca=False):
     model.eval()
     # grab the device from model parameter
@@ -3354,7 +3354,7 @@ model = VAE(embedding_size, input_channel).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-checkpoint_path = f"./weights/vae/vae_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+checkpoint_path = f"./weights/vae/vae1_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
 
 print(f'Training date:   {datetime.datetime.now().strftime("%Y_%m_%d, %H:%M:%S")}')
 print(f'Checkpoint path: {checkpoint_path}')
@@ -3393,7 +3393,7 @@ print(f'Training is complete!')
 
 #%% load from checkpoint
 # weight_filename = checkpoint_path
-weight_filename = './weights/vae/vae_2_mean_normalized_bce_20250601_200757.pth'
+weight_filename = './weights/vae/vae1_2_mean_normalized_bce_20250601_200757.pth'
 embd_sz, reduction, normalization, loss,*_ = weight_filename.split("_")[1:]
 states = torch.load(weight_filename)
 
@@ -3623,18 +3623,18 @@ def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
     plt.show()
 
 #!edit this only works with embds==2, for anything larger
-# we can pick the two dims and use those to create the grid 
+# we can pick the two dims and use those to create the grid
 @torch.no_grad()
 def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28)):
     # lets see if the transition in our latent space is smooth
     # that is we should be able to smoothly transition from one
-    # class to the other, at least this is what we are tryting 
+    # class to the other, at least this is what we are tryting
     # to see.
     # we create a vector of equally spaced values, and try to
     # visualize these vectors, (they act as our latent vector z)
     # since they are equally spaced, we can see how they change
     # gradually, ideally we want them to have a smooth transition
-    # from one class to another. 
+    # from one class to another.
     # so lets see how our interpolation turns out
     # n means we want a figure with nxn digits
     model.eval()
@@ -3663,7 +3663,9 @@ def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_sh
     plt.imshow(x)
     plt.title(f'latent space grid of numbers({n}x{n})')
     plt.show()
+
 #%%
+#note try these with embds=2 and larger numbers and see how they affect the outcome
 img_shape=(1,28,28)
 generate_random_images(model, count=32, img_shape=img_shape)
 evaluate_on_testset(model, dataloader_test, img_shape=img_shape)
