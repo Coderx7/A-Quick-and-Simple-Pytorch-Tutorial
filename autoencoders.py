@@ -3153,7 +3153,7 @@ class VAE(nn.Module):
     # For sampling we use the standard deviation (σ) not variance(σ^2)!,because multiplying
     # by variance (σ^2) wouldn't make sense dimensionally and it would lead to an incorrect 
     # scaling.
-    
+        
     # old explanation:
     # In order to deal with the fact that the network could also learn negative values
     # for σ(if we directly tried to predict σ without constraints), we'll have the 
@@ -3223,7 +3223,7 @@ class VAE(nn.Module):
         # for the latter (a good estimate) and if it fails to do so,it would no more represent
         # the gradient decent/the actual gradient.)
         
-        #update: 
+        #update: June 2025!
         # it seems my explanation is not prefectly correct and this is more about lowering the
         # estimates variance. basically the reparameterization trick provides us a lower-variance
         # estimator for the gradient ∇θ E_q(z|x) [log p(x|z)] compared to score function estimators.
@@ -3247,22 +3247,25 @@ class VAE(nn.Module):
         # 
         # Variance of the estimator: How much does our estimated direction jump around each time we 
         # take a new set of random samples for z? 
-        # We have two types of estimators, High variance Estimators like score function estimators
-        # and Low variance estimators like reparametrization trick.  
+        # We have two types of estimators, high variance Estimators like score function estimators
+        # and low variance estimators like reparametrization trick.  
         # For high variance estimator, imagine trying to aim a cannon, but the cannonball's launch 
         # direction is slightly random each time we try to calculate the aim. So, one estimate tells
         # us to aim "a bit left," the next "way right," the next "slightly up-left". 
         # The estimates are all over the place it's hard to get a reliable sense of the true target
         # This is what score function estimators can be like they work, but the gradient signals are
         # very noisy.
+        #!edit pick one explanation
         # For low variance estimator (e.g. reparameterization trick), imagine now we've stabilized
-        # the cannon's launch mechanism. the randomness is still there (it's essential for the VAE), 
-        # but it's introduced in a cleaner way. now, when we estimate our aim, the estimates are
-        # much more consistent: "a bit left," "a tiny bit left," "just a smidge left." They are 
-        # clustered much more tightly. This is what the reparameterization trick gives us.
-        # Why is Low Variance Better?
+        # the cannon's launch mechanism the randomness is still there (it's essential for the VAE), 
+        # but it's introduced in a cleaner way. (or imagine now the cannon itself is stable, but the way
+        # we incorporate necessary randomness (like wind, which is essential but we account for it 
+        # differently) is much smarter).
+        # now, when we estimate our aim, the estimates are much more consistent: "a bit left", 
+        # "a tiny bit left", "just a smidge left", They are clustered much more tightly this is what
+        # the reparameterization trick gives us.
         # 
-        # now how does each affect our training?
+        # now why is low variance better? and how does each affect our training?
         # in the high variance case, if our gradient estimates are very noisy, our training process
         # will be like a drunken walk. we will take big steps in random-ish directions. we might 
         # overshoot the optimal settings, then undershoot, and it will take a long time to settle down,
@@ -3318,15 +3321,15 @@ print(f'{img_re.shape=}')
 # model, without changing model components and training objective.
 
 # for calculating loss, we can have several options 
-# 1. use mse for reconstruction loss 
-# 2. use BCE for reconstruction loss   
+# 1. use mse for reconstruction loss
+# 2. use BCE for reconstruction loss
 # when using bce we have two options, we can use reduce='sum'
-# or we can use reduce='mean'. 
+# or we can use reduce='mean'.
 # if we want to use BCE with reduce='sum' we only calculate the kl
 # with sum. but when we want to use BCE with reduce='mean' or mse
 # we use sum(,-1) and then use loss_recons+torch.mean(kl)
 # we also need to normalize our reconstruction loss by the input dim
-# ension size. 
+# ension size.
 #!edit lets not use beta here, and show how hard it can get, so after it we
 #! introduce beta and other techniques to fight the issues?
 def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False, normalize=True):
