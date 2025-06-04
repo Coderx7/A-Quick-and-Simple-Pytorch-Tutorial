@@ -3126,17 +3126,45 @@ class VAE(nn.Module):
                                     #  nn.Sigmoid()
                                     )
     
-    # Note: 
+    # Note: (I used latex-input extension for vscode to have somewhat better formatting)
+    # ! edit use this instead of the old one
+    # new updated explanation 
+    # variance(σ^2) must always be positive because it represents squared differences!
+    # our network can learn negative values for σ if we directly try to predict it
+    # without any constraints. so we make the network learn the logvariance(log(σ²))
+    # instead and exponentiate it (exp) to get back the actual latent distribution's
+    # variance.
+    # torch.exp() converts logvar(log(variance) which our network produces) back to
+    # variance (sigma^2) but we want standard deviation not variance! so we have a 
+    # multiplication by 0.5 and then exponentiation (the multiplication by 0.5 before exponentiation is key)
+    # this is equivalent to computing the square root of the variance (its 
+    # as if we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
+    # remember log(a^b) = b.log(a) so log(√𝜎²)=log((𝜎²)^0.5)=0.5.log⁡(𝜎^2)
+    # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
+    # so it becomes standard deviation.
+    # moreover, variance (also standard deviation) can take very small or large values, 
+    # that can lead to overflow or underflow in floating-point computations, therefore
+    # representing it as log⁡(σ^2) is to avoid that issue!
+    # 
+    # sidenote2:
+    # the standard deviation represents the 'scale' of the distribution in the same
+    # units as the data (z = μ+σ⋅ϵ, ϵ∼N(0,I)) while the variance represents the overall
+    # spread of the distribution.
+    # For sampling we use the standard deviation (σ) not variance(σ^2)!,because multiplying
+    # by variance (σ^2) wouldn't make sense dimensionally and it would lead to an incorrect 
+    # scaling.
+    
+    # old explanation:
     # In order to deal with the fact that the network could also learn negative values
     # for σ(if we directly tried to predict σ without constraints), we'll have the 
     # network learn log(σ^2) and exponentiate(exp) it to get the latent distribution's
-    # variance.
+    # variance!
     def reparamtrization_trick(self, mu, logvar):
         # !edit combine them in one paragraph, we have too many sidenotes that we can 
         # !incorporate into the actual text I guess! 
         # torch.exp() converts logvar(log(variance) which our network produces) back to
         # variance (sigma^2) but note that here, we have the multiplication by 0.5 and
-        # then exponentiation.(the multiplication by 0.5 before exponentiation is key)
+        # then exponentiation(the multiplication by 0.5 before exponentiation is key)
         # this is equivalent to computing the square root of the variance (its 
         # asif we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
         # remember log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5)=0.5.log⁡(𝜎^2)
@@ -3159,7 +3187,7 @@ class VAE(nn.Module):
         # note here for sampling we use the standard deviation (σ) not variance(σ^2)!
         # because multiplying by variance (σ^2) wouldn't make sense dimensionally
         # and it would lead to an incorrect scaling.
-        # we use variance (σ^2) in the KL divergence term during optimization though
+        # we use variance (σ^2) in the KL divergence term(in our loss) during optimization though
         # (when representing the overall spread of a distribution).
         #
         std = torch.exp(0.5*logvar)
@@ -3177,14 +3205,14 @@ class VAE(nn.Module):
         # you should know by now, if not read the former explanations.
         # basically there are 2 main explanations, the first one (Which is not accurate) is
         # because without it, backprop wouldnt work atall, its impossible to backprop!(which 
-        # is not really the accurate, its possible and it works, but with a caveat!).
+        # is not really accurate, its possible and it works, but with a caveat!).
         # for the random part we sample from normal distribution N(0,1)
         # and treat this as a mere input. (like the images that are input and we dont 
         # calculate the gradients for) 
         # we then shift this new sample with the mean and std we have and effectively
         # reach the very same result. that is we add our mu and scale it by std 
         # (since our eps has 0 mean and std 1, adding it with mu, and scaling it by std
-        # will make it N(mu, std) which is what we want. our expression also now can be
+        # will make it N(mu, std^2) which is what we want. our expression also now can be
         # easily backpropagated. 
         # also you need to know that, it is also said this reparameterization trick 
         # is only done for numerical stability and actually the basic way can be done as well!
@@ -3194,6 +3222,63 @@ class VAE(nn.Module):
         # stochastic gradident decent vs gradient decent and how the former gives us an estimate
         # for the latter (a good estimate) and if it fails to do so,it would no more represent
         # the gradient decent/the actual gradient.)
+        
+        #update: 
+        # it seems my explanation is not prefectly correct and this is more about lowering the
+        # estimates variance. basically the reparameterization trick provides us a lower-variance
+        # estimator for the gradient ∇θ E_q(z|x) [log p(x|z)] compared to score function estimators.
+        # this leads to a more stable and efficient training.
+        # 
+        # now what does all of that mean?  
+        # lets get an intuitive insight about all of this. 
+        # imagine we are trying to figure out the best way to adjust the knobs(i.e. parameters θ) 
+        # on a complex machine (our VAE model) to make it produce good results. 
+        # The "good results" part involves a bit of randomness (z from q(z|x)) and how well the 
+        # machine can reconstruct the input given that random element (log p(x|z)).
+        # 
+        # Now we have 3 terms to explain, the ∇θ E_q(z|x) [log p(x|z)], the estimator and variance of 
+        # the estimator
+        # ∇θ E_q(z|x) [log p(x|z)]: This is the "true direction" we want to turn our knobs to. 
+        # It's an average (E_q(z|x)) of how good the reconstruction (log p(x|z)) is over all possible
+        # random choices (z), and how our knobs (θ) affect this average.
+        # 
+        # Estimator: we can't try all possible random choices z, that's infinite! So, we take a few 
+        # samples of z and calculate an estimate of that true direction.
+        # 
+        # Variance of the estimator: How much does our estimated direction jump around each time we 
+        # take a new set of random samples for z? 
+        # We have two types of estimators, High variance Estimators like score function estimators
+        # and Low variance estimators like reparametrization trick.  
+        # For high variance estimator, imagine trying to aim a cannon, but the cannonball's launch 
+        # direction is slightly random each time we try to calculate the aim. So, one estimate tells
+        # us to aim "a bit left," the next "way right," the next "slightly up-left". 
+        # The estimates are all over the place it's hard to get a reliable sense of the true target
+        # This is what score function estimators can be like they work, but the gradient signals are
+        # very noisy.
+        # For low variance estimator (e.g. reparameterization trick), imagine now we've stabilized
+        # the cannon's launch mechanism. the randomness is still there (it's essential for the VAE), 
+        # but it's introduced in a cleaner way. now, when we estimate our aim, the estimates are
+        # much more consistent: "a bit left," "a tiny bit left," "just a smidge left." They are 
+        # clustered much more tightly. This is what the reparameterization trick gives us.
+        # Why is Low Variance Better?
+        # 
+        # now how does each affect our training?
+        # in the high variance case, if our gradient estimates are very noisy, our training process
+        # will be like a drunken walk. we will take big steps in random-ish directions. we might 
+        # overshoot the optimal settings, then undershoot, and it will take a long time to settle down,
+        # if it ever does properly.
+        # in the low variance case, with more consistent gradient estimates, our training steps are more 
+        # reliable and direct. we are taking steadier steps towards the best knob settings. 
+        # The training process is smoother and less likely to get stuck or oscillate wildly.
+        # 
+        # how does that result in training efficiancy?
+        # in high variance case, to compensate for the noisy estimates, we often need to use very small
+        # learning rates (tiny steps) or average over many, many samples of z for each update, 
+        # which makes training slow.
+        # in the low variance case, because each gradient estimate is more reliable, we can often use
+        # larger learning rates or fewer samples of z per update, making the whole training process
+        # faster.
+        #
         return mu + eps*std
     # 
     def encode(self, input):
