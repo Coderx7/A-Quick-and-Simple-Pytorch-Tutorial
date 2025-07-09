@@ -4140,7 +4140,11 @@ class VAE(nn.Module):
         self.add_extra_noise = add_extra_noise
         # a simple weight to control the amount of noise applied on our z
         self.noise_weight = noise_weight
-        
+        #note from fture:
+        # in retroaspect, I could have easily resized the 28x2x8 to 32x32 and have
+        # a much easier time doing downsampling/upsampling, but I obviously I hadnt
+        # and in doing so I show how to calculate and comeup with right numbers for
+        # anysize!
         self.encoder = nn.Sequential(conv(self.input_channel,32),#28x28
                                      conv(32,64,stride=2),#14x14
                                      conv(64,96,stride=2),#7x7
@@ -4187,6 +4191,7 @@ class VAE(nn.Module):
         # for example using -1 forces the logvar to be std=exp(0.5x(−1))≈exp(−0.5)≈0.6065) 
         # self.fc_logvar.bias.data.fill_(-1)
         # ok this wasnt the issue! im clueless at this point! im removing bn now
+        # ok, bn is back, see logs ahead in the code for more information
         
         decoder_in_dim = self.embedding_size + self.bottleneck_size if self.use_skip_con else self.embedding_size
         # we use the followng formula to determine the output size here
@@ -4200,7 +4205,7 @@ class VAE(nn.Module):
                                      # 
                                      nn.BatchNorm1d(256*4*4),
                                     #  nn.GroupNorm(1,256*4*4),
-                                    # using leakyrely early on makes the model more unstable!loss shoots us quickly!
+                                    # using leakyrelu early on makes the model more unstable!loss shoots us quickly!
                                     # but other layers it seems ok to use leakyrelu
                                      nn.ReLU(),
                                     #  nn.Dropout(0.1),
@@ -4227,7 +4232,7 @@ class VAE(nn.Module):
                                     #  conv(32,32,kernel_size=3,stride=1,batch_norm=True),
                                     #  Print(),
                                      # while we use sigmoid here with bce, for more complex dataset
-                                     # using tanh with mse seems to give better result, but
+                                     # using tanh with mse seems to give better result?, but
                                      # note that, the input needs to be normalized as well (to -1,1)
                                      # for our case we go with sigmoid anyway
                                      deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
