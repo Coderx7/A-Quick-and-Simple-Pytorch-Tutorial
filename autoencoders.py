@@ -4422,8 +4422,8 @@ img_re, *_ = test_model(torch.randn(size=(5,input_channel,28,28)))
 print(f'{img_re.shape=}')
 #%%
 # lets train our model again
-# but this time, lets make things a bit tiddier!
-# todo make this for epochs I guess thats better
+# but this time, lets make things a bit tidier!
+# todo make this for each epoch I guess thats better
 def plot_training_metrics(mu_list, std_list, kl_losses, losses):
     epochs = range(len(mu_list))
     lists = (mu_list,std_list,kl_losses,losses)
@@ -4441,7 +4441,9 @@ def plot_training_metrics(mu_list, std_list, kl_losses, losses):
     plt.show()
 
 import math
-# we use this schedule to gradually increase beta
+# we use this schedule to gradually increase beta, initially I used 
+# a simple, linear scheduler but didnt get satisfactory results so I
+# instead went for a bit better version
 def beta_schedule(beta_max, epoch, total_epochs, midpoint=0.50, k=15):
     # scale epoch to [0,1]
     progress = epoch / total_epochs  
@@ -4644,7 +4646,7 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
         imgs = imgs.to(device)
         labels = labels.to(device)
         reconst_imgs, mu, logvar = model(imgs)
-        loss,*_ = model.calculate_loss(reconst_imgs, imgs, mu, logvar, beta, reduction, use_mse,use_freebits,min_kl,normalize)
+        loss,*_ = model.calculate_loss(reconst_imgs, imgs, mu, logvar, **kwargs) #beta, reduction, use_mse, use_freebits, min_kl, normalize)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
@@ -4653,7 +4655,7 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
         if i%interval==0:
             reconstructeds = reconst_imgs.cpu().view(-1, *img_shape)
             # grab the first few images and their reconstructions
-            # sidenote: when we use no_grad, theres no gradients, so no need for .detach()!
+            # sidenote: when we use no_grad() decorator, theres no gradients, so no need for .detach()!
             imgs = imgs[:sample_count].cpu().numpy()
             recons = reconstructeds[:sample_count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
@@ -4759,7 +4761,7 @@ def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, im
     plt.xlabel('Z_1')
     plt.ylabel('Z_2')
     plt.imshow(x)
-    plt.title(f'latent space grid of numbers({n}x{n})')
+    plt.title(f'Latent space grid of numbers({n}x{n})')
     plt.show()
 
 # lets see what each classes mean/std looks like
