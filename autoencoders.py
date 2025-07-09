@@ -3763,29 +3763,32 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # or too similar/generic. so lets talk about these issues we are facing 
 # and try to address them and hopefully get them fixed!
 #
-# During training we may face something called posterior collapse,
+# During training a VAE we may face something called posterior collapse,
 # it can happen for several reasons, but primarily, it happens
 # when the decoder is more powerful than the encoder(or encoder is too weak!)
 # and the latent space stops encoding meaningful information and the decoder ignores
-# the latent features/variables during reconstruction.
+# the latent features during reconstruction.
 # in its extreme form, the decoder wont even rely on the encoded representation
 # and will only rely on the prior itself (i.e. the learned latent distribution
 # collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
-# as a result, the latent features/variables will contain little to no useful information,
+# as a result, the latent features will contain little to no useful information,
 # leading to reconstructions that are too generic or blurry.
+# 
 # 
 # its worth noting that sometimes, you get clear and near prefect reconstructions, at train
 # test time, but random generation is just nonsense. so it would be more accurate to say
 # we will have blurry, nonsensical (blobs of color!/random noise) randomly sampled outputs
 # because this is a sign of meaningless latent space! as we will see in our experiments shortly
-# we can get great reconstrutions(like by using skipcon) but absolutely awful generations!(vaes by nature can not 
+# we can get great reconstrutions(like by using skipcon) but absolutely awful generations!(vanilla vaes by nature can not 
 # produce crystal clear/sharp images when it comes to compelx datasets! so a blurry output
 # is what we can hope for as best, (the amount of blurryness can be improved but dont expect much!)) 
 # having said this, when the posterior collapse happens, both reconstructions and generations
 # suffer greatly! theoutput is just bad! details minimal or nonexistant, images are eaither not
 # formed, or are malformed(miss parts), etc. 
 #
-# (posterior collapse occurs when the encoder ignores the latent space,
+# !#edit move them at the end of the discussion? 
+# (recap sidenote:
+# posterior collapse occurs when the encoder ignores the latent space,
 # in a way that the learned latent distribution becomes close to the prior
 # distribution (e.g. a standard normal distribution (N(0,I)), regardless 
 # of the input images. 
@@ -3793,8 +3796,15 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # reconstructs the data primarily from its learned prior or noise, rather than 
 # utlizing meaningful information encoded in the latent space. 
 # (it uses the patterns it learns from the prior distribution))
-# #! edit, this needs more refining,
-# sidenote:
+# 
+# (recap sidenote2: posterior collapse leads to uninformative z. if z is uninformative,
+# the decoder has two choices:
+# 1.generate the average of the dataset (blurry/generic reconstructions and samples).
+# 2.if the decoder is very powerful, it might learn to ignore z and reconstruct x well
+# (appearing to work fine on reconstruction, but z is still useless, leading to bad new samples).
+# This is the "decoder too powerful" scenario.)
+# 
+# sidenote reminder:
 # to refresh our memory :
 # the posterior distribution (q(z|x)) represents the distribution 
 # of the latent variable(vector) (z) conditioned on the input data (x).
@@ -3814,7 +3824,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # 1. q(z|x) i.e. posterior distribution does not deviate too far from the simple prior p(z).
 # 2. the latent space stays smooth and meaningful, making it easier to sample from.
 # 
-# Why is it bad if the Posterior becomes too close to the prior?
+# Why is it bad if the posterior becomes too close to the prior?
 # if it gets too close to the prior distribution it means mu(x) ≈ 0
 # and sigma(x) ≈ I for all inputs, which is when we say it collapses
 # to exactly match the prior (p(z)). 
@@ -3830,6 +3840,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # The vae essentially fails to use the latent space for encoding useful information
 # about the data.
 # 
+#
 # !edit
 # This happens because the KL divergence is minimized too quickly and thus it
 # overpowers the reconstruction loss from the begining.(if the KL term quickly
@@ -3859,7 +3870,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # and the encoder learns meaningful encodings of the data (via reconstruction loss).
 # 
 # # !edit
-# recap
+# recap (excessive? repeatative block?)
 # so for short: 
 # The prior distribution p(z) is fixed and simple (N(0, I)).
 # The posterior distribution q(z|x) is learned and depends on the data x using reconstruction loss in encoder.
@@ -3867,32 +3878,9 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # but to balance it with the reconstruction loss to maintain a useful latent space.
 # posterior collapse happens when the KL divergence dominates, leading the encoder 
 # to ignore (x) and match the prior directly.
-#
-# prior distribution p(z): 
-# is a predefined distribution over z (e.g. N(0, I))
-# regularizes the latent space to stay simple and smooth
-# independent of the data x.
-# fixed by design (e.g., Gaussian)
-# 
-# posterior distribution q(z|x) 
-# is the distribution of z given data x, learned by the encoder
-# encodes meaningful information about x into z.
-# depends on the input x
-# learned by the vae during training.
-# 
-# 
-# !edit
-# If the encoder is too simple (e.g. insufficient capacity, few layers, 
-# or too small latent dimensions), it may fail to encode meaningful 
-# representations of the input. this makes it easy for the latent space
-# to drift toward the prior, as the KL divergence loss 
-# (minimizing the distance between posterior and prior)
-# dominates over reconstruction loss.
-# 
 # note that posterior collapse can happen for several reasons, a simple or underpowered 
 # encoder is one of the possible causes. However, its often the result of an interplay 
 # of factors rather than just the simplicity of the encoder.
-# 
 # to be more precise, this happens when the kl divergence term dominates the loss.
 # kl divergence job is to ensur the latent space follows a prior (i.e. a Gaussian N(0, I))  
 # but when the kl term is too strong, the model learns to set q(z|x) ≈ p(z) )(i.e., 
@@ -3901,11 +3889,10 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # that can reconstruct the data directly from the prior distribution,without 
 # needing latent variables.
 # 
-#edit: obvious?/excessive? 
+# edit: obvious?/excessive? -no techincal information here, though we could trim the inrto a bit better
 # if the decoder is too powerful, it can learn to reconstruct x without 
 # relying on z at all which means even if z contains no useful information,
 # the decoder can still reconstruct well, leading to collapsed latents.
-
 # thats not the only reason though, if we use a large scaler/factor to normalize the loss 
 # (the kl term and reconstruction loss (its especially the case in beta-vaes(distenagled vaes) 
 # which we will also cover)), a large scaler in the kl term forces the latent distribution 
@@ -3919,7 +3906,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # reduce this randomness (e.g. by making standard deviation very small),
 # the latent space may become degenerate. its worth noting that if the 
 # latent space is too small, it may also be forced to collapse.
-
+# 
 # so it could be several things that can contribute to this issue, altogether or alone. 
 # likewise, there are several solutions/techniques that can help mitigate this issue
 # and in a way they all do this by balancing the reconstruction quality and latent space 
@@ -3985,7 +3972,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # features, while lower levels refine details.
 # !edit paper link
 # sidenote:
-# the idea comes from hierarchical vae paper,which proposed instead of one 
+# this idea comes from hierarchical vae paper,which proposed instead of one 
 # latent vector z we use multiple latent vectors! the latters depending on the previous ones.
 # (assuimg we use 2 latent vectors, the second mu,logvar would use the first latent vector z 
 # to create the second set of mu and logvar which we would then use to create latent vector z2
@@ -4004,7 +3991,7 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # !Edit add refs/papers- check papers/refs
 # ref https://arxiv.org/abs/1705.07120
 # a similar approach was introduced by VampPrior (Variational Mixture of Gaussians)
-# which said, instead of a single Gaussian prior, use a mixture of Gaussians.
+# which argued, instead of a single Gaussian prior, use a mixture of Gaussians.
 # this captures multi-modal distributions (e.g. different facial expressions in images)
 # the abstract reads: 
 # Many different methods to train deep generative models have been introduced in the past. 
@@ -4022,13 +4009,14 @@ generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=im
 # hierarchical VampPrior delivers state-of-the-art results on all datasets in the unsupervised
 # permutation invariant setting and the best results or comparable to SOTA methods for the 
 # approach with convolutional networks. 
-# 
+# we dont implement this version either and instead go for a much better architecture.
+#
 # we can also use VQ-VAE (Vector Quantized VAEs) which came to solve the vae issues (like posterior collapse)
 # it replaces the continuous latent space with discrete latent embeddings, making the
-# model less prone to collapse. and it works much much better than vaes, and has been
-# very influential well cover this after we are done with vae!
+# model less prone to collapse. and it works much much better than vanilla vaes, and has been
+# very influential we'll cover this after we are done with the vanilla versions of vae!
 
-# so now lets rewrite our vae, this time with the enhancements
+# so now lets rewrite our vae, this time with the enhancements we just talked about
 #
 
 #!edit use this instead of the above? or merge or use as recap?
@@ -4944,7 +4932,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # if its mnist use 1 if its cifar10 use 3 for input channel
 input_channel = 1 if dataset =='mnist' else 3
 # for mnist, 2 works(of course its not optimal, but works nonetheless), try different 
-# embedding sizes here and see their effects for yourself(learning rate also affects the results so its not just the embeddingsize its the whole package!!)
+# embedding sizes here and see their effects for yourself(learning rate also affects 
+# the results so its not just the embeddingsize its the whole package!!)
 # choose something even, it makes visualization easier(especially 
 # for generate_latent_space_grid function since we use 10x10/20x20
 # by default, but you can use larger or smaller grids as well, just 
