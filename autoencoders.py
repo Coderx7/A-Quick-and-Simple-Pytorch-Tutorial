@@ -4983,7 +4983,8 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # so if our training goes properly, and we see loss decrease properly we're fine!
 # this shows itself in more complex datasets such as cifar. we talked about
 # the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
-# other proper techniques in training!
+# other proper techniques in training! I took care of them here to some extend so we can
+# get somewhat that works, but its not by any means optimal. give it a try and see for yourself!
 # 
 lr =0.01
 weight_decay = 1e-3
@@ -5185,12 +5186,14 @@ kl_anealing=True #False
 # reconstruct the input, therefore when we try to generate 
 # something using sampling it will be garbage! cuz they were
 # not trained properly to have meaningful values)
-# 
-# skipcon is necessary for getting sharp/clear images, 
+# #sidenote: any mention of skipcon from now on being required belongs
+# to old experiments and is not valid for the reason I later (above)
+# mentioned.
+# (old note: skipcon is necessary for getting sharp/clear images, 
 # without it we will get very blury images
 # also the training will be more unstable. so for 
 # more stable training and sharper reconstructions we 
-# enable skipcon
+# enable skipcon)
 use_skipconnection=False #True
 # adding extra noise didnt do much for me, at least
 # in my experiments, I had the most luck with other 
