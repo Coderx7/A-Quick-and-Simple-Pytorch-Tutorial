@@ -5326,7 +5326,6 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # version (user larger betas? check to make latent space well formed? separated)
 # !add classification loss to the bunch and see if that helps in separating things!?
 # ! also edit the above
-# !see info from chatgpt
 # starting with embdsz=384 and no bn in decoder: it made loss to shoot up to 400k!
 # the reconstructions are expectedly very blurry, the generated images however, look more
 # colorful, but very very rough, you can see the images, but they are heavily distorted with noise
@@ -5771,16 +5770,17 @@ if not model.use_skip_con:
 # if the difference is close to 0, the latent space is collapsing
 # there should be noticeable variation between different images)
 #
-# fifth, we can visualizing the latent space with t-sne(pca is not good, its linear and wont work properly for nonlinear relationships which is ourcase)
+# fifth, we can visualizing the latent space with t-sne(pca is not good, 
+# its linear and wont work properly for nonlinear relationships which is ourcase)
 # if all the points cluster together, it's collapsed,
-# (a good latent space should separate different categories, otherwise reconstruction shows how bad it is)
+# (a good latent space should separate different categories, otherwise generation shows how bad it is)
 #
 # we can check the generated samples and tell if osmething is wrong!
 # if the generated images are nearly identical, regardless of input changes,
 # its a sign that the latent space is underutilized.
 # if all images look the same, posterior collapse is likely happening.  
 # a good VAE should generate diverse samples
-#(we can check how reconstruction changes with latent space,
+#(we can check how generation changes with latent space,
 # a properly trained VAE should smoothly interpolate between 
 # different points in latent space.not being able to do this means,
 # theres something wrong, depending on the severity, it could be a collapsed posterior,
@@ -5789,7 +5789,7 @@ if not model.use_skip_con:
 # isnt being used effectively.)
 #
 
-# recap of our recap!
+# recap of our recap(add for chapter summary?)!
 # why do we face posterior collapse? it happens when the encoder ignores the latent space 
 # and learns a simplestic/trivial distribution, making the decoder reconstruct only from noise. 
 # kl loss must not be close to 0 , it should be balanced (have nonzero values)
@@ -5799,8 +5799,8 @@ if not model.use_skip_con:
 # when using t-sne the latent space must not have a single cluster,  we must see  well-separated clusters
 # when interpolating we must not see abrupt/sudden/weird/unmeaningful changes, we must see smooth transitions from one class into another
 # 
-# as we saw in our experiments, detecting posterior collapse often 
-# requires checking kl term value, the latent space variance, 
+# as we saw in our experiments, detecting posterior collapse usually 
+# needs to check kl term value, the latent space variance, 
 # generated outputs and interpolation behavior.
 # The best way to avoid posterior collapse is to carefully tune the kl loss, 
 # use beta scaler, with kl anealing and avoid an overly powerful decoder(or a simple encoder!),
