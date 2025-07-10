@@ -5488,7 +5488,14 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # but decoder started at 256x1x1, it adversly affected the result, when i made it 256x4x4 (everything else intact)
 # it got good result, showing decoder starting with larger fmaps helps as well.
 # over all we can improve this a lot hopefully
-
+#
+# sidenote:
+# !todo check this and fix it
+# you may face difficulties during training if you spot loss exceeds 1700
+# and doesnt reach 1350 for example quickly it means your training is going south!
+# try restarting the kernel and only executing the vae related snippets and only cifar10
+# training code, I suspect the previous snippets leak and mess up the training process
+# in jupyternotebook! 
 
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
@@ -5524,12 +5531,12 @@ kwargs = {"states": model.state_dict(),
           "scheduler":scheduler.state_dict()}
 
 timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
-modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+modelname = f"./weights/vae/vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
 save_model(modelname=modelname, kwargs=kwargs)
 #%%
 timestamp2 = timestamp
 print(f'{timestamp2=}')
-# modelname='vae_cifar10_400_mean_normalized_bce_11_53_36_2025_02_17.pth'
+# modelname='./weights/vae/vae_cifar10_600_mean_normalized_bce_14_57_57_2025_02_17.pth'
 # save_model(modelname=modelname, kwargs=kwargs)
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
