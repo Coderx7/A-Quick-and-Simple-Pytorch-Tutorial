@@ -4640,8 +4640,10 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
     img_pairs = []
     losses = []
     interval = 10
+    # remove the klanealing from kwargs so we can send it to calculate_loss
+    kl_anealing = kwargs.pop('kl_anealing')
     model.eval()
-
+        
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         labels = labels.to(device)
@@ -4898,8 +4900,8 @@ def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, f
 
 def select_dataset(dataset_name='mnist', batch_size=128, size=28):
     if dataset_name.lower() == 'mnist':
-        dataset_train = datasets.MNIST('MNIST', train=True, download=True,transform=tf.ToTensor())
-        dataset_test = datasets.MNIST('MNIST', train=False, download=True,transform=tf.ToTensor())
+        dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True,transform=tf.ToTensor())
+        dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True,transform=tf.ToTensor())
     
     elif dataset_name.lower() in ['cifar','cifar10']:
         # for cifar10 a better architecture and training regime is required
@@ -4907,8 +4909,8 @@ def select_dataset(dataset_name='mnist', batch_size=128, size=28):
                                                  tf.RandomHorizontalFlip(),
                                                  tf.ToTensor(),])
         transformations = tf.Compose([tf.Resize(size), tf.ToTensor(),])
-        dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations_tr)
-        dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+        dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, download=True,transform=transformations_tr)
+        dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, download=True,transform=transformations)
    
     else:
         raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
