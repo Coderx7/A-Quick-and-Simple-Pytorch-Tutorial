@@ -5258,18 +5258,19 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # or use -1/1 with mse and see if that helps
 # or now use skipcon with bce and see if that works ths time with moving average trick!
 # use larger batch instead of 32!
-# update increasing the embdsz from 50 to 70 decreased our loss from 1370 to 1361 
+# update:
+# increasing the embdsz from 50 to 70 decreased our loss from 1370 to 1361 
 # and images became sharper! embds=90 made it 1355 and images are more formed(and sharper)
 # using embdsz=100, got us to 1353! but I decided to work on embds=90 and with change to 
-# epochs=100 and scheduler (30,35,55,75) it got down to 1353! with [30,35] 
-# its down to 1351, but I guess the ebmdssz=100 gives more detailed images (although with
-# the same loss, at least I guess so!) with [30,50] its 1351 as well(loss/klloss) are more smooth!
+# epochs=100 and scheduler (30,35,55,75) it got down to 1353! 
+# with [30,35] its down to 1351, but I guess the ebmdssz=100 gives more detailed images (although with
+# the same loss, at least I think so!) with [30,50] its 1351 as well(loss/klloss) are more smooth!
 # compared to [30,35]!
 # with embdsz=120 and [30,50] we get 1345. jumping to embdsz=256 the loss stayed at 1345 but
 # images now have much more details.
 # now we increase beta to 0.001 and see how that affects it (loss becomes 1393!) and makes it(reconstructions) worse
 # so beta remains at 0.0001(0.0002 is also a bit worse, so increasing beta is no brainer at this point).
-# lowering it to 0.00001 is also not improving thins, it increases the loss initially to 3000 and then
+# lowering it to 0.00001 is also not improving things, it increases the loss initially to 3000 and then
 # gradually decreases, but diverges quickly, shooting the loss to 10000! and then trying to lower it down
 # basically it fluctuates badly and doesnt improve! ultimately the final loss is 13014! and the results
 # are blury as hell)
@@ -5278,11 +5279,10 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # freebits=0.8 lowers our loss to 1335! but I guess the image quality is so so, not very different
 # than the 0.4 version one! but I might be wrong. trying freebits=0.2 gives us 1335 as well!
 # the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
-# very high due to very high kl loss, but normally the start in 1400s! and decrease). ok
+# very high due to very high kl loss, but normally they start in 1400s! and decrease). ok
 # freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
 # (using embdsz=200, we get 1335/1338/1339 (*3 runs) by the way, images are sharp but not sharper than 256, 
 # * 1335 was achieved after disabling bn for first layer of decoder
-# 
 # !edit move this part down
 # but random generation doesnt produce good images yet (images are blurry and 
 # interpolation is not smooth yet),but using mean/std we can replicate the samples!)
@@ -5291,10 +5291,6 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # the prior (normal distribution we sample from) look blurry or nonsensical,
 # it usually means the learned latent space is not well aligned with 
 # the standard normal distribution we sample from. 
-# In other words, the vae can reconstruct images by relying on learned 
-# posterior distributions for the training data, but unconditional generation
-# (using samples from N(0,I)) does not match how the models encoder actually 
-# encodes real images)
 # 
 #
 # using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
@@ -5331,7 +5327,7 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 # !add classification loss to the bunch and see if that helps in separating things!?
 # ! also edit the above
 # !see info from chatgpt
-# starting with embdsz=384 and no bn in decoder: it made loss to shoot out to 400k!
+# starting with embdsz=384 and no bn in decoder: it made loss to shoot up to 400k!
 # the reconstructions are expectedly very blurry, the generated images however, look more
 # colorful, but very very rough, you can see the images, but they are heavily distorted with noise
 # and discoloration.
