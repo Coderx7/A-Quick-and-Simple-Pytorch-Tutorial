@@ -5536,10 +5536,13 @@ save_model(modelname=modelname, kwargs=kwargs)
 #%%
 timestamp2 = timestamp
 print(f'{timestamp2=}')
+print(f'{modelname=}')
 # modelname='./weights/vae/vae_cifar10_600_mean_normalized_bce_14_57_57_2025_02_17.pth'
+# modelname = './weights/vae/vae_cifar10_600_mean_normalized_bce_16_21_49_2025_07_10.pth'
 # save_model(modelname=modelname, kwargs=kwargs)
 # load the model to make sure we are dealing with the right model!
 load_model(model, modelname=modelname)
+
 img_shape=(input_channel,28,28)
 kwargs = {"img_shape":img_shape,
           "beta":beta,
