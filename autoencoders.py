@@ -6303,31 +6303,21 @@ class B_VAE(nn.Module):
         reconstructed_imgs = self.decode(z)
         return reconstructed_imgs, mu, logvar
 
-def loss_disentagled_vae(outputs, imgs, mu, logvar, Beta, reduction='mean', use_mse=False):
-    # this loss has two parts, a construction loss and a KL divergence loss which
-    # shows how much distance exists between two given distrubutions. 
-    if reduction=='mean':
-        if use_mse:
-            criterion = nn.MSELoss()
-        else:
-            criterion = nn.BCELoss(reduction='mean')
-        recons_loss = criterion(outputs, imgs)
-        # normalize the reconstruction loss
-        recons_loss *= 28*28
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-        # -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        # when using mean, we always sum over the last dim
-        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        # we use beta and multiply it by our kl term. this is specific to 
-        # disentagled vae and is actually the main reason why the disentaglement 
-        # work
-        return torch.mean(recons_loss + (Beta*kl))
-    else:
+def loss_disentagled_vae(outputs, inputs, mu, logvar, beta, reduction ='mean', use_mse = False, normalize=True):
+    outputs = outputs.view(*inputs.shape)
+    if reduction == 'sum':
         criterion = nn.BCELoss(reduction='sum')
-        recons_loss = criterion(outputs, imgs)
-        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return recons_loss + (Beta*kl)    
+        reconstruction_loss = criterion(outputs, inputs)
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return reconstruction_loss + (beta*kl_loss)
+    else:
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
+        reconstruction_loss = criterion(outputs, inputs)
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+        _,h,w,c = inputs.shape
+        scaler = h*w*c if normalize else 1
+        return (scaler*reconstruction_loss) + (beta*kl_loss.mean())
+
 
 epochs = 50
 
@@ -6335,7 +6325,7 @@ embeddingsize = 5
 interval = 2000
 reduction='mean'
 # beta is a value biger than 1 
-Beta = 5.
+beta = 5.
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = B_VAE(embeddingsize).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.001)
@@ -6346,7 +6336,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
 
-        loss = loss_disentagled_vae(preds, imgs, mu, logvar, Beta= Beta, reduction=reduction, use_mse=False)
+        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= beta, reduction=reduction, use_mse=False)
         
         optimizer.zero_grad()
         loss.backward()
@@ -6367,7 +6357,7 @@ with torch.no_grad():
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
-        loss = loss_disentagled_vae(preds, imgs, mu, logvar, Beta= Beta, reduction=reduction, use_mse=False)
+        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= Beta, reduction=reduction, use_mse=False)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
