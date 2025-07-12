@@ -3330,11 +3330,16 @@ print(f'{img_re.shape=}')
 # we use sum(,-1) and then use loss_recons+torch.mean(kl)
 # we also need to normalize our reconstruction loss by the input dim
 # ension size.
-#!edit lets not use beta here, and show how hard it can get, so after it we
-#! introduce beta and other techniques to fight the issues?
+#!edit lets not use beta here and show how hard it can get to train a vae,
+# and later on we introduce beta and other techniques to fight the issues?
+# sidenote:
+# beta is usually discussed when we talk about β-VAE to control the influence
+# of KL divergence.we'll be discussing it later. the original VAE assumes beta=1, 
+# but using a tunable beta as a weighting mechanism can help balance 
+# our loss (the reconstruction term vs kl regularization term) I removed it from 
+# this part but we'll cover it in detail up ahead shortly.
 def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False, normalize=True):
     outputs = outputs.view(*inputs.shape)
-    #! beta belongs to entangled vae, the normal vae doesnt have beta scaler
     if reduction == 'sum':
         criterion = nn.BCELoss(reduction='sum')
         reconstruction_loss = criterion(outputs, inputs)
@@ -3353,10 +3358,7 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return reconstruction_loss + kl_loss
     else:
-        if use_mse:
-            criterion = nn.MSELoss()
-        else:
-            criterion = nn.BCELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
         reconstruction_loss = criterion(outputs, inputs)
         # here for the kl loss we only sum over the latent dimensions,
         # this gives us a single loss for each sample, 
@@ -3475,8 +3477,8 @@ print('model saved!')
 print(f'Training is complete!')
 
 #%% load from checkpoint
-# weight_filename = checkpoint_path
-weight_filename = './weights/vae/vae1_2_mean_normalized_bce_20250601_200757.pth'
+weight_filename = checkpoint_path
+# weight_filename = './weights/vae/vae1_2_mean_normalized_bce_20250601_200757.pth'
 embd_sz, reduction, normalization, loss,*_ = weight_filename.split("_")[1:]
 states = torch.load(weight_filename)
 
@@ -5491,11 +5493,10 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 #
 # sidenote:
 # !todo check this and fix it
-# you may face difficulties during training if you spot loss exceeds 1700
+# you may face difficulties during training if you spot loss exceeding 1700
 # and doesnt reach 1350 for example quickly it means your training is going south!
 # try restarting the kernel and only executing the vae related snippets and only cifar10
-# training code, I suspect the previous snippets leak and mess up the training process
-# in jupyternotebook! 
+# training code, 
 
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
@@ -6039,9 +6040,9 @@ def one_hot(input, num_classes=10):
 # print(z)
 # print(one_hot(z))
 def loss_function(outputs, imgs, mu, logvar, reduction='mean', use_mse=False):
-    b,h,w,c=imgs.shape
+    _,h,w,c=imgs.shape
     if reduction=='mean':
-        criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
         recons_loss = criterion(outputs, imgs)
         # normalize the reconstruction loss
         recons_loss *= h*w*c
@@ -6057,7 +6058,6 @@ def loss_function(outputs, imgs, mu, logvar, reduction='mean', use_mse=False):
         recons_loss = criterion(outputs, imgs)
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return recons_loss + kl
-
 #%%
 # now lets train 
 epochs = 50
