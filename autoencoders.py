@@ -6357,7 +6357,7 @@ with torch.no_grad():
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
-        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= Beta, reduction=reduction, use_mse=False)
+        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= beta, reduction=reduction, use_mse=False)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
@@ -6389,9 +6389,18 @@ plt.title('random generation')
 # img_latent_space = make_grid(preds,nrow=5).numpy().transpose(1,2,0)
 # ax.imshow(img_latent_space)
 #%%
-def change_latentvariable(z, n=3, steps=3, scaler=0.2, dim=0):
-    z_new = torch.zeros(size=(n, steps, z.size(-1)))
-    #! edit fix this!  
+#! fix this
+def change_latentvariable(z, n=1, steps=3, scaler=0.2, dim=0):
+    # grab a single z if there are more than 1 sample
+    # print(f'{z.shape=}')
+    z = z[0]
+    # and use it as the base for variations to be applied on
+    # i.e. create 5 samples (row) each going through steps variations
+    z_new = z.repeat(n, steps, 1)
+    # print(f'{z_new.shape=}')
+    # create variation values all at once using linsapce and later apply
+    # it on the new latentvector_z(z_new)
+    values = torch.linspace(start=-scaler, end=scaler, steps=steps)
     for i in range(steps):
         # we are basically creating a n(series) x steps x z tensor and in each
         # step, we fill one row of this tensor until all of them are filled
@@ -6399,57 +6408,69 @@ def change_latentvariable(z, n=3, steps=3, scaler=0.2, dim=0):
         # so each row is different from the previous one, basically we are tryng
         # to have smooth interpolation between these by introducing fixed steps
         # into the latent vector.
-        z_new[:,i,:] = z
-        print(f'{z_new=}')
-        print(f'{z_new.shape=}')
         # scale the latent vector by small amount
-        # so they are different in each step
-        z_new[:,i, dim] = z_new[:,i, dim] - (scaler*i)
+        # so they are different in each step - we took care of it by linsapce already!
+        # so we simply assign the values here
+        z_new[:, i, dim] -= values[i]
     return z_new
 
 def show_manifold(z, n, steps, dim , device):
     fig = plt.figure(figsize=(5,5))
     ax = fig.add_subplot(111)
     latent_vectors = change_latentvariable(z, n, steps, dim).to(device)
-    print(latent_vectors.shape)
+    # print(latent_vectors.shape)
     preds = model.decode(latent_vectors.view(-1,model.embedding_size)).cpu().detach()
     img_latent_space_man = make_grid(preds,nrow=steps).numpy().transpose(1,2,0)
     ax.imshow(img_latent_space_man)
 n=1
-show_manifold(z, n=n, steps=5, dim=3, device=device)
+show_manifold(z, n=n, steps=5, dim=0, device=device)
 show_manifold(z, n=n,  steps=5, dim=1, device=device)
 show_manifold(z, n=n,  steps=5, dim=2, device=device)
 show_manifold(z, n=n,  steps=5, dim=3, device=device)
 show_manifold(z, n=n,  steps=5, dim=4, device=device)
 # visualize the 2d manifold 
 #%%
-# variations over the latent variable :
+# lets view some variations over the latent space
 z_dim = model.embedding_size
-sigma_mean = 2.0*torch.ones((z_dim))
+# we plan on seeing the variations for each latent dimension
+# so overall we would want to have z_dim rows, each displaying
+# variations over several steps so we can see how a number forexample
+# morphs into other numbers by simply varying the latent mu/std
 mu_mean = torch.zeros((z_dim))
+sigma_mean = 2.0*torch.ones((z_dim))
+# save generated variable images
+# number of steps of variations
+num_steps = 8
+gen_images = []
 
-# Save generated variable images :
-nbr_steps = 8
-gen_images = torch.ones(size=(nbr_steps,1,28,28) )
-
-for latent in range(z_dim) :
-    #var_z0 = torch.stack( [mu_mean]*nbr_steps, dim=0)
-    var_z0 = torch.zeros(nbr_steps, z_dim)
-    val = mu_mean[latent]-sigma_mean[latent]
-    step = 2.0*sigma_mean[latent]/nbr_steps
-    print(latent, mu_mean[latent]-sigma_mean[latent], mu_mean[latent], mu_mean[latent]+sigma_mean[latent])
-    for i in range(nbr_steps) :
-        var_z0[i] = mu_mean
-        var_z0[i][latent] = val
-        val += step
-    var_z0 = var_z0.to(device)
-    gen_images_latent = model.decode(var_z0)
+for latent_idx in range(z_dim) :
+    # create a base for each row out of the mean
+    latent_vector_z = mu_mean.repeat(num_steps,1) # shape: (num_steps,zdim)
+    # create a lower and higher bound for linspace so we can  
+    # create a list of equally spaced values in latent space for visualization
+    start =  mu_mean[latent_idx] - sigma_mean[latent_idx]
+    end = mu_mean[latent_idx] + sigma_mean[latent_idx]
+    step_values = torch.linspace(start, end, steps=num_steps) # shape:(num_step)
+    
+    print(latent_idx, 
+          mu_mean[latent_idx]-sigma_mean[latent_idx],
+          mu_mean[latent_idx], 
+          mu_mean[latent_idx]+sigma_mean[latent_idx])
+    # 
+    for idx in range(num_steps) :
+        latent_vector_z[idx, latent_idx] = step_values[idx]
+                
+    latent_vector_z = latent_vector_z.to(device)
+    gen_images_latent = model.decode(latent_vector_z)
     gen_images_latent = gen_images_latent.cpu().detach()
-    gen_images = torch.cat( [gen_images, gen_images_latent], dim=0)
-img = make_grid(gen_images)
+    gen_images.append(gen_images_latent)
+    
+gen_images = torch.cat(gen_images, dim=0)
+img = make_grid(gen_images,num_steps)
 plt.imshow(img.cpu().numpy().transpose(1,2,0))
 #%%
-#! remove these visualizations, dont need them really I guess
+#! remove these visualizations, dont need them really I guess (I dont remember where
+# this function comes from!)
 # here we create a grid of images where each row corresponds to one latent dimension. 
 # Within each row, the latent dimension is varied across a range of values (from -3 to 3), 
 # while the rest of the latent vector is kept constant. 
