@@ -6528,9 +6528,12 @@ latent_space_walk(num_rows)
 # paper1?: https://arxiv.org/abs/1711.00937 2017
 # paper2 (pixelcnn, required for generation part-the conditional version) https://arxiv.org/abs/1606.05328
 # paper3(updated version): https://arxiv.org/abs/1906.00446 2019
-#! pytorch implementation from Aäron van den Oord (author of pixelcnn), but overall the vq-vae explanation part is ok!): 
+#! pytorch implementation from Aäron van den Oord (author of pixelcnn),
+# but overall the vq-vae explanation part is ok!): 
 # https://colab.research.google.com/github/zalandoresearch/pytorch-vq-vae/blob/master/vq-vae.ipynb
-# a good introductory video (doesnt get deep, doesnt cover all aspects of it(so reading the whole paper is a must), but overall is good for a brief introduction) https://www.youtube.com/watch?v=VZFVUrYcig0
+# a good introductory video (doesnt get deep, doesnt cover all aspects of it
+# (so reading the whole paper is a must), but overall is good for a brief introduction):
+# https://www.youtube.com/watch?v=VZFVUrYcig0
 #
 # as exciting as the idea behind VAEs are, they are prune to posterior collapse
 # and we saw that first hand, we tried different methods to improve upon our basic
@@ -6540,10 +6543,10 @@ latent_space_walk(num_rows)
 # the issues that prevent us from performing well on complex datastes)
 # we saw that to get around these issues, different variants were proposed, we used some 
 # of them in our work and got much better results. so there are other variants which improve upon it, 
-# we didnt cover all of them here, because there are many. so I try to only use the ones
-# that had substantially more novelties and improvements. the next variant we are going to
-# cover is the VQ-VAE, a very influential paper, that came to resolve vae issues
-# and was used in many high profile papers afterward (imagen, vqgan, etc)
+# we didnt cover all of them here, because there are simply so many. so I try to only use the ones
+# that had substantially more novelties and improvements. 
+# the next variant we are going to cover is the VQ-VAE, a very influential paper, that came 
+# to resolve vae issues and was used in many high profile papers afterward (imagen, vqgan, etc)
 # VQ-VAE uses the same basic idea of the vae, however, it changes it in somewhat fundamental way
 # for one, it uses discrete latent representation instead of continuous one and rightfully argues 
 # that its a more natural appraoch toward modeling what we are dealing with in the real world
@@ -6561,7 +6564,7 @@ latent_space_walk(num_rows)
 # directly or say it in our words?(use the following (at the end) explanations here?)
 # ! ADD introduction from paper, it says it good! 
 #
-# The abstract reads: 
+# From paper, the abstract reads: 
 # Learning useful representations without supervision remains a key challenge in 
 # machine learning. In this paper, we propose a simple yet powerful generative model
 # that learns such discrete representations. 
@@ -6579,28 +6582,29 @@ latent_space_walk(num_rows)
 # 
 
 # how the model works?
-# we have 3 parts in a vq-vae architecture(vqvae itself, we need more than just vqvae to generate images, more on this in a moment),
-# an encoder, a quantizer and a decoder.
+# we have 3 parts in a vq-vae architecture(vqvae itself, we need more than just vqvae
+# to generate images, more on this in a moment), an encoder, a quantizer and a decoder.
 # the encoder gets an image and maps it to a sequence of discrete latent variables
 # the decoder takes these latent sequences and tries to reconstruct the input
 # now what about the quantizer part you may ask?
-# well to be more specific, our encoder gets an rgb image, and outputs some outputs ( lets call it E(x))
-# we also have an embedding layer where we make sure the encoder's ouput channels are the same 
-# as the dimentionality of this embedding layers.
+# well to be more specific, our encoder gets an rgb image, and outputs some outputs
+# (lets call it E(x)) we also have an embedding layer where we make sure the encoder's
+# ouput channels are the same as the dimentionality of this embedding layers.
 # to calculate the actual discrette latent variables, we need to use a trick, which is we 
 # instead of feeding the encoders output directly to decoder, we find the nearest embedding vector
-# and the encoders output, and grab its index.(grab the index of the embedding layer where its closes 
-# to our encoders outputs) we use this index, and grab the corrosponding
+# and the encoders output, and grab its index.(grab the index of the embedding layer where
+# its closes to our encoders outputs) we use this index, and grab the corrosponding
 # embedding vector from our embedings, and feed that to our decoder, and decoder uses it to 
 # reconstruct the input. 
-# since our comparsion here (the neigherst neighbor between our encoder and embeddings) doesnt
-# have a real gradient, we cant backprop through it, (we cant have backward pass for that comparsion),
+# since our comparsion here (the neigherst neighbor between our encoder and embeddings) does
+# not have a real gradient, we cant backprop through it, (we cant have backward pass for that comparsion),
 # so instead we simply pass the gradients from the decoder to the encoder without changing them.
-# this is why we made our encoder output channels the same as embedding size, so we can compare with it
-# and use the decoders gradients for encoder.
-# the idea behind this is that since the encoders output representation and the input to decoder(which is the embeddings)
-# share the same channel dimensial space, the gradients contain useful information for how the 
-# encoder has to change its output to lower reconstruction error.
+# this is why we made our encoder output channels the same as embedding size, so we can compare
+# with it and use the decoders gradients for encoder.
+# the idea behind this is that since the encoders output representation and the input to the 
+# decoder(which is the embeddings) share the same channel dimensial space, the gradients 
+# contain useful information for how the encoder has to change its output to lower reconstruction
+# error.
 # basically if the encoders output is close to embeddings, then we should be able to treat them
 # as the same and hence we can use embeddings gradients for the outputs as well. 
 # we do this in quantizer part beftween encoer and decoder
@@ -6608,51 +6612,41 @@ latent_space_walk(num_rows)
 # !edit
 # note that the vqvae by itself is not a generative model, we cant generate anything with it.
 # It's for learning useful "discrete" representations/ good embeddings if you will.
-# to generate new data(we are not bound to only images, we can generate all sorts of data, image, audio,etc),
-# as its stated in the paper, we need to pair it with an autoregressive 
+# to generate new data(we are not bound to only images, we can generate all sorts of data,
+# image, audio,etc), as its stated in the paper, we need to pair it with an autoregressive 
 # model like PixelCNN which the paper used or a transformer that can model the prior 
 # distribution over the discrete latent codes. 
-# (in the paper they used a PixelCNN architecture over the discrete latents to 
-# generate new sequences of codes, which are then fed to the decoder to produce images.)
+# (in the paper they used the PixelCNN architecture over the discrete latents to 
+# generate new sequences of codes, which are then fed to the decoder to produce images)
 # so to generate new images, we train the vqvae model to get a good embeddings and encoder-decoder.
-# if you remember vq-vae uses the vae framework, but so far we didnt specify any prior, or the likes
-# this is where the second model comes in, unlike the normal vae, where we specified a prior, 
-# here we learn it from data! so in our next step, we train a separate prior model (like PixelCNN) 
-# on the discrete latent codes. and finally for the actual generation process, we now simply sample 
-# from the prior model we just trained and get a sequence of codes which we then use to decode them 
-# into an image.
-# we can condition our generation the same way we did for normal vae, and generate images for certain class, 
-# to do this we'd need the prior model to be conditioned on the class label, that is we train the 
-# prior model to generate codes conditioned on the label, then decode those codes.() we can make it
-# more intersting by conditioning it on a piece of text, so by describing what we want, we get an image)
+# if you remember vq-vae uses the vae framework, but so far we didnt specify any prior,
+# or the likes this is where the second model comes in, unlike the normal vae, where we 
+# specified a prior, here we learn it from data! 
+# so in our next step, we train a separate prior model (like PixelCNN) on the discrete 
+# latent codes and finally for the actual generation process, we now simply sample 
+# from the prior model we just trained and get a sequence of codes which we then use to 
+# decode them into an image.
+# we can condition our generation the same way we did for normal vae, and generate images
+# for certain class, to do this we'd need the prior model to be conditioned on the class
+# -label, that is we train the prior model to generate codes conditioned on the label, 
+# then decode those codes.(we can make it more intersting by conditioning it on a piece 
+# of text, so by describing what we want, we get an image!)
 # 
-#@
-# excessive?
-# as we said, the vqvae model itself doesnt include the prior model in its training. The prior 
-# is learned separately. So the vqvae focuses on reconstruction and learning the embedding(coodbook),
-# while the prior model handles the generation of the latent codes. 
-# This separation allows the vqvae to be used in different ways, depending on the prior model
-# used.
-# 
-# Another thing to consider is that since the latent space is discrete, it might be more efficient
+#
+# sidenote: 
+# @excessive?
+# as we said, the vqvae model itself doesnt include the prior model in its training. the prior 
+# is learned separately so the vqvae focuses on reconstruction and learning the embedding(coodbook),
+# while the prior model handles the generation of the latent codes. this separation allows 
+# the vqvae to be used in different ways, depending on the prior model used(i.e. different
+# priors can be trained for different tasks, while the actual vqvae does not need retraining)
+# another thing to consider is that since the latent space is discrete, it might be more efficient
 # for certain types of data, like speech or music, where discrete representations are more natural.
 # For images, though, using a discrete latent space with a powerful decoder can still lead to 
 # high-quality reconstructions and generations when paired with a good prior model.
-# 
-# Also, in terms of training, VQ-VAE uses a straight-through estimator to handle the non-differentiable 
-# quantization step during backpropagation. This allows the model to learn the codebook entries effectively.
-# The commitment loss(beta) also helps to ensure that the encoder commits to the codebook entries.
-# But coming back to generation: without a prior model, can VQ-VAE generate new images? Probably not,
-# because the encoder only maps inputs to discrete codes, and the decoder maps codes back to data. 
-# To generate new data, you need new codes that weren't derived from an input, which requires a 
-# prior model. 
-# 
-# the VQ-VAE alone isn't a generative model, but when combined with a prior model over the discrete 
-# latents, it can generate new samples.
-# In short, the use cases for VQ-VAE include learning discrete representations for data compression,
+# the use cases for vqvae include learning discrete representations for data compression,
 # unsupervised learning of useful features, and enabling controllable generation when paired with 
-# an appropriate prior model. To generate new images, we need that prior model to sample plausible 
-# sequences of discrete codes, which the VQ-VAE decoder can then turn into images
+# an appropriate prior model. 
 
 # a simplistic res module
 #-------------------------------DEBUG--------------------------------
