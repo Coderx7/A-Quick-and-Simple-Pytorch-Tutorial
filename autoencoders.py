@@ -6697,6 +6697,13 @@ class deconv(nn.Module):
             out += x  
         return out
 
+# sidenote:
+# I wrote the explanations a few times, each time fixing or making it clearer for myself.
+# below you will also see dbug sections which I wrote when I was debugging the model for fp16 trainig
+# normally you can disregard those parts completely and only read them if you want to know whats happening
+# and why I was doing that. I will most probably clear things out a lot by removing the debug logs
+# but for now im leaving it all here
+
 class Quantizer(nn.Module):
     def __init__(self, num_embd, embd_size, beta_weight, use_ema=True, decay_rate=0.99, epsilon=1e-5):
         super().__init__()
@@ -6746,7 +6753,7 @@ class Quantizer(nn.Module):
         # is chosen during the assignment process.(see more explanation a head)
         # we use self.register_buffer so ema_cluster_size is saved when we save our model
         # and also its not included in computational graph
-        # sidenote: instead of ema_cluster_size, ema_assignment_frequency, or ema_cluster_frequency could be better!
+        # sidenote: instead of ema_cluster_size, ema_assignment_frequency, or ema_cluster_frequency could be better! should we change it?
         self.register_buffer('ema_cluster_size', torch.zeros(self.num_embd))
         self.ema_w = nn.Parameter(torch.Tensor(self.num_embd, self.embd_size))
         self.ema_w.data.normal_()
@@ -6887,7 +6894,7 @@ class Quantizer(nn.Module):
                 # after we add the epsilon to all of the clusters we use total_assignments
                 # in the denominator to normalize it.at the end once again multiply the whole result
                 # by total_assignments again to scale it back to the original total.
-                # we do this so the laplace smoothing doesn't change the  total number of assignments,
+                # we do this so the laplace smoothing doesnt change the total number of assignments,
                 # which is important for maintaining the scale when updating the embeddings. 
                 # so the division by (total + num_embds*epsilon) and multiplication by total at the end
                 # redistributes the added epsilon across the clusters while keeping the sum the same.
@@ -7603,13 +7610,34 @@ class Quantizer(nn.Module):
                 
                 # !edit: add relavent bits:
                 #sidenote:
-                # The `ema_cluster_size` was addressed earlier with Laplace smoothing to prevent division by zero. Now, combining that with `ema_w`, which is the EMA of the summed encoder outputs, and then normalizing by the smoothed cluster sizes gives the updated embeddings. This way, even if a cluster hasn't been assigned in the current batch, the EMA ensures it still gets updated based on historical data, smoothed by the epsilon.
-                # I need to check if the dimensions make sense. `encodings` is probably a matrix of shape [batch*latent_dim, num_embeddings], where each row is a one-hot vector indicating the chosen embedding. Transposing it would make [num_embeddings, batch*latent_dim], and multiplying by `encoder_outputs_flatten` (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim] matrix `dw`. Each row in `dw` is the sum of encoder outputs assigned to that embedding.
-                # Then `ema_w` is a [num_embeddings, embedding_dim] parameter that's updated with EMA. Dividing by `ema_cluster_size.unsqueeze(1)` (which is [num_embeddings, 1]) gives the average encoder output per embedding, scaled by their smoothed counts. This updates the codebook embeddings to be the moving average of the encoder outputs assigned to them.
-                # So, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time, which helps in training stability. The division by `ema_cluster_size` ensures that each embedding vector is the average of all encoder outputs that were assigned to it, adjusted for the smoothing to avoid division by zero and ensure all embeddings get updated even if rarely used.
-                # But why not just use the current batch's assignments directly? Because EMA reduces variance in the updates, making training more stable. Especially with discrete assignments, which can be noisy, using an EMA helps the codebook converge more smoothly.
-                # Also, since `encodings` might be soft assignments (like in the original VQ-VAE with straight-through estimator), the EMA would still work by accumulating the weighted contributions from each encoder output to each codebook entry. The Laplace smoothing on cluster sizes ensures that even rarely used embeddings have a non-zero count, so their EMA doesn't get stuck or cause numerical issues when updating.
-                # Putting it all together, these lines are responsible for updating the codebook embeddings in a stable, smoothed manner using EMA, which is crucial for effective training of VQ-VAEs by preventing codebook collapse and ensuring all embeddings are utilized.
+                # The `ema_cluster_size` was addressed earlier with Laplace smoothing to prevent division by zero.
+                # Now, combining that with `ema_w`, which is the EMA of the summed encoder outputs, and then 
+                # normalizing by the smoothed cluster sizes gives the updated embeddings. This way, even if 
+                # a cluster hasn't been assigned in the current batch, the EMA ensures it still gets updated
+                # based on historical data, smoothed by the epsilon.
+                # I need to check if the dimensions make sense. `encodings` is probably a matrix of shape
+                # [batch*latent_dim, num_embeddings], where each row is a one-hot vector indicating the chosen embedding.
+                # Transposing it would make [num_embeddings, batch*latent_dim], and multiplying by 
+                # `encoder_outputs_flatten` (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim]
+                # matrix `dw`. Each row in `dw` is the sum of encoder outputs assigned to that embedding.
+                # Then `ema_w` is a [num_embeddings, embedding_dim] parameter that's updated with EMA. Dividing by
+                # `ema_cluster_size.unsqueeze(1)` (which is [num_embeddings, 1]) gives the average encoder output 
+                # per embedding, scaled by their smoothed counts. This updates the codebook embeddings to be the 
+                # moving average of the encoder outputs assigned to them.
+                # So, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time,
+                # which helps in training stability. The division by `ema_cluster_size` ensures that each embedding vector
+                # is the average of all encoder outputs that were assigned to it, adjusted for the smoothing to avoid 
+                # division by zero and ensure all embeddings get updated even if rarely used.
+                # But why not just use the current batch's assignments directly? Because EMA reduces variance in the updates,
+                # making training more stable. Especially with discrete assignments, which can be noisy, using an EMA 
+                # helps the codebook converge more smoothly.
+                # Also, since `encodings` might be soft assignments (like in the original VQ-VAE with straight-through estimator),
+                # the EMA would still work by accumulating the weighted contributions from each encoder output to each 
+                # codebook entry. The Laplace smoothing on cluster sizes ensures that even rarely used embeddings have 
+                # a non-zero count, so their EMA doesn't get stuck or cause numerical issues when updating.
+                # Putting it all together, these lines are responsible for updating the codebook embeddings in a stable, 
+                # smoothed manner using EMA, which is crucial for effective training of VQ-VAEs by preventing codebook 
+                # collapse and ensuring all embeddings are utilized.
                 # 
                 #Why These Steps?
                 # Stability via EMA:
