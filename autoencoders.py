@@ -7760,14 +7760,14 @@ class Quantizer(nn.Module):
         # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
         # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
         # which is non-differentiable.
-        # basically using the detach trick here prevents the gradients from flowing through 
+        # basically using the detach trick here it prevents the gradients from flowing through 
         # (quantized_z_ex - encoder_outputs) so, during backpropagation, in the forward pass we
         # use the quantized_z_ex, the model sees the actual quantized values and the in 
         # backward pass, its as if the encoder_outputs were used, which allows the gradients
         # to propagate through the encoder.
         quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach()
         # lets also calculate the average selection probablity. 
-        # this tells us how often an embedding vector is selected. 
+        # this tells us know how often an embedding vector is selected. 
         # its important because it can tell us whether some vectors are rarely selected
         # or not, if so then it might indicate embedding space/codebook collapse!
         # its a common issue where only a few embeddings are used constantly and 
@@ -7788,7 +7788,7 @@ class Quantizer(nn.Module):
         # using a exponential moving average should prevent low prepexlity!
         # !edit add moving average!
         # 
-        # sidenote:
+        # sidenote-deeper explanation:
         # !edit
         # Perplexity is in fact a measure of uncertainty or diversity in a probability distribution.
         # It is commonly used in language modeling, information theory, and in Vector Quantization 
@@ -7800,7 +7800,7 @@ class Quantizer(nn.Module):
         # where p_i represents the probability of selecting the i-th element from a distribution
         # The perplexity is simply the exponentiation of entropy:
         #  PPL = exp(H(p)) = e^(- Σ p_i * log(p_i))
-        #This measures how uncertain or diverse a probability distribution is. In VQ-VAE,
+        # This measures how uncertain or diverse a probability distribution is. In VQ-VAE,
         # it helps evaluate how well embedding space is being utilized.
         # 
         # Ok this didnt explain much at all, perplexity in fact measures the effective number
@@ -7823,7 +7823,7 @@ class Quantizer(nn.Module):
         # but if the reconstructions are pretty good with much needed details and diversity then, 
         # we are good! even if its 40 out of 512 codebook verctors!
         # 
-        # sidenote: 
+        # sidenote:  
         # in many implementations you may see people refering to embeddings(the whole embedding vectors/ditionary of embedding vectors!)
         # as codebooks! 
         # so embedding vectors and codebook vectors are the same thing! if you read the paper
@@ -7884,7 +7884,7 @@ class Quantizer(nn.Module):
         # discrete representation derived from that continuous latent space) the latents!.
         # other well-known names that are used are discrete_latents and quantized_latents which 
         # are more accurate imho! so I'll be using the discrete_latents instead from now on!
-        # (as to why people do that(aside from our previous points which still are valid imho),
+        # (as to why people do that(aside from my previous points which still are valid imho),
         # I guess since, given the context, its known knowledge, everyone just shortens the 
         # explanation and directly calls them that way!(after all they are the discrete form of
         # the continuous counterpart! (also it makes sense in the vqvae context itself, without
@@ -7893,7 +7893,6 @@ class Quantizer(nn.Module):
         return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , discrete_latents
 
 # lets now add the main model 
-#! make it conditional so we can create different types of images?!
 class VQVAE(nn.Module):
     def __init__(self, input_channels, embd_num, embd_size, beta, use_ema):
         super().__init__()
