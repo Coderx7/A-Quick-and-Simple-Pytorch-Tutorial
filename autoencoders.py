@@ -6943,16 +6943,16 @@ class Quantizer(nn.Module):
                 # portion of the new dw.
                 # 
                 # !edit:
-                # ema_w controls how much historical data is retained vs. new contributions.
-                # This smooths the codebook updates over time, preventing abrupt changes and 
-                # stabilizing training.
-                # ema_w tracks the cumulative weighted sum of encoder outputs assigned to each
-                # codebook entry.
+                # in other words, ema_w controls how much historical data is retained vs new contributions.
+                # This smooths the codebook updates over time, preventing sudden changes 
+                # thus stabilizing the training.
+                # (ema_w tracks the cumulative weighted sum of encoder outputs assigned to each
+                # codebook entry).
                 # self.ema_w = nn.Parameter(self.ema_w * self.decay_rate + (1 - self.decay_rate) * dw)
                 # or 
                 self.ema_w.data.mul_(self.decay_rate).add_(dw, alpha=(1 - self.decay_rate))
                 # -----------------------DEBUG---------------------
-                # a nother operation involving multiplication, 
+                # another operation involving multiplication, 
                 # update: no warning, so this is not the issue, we are still getting nans!
                 # update2: see debug below, the way we are using nn.parameter seems 
                 # to have been causing the instablities in fp16 mode! most probably
@@ -7606,54 +7606,51 @@ class Quantizer(nn.Module):
                 # sidenote: 
                 # by using EMA twice for both the cluster sizes and the embedding vectors(ema_w), 
                 # we make sure we (i.e. the model) avoid relying only on the current batchs assignments, 
-                # which might be noisy. this should lead to a more stable training.
+                # which might be noisy. this should lead to a more stable training(which it absolutely does!).
                 
-                # !edit: add relavent bits:
-                #sidenote:
-                # The `ema_cluster_size` was addressed earlier with Laplace smoothing to prevent division by zero.
-                # Now, combining that with `ema_w`, which is the EMA of the summed encoder outputs, and then 
+                # !edit: repeatative, excessive, already explained, remove:
+                #sidenote/summary:
+                # The ema_cluster_size was addressed earlier with Laplace smoothing to prevent division by zero.
+                # Now, combining that with ema_w, which is the EMA of the summed encoder outputs, and then 
                 # normalizing by the smoothed cluster sizes gives the updated embeddings. This way, even if 
-                # a cluster hasn't been assigned in the current batch, the EMA ensures it still gets updated
+                # a cluster hasnt been assigned in the current batch, the EMA ensures it still gets updated
                 # based on historical data, smoothed by the epsilon.
-                # I need to check if the dimensions make sense. `encodings` is probably a matrix of shape
-                # [batch*latent_dim, num_embeddings], where each row is a one-hot vector indicating the chosen embedding.
-                # Transposing it would make [num_embeddings, batch*latent_dim], and multiplying by 
-                # `encoder_outputs_flatten` (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim]
-                # matrix `dw`. Each row in `dw` is the sum of encoder outputs assigned to that embedding.
-                # Then `ema_w` is a [num_embeddings, embedding_dim] parameter that's updated with EMA. Dividing by
-                # `ema_cluster_size.unsqueeze(1)` (which is [num_embeddings, 1]) gives the average encoder output 
-                # per embedding, scaled by their smoothed counts. This updates the codebook embeddings to be the 
+                # (encodings is a matrix of shape [batch*latent_dim, num_embeddings], where each row is a 
+                # one-hot vector indicating the chosen embedding.
+                # transposing it would make [num_embeddings, batch*latent_dim], and multiplying by 
+                # encoder_outputs_flatten (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim]
+                # matrix dw. Each row in dw is the sum of encoder outputs assigned to that embedding.
+                # then ema_w is a [num_embeddings, embedding_dim] parameter thats updated with EMA. dividing by
+                # ema_cluster_size.unsqueeze(1) (which is [num_embeddings, 1]) gives the average encoder output 
+                # per embedding, scaled by their smoothed counts. this updates the codebook embeddings to be the 
                 # moving average of the encoder outputs assigned to them.
-                # So, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time,
-                # which helps in training stability. The division by `ema_cluster_size` ensures that each embedding vector
+                # so, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time,
+                # which should help training stability. the division by ema_cluster_size ensures that each embedding vector
                 # is the average of all encoder outputs that were assigned to it, adjusted for the smoothing to avoid 
                 # division by zero and ensure all embeddings get updated even if rarely used.
-                # But why not just use the current batch's assignments directly? Because EMA reduces variance in the updates,
-                # making training more stable. Especially with discrete assignments, which can be noisy, using an EMA 
+                # but why not just use the current batch's assignments directly? because EMA reduces variance in the updates,
+                # making training more stable. especially with discrete assignments, which can be noisy, using an EMA 
                 # helps the codebook converge more smoothly.
-                # Also, since `encodings` might be soft assignments (like in the original VQ-VAE with straight-through estimator),
-                # the EMA would still work by accumulating the weighted contributions from each encoder output to each 
-                # codebook entry. The Laplace smoothing on cluster sizes ensures that even rarely used embeddings have 
-                # a non-zero count, so their EMA doesn't get stuck or cause numerical issues when updating.
-                # Putting it all together, these lines are responsible for updating the codebook embeddings in a stable, 
-                # smoothed manner using EMA, which is crucial for effective training of VQ-VAEs by preventing codebook 
-                # collapse and ensuring all embeddings are utilized.
                 # 
-                #Why These Steps?
-                # Stability via EMA:
-                #     Directly using per-batch assignments would cause noisy updates. EMA smooths these updates over time, critical for avoiding codebook collapse (where most embeddings go unused).
-                #     Example: If a codebook entry is rarely used, its ema_cluster_size remains small, but EMA ensures it still receives gradual updates from dw.
-                # Normalization by Cluster Size:
-                #     Dividing by ema_cluster_size converts the summed encoder outputs (ema_w) into an average of the encoder outputs assigned to each codebook entry.
-                #     Without this, embeddings would grow disproportionately large based on how frequently they’re used.
-                # Alignment with Laplace Smoothing:
-                #     The earlier Laplace smoothing of ema_cluster_size ensures no division by zero, even for unused codebook entries.
-                #     Smoothing also ensures rarely used embeddings still receive small updates (via epsilon), preventing them from becoming "dead" units.
+                # Why would we want to take these steps like this and not use per-batch assignments?
+                # because directly using per-batch assignments would cause noisy updates. ema smooths these updates
+                # over time and it is absolutely critical for avoiding codebook collapse (i.e. where most embeddings go unused)!
+                # for example, if a codebook entry is rarely used, its ema_cluster_size remains small, but ema ensures it 
+                # still receives gradual updates from dw.
+                # why do we do normalization by cluster size?
+                # because doing so (dividing by ema_cluster_size) converts the summed encoder outputs (ema_w) into an
+                # average of the encoder outputs assigned to each codebook entry. without this, embeddings would grow
+                # disproportionately large based on how frequently they're used.(recall going fp16 issues?)
+                # whats the smoothing(laplase) used/good for here?
+                # the laplace smoothing of ema_cluster_size we saw earlier ensures no division by zero, even for unused 
+                # codebook entries. also smoothing ensures rarely used embeddings still receive small updates (via epsilon)
+                # which preventis them from becoming dead units.
                 #
-                # Key Takeaways
-                # EMA Smoothing: Stabilizes codebook updates by prioritizing historical consistency over noisy per-batch assignments.
-                # Normalization: Ensures embeddings represent the average of assigned encoder outputs, not their sum.
-                # Laplace Symbiosis: The earlier smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, even rarely used ones.
+                # recap:
+                # EMA (smoothing) stabilizes codebook updates by prioritizing historical consistency over noisy per-batch assignments.
+                # normalization ensures embeddings represent the average of assigned encoder outputs not their sum.
+                # laplace smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, 
+                # even the rarely used ones.
                 
                 # from future: 
                 # see debug below, this works for fp32, but not fp16!
