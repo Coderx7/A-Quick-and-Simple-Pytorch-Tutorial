@@ -9916,13 +9916,13 @@ def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes
     # so we need a blank canvas to fill sequentially and starting with zeros is the 
     # standard way to provide this initial empty state.
     # initially when I first implemented my prior model, it wasnt good, it couldnt learn
-    # anything because it was too simplistic, because of that, when i first wrote the early
+    # anything because it was too simplistic, because of that, when I first wrote the early
     # version of this function, using zeros would only give me solid colors like red! blue!
     # after some diggings, found a suggestion that told me to use randints, and it actually 
     # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
     # that actually looked like an object, though badly deformed and pretty low quality in general,
     # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
-    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toppled
+    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toped
     # itw ith my buggy generation function that didnt follow the autoregressive nature, made
     # all of this worse! only after that I found about the issue that starting with random 
     # codes (torch.randint) breaks the autoregressive process completely and the model wont 
@@ -10061,7 +10061,7 @@ def display_generated_samples(vqvae_model:VQVAE,
                                # tend to work on lower abstractions? (imagine a photoshop layer
                                # where the final image is made of several layers, adding details
                                # retouches, etc to the image, at least this is the feeling 
-                               # i get from these images. 
+                               # I get from these images. 
                                # todo work on explanation!)
                                temperature=temperature,
                                device=device,
@@ -10278,9 +10278,9 @@ prior, ckptname = train_prior(prior=prior,
 # better than than before!(when we used 32x32 versions!)
 
 #!todo remove from here
-# these blocks use our initial version of pixel cnn, and i also didnt save any hyperparameters
+# these blocks use our initial version of pixel cnn, and I also didnt save any hyperparameters
 # for them, so they're just weights I dont plan on getting to work! early versions didnt
-# work properly until i improved the architecture (the architecture is roughly the same
+# work properly until I improved the architecture (the architecture is roughly the same
 # though I uses residual connections, it should be in previous commits, so if needs be
 # can use that, but I dont plan on doing it! lets remove them altogether!)
 # ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
