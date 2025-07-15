@@ -8125,7 +8125,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
     total_steps = len(dataloader_train) * epochs
     warmup_steps = len(dataloader_train) * warmup_epochs
     
-    # added later to see how much improvement we can get out of our curent model!
+    # added this later to see how much improvement we can get out of our curent model!
     def lr_lambda(current_step):
         if current_step < warmup_steps:
             return float(current_step) / float(max(1, warmup_steps))
@@ -8155,8 +8155,7 @@ def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, devi
 
     # without this loss will decrease a lot but the result isnt as good as when
     # we normalize the loss, and take the whole dataset into account!
-    #! whats really ahppening here? why do I need to take the whole dataset into account like this?
-    # what does this do?
+    # check how much normalization affects us?
     # min_v = dataloader_train.dataset.data.min()
     # max_v = dataloader_train.dataset.data.max()
     # print(f'{min_v=}')
@@ -8536,7 +8535,7 @@ import matplotlib.animation as animation
 # fps=600, and interval=90 results seem to have roughly the same speed 
 # (because 1/600 = 0.0016 second(or 1.6 milliseconds) for each frame when using fps,
 # likewise to get 600 fps with interval we need 1/1.6 = 600 fps !
-# however, in my experience interval=90 feels like fps=600! so you might want to go for that!
+# however, in my experience interval=90 feels like fps=600! so we might want to go for that!
 #!todo choose one over the other!
 # )
 def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=600, figsize=(6,8)):
@@ -8583,15 +8582,15 @@ dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(
 view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}',figsize=(10,13))
 #%%
 # we first start with mnist to see if our implementation is ok 
-# (sidenote: I actually faced quit a lot of issues and switching to mnist helped a lot. 
-# I was initially using with cifar10 directly. after mnist, I used celeba, because its 
+# (sidenote: I actually faced quite a lot of issues and switching to mnist helped a lot. 
+# I was initially using cifar10 directly. after mnist, I used celeba, because its 
 # simpler than cifar10 and one can more easily identify patterns, and whether
 # you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
 # images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
 # very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
 
-# why doesnt anime work!? it gives me blurry blacknwhite recons!!?
-# our anime dataset is just too small to work! try cifar10 or other datasets with
+# danime doesnt work! it gives me blurry blacknwhite recons!!?
+# ok found the reason! our anime dataset is just too small to work! try cifar10 or other datasets with
 # limited_samples=True and see the resulut (basically aroudn 1000 samples wont
 # work if we train a model from scratch!) asign of small/inadequate training set
 # is that the images will be discolored, almost black and white, becoming monocolors
@@ -8925,7 +8924,7 @@ view_results(model, dataloader_train, dataloader_test)
 #! Todo, add a separate method in vqvae to make this easier and not repeat
 #! each time we may want to access latents (i.e. min_indexes)
 # from future!:
-# after a second thouht, our function works pretty much with any iterable
+# after a second thought, our function works pretty much with any iterable
 # not just dataloaders, so I'll guess I add a bit of type info so later on
 # I can reuse this 
 from typing import Iterable, Tuple
@@ -9024,7 +9023,7 @@ class MaskedConv2d(nn.Conv2d):
         # we can use convolution operation and enforce an autoregressive behavior with it
         # people usually use a raster scan move, which in simple terms means, 
         # go from left to right of the image, one row at a time, and then go to 
-        # second row. like how the process images in rendering! 
+        # second row. like how they process images in rendering! 
         # to do this effectively, we can alter a convolutional kernel to do this
         # for us automatically.
         # we need to create two masks, A, and B like the paper.
@@ -9361,87 +9360,67 @@ class GatedConv2d(nn.Module):
 # somewhere else, possibly in the vqvae base model itself, maybe I need to add the
 # improvements in t he second paper to get good results or buff up the architetcure
 # even more!
-class AttentionBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.query = nn.Conv2d(channels, channels // 8, 1)
-        self.key = nn.Conv2d(channels, channels // 8, 1)
-        self.value = nn.Conv2d(channels, channels, 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
+# update from future: see the next comments, I explain what was wrong!
+# class AttentionBlock(nn.Module):
+#     def __init__(self, channels):
+#         super().__init__()
+#         self.query = nn.Conv2d(channels, channels // 8, 1)
+#         self.key = nn.Conv2d(channels, channels // 8, 1)
+#         self.value = nn.Conv2d(channels, channels, 1)
+#         self.gamma = nn.Parameter(torch.zeros(1))
 
-    def forward(self, x):
-        batch_size, C, H, W = x.size()
-        query = self.query(x).view(batch_size, -1, H * W).permute(0, 2, 1)
-        key = self.key(x).view(batch_size, -1, H * W)
-        value = self.value(x).view(batch_size, -1, H * W)
-        attn = torch.bmm(query, key)
-        attn = F.softmax(attn, dim=-1)
-        attn_out = torch.bmm(value, attn.permute(0, 2, 1))
-        attn_out = attn_out.view(batch_size, C, H, W)
-        return self.gamma * attn_out + x
-class MaskedAttentionBlock(nn.Module):
-    """Self-Attention with Causal Masking for Autoregressive Models"""
-    def __init__(self, channels, H, W): # Need spatial dims for mask
-        super().__init__()
-        self.channels = channels
-        self.H = H
-        self.W = W
-        # Use channels // 8 or some other factor, ensure it's not zero if channels < 8
-        self.head_dim = max(1, channels // 8)
-        self.query = nn.Conv2d(channels, self.head_dim, 1)
-        self.key = nn.Conv2d(channels, self.head_dim, 1)
-        self.value = nn.Conv2d(channels, channels, 1) # Value uses full channels
-        self.gamma = nn.Parameter(torch.zeros(1))
+#     def forward(self, x):
+#         batch_size, C, H, W = x.size()
+#         query = self.query(x).view(batch_size, -1, H * W).permute(0, 2, 1)
+#         key = self.key(x).view(batch_size, -1, H * W)
+#         value = self.value(x).view(batch_size, -1, H * W)
+#         attn = torch.bmm(query, key)
+#         attn = F.softmax(attn, dim=-1)
+#         attn_out = torch.bmm(value, attn.permute(0, 2, 1))
+#         attn_out = attn_out.view(batch_size, C, H, W)
+#         return self.gamma * attn_out + x
+# class MaskedAttentionBlock(nn.Module):
+#     def __init__(self, channels, H, W):
+#         super().__init__()
+#         self.channels = channels
+#         self.H = H
+#         self.W = W
+#         # use channels // 8 or some other factor
+#         self.head_dim = max(1, channels // 8)
+#         self.query = nn.Conv2d(channels, self.head_dim, 1)
+#         self.key = nn.Conv2d(channels, self.head_dim, 1)
+#         self.value = nn.Conv2d(channels, channels, 1) 
+#         self.gamma = nn.Parameter(torch.zeros(1))
 
-        # Create causal mask
-        mask = torch.tril(torch.ones(H * W, H * W)) # Shape (HW, HW)
-        # Register as buffer
-        self.register_buffer('causal_mask_base', mask) # Store the base mask
+#         # causal mask
+#         mask = torch.tril(torch.ones(H * W, H * W))
+#         # register as buffer
+#         self.register_buffer('causal_mask_base', mask)
 
 
-    def forward(self, x):
-        batch_size, C, H, W = x.size()
-        assert H == self.H and W == self.W, \
-            f"Input spatial dims ({H},{W}) don't match block's expected dims ({self.H},{self.W})"
+#     def forward(self, x):
+#         batch_size, C, H, W = x.size()
+#         assert H == self.H and W == self.W, \
+#             f"Input spatial dims ({H},{W}) don't match block's expected dims ({self.H},{self.W})"
 
-        HW = H * W
-        query = self.query(x).view(batch_size, self.head_dim, HW).permute(0, 2, 1) # B, HW, C'
-        key = self.key(x).view(batch_size, self.head_dim, HW) # B, C', HW
-        value = self.value(x).view(batch_size, C, HW).permute(0, 2, 1) # B, HW, C
-
-        # Attention Scores: B, HW, HW
-        attn = torch.bmm(query, key) # Q * K^T
-        attn = attn / (self.head_dim ** 0.5) # Scale
-
-        # --- Apply the causal mask (Corrected) ---
-        # Get the base mask and select the relevant part
-        current_mask = self.causal_mask_base[:HW, :HW] # Shape (HW, HW)
-        # Create the boolean condition for masked_fill
-        mask_condition = (current_mask == 0) # Shape (HW, HW)
-        # Apply to attn (B, HW, HW) - broadcasts mask_condition correctly
-        masked_attn = attn.masked_fill(mask_condition, float('-inf'))
-        # --- End Correction ---
-
-        # Softmax over keys (last dimension)
-        # attn_softmax shape will now be (B, HW, HW)
-        attn_softmax = F.softmax(masked_attn, dim=-1)
-
-        # --- Dtype Correction ---
-        # Ensure dtypes match for bmm by casting value to attn_softmax's dtype
-        # this is for when we use autocast! explain!
-        value_casted = value.to(attn_softmax.dtype)
-        # --- End Correction ---
-
-        # print("attn_softmax shape:", attn_softmax.shape, "dtype:", attn_softmax.dtype)
-        # print("value_casted shape:", value_casted.shape, "dtype:", value_casted.dtype)
-
-        # Weighted sum of values: B, HW, C
-        attn_out = torch.bmm(attn_softmax, value_casted) # Attn * V (Corrected)
-
-        # Reshape back: B, C, H, W
-        attn_out = attn_out.permute(0, 2, 1).view(batch_size, C, H, W)
-
-        return self.gamma * attn_out + x
+#         HW = H * W
+#         query = self.query(x).view(batch_size, self.head_dim, HW).permute(0, 2, 1)
+#         key = self.key(x).view(batch_size, self.head_dim, HW)
+#         value = self.value(x).view(batch_size, C, HW).permute(0, 2, 1) 
+#         attn = torch.bmm(query, key)
+#         attn = attn / (self.head_dim ** 0.5) 
+#         current_mask = self.causal_mask_base[:HW, :HW] 
+#         mask_condition = (current_mask == 0)
+#         masked_attn = attn.masked_fill(mask_condition, float('-inf'))
+#         attn_softmax = F.softmax(masked_attn, dim=-1)
+#         # ensure dtypes match for bmm by casting value to attn_softmax's dtype
+#         # this is for when we use autocast! explain!
+#         value_casted = value.to(attn_softmax.dtype)
+#         # print("attn_softmax shape:", attn_softmax.shape, "dtype:", attn_softmax.dtype)
+#         # print("value_casted shape:", value_casted.shape, "dtype:", value_casted.dtype)
+#         attn_out = torch.bmm(attn_softmax, value_casted) 
+#         attn_out = attn_out.permute(0, 2, 1).view(batch_size, C, H, W)
+#         return self.gamma * attn_out + x
 
 # this is the test block that got suddenly used for later models!
 class ResidualBlock0(nn.Module):
