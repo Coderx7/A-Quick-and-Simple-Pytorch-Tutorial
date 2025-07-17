@@ -9635,84 +9635,78 @@ def train_prior(prior:PixelCNN,
             # our case, as the loss seems to be working well so far
             loss = F.cross_entropy(logits.float(), latents.long())
             
-            #! calculate bits per dimension: needs excessive edits
-            # bits per dimension(BPD) is used to evaluate autoregressive generative models like pixelcnn,
-            # transformers,etc), that work with high dimensional data like images. 
-            # For example, the original Pixelcnn achieves BPD of 2.29 for Cifar10 and everyone 
-            # who trains or works in this subfield/subject uses it.
-            # (we have other metrics that we use for other types of models, such as GANs which are non-likelihood-based.
-            # we'll cover these in future chapters)
-            # this is used because it makes comparing different models across different image
+            #! calculate bits per dimension
+            #! edit and sumarize
+            # we use bits per dimension(BPD) metric to evaluate autoregressive generative models such as pixelcnn,
+            # transformers,etc, that work with high dimensional data like images in out case.
+            # The original Pixelcnn achieves a BPD of 2.29 for cifar10 and everyone who trains 
+            # or works in this subfield/subject uses this metric.
+            # (note we have other metrics that we use for other types of models (e.g. GANs which 
+            # are non-likelihood-based) we'll cover these in future chapters)
+            # we use this metric because it makes comparing different models across different image
             # sizes (or datasets) easier. 
-            # it essentially measurs how well the model compresses the data, which put in other words
+            # it essentially measurs how well the model compresses the data, which put in simple words
             # means, it shows how well our model correctly assigns higher likelihood (lower NLL) to 
-            # the true data, which in turn shows how good its predictive power and compression capabilities
-            # are.
-            # 
+            # the true data, which in turn shows how good its predictions (or how well its compression
+            # capabilities) are.
+            #
             # (second version might be better and more on point):
-            # BPD simply put, measures how well a model predicts the data distribution.
-            # it essentially measures the average number of bits required to encode each dimension
-            # (e.g. each pixel value or sub-pixel value) of the data, assuming an ideal compression
-            # scheme based on the model's predicted probabilities?
-            # when a model achieves a lower BPD, it means that model is better at predicting the data
-            # distribution, as it requires fewer bits per dimension (or per pixel in our case) to 
-            # encode the image.
             # 
-            
+            # BPD is derived from the negative log-likelihood (NLL) of the data under the model
+            # which is typically calculated using the natural logarithm(base e), resulting in
+            # units of "nats".
+            # BPD simply put, measures how well a model predicts the data distribution!
+            # it essentially measures the average number of bits required to encode each dimension
+            # (e.g. each pixel value) of the data.
+            # 
+            # when a model achieves a lower BPD, it means that model is better at predicting the data
+            # distribution, since it requires fewer bits per dimension (or per pixel in our case) to 
+            # encode the image.the formula for that is : bpd = nats_per_dim * np.log2(np.e)
+            # 
             # note that since log base e (natural log) is used in the NLL calculation, if we divide 
             # by log(2) it converts it to bits (since log2(x) = ln(x)/ln(2)).
-            # the actual formula for BPD then is : 
+            # so the actual formula for BPD then is(for a single image) : 
             # BPD = (NLL) / (number of pixels * log(2))
-            # our model outputs probabilities for each pixel and each pixel is modeled as a discrete distribution
-            # (i.e. like 256 possible values for each color channel element in an 8-bit image) 
-            # The loss is the negative log-likelihood of the true pixel values given the model's predicted
-            # distribution. 
-            # we sum the NLL over all pixels in the image, then average over the batch. 
+            # 
+            #
+            # sidenote:(to be more accurate the formula for single image would be:
+            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
+            # and for batch:
+            # BPD = (NLL_total / (num_images * num_pixels)) / log(2))
+            # 
+            # our model outputs probabilities for each pixel and each pixel is modeled as 
+            # a discrete distribution (i.e. like 256 possible values for each color channel
+            # element in an 8-bit image). 
+            # the loss is the negative log-likelihood of the true pixel values given the model's predicted
+            # distribution. so we sum the NLL over all pixels in the image, then average over the batch. 
             # This gives us the average NLL per image.
             # we then divide this average NLL by the number of pixels per image (i.e. 32*32*3=3072) 
-            # to get NLL per dimension (pixel). then convert from nats to bits by dividing by log(2). 
-            # 
-            
-            # note that since log base e (natural log) is used in the NLL calculation, if we divide 
-            # by log(2) it converts it to bits (since log2(x) = ln(x)/ln(2)).
-            # so, the formula would be (for single image):
-            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
-            # or (for batch):
-            # BPD = (NLL_total / (num_images * num_pixels)) / log(2)
-            # but since we used crossentropy here, and by default it uses reduction='mean', 
-            # it's already averaged over the batch and the elements. 
+            # to get NLL per dimension (per pixel) and finally convert from nats to bits by dividing by log(2). 
+            #
+            # However since we used crossentropy here and not NLL directly, and by default crossentropy
+            # uses reduction='mean', it's already averaged over the batch and the elements. 
             # so if the loss is computed as the average NLL per pixel, then we just need to 
             # convert that average to bits by dividing by log(2) and dont need to divide it 
             # by n_dims here!
             #  
             # so to recap again, when we simply use F.cross_entropy(), by default it uses reduction='mean'
-            # which means first the NLL loss is calculated for each individual spatial position (h, w) within 
-            # each image/latent n in the batch.
+            # which means first the NLL loss is calculated for each individual pixel/spatial position (h, w)
+            # within each image/latent n in the batch.
             # then reduction='mean' part, computes the average of all these individual NLL values across 
             # the entire batch (N) and all spatial dimensions (H, W), and all thats left to do to get
             # BPD is to simply divide the loss by log(2)! (or multiply by log2(e))
             # 
-            # Dividing the NLL (calculated using natural log, ln) by log(2) (which is ln(2)) converts 
-            # the units from nats to bits. The formula log2(x) = ln(x)/ln(2) is the justification.
+            # dividing the NLL (calculated using natural log(ln)) by log(2) (which is ln(2)) converts 
+            # the units from nats to bits. hence the formula log2(x) = ln(x)/ln(2)! 
             # 
-            # Lower BPD indicates a better model (better compression, closer fit to the true data distribution). 
-            # It allows for standardized comparison across models and datasets, normalizing for dimensionality.
-            # 
-            # BPD is derived from the negative log-likelihood (NLL) of the data under the model. 
-            # The NLL is typically calculated using the natural logarithm (base e), resulting in
-            # units of "nats".
-            # The fundamental definition is:
-            # BPD = Average NLL per Dimension (in nats) / ln(2)
-            # or equivalently:
-            # BPD = Average NLL per Dimension (in nats) * log2(e)
-            # where ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the 
-            # base-2 logarithm of e (approx 1.443). 
+            # so  
+            # BPD = average NLL per dimension (in nats) / ln(2)
+            # or
+            # BPD = average NLL per dimension (in nats) * log2(e)
+            # (ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the 
+            # base-2 logarithm of e (approx 1.443)) 
             # The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
             # 
-            # When modeling discrete data (like pixel values 0-255), 
-            # F.cross_entropy is commonly used as the loss function.
-            # It calculates the NLL for each individual element (pixel/sub-pixel) based on the 
-            # model's predicted probabilities (logits) and the true target value (latents.long()).
             # important note:
             # the reduction type for F.crossentropy by default is reduction='mean', therefor 
             # F.cross_entropy averages these NLL values (in nats) over all elements across
@@ -11221,7 +11215,7 @@ def visualize_latent_distribution(latent_maps_list,
     # since the number of indexes may be small, the histogram maynot look well
     # so for the case where there are ctually a few indexes, we can try to 
     # allocate more indexes per each bin, and this way by decreasing the 
-    # number of bins involves, make each column thicker and more noticeable
+    # number of bins involved, make each column thicker and more noticeable
     # sidenote: we could have also math.ceil
     # but I didnt want to use math module just for this function, 
     # otherwise doing math.ceil is clearer nonetheless
@@ -11285,7 +11279,7 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 #
 # checking the real image with its reconstruction and its latent (column1 to 3) tells us
 # how well our vqvae is doing and how accurately latents are derived from that image
-# and how well the decoder does its job. this tests the quality of our vqvae model in general,
+# and how well the decoder does its job. it tests the quality of our vqvae model in general,
 # to see how well each separate part works the quantizer, the encoder and the decoder, all separately
 # in a decent vqvae model, we expect the reconstruction to be as close to the real image as possible
 # the reconstructed image might be slightly blurrier or lack fine details , but its ok 
