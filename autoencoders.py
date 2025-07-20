@@ -260,6 +260,12 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                num_workers = num_workers,
                                                pin_memory=True)
 
+def ensure_directory_exists(path, exist_ok=True):
+    # grab the directory part of the path excluding the filename (tail)
+    dir_path = os.path.split(path)[0]
+    # and create it if it doesnt already exists
+    os.makedirs(dir_path, exist_ok=exist_ok)
+    
 # lets view a sample of our images 
 def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None, title=None, title_top_margine=0.99,title_fontsize=12):
     # images in pytorch have the shape (channel, h,w) and since we have a
@@ -336,6 +342,7 @@ def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, nor
     # images. (basically keep traking how the model is doing in terms of
     # reconstruction is essential when it comes to generative models!)
     if fname_to_save_as:
+        ensure_directory_exists(fname_to_save_as)
         # bbox_inches='tight' makes matplotlib to include all of 
         # the elements of the figure even those that extend outside
         # the default bounding box, without this only a portion of 
@@ -352,7 +359,7 @@ view_images(imgs=randns,
             labels=[f'num_{l.item()}' for l in labels], 
             rows=13,
             cols=10,
-            fname_to_save_as='./results/randomtest.jpg',
+            fname_to_save_as='./results/misc_visualizations/random_test.jpg',
             # figsize=(12,16),
             title='Random images')
 
@@ -3440,6 +3447,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 checkpoint_path = f"./weights/vae/vae1_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+ensure_directory_exists(checkpoint_path)
 
 print(f'Training date:   {datetime.datetime.now().strftime("%Y_%m_%d, %H:%M:%S")}')
 print(f'Checkpoint path: {checkpoint_path}')
@@ -3500,7 +3508,7 @@ model.eval()
 print('weights loaded')
 #%%
 # now lets write some functions for visualization and see how our model performs
-# 
+#  
 # we can generate random images by randomly sampling from a normal distribution!
 # simply generating some random numbers using randn (i.e. randomly sampling from
 # a normal distribution) in the form of our input, gives us random classes!
@@ -3552,7 +3560,7 @@ def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= 
     plt.show()
 
 @torch.no_grad()
-def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28,28)):
+def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28,28), save_dir='./results/'):
     test_set_size = len(dataloader_test.dataset)
     img_pairs = []
     losses = []
@@ -3587,7 +3595,7 @@ def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28
     ax.set_title('testset loss')
     plt.show()
     
-    display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols=1, save_dir=save_dir)
 
 # evaluate_on_testset(model, dataloader_test)
 
@@ -3753,7 +3761,7 @@ def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_sh
 #note try these with embds=2 and larger numbers and see how they affect the outcome
 img_shape=(1,28,28)
 generate_random_images(model, count=32, img_shape=img_shape)
-evaluate_on_testset(model, dataloader_test, img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, img_shape=img_shape,save_dir='./results/vae/vae1')
 plot_2d_latent_space(model)
 plot_encoder_output_projection(model, dataloader_train, title='Encoder output projection',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
@@ -4563,6 +4571,7 @@ def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, bet
 
 def save_model(modelname, kwargs):
     try:
+        ensure_directory_exists(modelname)
         torch.save(kwargs, modelname)
         print(f"{modelname} saved!")
     except Exception as ex:
@@ -4637,7 +4646,7 @@ def check_laten_representation_interpolation(model:VAE, dataloader, interpolatio
     plt.show()
 
 @torch.no_grad()
-def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), **kwargs):#beta=1, reduction='mean', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
+def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), save_dir='./results/', **kwargs):
     test_set_size = len(dataloader_test.dataset)
     img_pairs = []
     losses = []
@@ -4676,7 +4685,7 @@ def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(
     ax.set_title('testset loss')
     plt.show()
     
-    display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols=1, save_dir=save_dir)
 
 @torch.no_grad()
 def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28), img:torch.Tensor=None):
@@ -5024,7 +5033,7 @@ kwargs = {"states": model.state_dict(),
           "scheduler":scheduler.state_dict()}
 
 timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
-modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+modelname = f"./weights/vae/vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
 save_model(modelname=modelname, kwargs=kwargs)
 #%%
 # load the model to make sure we are dealing with the right model!
@@ -5042,7 +5051,7 @@ check_latent_representation_diversity(model, dataloader_train)
 # fix these two for skipcon version
 check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
 generate_random_images(model, count=32,img_shape=img_shape)
-evaluate_on_testset(model, dataloader_test, **kwargs)
+evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/')
 # this generation is broken for skipcon for now,
 # we can send an input img, for the sake of running it 
 # without errors, but the output doesnt work as we expect it
@@ -5493,10 +5502,14 @@ model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).
 #
 # sidenote:
 # !todo check this and fix it
-# you may face difficulties during training if you spot loss exceeding 1700
-# and doesnt reach 1350 for example quickly it means your training is going south!
-# try restarting the kernel and only executing the vae related snippets and only cifar10
-# training code, 
+# you may face difficulties during training if you spot loss(exploding) exceeding
+# 1700 and not going down asap (reach 1400/1350ish for example quickly)
+# it means your training is going south!(the loss will be in the hunderdthousands or even milions!)
+# try restarting the training, usually after a few times, it should start from
+# a good state and you'll see it drop from 1700 to 1400 and it goes down from there
+# (for me on the 4th try it started training properly! sometimes it starts well
+# at the first attempt so keep that in mind in case the loss explodes at the very
+# beginning)
 
 lr =0.001#0.001 0.002
 weight_decay = 1e-3
@@ -5535,8 +5548,8 @@ timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
 modelname = f"./weights/vae/vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
 save_model(modelname=modelname, kwargs=kwargs)
 #%%
-timestamp2 = timestamp
-print(f'{timestamp2=}')
+# timestamp2 = timestamp
+# print(f'{timestamp2=}')
 print(f'{modelname=}')
 # modelname='./weights/vae/vae_cifar10_600_mean_normalized_bce_14_57_57_2025_02_17.pth'
 # modelname = './weights/vae/vae_cifar10_600_mean_normalized_bce_16_21_49_2025_07_10.pth'
@@ -12712,6 +12725,7 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
                              figsize=(12,8),
                              num_indexes_per_bins=1)
 
+# link to results https://mega.nz/folder/kQMigB7C#i_q5kOglxytRFQJsH18lww
 #%%
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf
@@ -12795,26 +12809,48 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
 # Whats the tradoff here? capture only the important variations in the data and 
 # do not capture the ones that are not important.
 # look at the following plot for example :
-#                  Y
-#             . %8.                                   
-#     .  . .    S@ .  .  . .  .  . .  .  . .  .  . .  
-#    .     . .  8X .       .       .       .       .
-#      .      . @%   . .     . .     . .     . .    
-#  .     .  . . 8t .     .       . .     .       .  
-#    .  .     . 8% .  .   . .  .   .:. U1  . .  .   .
-#   .     . .   8t .    .       ..8%.t .         .  
-#     .       . 8%  .      . . .%@888.    . . .    
-#    U2. .  .   8t .  .  .   .88 ;t.     .        . 
-# .X@:.       . 8%  .   .  ..8S:..  .  .     .  .   
-#  :X8X    .    @% .     .:SX...          .       . 
-#    . 8  . .  .8t .  . . ;8;.   .  . .     . .     
-#   .  %8@;.  . @%  . . %%8;.           .       .  .
-#     . ..X8@. .@% . .8SS%:.   .  .  .    .   .   . 
-#         . ;@8%8t :S@%:.        .     .    .   .   
-#  .  .       .X @  8S.     . .    .     .          
-#      . . . . .@888: . . .    . .  . . .  . . . . .
-#   . X@@X@@@X@X888@@@X@@@X@@@@@@X@@@@@@X@@@@@@X@.;;
-#              .:.                                X;
+
+        #                             Y
+        #                                *                                                                                                
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                               
+        #                                *                                              *@@@                                              
+        #                                *                                             *@ @  U1                                          
+        #                                *                                           *@@@                                               
+        #                                *                                          *@                                                     
+        #                                *                                        *@                                                       
+        #                                *                                     @*@@                                                        
+        #                                *                                     * @@                                                         
+        #                                *                                   * @@                                                           
+        #                                *                                 *@@                                                              
+        #                                *                               *@@@                                                               
+        #                                *                            @* @                                                                  
+        #       U2                       *                           * @ @@                                                                  
+        #     *                          *                          *@ @                                                                     
+        #       *                        *                        *@ @ @                                                                     
+        #          *                     *                       * @@                                                                        
+        #            *                   *                     *@@                                                                           
+        #              *                 *                  @*@@@                                                                           
+        #                *               *                 *@                                                                               
+        #                  *             *               *@@ @                                                                              
+        #                    *           *            @ *@                                                                                  
+        #                      *         *          @ *@@                                                                                   
+        #                        *       *         @*@@                                                                                     
+        #                          *     *       @*@                                                                                        
+        #                            *   *     @*@                                                                                         
+        #                              * *  @ *@                                                                                            
+        #                                * *                                                                                                 
+        #                                *                                                                                                 
+        #    ******************************************************************************************************** 
+        #                                                                                                             X    
 # shape: "./contractive_autoencoder_u1_u2_axis_plot.png"
 # 
 # So This is how it goes, we have 2 dimensions u1 and u2 , of which u1 is more important
