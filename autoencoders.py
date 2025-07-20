@@ -6378,7 +6378,7 @@ z = torch.randn(size=(8, model.embedding_size)).to(device)
 reconstructed_imgs = model.decode(z).cpu().detach()
 img = make_grid(reconstructed_imgs)
 plt.imshow(img.numpy().transpose(1,2,0))
-plt.title('random generation')
+plt.title('random generation for b-vae')
 #%%
 # n = 1
 # z = torch.randn(size=(n,model.embedding_size)).to(device)
@@ -8674,7 +8674,7 @@ dataloader_train,dataloader_test = train_vqvae(model,
                                                img_size,
                                                use_fp16=use_fp16,
                                                checkpoint_dir_path='./weights/vqvae/emb256/',
-                                               recons_dir_path='./results/',
+                                               recons_dir_path=f'./results/vqvae/',
                                                limited_samples=limited_samples,
                                                train_samplesize=training_samplesize,
                                                test_samplesize=test_samplesize)
@@ -8806,6 +8806,9 @@ ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CI
 # Epoch: 77/100 | Loss: 0.0234 | Recons-Error: 0.0032 | VQ-Loss: 0.0201 | Perplexity: 6.8012 | LR: 0.000138
 # ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_192142/vqvae_CELEBA_64x64_20250424_192142.ckpt'
 
+
+#CIFAR10 - July 20 2025 test EMA/FP16 enabled
+ckpt_name='./weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250720_165652/vqvae_CIFAR10_64x64_20250720_165652.ckpt'
 
 # train prior with this new vqvae(ema enabled) and see how much it affects the end result 
 # I guess with this improvement, our simple_generator should work somehow aswell
@@ -10252,7 +10255,7 @@ prior, ckptname = train_prior(prior=prior,
                               figsize=(12,16),
                               seed=66,
                               checkpoint_dir_path='./weights/prior/emb256/',
-                              recons_dir_path='./results/',
+                              recons_dir_path='./results/prior/',
                               )
 
 #sidenote: 
@@ -10438,7 +10441,8 @@ ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250
 # ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857.ckpt'
 # ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857_best.pt'
 
-
+#CIFAR10 July 20 2025 test
+ckptname='./weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250720_175547/vqvae_prior_CIFAR10_embd256_Conditional_20250720_175547.ckpt'
 
 
 print(f'{dataset=}')
@@ -12108,7 +12112,9 @@ prior, ckptname = train_prior(prior=prior,
 ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951.ckpt'
 # ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951_best.pt'
 
-
+# CIFAR10 July 20 2025 test Pixelcnn2 prior
+ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437.ckpt'
+# ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437_best.pt'
 
 print(f'{dataset=}')
 print(f'{device=}\n')
