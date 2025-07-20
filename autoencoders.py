@@ -6073,6 +6073,10 @@ def loss_function(outputs, imgs, mu, logvar, reduction='mean', use_mse=False):
         return recons_loss + kl
 #%%
 # now lets train 
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
 epochs = 50
 embedding_size = 2
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -6165,26 +6169,8 @@ preds = model.decode(z, labels).detach().cpu()
 img = make_grid(preds)
 plt.imshow(img.numpy().transpose(1,2,0),cmap='gray')
 #%%
-import os
-# lets display them a longside the original ones
-def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
-    img_cnt = len(img_pairs)
-    print(img_cnt)
-    fig = plt.figure(figsize=(32,24))
-    for i in range(img_cnt):
-        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
-                            nrow=nrows,
-                            normalize=True)
-        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
-        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
-        ax.set_title(f'cvae testset reconstruction-{i}')
-        
-        if not os.path.exists('results'):
-            os.makedirs('results')
-        save_image(grid_imgs, f'results/cvae_imgs_{i}.jpg')
-
 # image reconstruction 
-display_imgs_recons(img_pairs,nrows=10,rows=23,cols=4)
+display_imgs_recons(img_pairs,nrows=10,rows=23,cols=4,save_dir=f'results/vae/cvae/')
 
 # now lets see the digits 2d manifold
 # we cant have the interpolation we used for vanila vae, because for one
@@ -6212,6 +6198,7 @@ def vanila_vae_digits_manifold(n=10):
     preds = model.decode(grid, labels_one_hot).cpu().detach()
     img = make_grid(preds,nrow=n)
     fig = plt.figure(figsize=(n,n))
+    plt.title(f'vanila vae digits manifold for cvae')
     ax = fig.add_subplot(111)
     ax.imshow(img.numpy().transpose(1,2,0))
 
