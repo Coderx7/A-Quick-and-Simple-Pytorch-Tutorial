@@ -5051,7 +5051,7 @@ check_latent_representation_diversity(model, dataloader_train)
 # fix these two for skipcon version
 check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
 generate_random_images(model, count=32,img_shape=img_shape)
-evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/')
+evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/mnist/')
 # this generation is broken for skipcon for now,
 # we can send an input img, for the sake of running it 
 # without errors, but the output doesnt work as we expect it
@@ -5087,7 +5087,7 @@ generate_similar_images(model, imgs[0])#7
 generate_similar_images(model, imgs[8])#8
 generate_similar_images(model, imgs[7])#9
 # the animation maynot work inside jupyternotebook, but the gif file works
-create_interpolation_animation(model, filename=f'mnist_{timestamp}')
+create_interpolation_animation(model, filename=f'./results/vae/vae2/mnist_{timestamp}')
 
 #%%
 # torch.autograd.set_detect_anomaly(False)
@@ -5568,7 +5568,7 @@ kwargs = {"img_shape":img_shape,
           "normalize":normalize}
 check_latent_representation_diversity(model, dataloader_train)
 plot_2d_latent_space(model)
-evaluate_on_testset(model, dataloader_test, **kwargs)
+evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/cifar10/')
 plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
 plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
 # fix these two for skipcon version
@@ -5617,7 +5617,7 @@ if not model.use_skip_con:
     generate_similar_images(model, imgs[23])#9
 
     # the animation maynot work inside jupyternotebook, but the gif file works
-    create_interpolation_animation(model, filename=f'cifar10_{timestamp}',mu=0.2,std=0.01)
+    create_interpolation_animation(model, filename=f'./results/vae/vae2/cifar10/cifar10_{timestamp}',mu=0.2,std=0.01)
 #%%
 # save the model
 # timestamp = datetime.datetime.now().strftime("%H_%M_%S")
