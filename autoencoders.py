@@ -12614,7 +12614,9 @@ ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Cond
 # Epoch: 119/120  | Loss: 2.700160 | Val-Loss: 3.029902 | BPD: 3.895507 |  BPD_VAL: 4.371224 | LR:0.000000
 ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557.ckpt'
 
-
+# July 23 2025 test 100 epochs, due to frequent power outages I cant train more
+# I'm just checking the code and see if everything works. 
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250723_081042/vqvae_prior_CIFAR10_embd256_Conditional_20250723_081042.ckpt'
 
 print(f'{dataset=}')
 print(f'{device=}\n')
@@ -12718,7 +12720,11 @@ visualize_latent_distribution([discrete_latents_real, latents_prior],
                              figsize=(12,8),
                              num_indexes_per_bins=1)
 
-# link to results https://mega.nz/folder/kQMigB7C#i_q5kOglxytRFQJsH18lww
+# link to results and weights
+# I tried to upload all of the weights and visualizations 
+# during my experiments, check them out from these links:
+# https://mega.nz/folder/kQMigB7C#i_q5kOglxytRFQJsH18lww
+# link2 https://mega.nz/folder/KgIgjS7S#UK18oRjXJrNx2SMEXw1WUg
 #%%
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf
@@ -13071,6 +13077,11 @@ def loss_function2(W, x, recons_x, h, lam=1e-4):
     return mse + contractive_loss.mul_(lam)
 
 # torch.autograd.set_detect_anomaly(True)
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
+
 epochs = 50 
 interval = 2000
 embedding_size = 5
@@ -13086,17 +13097,28 @@ for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         labels = labels.to(device)
-        # note imgs is not a leaf node, so the gardients wouldnot be ratained
-        # in order to ratain gradients for non leaf nodes, use retain_graph
-        # .grad field is only populated for leaf Tensors. If you want it for other Tensors, 
-        # you can use the imgs.retain_grad() function to get the .grad field populated 
-        # for non-leaf Tensors. but I found it esaier to just enable/diable the grads
-        # inside the training loop and thus outside of lossfunction. 
-        # also imgs.retain_grad() shuold be called before doing forward() as it will
-        # instruct the autograd to store grads into nonleaf nodes. 
-        imgs.retain_grad()
+        #
+        # note that imgs is a leaf tensor but with requires_grad=False, 
+        # (its a leaf node/tensor because its loaded from the dataloader
+        # and not the result of any operation)
+        # since we want to compute gradients with respect to imgs, we need to 
+        # enable its gradients (do imgs.requires_grad_(True))
+        # if we want the .grad field to be populated for non-leaf tensors
+        # (that is the intermediate results in the computation graph), we 
+        # must call .retain_grad() on those tensors before the forward pass.
+        # for example!
+        # that is something like this:
+        # out = model(imgs)
+        # out.retain_grad()
+        # loss = loss_function(outputs, labels)
+        # loss.backward()
+        # print(out.grad)
+        # we dont need to do that here, since simply enabling grads for imgs should
+        # be enough and the rest of the tensors involved already have proper
+        # gradients and we dont need to do soething like imgs.retain_grad()!
+        # its grads(.grad) will be populated after loss.backward().
         imgs.requires_grad_(True)
-        
+
         outputs_e, outputs = model(imgs)
         loss = loss_function(outputs_e, outputs, imgs, lam,device)
         # loss = loss_function2(W, imgs, outputs, outputs_e, lam)
@@ -13273,7 +13295,8 @@ plt.imshow(img)
 # first on Microsoft Research.
 
 #%%
-# Adversarial Autoencoder https://blog.paperspace.com/adversarial-autoencoders-with-pytorch/
-
+# Adversarial Autoencoder
+# good to read: https://blog.paperspace.com/adversarial-autoencoders-with-pytorch/
+#
 
 #%% [markdown]
