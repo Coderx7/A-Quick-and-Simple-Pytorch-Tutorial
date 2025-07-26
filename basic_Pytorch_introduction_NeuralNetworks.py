@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 # This module also provides several well known achitectures such as AlexNet, VGGNet, 
 # ResNet, MobileNet, VIT, Conext, efficientnets, etc
 # 
-# ok. lets see how to use it 
+# ok. lets see how to use all of these! 
 # here lets import datasets for using the dataset capabilities
 # use transforms for data-augmentation, and
 # models for using existing models
@@ -35,18 +35,19 @@ transformations = transforms.ToTensor()
 # the Compose method, takes a list of transformations so we can simply instead do : 
 transformations = transforms.Compose([transforms.ToTensor(),
                                       # for normalizing note we used 0.5, that ',' 
-                                      # is needed since mean and std requires a tuple
+                                      # is needed since mean and std require a tuple
                                       # and since mnist is grayscale(black n white)
                                       # / has 1 channel images only! we use 1
                                       # number only for mean and std.
                                       # sidenote: we dont need to normalize mnist as its already
                                       # in the 0-1 range. doing the following normalization will
-                                      # take it to [-1,1] range!
-                                      # transforms.Normalize(mean=(0.5,),std=(0.5,))
-                                      ]) 
+                                      # takes it to [-1,1] range!
+                                      # that is (img-0.5)/0.5 = (img)*2-1
+                                      #transforms.Normalize(mean=(0.5,),std=(0.5,))
+                                      ])
 # 
-dataset_train = datasets.MNIST(root='MNIST', train=True, transform=transformations, download=True)
-dataset_test = datasets.MNIST(root='MNIST', train=False, transform=transformations, download=True)
+dataset_train = datasets.MNIST(root='./data/MNIST/', train=True, transform=transformations, download=True)
+dataset_test = datasets.MNIST(root='./data/MNIST/', train=False, transform=transformations, download=True)
 
 # now we have our datasets. but as you know, usually we dont load the whole dataset all atonce!
 # instead we read in batches! in Pytorch we do this using a dataloader. using a dataloader
@@ -69,12 +70,14 @@ print(f'test dataloader size: {len(dataloader_test)}')
 
 # OK, we defined our datasets, and dataloaders. lets inspect our data and see how they look ! 
 imgs, labels = next(iter(dataloader_train))
-
+# lets check the value range in our images: 
+print(f'imgs.min()= {imgs.min().item()}')
+print(f'imgs.max()= {imgs.max().item()}')
 # remember our images, are not tensors, and in order to display them using matplotlib
 # we must convert them back to normal numpy arrays and again since we normalized them 
 # we must unnormalize them for visualization as well. 
 # lets write a function that accepts a batch of images with their labels and displays them! 
-def visualize_imgs(imgs, labels, row=3, cols=11,):
+def visualize_imgs(imgs, labels, row=3, cols=11):
     # images in pytorch have their axes swapped! 
     # so we first fix their orders firts! 
     # the dim is batch, c, h, w, but we should be having 
@@ -84,7 +87,7 @@ def visualize_imgs(imgs, labels, row=3, cols=11,):
     # now we need to unnormalize our images but since 
     # we didnt normalize our images, we dont need to 
     # do anything here!
-    # imgs = (imgs / 2) + 0.5
+    # imgs = (imgs+1)/2
     # figsize takes two arguments, which specify the column(width) and row(height)
     fig = plt.figure(figsize=(20,5))
     for i in range(imgs.shape[0]):
@@ -175,8 +178,8 @@ print(x)
 # without replacement simply means the values are unique.
 # what this class needs is a list of indeces. lets create ourselevs a list of indeces : 
 
-dataset_train = datasets.MNIST(root='MNIST', train=True, transform=transformations, download=True)
-dataset_test = datasets.MNIST(root='MNIST', train=False, transform=transformations, download=True)
+dataset_train = datasets.MNIST(root='./data/MNIST/', train=True, transform=transformations, download=True)
+dataset_test = datasets.MNIST(root='./data/MNIST/', train=False, transform=transformations, download=True)
 
 train_num_samples = len(dataset_train)
 # this simply gives us a list of indexes starting from 0 - 59999
@@ -683,10 +686,9 @@ for epoch in range(epochs):
     # display class stats
     for c in range(10):
         total_samples = total_class_samples[c]
-        sample_cnt = sample_counts[c].item()
         correct_preds = class_correct_count[c]
         class_level_acc = (correct_preds/total_samples) * 100
-        print(f'    -- class {c}: {correct_preds:04d}/{total_samples:04d}/{sample_cnt:04d} | class-level accuracy: {class_level_acc:.2f}')
+        print(f'    -- class {c}: {correct_preds:04d}/{total_samples:04d} | class-level accuracy: {class_level_acc:.2f}')
     
 print(f'Training Finished!')
 # its now a bit better than the previous one but we still have a lot to improve here
@@ -1506,7 +1508,7 @@ print(resnet)
 # but before that let me tell you how you can save/load your models in Pytorch ! 
 # in order to save your model, all you need to do is to use torch.save() 
 # and pass your model.state_dict() which is a dictionary containing your model parameters: 
-torch.save(model.state_dict(),'mymodel_weights.pth')
+torch.save(model.state_dict(),'./weights/mymodel_weights.pth')
 # sidenote: 
 # we can use any extensions we like (like.t, .pt, .pth, etc),
 # but a general trend/convention is to use 'pth' for model weights to refer its from pytorch!
@@ -1537,7 +1539,7 @@ settings = {'state_dict': model.state_dict(),
 # use a .ckpt to show this includes more than the raw model weights, it includes other
 # informations needed to resume training like optimizer and scheduler settings as well as
 # any other setting or piece of config thats needed. 
-torch.save(settings, 'ourmodel.ckpt')
+torch.save(settings, './weights/ourmodel.ckpt')
 #  thats it 
 print('save done!')
 #%%
@@ -1546,7 +1548,7 @@ print('save done!')
 # we first load the whole dictionary from our model!
 # note, its always a good idea to try to load the checkpoint in cpu mode first!
 # TODO: explain more
-model_settings_dict = torch.load('ourmodel.ckpt', map_location='cpu')
+model_settings_dict = torch.load('./weights/ourmodel.ckpt', map_location='cpu')
 # now that we have our dictionary of settings, lets load the values 
 # before we continue lets create the variables with garbage values so
 # we know for sure the loading is done successfully 
@@ -1758,8 +1760,8 @@ transformations_test = transforms.Compose([transforms.Resize(224),
                                                                 std=(0.229, 0.224, 0.225))
                                            ])
 
-dataset_train = datasets.CIFAR10('CIFAR10', train=True, transform = transformations_train, download=True)
-dataset_test = datasets.CIFAR10('CIFAR10', train=False, transform = transformations_test, download=True)
+dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, transform = transformations_train, download=True)
+dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, transform = transformations_test, download=True)
 
 dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size = batch_size, shuffle=True, num_workers = 2)
 dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size = batch_size, shuffle=False, num_workers = 2)
