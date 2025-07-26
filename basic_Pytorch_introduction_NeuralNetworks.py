@@ -2303,7 +2303,10 @@ print(f'count: {len(detection_models)}, {detection_models=}')
 model = torch.hub.load("pytorch/vision", "resnet18", weights="IMAGENET1K_V1")
 
 # Option 2: passing weights param as enum
-weights = torch.hub.load("pytorch/vision", "get_weight", weights="ResNet18_Weights.IMAGENET1K_V1")
+# weights = torch.hub.load("pytorch/vision", "get_weight", weights="ResNet18_Weights.IMAGENET1K_V1")
+# update July 26 2025 - this is no more allowed in newer versions of torchvision (i.e. 0.13+ I believe)
+# the get_weight is removed and instead we need to use the enum directly i.e.:
+weights = models.ResNet18_Weights.IMAGENET1K_V1
 model = torch.hub.load("pytorch/vision", "resnet18", weights=weights)
 
 # You can also retrieve all the available weights of a specific model via PyTorch
@@ -2360,7 +2363,7 @@ model.eval()
 
 # Download an example image from the pytorch website
 import urllib
-url, filename = ("https://github.com/pytorch/hub/raw/master/images/dog.jpg", "dog.jpg")
+url, filename = ("https://github.com/pytorch/hub/raw/master/images/dog.jpg", "./data/dog.jpg")
 try: urllib.URLopener().retrieve(url, filename)
 except: urllib.request.urlretrieve(url, filename)
 
