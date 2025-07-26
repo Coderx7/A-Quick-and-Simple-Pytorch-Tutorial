@@ -2180,7 +2180,7 @@ weights = models.ResNet18_Weights.DEFAULT
 # grab the transforms
 preprocess = weights.transforms()
 # get an image
-img_url = 'https://ir-1.parsget.com/download/57OZz01jNv/dog.jpg'
+img_url = 'https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg'
 img = Image.open(requests.get(url=img_url,stream=True).raw)
 # and apply it and get the preprocessed image:
 img_transformed = preprocess(img)
@@ -2396,7 +2396,7 @@ probabilities = output.softmax(dim=1)[0]
 
 
 # Read the categories
-with open("imagenet_classes.txt", "r") as f:
+with open("./data/imagenet_classes.txt", "r") as f:
     categories = [s.strip() for s in f.readlines()]
 # Show top categories per image
 top5_prob, top5_catid = probabilities.topk(5,dim=0)
