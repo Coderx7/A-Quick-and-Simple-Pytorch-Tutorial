@@ -428,7 +428,7 @@ def train_val(model, dataloader, optimizer, criterion_1, criterion_2, is_trainin
             # tutorial later on. 
             # 
             # sidenote: 
-            # torch.mean((torch.round(prd_clr) == lbl_clr).float()) is not the per-label-accuracy
+            # torch.mean((torch.round(prd_clr.sigmoid()) == lbl_clr).float()) is not the per-label-accuracy
             # its a global accuracy, that is, it flattens the tensor and takes its mean which
             # is equivalent to calculating the per-label-accuracy and then take the average 
             # of all the accuracies for a sample (basically turning a tensor of accuracies into
@@ -436,12 +436,13 @@ def train_val(model, dataloader, optimizer, criterion_1, criterion_2, is_trainin
             # thing is doing generally (grossly, it doesnt give an accurate or detailed overview though!)).
             # while it can give us a rough estimate on how well the model is doing in each batch,
             # it doesnt tell us much on how well our model is doing for each label specifically! 
-            accuracies[4] += torch.mean((torch.round(prd_clr) == lbl_clr).float())
+            color_predictions = torch.round(prd_clr.sigmoid())
+            accuracies[4] += torch.mean((color_predictions == lbl_clr).float())
             # note the .all() where we indicate all predictions and their target labels
             # for each sample need to be true for that sample lable to pass as a match
-            subset_acc = torch.mean((prd_clr == lbl_clr).all(dim=1).float())
+            subset_acc = torch.mean((color_predictions == lbl_clr).all(dim=1).float())
             # Per-label accuracy
-            per_label_acc = torch.mean((torch.round(prd_clr) == lbl_clr).float(), dim=0)
+            per_label_acc = torch.mean((color_predictions == lbl_clr).float(), dim=0)
             # the same as accuracies[4] 
             per_label_acc_avg += torch.mean(per_label_acc) 
 
@@ -574,8 +575,8 @@ train_loop(model, epochs, dataloader_train, dataloader_val, optimizer, lrsched, 
 #  --color          : 25.87%
 # per-label-acc-avg: 25.87
 #%%
-torch.save(model.state_dict(),'mtl_animefighting.pt')
-model.load_state_dict(torch.load('mtl_animefighting.pt'))
+torch.save(model.state_dict(),'./weights/mtl_animefighting.pt')
+model.load_state_dict(torch.load('./weights/mtl_animefighting.pt'))
 #%%
 # or you can freeze the net, train for some epoch, unfreeze and retrain
 # resetting the learning rates to their default values
@@ -601,10 +602,19 @@ def parse_predictions(names, preds):
     
     (colors, genders,regions, fightings, alignments) = names
     (clr_prd, gdr_prd, rgn_prd, ftn_prd, aln_prd) = preds
-    # color names
-    colornames = torch.round(clr_prd)
-    for i in range(colornames.size(0)):
-        clr = ' '.join([name for name, idx in zip(colors, colornames[i]) if idx ==1])
+    # we didnt use sigmoid on our fc_color, so the logits are unbounded
+    # therefore, we use sigmoid here to make the values be in 0-1 range
+    # and then round the color predictions so we get either 0 or 1 for each color
+    color_preds = torch.round(clr_prd.sigmoid())
+    # print(f'{color_preds.shape=}') # shape: (32x8)
+    # print(f'{color_preds.size(0)=}') # shape:32
+    # print(f'{colors=}')#8 colors
+    for i in range(color_preds.size(0)):
+        print(f'{color_preds[i].cpu().detach().numpy()}')
+        # look at all the color predictions for the current sample and grab their 
+        # name only if their predicted value (label) is 1 implying the color is
+        # present in the image
+        clr = ' '.join([color for color, label in zip(colors, color_preds[i]) if label==1])
         gdr = genders[torch.argmax(gdr_prd[i]).item()]
         rgn = regions[torch.argmax(rgn_prd[i]).item()]
         ftn = fightings[torch.argmax(ftn_prd[i]).item()]
@@ -645,6 +655,7 @@ for imgs, _ in dataloader_test:
 #%%
 #%% 
 # In the name of God the most compassionate the most merciful
+# second version
 # In this part we are going to see how we can do multi-task learning in Pytorch
 # we may have two parts but I'm not sure yet. 
 # in the first example, we will build a multitask model that will do multi-label
