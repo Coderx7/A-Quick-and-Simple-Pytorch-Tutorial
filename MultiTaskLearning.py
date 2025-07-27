@@ -549,40 +549,53 @@ lrsched = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,13,18,20])
 train_loop(model, epochs, dataloader_train, dataloader_val, optimizer, lrsched, criterion_1, criterion_2, 5)
 # which made us achieve, the following results, which we can improve with better
 # training regime and model improvements, and cleaning the dataset!
+# epoch 18 : lrs : 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000
+# [validation] iter: 2 loss: 2.629042
+# Accuracies:
+#  --gender         : 75.35%
+#  --region         : 6.25%
+#  --fighting       : 36.11%
+#  --alignment      : 8.33%
+#  --color          : 73.48%
+# per-label-acc-avg: 73.48
+# Per-Label Accuracies:
+#   --white  : 33.33%
+#   --red    : 100.00%
+#   --green  : 100.00%
+#   --black  : 100.00%
+#   --blue   : 66.67%
+#   --purple : 66.67%
+#   --gold   : 66.67%
+#   --silver : 33.33%
+# epoch 19 : lrs : 0.000000 0.000000 0.000001 0.000000 0.000000 0.000000
+# [validation] iter: 2 loss: 2.116157
 # Accuracies:
 #  --gender         : 87.50%
-#  --region         : 6.25%
-#  --fighting       : 65.62%
-#  --alignment      : 9.38%
-#  --color          : 24.13%
-# per-label-acc-avg: 24.13
+#  --region         : 28.47%
+#  --fighting       : 23.96%
+#  --alignment      : 5.21%
+#  --color          : 79.17%
+# per-label-acc-avg: 79.17
 # Per-Label Accuracies:
-#   --white  : 0.00%
-#   --red    : 0.00%
-#   --green  : 33.33%
-#   --black  : 0.00%
-#   --blue   : 33.33%
-#   --purple : 33.33%
-#   --gold   : 0.00%
-#   --silver : 66.67%
-# epoch 19 : lrs : 0.000000 0.000000 0.000001 0.000000 0.000000 0.000000
-# [validation] iter: 2 loss: 3.935592
-# Accuracies:
-#  --gender         : 89.58%
-#  --region         : 8.33%
-#  --fighting       : 63.54%
-#  --alignment      : 8.33%
-#  --color          : 25.87%
-# per-label-acc-avg: 25.87
+#   --white  : 100.00%
+#   --red    : 100.00%
+#   --green  : 66.67%
+#   --black  : 100.00%
+#   --blue   : 100.00%
+#   --purple : 100.00%
+#   --gold   : 100.00%
+#   --silver : 33.33%
 #%%
 torch.save(model.state_dict(),'./weights/mtl_animefighting.pt')
+#%%
 model.load_state_dict(torch.load('./weights/mtl_animefighting.pt'))
 #%%
 # or you can freeze the net, train for some epoch, unfreeze and retrain
 # resetting the learning rates to their default values
+# note lr=0.1 will lead to the loss explosion! so we use a much lower lr!
 for p in optimizer.param_groups:
-    p['lr'] = 0.1
-optimizer.param_groups[0]['lr'] = 0.1
+    p['lr'] = 1e-5
+optimizer.param_groups[0]['lr'] = 1e-5
 
 # # #%%
 model.unfreeze_feature_layers()
@@ -610,7 +623,7 @@ def parse_predictions(names, preds):
     # print(f'{color_preds.size(0)=}') # shape:32
     # print(f'{colors=}')#8 colors
     for i in range(color_preds.size(0)):
-        print(f'{color_preds[i].cpu().detach().numpy()}')
+        # print(f'{color_preds[i].cpu().detach().numpy()}')
         # look at all the color predictions for the current sample and grab their 
         # name only if their predicted value (label) is 1 implying the color is
         # present in the image
@@ -948,7 +961,7 @@ class Resnet18_multiTaskNet(nn.Module):
         # print(f'{output.shape=}')
         output = output.view(input_imgs.size(0), -1)
         # print(f'{output.shape=}')
-        output = self.bn_pu(F.relu(self.fc0(output)))
+        output = F.relu(self.bn_pu(self.fc0(output)))
         # print(f'{output.shape=}')
         # since outfitcolor is multi label we should use sigmoid
         # but since we want a numerical stable one, we use
@@ -958,14 +971,15 @@ class Resnet18_multiTaskNet(nn.Module):
         # also we can use BCE for other classes as well 
         # since they are binary classes themselves, and 
         # using a sigmoid and threshold we should be able to
-        # determine which one is which! however, we can also treat
-        # them as a multi-class problem where each have two classes
-        # so we can also use crossentropy! thats what we do here
+        # determine which one is which during inference time!
+        # however, we can also treat them as a multi-class 
+        # problem where each have two classes so we can also
+        # use crossentropy! thats what we do here
         prd_gender = self.fc_gender(output)
         prd_adulthood = self.fc_adulthood(output)
         prd_length = self.fc_length(output)
         prd_haircolor = self.fc_haircolor(output)
-        prd_outfitcolors = torch.sigmoid(self.fc_outfitcolors(output))
+        prd_outfitcolors = self.fc_outfitcolors(output)
         return prd_gender, prd_adulthood, prd_length, prd_haircolor,prd_outfitcolors
     
     def _set_freeze_(self, status):
@@ -1003,40 +1017,39 @@ criterion_2 = nn.BCEWithLogitsLoss()
 
 
 #%%
-
 # now before we write the training loop, lets first see how to 
 # calculate accuracy for our multilabel part.
 # we said before that there are several ways to calculate such metrics.
 # here we calculate two such ways which are subset accuracy and 
 # per-label accuracy.
-# subset accuracy means all labels for an instance must match exactly and
+# subset accuracy means all labels for a sample must match exactly and
 # per-label accuracy means it measures the accuracy label-wise.
 # 
 # sidenote: 
 # Subset Accuracy
 # Subset accuracy is a strict metric that checks if the entire set of predicted labels 
-# matches the entire set of true labels for an instance. 
-# In other words, all the labels must be correctly predicted for an instance to 
+# matches the entire set of true labels for a sample. 
+# In other words, all the labels must be correctly predicted for a sample to 
 # be counted as accurate.
 # so the formula will be: 
-#    Number of instances where all labels are correctly predicted / Total number of instances
+# Number of samples where all labels are correctly predicted / Total number of samples
 # 
 # for example if we have three labels, and only two samples out of four samples
-# have all 3 labels match exactly with the true labels, then our accuracy will be 2/4 = 0.5, will 
-# be 50%! and if a single label out of 3 is wrong/misclassified, the whole label for that sample is
-# treated as complely wrong!
+# have all 3 labels match exactly with the true labels, then our accuracy will be 2/4 = 0.5,
+# will be 50%! and if a single label out of 3 is wrong/misclassified, the whole label for 
+# that sample is treated as complely wrong!
 # therefore this means the subset accuracy can be very low for a multilabel problem,
 # especially if there are many labels, as a single misclassification for any label 
-# will make the entire instance be rendered as incorrect.
+# will make the entire sample be rendered as incorrect.
 # However, its useful if we need all predictions to be correct for a task, 
 # such as medical diagnosis where all conditions must be correctly identified.
 
 # Per-label Accuracy
-# Contrary to subset accuracy, Per-label accuracy calculates the accuracy for each
+# Contrary to the subset accuracy, Per-label accuracy calculates the accuracy for each
 # individual label across all samples. It measures how well the model predicts each 
 # label independently of others.
 # to calculate the accuracy for a label (i) we simply divide its correct labels and divided
-# it by number of smples!
+# it by number of samples!
 # Per-label Accuracy(i) = Number of correct predictions for Label i/Total number of samples
 #
 # for example using the same example as before, imagine our labels are like this: 
@@ -1045,12 +1058,13 @@ criterion_2 = nn.BCEWithLogitsLoss()
 # we treat each label (each one of three) as a single label, as if they were separate classes
 # this means we will have 3 accuracy: 
 
-# | Sample | True Labels  | Predicted Labels | Label 1 Correct? | Label 2 Correct? | Label 3 Correct? |
-# |--------|--------------|------------------|------------------|------------------|------------------|
-# | 1      | `[1, 0, 1]`  | `[1, 0, 1]`      | Yes              | Yes              | Yes              |
-# | 2      | `[0, 1, 0]`  | `[0, 1, 1]`      | Yes              | Yes              | No               |
-# | 3      | `[1, 1, 0]`  | `[1, 1, 0]`      | Yes              | Yes              | Yes              |
-# | 4      | `[0, 0, 1]`  | `[0, 0, 0]`      | Yes              | Yes              | No               |
+# | Sample | True Labels  | Predicted Labels | Label 1  | Label 2  | Label 3  |
+# |        |              |                  | correct? | correct? | correct? |
+# |--------|--------------|------------------|----------|----------|----------|
+# |   1    |  [1, 0, 1]   |    [1, 0, 1]     |   Yes    |  Yes     |   Yes    |
+# |   2    |  [0, 1, 0]   |    [0, 1, 1]     |   Yes    |  Yes     |   No     |
+# |   3    |  [1, 1, 0]   |    [1, 1, 0]     |   Yes    |  Yes     |   Yes    |
+# |   4    |  [0, 0, 1]   |    [0, 0, 0]     |   Yes    |  Yes     |   No     |
 
 # accuracy for Label 1 (all samples predicted correctly)= 4/4 = 1.0 
 # accuracy for Label 2 (all samples predicted correctly)= 4/4 = 1.0 
@@ -1063,12 +1077,12 @@ criterion_2 = nn.BCEWithLogitsLoss()
 # also this approach gives a better overview of the overall results, and 
 # averages across all labels, which is useful for summarizing results.
 
-# subset accuracy usecase:
-# use when exact matches for all labels are required.
-# example: A robot's action plan where every step must be correct.
-# per-label accuracy usecase:
-# use for diagnosing model performance on individual labels.
-# example: Multi-attribute prediction in images (e.g., age, gender, emotion).
+# 
+# so we can use subset accuracy when exact matches for all labels are required
+# such as for example a robot's action plan where every step must be correct.
+# and in the same vein, we can use per-label accuracy for diagnosing model performance
+# on individual labels for example for multi-attribute prediction in images 
+# (e.g. age, gender, emotion, etc)
 
 def calculate_accuracy(y_pred, y_true, threshold=0.5):
     y_pred = torch.sigmoid(y_pred) > threshold
@@ -1127,7 +1141,7 @@ def train_val(model, dataloader, optimizer, criterion_1, criterion_2, is_trainin
             accuracies[1] += torch.mean((indxs_adlt.view(*lbl_adlt.shape) == lbl_adlt).float()).item()
             accuracies[2] += torch.mean((indxs_len.view(*lbl_len.shape) == lbl_len).float()).item()
             accuracies[3] += torch.mean((indxs_hclr.view(*lbl_hclr.shape) == lbl_hclr).float()).item()
-            accuracies[4] += torch.mean((torch.round(prd_oclr) == lbl_oclr).float()).item()
+            accuracies[4] += torch.mean((torch.round(prd_oclr.sigmoid()) == lbl_oclr).float()).item()
             
             subset_accuracy, perlabel_accuracy = calculate_accuracy(prd_oclr,lbl_oclr)
             perlabel_accuracy_avg = torch.sum(perlabel_accuracy)/len(perlabel_accuracy)*100
@@ -1244,16 +1258,22 @@ optimizer.add_param_group({"params": model.fc_outfitcolors.parameters(), "lr": 0
 lrsched = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,13,18,20])
 train_loop(model, epochs, dataloader_train, dataloader_val, optimizer, lrsched, criterion_1, criterion_2, 5)
 #%%
+torch.save(model.state_dict(),'./weights/mtl_animestyles.pt')
+#%%
+model.load_state_dict(torch.load('./weights/mtl_animestyles.pt'))
+#%%
 # or you can freeze the net, train for some epoch, unfreeze and retrain
 # resetting the learning rates to their default values
+# 1e-3 (0.001)
 for p in optimizer.param_groups:
-    p['lr'] = 0.001
-optimizer.param_groups[0]['lr'] = 0.001
+    p['lr'] = 1e-3
+optimizer.param_groups[0]['lr'] = 1e-3
 
 # # #%%
 model.unfreeze_feature_layers()
-train_loop(model, epochs, dataloader_train, dataloader_val, optimizer, lrsched, criterion_1, criterion_2, 5)
-
+train_loop(model, 20, dataloader_train, dataloader_val, optimizer, lrsched, criterion_1, criterion_2, 5)
+#%%
+torch.save(model.state_dict(),'./weights/mtl_animestyles2.pt')
 #%%
 # now lets see how it performs on test set 
 # lets create functions that show the predictions better!
@@ -1272,10 +1292,13 @@ def parse_predictions(dataset:AnimeMTLDataset, preds):
     gendernames = {idx:name for (name,idx) in dataset.gender.items()}
     adulthoodnames = {idx:name for (name,idx) in dataset.adulthood.items()}
     lengthnames = {idx:name for (name,idx) in dataset.length.items()}
-    outfit_colors = torch.round(oclr_prd)
-    print(f'{outfit_colors[0:3]=}')
+    # apply sigmoid followed by rounding operation so we get the 0-1 range for our colors
+    outfit_colors = torch.round(oclr_prd.sigmoid())
+    # print(f'{outfit_colors[0:3]=}')
     for row in range(outfit_colors.size(0)):
-        oclr = ' '.join([colornames[int(idx.item())] for idx in outfit_colors[row] if idx>0])
+        current_outfit_color = outfit_colors[row]
+        # print(f'{current_outfit_color.cpu().detach().numpy()}')
+        oclr = ' '.join([colornames[idx] for idx,label in enumerate(current_outfit_color) if label==1])
         gdr = gendernames[torch.argmax(gdr_prd[row]).item()]
         adl = adulthoodnames[torch.argmax(adl_prd[row]).item()]
         len = lengthnames[torch.argmax(len_prd[row]).item()]
@@ -1313,3 +1336,13 @@ for imgs, _ in dataloader_test:
     show_predictions(imgs, preds)
     
 # %%
+# now as you can see the results are not perfect, neither is our architecture and
+# training regime. in order to improve upon our results we need t o have a better
+# architecture. for example utilize larger featuremap sizes so the color informations
+# can be obtained more accurately and more easily and use block consisting several 
+# layers instead of a single linear layer for each head. 
+# we can then use different weights for each label if they are imbalanced
+# among other things.
+# I might continue this and further improve these examples but for now I believe
+# it suffices our usecase which is get an idea about how stuff works and how we can
+# improve them.
