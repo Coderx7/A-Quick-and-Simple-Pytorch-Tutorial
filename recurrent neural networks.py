@@ -1682,7 +1682,7 @@ print(f'{a[0,:,:,0]=}')
 import re
 import unicodedata
 from unidecode import unidecode
-
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 # note
 # since our dataset is utf-8/unicode, there are non ascii characters
 # which we are better off removing this simplifies the 
@@ -1896,13 +1896,13 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler
+# from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 
 # so far so good, but thats very messy, lets tidy things up a bit so 
 # we can actually make heads or tails of it!
 # for this, in order not to send several variables each time to every functions!
 # and write logic each time, lets encapsulate each language into a structure
-# and access all related information all in once place through said structure.
+# and access all related information all in one place through said structure.
 # we can use a class for vocab, but I think a named tuple should suffice, as we plan
 # on encapsulating everything in a single class to avoid repetition
 # between language/vocab class and dataset class. (reading files/using pairs_list
@@ -2150,6 +2150,12 @@ model.to(device)
 # (it does :))
 train(train_dataloader, model, epochs=80, interval=5)
 #%%
+#%%
+torch.save(model.state_dict(),'./weights/bahdanau_attention.pt')
+#%%
+model.load_state_dict(torch.load('./weights/bahdanau_attention.pt'))
+#%%
+import random
 def evaluate(model, sentence, dt):
     model.eval()
     hidden_states=None
@@ -2179,6 +2185,7 @@ def evaluate_model(model, dt, sample_count=5):
 
 evaluate_model(model, dt, sample_count=10)
 #%%
+
 # now lets visualize the attention weights as well and see how they look 
 def visualize_attention(input_sentence, output_words, attention_weights):
     _, ax = plt.subplots(figsize=(8, 6))
@@ -2202,9 +2209,9 @@ def evaluate_and_visualize_attention():
     # it couldnt create a big enough vocab for the language. limitting the sequence length
     # too much can result in this error.
     test_sentences = [("he is not as tall as his father", "il n'est pas aussi grand que son pere"),
-                      ("i am too tired to drive", "je suis trop fatigue pour conduire"),
-                      ("i am sorry if this is a silly question", "je suis desole si c'est une question idiote"),
-                      ("i am really proud of you", "je suis reellement fiere de vous")]
+                      ("I am too tired to drive", "je suis trop fatigue pour conduire"),
+                      ("I am sorry if this is a silly question", "je suis desole si c'est une question idiote"),
+                      ("I am really proud of you", "je suis reellement fiere de vous")]
 
     for en,fr in test_sentences:
         input_sentence = en if dt.in_lang == 'eng' else fr
@@ -2220,13 +2227,18 @@ def evaluate_and_visualize_attention():
 evaluate_and_visualize_attention()
 
 #%%
-
-# as you can see when the amount of data is small, we can quickly get a very good result
-# I know the vocab and training part needs refactoring and we will hopefully do that in the
-# next round. (official pytorch code example can be used as well. the training dataset
-# and loop was infact used that docs a lot. I only changed bits of it to make it compatible
-# with our code. with this we end the bahdanau attention section and go to the next section 
+# as you can see when the sentences are short, we can quickly get pretty good results!
+# longer sentences on other hand are not as good!
+# anyway, the vocab and training part needs refactoring and we will hopefully do that in the
+# next round. 
+# meanwhile the official pytorch code example can be read/used as well. 
+# I found the dataset that we used from the official docs, and used their training loop
+# as the starting point for our own training loop, I only needed to changed a few parts
+# to make it compatible with our own codebase here. so its a decent source you may want to have
+# alook at as well.
+# with this we conclude our bahdanau attention section and go to the next section 
 # which is sentiment analysis!)
+#%%
 
 
 #%% my old implementation- remove later
