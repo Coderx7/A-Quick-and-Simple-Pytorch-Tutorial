@@ -3814,7 +3814,7 @@ for epoch in range(num_epochs):
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
 
 # Save model
-torch.save(model.state_dict(), "skipgram_model.pth")
+# torch.save(model.state_dict(), "./weights/skipgram_model.pth")
 # after 5 epochs this is what we get: 
 # the loss doesnt show it properly, but using similarity check
 # we can clearly see the converging process where similar words
@@ -3868,8 +3868,17 @@ torch.save(model.state_dict(), "skipgram_model.pth")
 #   -coined    | describe, term, surrealism, popularized, myth
 #  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
 # Epoch 15/50, Loss: 9.1774
-#
+#%%
+
+torch.save({"state_dict":model.state_dict(),
+            "epochs":epoch,
+            "loss":np.mean(losses),
+            "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
 # now lets visualize them 
+#%%
+checkpoint = torch.load("./weights/skipgram_model.pth")
+model.load_state_dict(checkpoint['state_dict'])
+print(f'embedding_size = {checkpoint["embedding_size"]}')
 #%%
 %matplotlib inline
 %config InlineBackend.figure_format = 'retina'
@@ -3889,7 +3898,7 @@ for idx in range(viz_words):
 #%%
 # Save embeddings
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-np.save("word_embeddings_skipgram_nonmikolve.npy", embeddings)
+np.save("./weights/word_embeddings_skipgram_nonmikolve.npy", embeddings)
 
 # Visualize with PCA or t-SNE
 from sklearn.decomposition import PCA
@@ -3957,25 +3966,27 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         # (1xembeddings) and (1xembedding) , so we should have a 1x1 result.
         
         batch_size = input_embeddings.size(0)
+        embedding_size = input_embeddings.size(1)
         # reshape them so we can multiply them 
-        input_embeddings = input_embeddings.view(batch_size, embedding_dim, 1)
-        output_embeddings = output_embeddings.view(batch_size, 1, embedding_dim)
+        input_embeddings = input_embeddings.view(batch_size, embedding_size, 1)
+        output_embeddings = output_embeddings.view(batch_size, 1, embedding_size)
         # recall log(1) = 0, log(0)=1
         # since batches are involved we simply use the bmm (bacth-matrix-multiply)
         # and because we want probablities, so we use sigmoid.
         # and for numerical stability we use log!
         #  
-        # basically sigmoid maps our dot product (similarity) to a probability between 0 and 1.
-        # and log converts this probability into a log-probability, which makes it easier to sum probabilities (log-sum trick) during optimization.
-        # this overall allows us to enjoy: 
-        # Numerical Stability: by using the log-probability we avoid potential issues with small probabilities (as log values scale better).
-        # Gradient Computation: The log-probability formulation simplifies gradient calculations, making training more stable and efficient.
-        # and finally maximizing the log probability corresponds to minimizing the negative log-likelihood,
-        # which is a common approach in probabilistic models.
+        # basically sigmoid maps our dot product (similarity) to a probability between 0 and 1
+        # and log converts this probability into a log-probability, which makes it easier to
+        # sum probabilities (log-sum trick) during optimization.
+        # this overall allows us not only to have numerical stability by using the log-probability
+        # (we avoid potential issues with small probabilities (as log values scale better))
+        # but also more efficient training because the log-probability formulation simplifies 
+        # gradient calculations and thus makes training more stable and efficient.
+        # and finally maximizing the log probability corresponds to minimizing the negative 
+        # log-likelihood, which is a common approach in probabilistic models.
         # sidenote: we could have used F.logsigmoid() fused operator as well!
         # see the simplified version below
-        loss1 = torch.bmm(input_embeddings, output_embeddings).sigmoid().log().squeeze()
-        
+        loss1 = torch.bmm(output_embeddings, input_embeddings).sigmoid().log().squeeze()
         # now for our noise/random/megative samples we simply do the same thing
         # but since the random samples and input embeddings should not be similar
         # we use a -1 sign in the operation to signal they must to be similar (a large positive number)
@@ -4116,6 +4127,7 @@ def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_in
 # play with the numbers and better see the similar words
 # 
 start=200
+window_size=5
 print(f'words starting at {start}:')
 for i in range(start,start+window_size):
     print(f'{i}: {int2word[i]}')
@@ -4131,7 +4143,7 @@ vocab_size = len(word2int)
 noise_dist = create_noise_distribution(word_freqs)
 noise_dist = noise_dist.to(device)
 
-model = SkipGramWithNegativeSampling(vocab_size, embedding_size,noise_dist)
+model = SkipGramWithNegativeSampling(vocab_size, embedding_size, noise_dist)
 model.to(device)
 # note we are using log_softmax, so we must use nllloss here,
 criterion = SkipGramNegativeSamplingLoss()
@@ -4180,8 +4192,12 @@ for epoch in range(num_epochs):
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
             
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
-# Save model
-torch.save(model.state_dict(), "skipgram_negativesampling_model.pth")
+    # Save model
+    torch.save({"state_dict":model.state_dict(),
+                "epochs":epoch,
+                "loss":np.mean(losses),
+                "embedding_size":embedding_size}, "./weights/skipgram_negativesampling_model.pth")
+
 #%%
 # Test after each epoch
 valid_examples, valid_similarities = evaluate_embeddings(model,
@@ -4257,7 +4273,7 @@ for idx in range(viz_words):
 #%%
 # Save embeddings
 embeddings = model.input_embedding.weight.detach().cpu().numpy()
-np.save("word_embeddings_skipgram_negativesampling.npy", embeddings)
+np.save("./weights/word_embeddings_skipgram_negativesampling.npy", embeddings)
 
 # Visualize with PCA or t-SNE
 from sklearn.decomposition import PCA
@@ -4301,3 +4317,5 @@ plt.show()
 
 #%%
 # Named-Entity Recognition(NER). 
+
+# %%
