@@ -3812,9 +3812,11 @@ for epoch in range(num_epochs):
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
 
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
+    torch.save({"state_dict":model.state_dict(),
+                "epochs":epoch,
+                "loss":np.mean(losses),
+                "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
 
-# Save model
-# torch.save(model.state_dict(), "./weights/skipgram_model.pth")
 # after 5 epochs this is what we get: 
 # the loss doesnt show it properly, but using similarity check
 # we can clearly see the converging process where similar words
@@ -3869,11 +3871,10 @@ for epoch in range(num_epochs):
 #  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
 # Epoch 15/50, Loss: 9.1774
 #%%
-
-torch.save({"state_dict":model.state_dict(),
-            "epochs":epoch,
-            "loss":np.mean(losses),
-            "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
+# torch.save({"state_dict":model.state_dict(),
+#             "epochs":epoch,
+#             "loss":np.mean(losses),
+#             "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
 # now lets visualize them 
 #%%
 checkpoint = torch.load("./weights/skipgram_model.pth")
@@ -3887,10 +3888,11 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-viz_words = 100
+viz_words = 200
 tsne = TSNE()
 embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
 
+plt.figure(figsize=(24,16))
 fig, ax = plt.subplots(figsize=(16, 16))
 for idx in range(viz_words):
     plt.scatter(*embed_tsne[idx, :], color='steelblue')
@@ -3900,12 +3902,13 @@ for idx in range(viz_words):
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
 np.save("./weights/word_embeddings_skipgram_nonmikolve.npy", embeddings)
 
-# Visualize with PCA or t-SNE
 from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
 
 pca = PCA(n_components=2)
-reduced_embeddings = pca.fit_transform(embeddings[:50])  # Plot first 100 words
+# plot the first 50 words
+reduced_embeddings = pca.fit_transform(embeddings[:50])  
+# use a large figsize so points are not crammed into a tiny plot
+plt.figure(figsize=(24,16))
 plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
 for i, word in enumerate(word_list[:50]):
     plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
@@ -3970,7 +3973,7 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         # reshape them so we can multiply them 
         input_embeddings = input_embeddings.view(batch_size, embedding_size, 1)
         output_embeddings = output_embeddings.view(batch_size, 1, embedding_size)
-        # recall log(1) = 0, log(0)=1
+        # reminder: log(1) = 0, log(0)=undefined! 
         # since batches are involved we simply use the bmm (bacth-matrix-multiply)
         # and because we want probablities, so we use sigmoid.
         # and for numerical stability we use log!
@@ -3985,17 +3988,45 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         # and finally maximizing the log probability corresponds to minimizing the negative 
         # log-likelihood, which is a common approach in probabilistic models.
         # sidenote: we could have used F.logsigmoid() fused operator as well!
-        # see the simplified version below
-        loss1 = torch.bmm(output_embeddings, input_embeddings).sigmoid().log().squeeze()
+        # see the simplified version below(after this implementation)
+        # in order not to face issues, we must make sure log doesnt recieve 0!
+        # otherwise we would get nans! the easy way is to use logsigmoid() but without it
+        # we can simply clamp the 0 to a very small number epsillon and this way avoid the issue
+        # epsilon =1e-8 seems ok, but the larger the epsilon gets the larger the bias becomes
+        # we want to have the least amount of bias imposed here, (i.e. the closest to 0 we can get)
+        # to prevent no clamping as much as possible and only clamp when otherwise it would
+        # lead to nans (output of sigmoid becomes 0 and thus log(0) becons -inf and resulting in nans
+        # in our loss!
+        epsillon = 1e-10
+        loss1 = torch.bmm(output_embeddings, input_embeddings).sigmoid().clamp(min=epsillon).log().squeeze()
+        # print(f'{loss1.shape=}') #torch.Size([3030])
         # now for our noise/random/megative samples we simply do the same thing
         # but since the random samples and input embeddings should not be similar
         # we use a -1 sign in the operation to signal they must to be similar (a large positive number)
         # and finally we sum all the results to have a single number for loss
-        loss2 = torch.bmm(noise_embedidngs.neg(), input_embeddings).sigmoid().log().sum(dim=1)
+        # 
+        # update:
+        # I initially left the squeeze at the end, and it caused our loss2 to have an extra dim
+        # (e.g. (3030,1))! this simple mistake, sent everything into oblivion! 
+        # because when our loss1 is added to loss2, their shape is not the same 
+        # so pytorch goes for a broadcast and therefore it reshapes loss1 to (1,3030)
+        # while loss2 is (3030,1). so when it tries to add the two, we endup with a 
+        # (3030,3030) tensor! basically it adds every entry from loss1 to every entery
+        # from loss2, whereas, it should have been adding each entry with its respective 
+        # entry in the other tensor. that is, idx1 from loss1 must be added to idx1 in loss2.
+        # whereas here, idx1 is added to all entries in loss2, and each entry repeats 
+        # this so instead of 3030 values for example, we end up with 3030x3030 values 
+        # which leads to nonsensical value for loss(adding values like this is meaningless
+        # (imagine trying to average ones score and instead of adding your best and worst scores,
+        # you go and add your best score to everyones worst scores, and they do this with 
+        # everyone elss (their best score is added to everyone elses worst score!)))
+        loss2 = torch.bmm(noise_embedidngs.neg(), input_embeddings).sigmoid().clamp(min=epsillon).log().sum(dim=1).squeeze()
+        # print(f'{loss2.shape=}') #torch.Size([3030])
         # and we add them both and try to minize the whole loss
         return -torch.mean(loss1+loss2)
 
-# we could simply our loss further like this
+# we could simply our loss further like this 
+# this is a numerically stable version because of logsigmoid!
 # class SkipGramNegativeSamplingLoss(nn.Module):
 #     def __init__(self):
 #         super().__init__()
@@ -4013,11 +4044,11 @@ def create_noise_distribution(word_freqs, power=0.75):
     # In order to have a noise distribution, we need probablities! 
     # how do we create one? 
     # we can make a frequency distribution of words in the corpus and then 
-    # normalized it to represent probabilities (i.e., a unigram distribution)
+    # normalized it to represent probabilities (i.e. a unigram distribution)
     # 
     # we can calculate it as:
-    # unigram_dist [𝑖] = count(𝑤_𝑖)/total_word_count
-    # where count(𝑤_𝑖) is the number of occurrences of word 𝑤_𝑖
+    # unigram_dist[i] = count(w_i)/total_word_count
+    # where count(w_i) is the number of occurrences of word w_i
     # in the corpus, and total_word_count is the total number of words.
     # we already have word_freqs dictionary, so we can easily do : 
     # word_freqs = [cnt for k,cnt in word_freqs.items()]
@@ -4033,17 +4064,17 @@ def create_noise_distribution(word_freqs, power=0.75):
     # bigram, that is a "bigram" refers to pairs of consecutive words, 
     # and "trigram" refers to three-word sequences.
     #
-    # The unigram distribution is a frequency-based distribution 
-    # where each word's probability is proportional to how often it appears in the corpus.
+    # The unigram distribution is a frequency-based distribution where each word's 
+    # probability is proportional to how often it appears in the corpus.
     # 
     # How do we compute it then?
-    # simpe! to calculate the unigram distribution, we simply: 
-    # 1.Count the occurrences of each word in the corpus and then
-    # 2.Normalize these counts by dividing by the total number of words in the corpus.
+    # simpe! to calculate the unigram distribution, we simply count the occurrences 
+    # of each word in the corpus and then normalize these counts by dividing by 
+    # the total number of words in the corpus.
     # 
-    # For a word 𝑤_𝑖, the unigram probability 𝑃(𝑤_𝑖) is:
-    # 𝑃(𝑤_𝑖) = count(𝑤_𝑖) / total_number_of_words_in_corpus
-    # Where:count(𝑤_𝑖) is the number of times word 𝑤_𝑖 appears in the corpus.
+    # for a word w_i, the unigram probability P(w_i) is:
+    # P(w_i) = count(w_i) / total_number_of_words_in_corpus
+    # where count(w_i) is the number of times word w_i appears in the corpus.
     # total number of words in corpus is the sum of all word frequencies.
     #
     # but this wouldnt be enough, as not all the words are repeated equally
@@ -4052,31 +4083,30 @@ def create_noise_distribution(word_freqs, power=0.75):
     # 
     # final_distribution = (unigram_dist**power) / np.sum(unigram_dist**power) 
     # 
-    # now using the power (unigram_dist ** power) raises the probabilities to a
+    # now the power in our new formula (unigram_dist ** power) raises the probabilities to a
     # certain power(more explanation in a moment), which adjusts the distribution to 
     # favor less frequent words while at the same time keeps frequent words relatively likely.
-    # speaking of the power used, different powers have different implications and effects:
-    # If power = 1, the distribution remains proportional to the unigram distribution.
-    # If power < 1, it smooths the distribution, reducing the dominance of highly frequent words.
-    # If power > 1, it amplifies the dominance of frequent words.
+    # speaking of the power used, different powers have different implications and effects,
+    # for example, 
+    # If power=1, the distribution remains proportional to the unigram distribution
+    # If power<1, it smooths the distribution, reducing the dominance of highly frequent words
+    # If power>1, it amplifies the dominance of frequent words
     # 
-    # with these changes, now the noise distribution ensures that:
-    # Frequent words are more likely to be selected as noise samples.
-    # and the distribution can also be tailored using the power to 
-    # balance between very frequent and less frequent words.
+    # now with these changes, our noise distribution can make sure frequent words 
+    # are more likely to be selected as noise samples and the distribution can 
+    # also be configured using the power to balance between very frequent and less 
+    # frequent words.
     # 
     # sidenote: Why do we use power=0.75?
-    # Empirically, it has been found that using a power of 0.75 provides 
-    # a good trade-off between frequent and rare words, 
-    # improving the quality of word embeddings. 
-    # Frequent words still appear often as negative samples, 
+    # because its a value that has been widely used its shown empiracally to provide 
+    # a good trade-off between frequent and rare words which improves the quality 
+    # of our word embeddings. frequent words still appear often as negative samples
     # but their dominance is reduced compared to their true frequency in the corpus.
     # 
-    # finally by doing np.sum(unigram_dist ** power), our adjusted probabilities are summed to
-    # normalize the distribution. this sum ensures the sum of distribution equals 1, making 
-    # it a valid probability distribution.
-    # 
-    # This normalized_dist is then used to sample negative words during training.
+    # finally by doing np.sum(unigram_dist ** power), our adjusted probabilities are
+    # summed to normalize the distribution. this is to make sure the sum of distribution
+    # equals 1, making it a valid probability distribution.
+    # this normalized_dist is then used to sample negative words during training.
     word_freqs = [cnt for _,cnt in word_freqs.items()]
     unigram_dist = torch.tensor(word_freqs / np.sum(word_freqs))
     noise_distribution = unigram_dist ** power/torch.sum(unigram_dist**power)
@@ -4135,11 +4165,9 @@ for i in range(start,start+window_size):
 
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# Define the model, loss, and optimizer
 embedding_size = 300
 vocab_size = len(word2int)
-
-# Initialize noise distribution
+# initialize noise distribution
 noise_dist = create_noise_distribution(word_freqs)
 noise_dist = noise_dist.to(device)
 
@@ -4149,7 +4177,6 @@ model.to(device)
 criterion = SkipGramNegativeSamplingLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.003)
 
-# Training loop
 num_epochs = 50
 batch_size = 512
 window_size = 5
@@ -4197,7 +4224,28 @@ for epoch in range(num_epochs):
                 "epochs":epoch,
                 "loss":np.mean(losses),
                 "embedding_size":embedding_size}, "./weights/skipgram_negativesampling_model.pth")
-
+# 
+# Epoch 15/50, Loss: 1.8525
+# president : presidential, elected, executive, minister, elections
+# political : politics, parties, social, party, government
+# party     : democratic, coalition, election, vote, elections
+# order     : orders, given, position, that, needed
+# ahman     : emmitt, moriarty, mulligan, spinrad, geary
+# theophylline: allosteric, metabolised, kaposi, allergen, benzoic
+# esta      : greencine, cet, roca, mgm, coro
+# shortlist : wrongdoing, incapacitated, sihanouk, steadfastly, bosnians
+#  -Epoch 16/50 | Iter 7 | Loss: 1.8418
+# Epoch 16/50, Loss: 1.8422
+# order     : orders, given, knights, any, their
+# party     : elections, democratic, coalition, opposition, parties
+# president : elected, presidential, cabinet, executive, vice
+# political : politics, democracy, parties, social, government
+# theophylline: allosteric, allergen, theobromine, kaposi, guillain
+# ahman     : spinrad, moriarty, wyche, emmitt, rookie
+# shortlist : eurofighter, bosnians, nuseibeh, sihanouk, underscores
+# whitgift  : arrigo, berengar, excommunicates, tunis, donati
+#  -Epoch 17/50 | Iter 7 | Loss: 1.8327
+# Epoch 17/50, Loss: 1.8331
 #%%
 # Test after each epoch
 valid_examples, valid_similarities = evaluate_embeddings(model,
@@ -4215,7 +4263,6 @@ for i, valid_idx in enumerate(valid_examples):
     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
 #%%
-
 test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
 test_indices = [word2int[word] for word in test_words if word in word2int]
 
@@ -4266,6 +4313,7 @@ viz_words = 100
 tsne = TSNE()
 embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
 
+plt.figure(figsize=(24,16))
 fig, ax = plt.subplots(figsize=(16, 16))
 for idx in range(viz_words):
     plt.scatter(*embed_tsne[idx, :], color='steelblue')
@@ -4280,7 +4328,9 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 
 pca = PCA(n_components=2)
-reduced_embeddings = pca.fit_transform(embeddings[:50])  # Plot first 100 words
+reduced_embeddings = pca.fit_transform(embeddings[:50])  # Plot first 50 words
+
+plt.figure(figsize=(24,16))
 plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
 for i, word in enumerate(word_list[:50]):
     plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
@@ -4293,7 +4343,7 @@ plt.show()
 # we also used nearest neighbors to see how the model produces meaningful and 
 # related words for a given word.
 # 
-# to improve the results:
+# to improve the results
 # obviously we start fine-tuning if the results aren't as good as we expected, 
 # training longer or adjusting the hyperparameters (e.g., learning rate, embedding size)
 # directly affects the outcome.
