@@ -535,6 +535,9 @@ class lstm_char(nn.Module):
     
     def forward(self, input, hidden_states):
         rnn_outputs, hidden_states = self.rnn(input,hidden_states)
+        # by this we merge the batch and sequence dims as one, so instead of (3,4,5)
+        # we have (7,5), and the linear layer will process all sequences this way
+        # later on we reshape back the output to get sequences back .e. (3,4,output_size)
         outputs = rnn_outputs.reshape(-1, self.hidden_size*self.direction)
         outputs = self.drp(outputs)
         outputs = self.fc(outputs)
@@ -857,14 +860,15 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # attention to specific parts of the input in order to produce more plausible outcome. 
 # it was initially proposed for NMT or neural machine translation, where for example, you'd want
 # to translate a sentence from one language to another.
-# in a traditional case which we saw earlier in such cases, a seq2seq model is used, 
-# that is, a model comprising of two networks, an encoder and a decoder, where the input sequence is fed to the encoder, a decoder ultimately recieves a 
-# compressed representation , representing the input sequence, from the encoder part and then, 
+# in a traditional case which we saw earlier/in such cases, a seq2seq model is used, 
+# that is, a model comprising of two networks, an encoder and a decoder, where the input sequence
+# is fed to the encoder, a decoder ultimately recieves a 
+# compressed representation, representing the input sequence, from the encoder part and then, 
 # tries  to produce a sequence as the answer. 
 # the problem with this procedure was/is that for a long
 # sequence, we cant transfer the information from earlier time steps, its just simply not possible 
 # (yes I know how we said about the lstm and gru gates, retaining earlier time step features, the 
-# idea here, is even if lstm gates simply and ease the transfer of a specific feature from earlier
+# idea here, is even if lstm gates simplify and ease the transfer of a specific feature from earlier
 # time steps to the later timesteps, lots of such information will be lost becasue the last output
 # is simply a finite fixed-size vector which can only accomated so much features, and mostly they 
 # will be features from recent timesteps as apposed to earlier ones. please note that, there 
@@ -875,10 +879,10 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # also have noise!, only a handful of such features get the chance to be transfered, features do get
 # identified, but they cant be utilized as we dont have a mechanism to use them effectively so in the
 # current procedure, they just get lost. 
-# so what should we do then? we can use all of the states 
-# from all previous timesteps instead of using only the last one. this way, we can provide much more
-# information and this wealth of information at each timestep can help the network produce better result
-# but how do we do that? surely not all hidden states, are equally important when it comes to producing 
+# so what should we do then? we can use all of the states from all previous timesteps instead of using
+# only the last one. this way, we can provide much more information and this wealth of information at 
+# each timestep can help the network produce better result but how do we do that? 
+# surely not all hidden states are equally important when it comes to producing 
 # a translation, a new word e.g. here we can rank them based on how much they affect the outcome. 
 # this way the network will gradually understand the relationship and focuses on the correct states
 # when needed. this is the gist of attention. we simply use all hidden states from all timesteps in 
@@ -947,56 +951,52 @@ print(repr(sample(model, size=200, prompt='\n',topk=5)))
 # remember in PyTorch, a RNN returns two outputs, the first one is the hidden-states for each timestep
 # and the second one is the final hidden-state (for the last timestep). PyTorch refers to the first returned
 # field, as outputs, and the the second one as hidden_states. just be aware of that.
-# 
-# (this is important and the outputs may not be the best name, as unlike the traditional sense, 
+# this is important and the outputs may not be the best name, as unlike the traditional sense, 
 # its not gone through a linear layer with activation function (e.g. tanh in the case of simple RNN),
 # as one might think of the output layer of a rnn like what we did in our RNN tutorial/implementation) 
 # therefore, instead of using only the last hidden state for the final timestep, we’ll be carrying forward 
 # all hidden-states (i.e. for all timesteps) produced by the encoder to the next step.
-
-# After this step, we can start using the decoder to producethe outputs. 
-# At each time step of the decoder, we have to calculate the alignment score of each encoder output
+# 
+# after this step, we can start using the decoder to producethe outputs. 
+# at each time step of the decoder, we have to calculate the alignment score of each encoder output
 # with respect to the decoder input and hidden-state at that time step. 
-# The alignment score is the essence of the Attention mechanism, as it quantifies the amount of 
+# the alignment score is the essence of the Attention mechanism, because it quantifies the amount of 
 # "Attention" the decoder will place on each of the encoder outputs when producing the next output.
-
-# The alignment scores for Bahdanau Attention are calculated using the hidden state produced by
+# 
+# the alignment scores for Bahdanau Attention are calculated using the hidden state produced by
 # the decoder in the previous timestep and the encoder outputs with the following equation:
 # score_alignment = W_combined * tanh(W_decoder * H_decoder + W_encoder * H_encoder)
-
+# 
 # as you can see, its basically the decoders hidden state plus the encoders hidden state which are
 # being used in a tanh transformation function. the weights are basically going to specify how much 
 # importantce each hidden state has. 
-
-# The decoder hidden state and encoder outputs will be passed through their individual 
+#
+# the decoder's hidden state and encoder's outputs will be passed through their individual 
 # Linear layer(that is we use nn.Linear without a bias since it simply does a W*input!
 # and makes life easier for us, without it, we should define a new parameter W and multiply it
 # by the decoder hidden state, its the same thing! but uglier! so thats why we simply use 
 # a linear layer as a learnable parameter for (W_decoder*H_decoder)) and have their own 
 # individual trainable weights.
-
-# Lastly, the resultant vector from the previous few steps will undergo matrix multiplication with 
+# lastly the resultant vector from the previous few steps will undergo matrix multiplication with 
 # a trainable vector, obtaining a final alignment score vector which holds a score for each encoder
 # output.
-
-# Note: As there is no previous hidden state or output for the first decoder step, the last encoder 
-# hidden state and a Start Of String (<SOS>) token can be used to replace these two respectively.
-
-# 3. Softmaxing the Alignment Scores
-# After generating the alignment scores vector in the previous step, we can then apply a softmax on this
-# vector to obtain the attention weights. The softmax function will cause the values in the vector to
-# sum up to 1 and each individual value will lie between 0 and 1, therefore representing the weightage
-# each input holds at that time step.
-
-# 4. Calculating the Context Vector
-# After computing the attention weights in the previous step, we can now generate the context vector by
+#
+# sidenote: 
+# because there is no previous hidden state or output for the first decoder step, we use the last encoder 
+# hidden state and a Start Of String (<SOS>) token to replace these two respectively.
+# 
+# after generating the alignment scores vector in the previous step, we can then apply a softmax on this
+# vector to obtain the attention weights. The softmax is used so the vector values sum to 1 so each 
+# individual value will lie between 0 and 1 and we can consider them as actual(normalized) weights for each input
+# for that timestep.
+#
+# after computing the attention weights in the previous step, we can now generate the context vector by
 # doing an element-wise multiplication of the attention weights with the encoder outputs.
-# Due to the softmax function in the previous step, if the score of a specific input element is closer
-# to 1 its effect and influence on the decoder output is amplified, whereas if the score is close to 0,
-# its influence is drowned out and nullified.
-
-# 5. Decoding the Output
-# The context vector we produced will then be concatenated with the previous decoder output. 
+# because we used softmax in the previous step, if the score of a specific input element is closer
+# to 1 its effect and influence on the decoder output will be amplified and if the score is close to 0,
+# its influence will be decreased accordingly(i.e. it'll be nullified).
+# 
+# the context vector we produced will then be concatenated with the previous decoder output. 
 # It is then fed into the decoder RNN cell to produce a new hidden state and the process repeats itself
 # from step 2. The final output for the time step is obtained by passing the new hidden state through a
 # Linear layer, which acts as a classifier to give the probability scores of the next predicted word.
@@ -1095,7 +1095,8 @@ class BahdanauAttentionDecoder(nn.Module):
         # maximum length are chosen to be the same, which means, input sequence and output sequence
         # have the same length, any language that has shorter enntry, will fill the remaining space
         # with EOS symbols signifying the actual data has ended. (its like padding) so we dont use
-        # a separate variable/attribute for output sequence length anymore. 
+        # a separate variable/attribute for output sequence length anymore.
+        # 
         # we simply use the same length from the input sequence.
         # this is used as a loop counter to keep track of output words before we
         # return the result.
@@ -1165,7 +1166,9 @@ class BahdanauAttentionDecoder(nn.Module):
         # when we define the classifier, we specify the output dim for a single
         # output timestep(word,token),the number of outputs, is determined by the
         # output sequence length (number of timesteps) which will be automatically
-        # taken care of
+        # taken care of (by fusing the timestep dim with batch dim, basically treat
+        # each timestep as another batch, which later we reshape back and get the
+        # processed final output sequence)
         self.classifier = nn.Linear(hidden_size, self.vocab_size)
         
         # self.start token - we use 0 as the number representing the special start token
@@ -1189,6 +1192,8 @@ class BahdanauAttentionDecoder(nn.Module):
         # 
         # self.start token
         self.start_token = torch.tensor([self.sos_symbol for _ in range(encoder_states.size(0))], dtype=torch.long).view(-1,1)
+        # or we could have done it using repeat!
+        # self.start_token = torch.tensor([self.sos_symbol],dtype=torch.long).repeat(encoder_states.size(0)).view(-1,1)
         input_t = self.embedding(self.start_token.to(encoder_states.device))
     
         # remember we also need to grab outputs for each timestep
@@ -1312,46 +1317,7 @@ class BahdanauAttentionDecoder(nn.Module):
         # attention_score = self.W_v(weights_added)
         # print(f'{attention_score.shape=}') # (batch,ts,1) which means each timestep has a 
         # single weight
-        
-        # lets think about our choices here
-        # The implications of using `torch.matmul(weights_added, W_v.t())` instead of 
-        # the element-wise multiplication are different in terms of the mathematical
-        # operation and the resulting tensor shape.
-        # In the element-wise multiplication case (the previous way), the operation is 
-        # applied element-wise between the broadcasted tensors, and the resulting tensor 
-        # has the same shape as the larger tensor (wights_added in this case).
         # 
-        # However, when using `torch.matmul(weights_added, W_v.t())`, it performs
-        # a batched matrix multiplication between `weights_added` and the transposed weight
-        # matrix `W_v.t()`. This operation has different implications notably:
-        # 1. **Linear Transformation**: The matrix multiplication applies a 
-        #      linear transformation to each batch in `wights_added` using the weight matrix
-        #      `w_v`. 
-        #      This is a common operation in neural networks, 
-        #      where the weight matrix is used to transform the input data (`wights_added`) 
-        #      into a different representation (e.g., applying a fully connected layer).
-        # 2. **Dimensionality Reduction**: The resulting tensor has a reduced dimensionality 
-        #      compared to the input tensor `wights_added`. Specifically, the last dimension 
-        #      is reduced to 1, which means that each batch in the output tensor is a vector.
-        #    - If `wights_added` has shape `(2, 5, 7)` and `w_v` has shape `(1, 7)`, the output
-        #      tensor will have shape `(2, 5, 1)`.
-        #    - This dimensionality reduction is often desired in neural networks, where the 
-        #      output of one layer (e.g., a fully connected layer) is used as input to the 
-        #      next layer.
-        # 3. **Weight Sharing**: By using the same weight matrix `w_v` for all batches in 
-        #      `wights_added`, the linear transformation is shared across all batches. 
-        #       This is a common technique in neural networks, where the same set of weights
-        #       is applied to different inputs (batches) during training and inference.
-        # So, when `w_v` is a weight matrix, using `torch.matmul(wights_added, w_v.t())` 
-        # instead of element-wise multiplication suggests that we are performing a 
-        # linear transformation on the input tensor `wights_added` using the weight matrix `w_v`.
-        # This is a common operation in neural networks, where weight matrices are learned during
-        # training to transform the input data into a desired representation.
-        # The choice between element-wise multiplication and matrix multiplication should
-        # align with the intended mathematical operation and the desired transformation of
-        # the input data. which in our case is clear, w_v is a weight matrix, and it is indeed
-        # what we intend.
-        #
         # torch.set_printoptions(profile='default')
         # softmax to ensure both nonnegativity and normalization.
         #sidenote: note that this is the weight matrix thats usually visualized
@@ -1381,7 +1347,10 @@ class BahdanauAttentionDecoder(nn.Module):
         # method 3: (the correct way)
         # use batch-matrix multiplication which 
         # first permute the weights dim so they become compatible with encoder_states
-        # and then carry on the multiplication
+        # and then carry on the multiplication which gives us the context_vector which 
+        # is the weighted sum of the encoder states (each element in the context_vector
+        # is the sum of the encoder states weighted by the corresponding attention weights
+        # which is what we want!)
         # print(f'{encoder_states.shape=}')#(2,5,7)
         context_vector = torch.bmm(attention_weights.permute(0,2,1), encoder_states)
         # print(f'{context_vector.shape=}')
@@ -1397,25 +1366,19 @@ class BahdanauAttentionDecoder(nn.Module):
         # - `torch.bmm` is specifically designed for batch matrix multiplication of 3D tensors.
         # - It takes two 3D tensors of shapes `(b, n, m)` and `(b, m, p)` and returns a 3D tensor
         #   of shape `(b, n, p)`.
-
-        # and finally Element-wise Multiplication Followed by Sum
-        # - This operation involves element-wise multiplication of tensors 
-        # followed by a summation along a specified dimension.
-        # - It is not the same as matrix multiplication but can yield similar results 
-        # in specific cases due to the shapes and dimensions involved. (like our case here)
         # 
-        # so to cut a long story short, this boils down to : 
-        # - method 1 which uses `torch.matmul` with permuted dimensions, effectively performs a 
-        #   batch matrix multiplication.
-        # - method 3 which uses `torch.bmm` with permuted dimensions, performing batch matrix multiplication
-        # - `torch.matmul` and `torch.bmm` are not the same but can yield similar results in 
-        #    this specific cases due to the shapes and dimensions involved. torch.matmul supports and does batch multiply
-        #    when its the case.
-        # - **Element-wise multiplication followed by a sum** is also a different operation but 
-        #   can produce the same result in specific cases like ours.
-        #
-        # so to make the intend clear, we use torch.bmm otherwise if we use matmul, we may make a mistake 
-        # and go haywire as I previously did!
+        # so to cut a long story short:
+        # method 1 and 3 give us the correct result, because torch.matmul in method 1 performs a 
+        # batch matrix multiplication just like method 3. 
+        # obviously torch.matmul and torch.bmm are not the same but in this specific case 
+        # they result in the same outcome because of the shapes and dimensions involved,
+        # they compute the weighted sum of the encoder states.
+        # element-wise multiplication followed by a sum is a different operation, although 
+        # it can produce the same shape in specific cases like ours the outcome is wrong!
+        # 
+        # so to make the intend clear, we use torch.bmm otherwise if we use matmul, we may make
+        # a mistake and go haywire as I previously did and wasted a lot of time debugging!
+        # 
         # sidenote: 
         # (if its not clear yet, bmm simply means, we are dealing with several samples instead of 1
         # set aside the batch dimension for a moment and you'll noticed we endup with 5 numbers 
@@ -1428,77 +1391,16 @@ class BahdanauAttentionDecoder(nn.Module):
         # then stack the results hence how we actually do a batch-matrix-multiply behind the scene!
         # of course the actual behind the scene implementation of bmm uses specialized routine to
         # speed things up based on the hardware its executed but the idea stays the same regardless))
-        
+        # sidenote: 
+        # the dimensions in explanation (like (2,5,7) etc) comes from my test example below which I 
+        # used for debugging
+        # 
+        # 
         # at this point we have a context vector that shows the attention
         # of each input sequence, we can feed this directly to decoder
         # or concatenate it with the input at timestep_t and then feed this new
         # input to decoder (the second method is what we do)
-        
-        # Further explanation: 
-        # Let's break down how batch matrix multiplication (`torch.bmm`) 
-        # computes the weighted sum of the encoder states step by step.
-        # 1. **Inputs:**
-        #    - `attention_weights`: A tensor of shape `(batch_size, seq_len, 1)` representing 
-        #       the attention weights for each time step in the sequence.
-        #    - `encoder_states`: A tensor of shape `(batch_size, seq_len, hidden_size)` representing
-        #       the hidden states of the encoder for each time step.
-
-        # 2. **Permute Attention Weights:**
-        #    - Before performing batch matrix multiplication, we need to permute the `attention_weights`
-        #      to match the dimensions required for multiplication.
-        #    - After permutation, `attention_weights` will have the shape `(batch_size, 1, seq_len)`.
-
-        # 3. **Batch Matrix Multiplication:**
-        #    - Perform batch matrix multiplication between the permuted `attention_weights` and `encoder_states`.
-        #    - Here, `torch.bmm` computes the matrix product for each batch. 
-        #      The resulting `context_vector` will have the shape `(batch_size, 1, hidden_size)`.
-
-        # 4. **Weighted Sum:**
-        #    - The batch matrix multiplication effectively computes the weighted sum of the encoder states. 
-        #      Each element in the `context_vector` is the sum of the encoder states weighted by the 
-        #      corresponding attention weights.
-        #    - Mathematically, for each batch i, the context vector c_i is computed as:
-        #      \[
-        #      c_i = \sum_{j=1}^{\text{seq_len}} \text{attention_weights}_{ij} \cdot \text{encoder_states}_{ij}
-        #      \]
-        #    - This operation is performed for each batch in parallel.
-
-        # ### Example:
-        # Let's consider a simple example with a batch size of 1, sequence length of 3, and hidden size of 2.
-        # - `attention_weights` (after permutation):
-        #   \[
-        #   \begin{bmatrix}
-        #   [0.2, 0.3, 0.5]
-        #   \end{bmatrix}
-        #   \]
-        # - `encoder_states`:
-        #   \[
-        #   \begin{bmatrix}
-        #   [h_{11}, h_{12}], 
-        #   [h_{21}, h_{22}], 
-        #   [h_{31}, h_{32}]
-        #   \end{bmatrix}
-        #   \]
-
-        # - Batch matrix multiplication:
-        #   \[
-        #   \text{context_vector} = \begin{bmatrix}
-        #   [0.2, 0.3, 0.5]
-        #   \end{bmatrix} \times \begin{bmatrix}
-        #   [h_{11}, h_{12}], 
-        #   [h_{21}, h_{22}], 
-        #   [h_{31}, h_{32}]
-        #   \end{bmatrix}
-        #   \]
-
-        # - Resulting `context_vector`:
-        #   \[
-        #   \begin{bmatrix}
-        #   [0.2 \cdot h_{11} + 0.3 \cdot h_{21} + 0.5 \cdot h_{31}, 0.2 \cdot h_{12} + 0.3 \cdot h_{22} + 0.5 \cdot h_{32}]
-        #   \end{bmatrix}
-        #   \]
-        # This `context_vector` is the weighted sum of the encoder states, where the weights are given by the attention weights.
-         
+        # 
         # I have seen some people where they multiply context by the encoder-states 
         # and then use that to concatenate with the input. 
         # this is called multiplicative attention. by the way its different than 
@@ -4006,7 +3908,7 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         # and finally we sum all the results to have a single number for loss
         # 
         # update:
-        # I initially left the squeeze at the end, and it caused our loss2 to have an extra dim
+        # I initially left out the squeeze() at the end, and it caused our loss2 to have an extra dim
         # (e.g. (3030,1))! this simple mistake, sent everything into oblivion! 
         # because when our loss1 is added to loss2, their shape is not the same 
         # so pytorch goes for a broadcast and therefore it reshapes loss1 to (1,3030)
