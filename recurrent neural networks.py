@@ -1237,8 +1237,10 @@ class BahdanauAttentionDecoder(nn.Module):
             # input_t = input_t[:,None,:]
             # print(f'{input_t.shape=}')
             output_t, hidden_state, attention_weights = self.forward_attention(input_t, encoder_states, hidden_state)
-           
-            hidden_state = tuple(h.detach()for h in hidden_state)
+            # truncated BPTT, I initially enabled it to help with more stable training, 
+            # but it seems it hurts long term learning/dependencies! 
+            # so we disable it in seq2seq!
+            # hidden_state = tuple(h.detach()for h in hidden_state)
             # output_t is (2,1,7) (7 is hidden-size here), so we need the classifier to give
             # the output of size (bs, output_size). (our classifier dim is (hiddensize, outputsize))
             # the reshape makes it (2,7) which is compatible with our classifier
@@ -1311,7 +1313,7 @@ class BahdanauAttentionDecoder(nn.Module):
         # only like this, otherwise the context vector at the end would endup (batchsize, ts, hiddensize)
         # which is wrong, as it should be the weighted sum of the encoder-states (if we sum over ts axis and
         # get (batch, 1, hidden_size), it would still be wrong as we have done a different operation))
-        attention_score = torch.matmul(weights_added ,self.W_v.data.t())
+        attention_score = torch.matmul(weights_added ,self.W_v.t())
         # if we had implemented W_v as a linear layer instead of a nn.Parameter,
         # we could have also done this instead and get the exact same result:
         # attention_score = self.W_v(weights_added)
@@ -1730,9 +1732,11 @@ print(sentence)
 print(convert_to_int(sentence,'en', max_words=max_words_in_sentence, to_tensor=True))
 print(convert_to_word(convert_to_int(sentence,'en',max_words=max_words_in_sentence),'en'))
 
+device = 'cuda' if torch.cuda.is_available()  else 'cpu'
+
 # now lets create our dataloader!
 def get_dataloader(batch_size, input_lang, output_lang, seq_length, 
-                   pairs_list, en_word2int, fr_word2int, reverse=False):
+                   pairs_list, en_word2int, fr_word2int, reverse=False, device='cuda'):
 
     if reverse:
         pairs_list = [(l2,l1) for l1,l2 in pairs_list]
@@ -2008,7 +2012,7 @@ def train_epoch(dataloader, model, optimizer, criterion):
 
     return total_loss / len(dataloader)
 
-def train(train_dataloader, model, epochs, learning_rate=0.001, interval=100):
+def train(train_dataloader, model, epochs, checkpoint_path,learning_rate=0.001, interval=100):
     
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
@@ -2024,6 +2028,11 @@ def train(train_dataloader, model, epochs, learning_rate=0.001, interval=100):
             losses.append(loss_avg)
             total_loss = 0
             print(f'{epoch}/{epochs} | Loss: {loss_avg:.4f}')
+            torch.save({"state_dict":model.state_dict(),
+                        "epochs":epoch,
+                        "loss":loss_avg,
+                        "embedding_dim":model.embedding_dim,
+                        "hidden_size":model.hidden_size}, checkpoint_path)
             
     plt.plot(losses)
 
@@ -2050,12 +2059,12 @@ model.to(device)
 # regularization, and optimization regime, but for now its suffices 
 # we just want to see how it performs and whether our attention mechanism actually works!
 # (it does :))
-train(train_dataloader, model, epochs=80, interval=5)
+train(train_dataloader, model, epochs=80, interval=5, checkpoint_path='./weights/bahdanau_attention.pth')
 #%%
 #%%
-torch.save(model.state_dict(),'./weights/bahdanau_attention.pt')
+torch.save(model.state_dict(),'./weights/bahdanau_attention.pth')
 #%%
-model.load_state_dict(torch.load('./weights/bahdanau_attention.pt'))
+model.load_state_dict(torch.load('./weights/bahdanau_attention.pth'))
 #%%
 import random
 def evaluate(model, sentence, dt):
