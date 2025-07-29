@@ -1237,10 +1237,14 @@ class BahdanauAttentionDecoder(nn.Module):
             # input_t = input_t[:,None,:]
             # print(f'{input_t.shape=}')
             output_t, hidden_state, attention_weights = self.forward_attention(input_t, encoder_states, hidden_state)
+            
             # truncated BPTT, I initially enabled it to help with more stable training, 
-            # but it seems it hurts long term learning/dependencies! 
-            # so we disable it in seq2seq!
+            # and everything went smoothly. later on however I notice this 
+            # hurts long term learning/dependencies! so I'm disabling it now
+            # after disabling it, we got much faster convergence rate(at least 3x)
+            # and lower loss 
             # hidden_state = tuple(h.detach()for h in hidden_state)
+            
             # output_t is (2,1,7) (7 is hidden-size here), so we need the classifier to give
             # the output of size (bs, output_size). (our classifier dim is (hiddensize, outputsize))
             # the reshape makes it (2,7) which is compatible with our classifier
@@ -2060,11 +2064,37 @@ model.to(device)
 # we just want to see how it performs and whether our attention mechanism actually works!
 # (it does :))
 train(train_dataloader, model, epochs=80, interval=5, checkpoint_path='./weights/bahdanau_attention.pth')
+# 65/80 | Loss: 0.5280
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.21it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.35it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.24it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.25it/s]
+# 100%|██████████| 4245/4245 [00:51<00:00, 83.23it/s]
+# 70/80 | Loss: 0.5204
+# 100%|██████████| 4245/4245 [00:51<00:00, 82.71it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 84.91it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.63it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.56it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.55it/s]
+# 75/80 | Loss: 0.5140
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.71it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.67it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 84.91it/s]
+# 100%|██████████| 4245/4245 [00:50<00:00, 84.32it/s]
 #%%
 #%%
-torch.save(model.state_dict(),'./weights/bahdanau_attention.pth')
+# torch.save({"state_dict":model.state_dict(),
+#             "embedding_dim":model.embedding_dim,
+#             "hidden_size":model.hidden_size}, './weights/bahdanau_attention.pth')
 #%%
-model.load_state_dict(torch.load('./weights/bahdanau_attention.pth'))
+model.load_state_dict(torch.load('./weights/bahdanau_attention.pth')["state_dict"])
+# previously I used a frozen W_v (the one with W_v.data.t() which I did by mistake during my
+# debugging early in the implementation) yet the model trained seemingly fine. however
+# by unfreezing it (i.e. using it normally) we get much better results. you can see
+# both weights, the one that uses frozen_W_v is marked accordingly and the one that doesnt
+# have any extra tags, is the correct and best model so far which uses the W_v in computation graph
+# normally. 
+# model.decoder.W_v
 #%%
 import random
 def evaluate(model, sentence, dt):
@@ -2116,17 +2146,19 @@ def visualize_attention(input_sentence, output_words, attention_weights):
     plt.show()
 
 def evaluate_and_visualize_attention():
-    # note if you get some keyerror, its because you limited the dataset so much
+    # note if you get some keyerror, its because we limited the dataset so much
     # it couldnt create a big enough vocab for the language. limitting the sequence length
     # too much can result in this error.
+    # also note we use lowercase letters in our vocab, so we can use upper case letters here
+    # if we do we need to make them lower case before feeding them to our model
     test_sentences = [("he is not as tall as his father", "il n'est pas aussi grand que son pere"),
                       ("I am too tired to drive", "je suis trop fatigue pour conduire"),
                       ("I am sorry if this is a silly question", "je suis desole si c'est une question idiote"),
                       ("I am really proud of you", "je suis reellement fiere de vous")]
 
     for en,fr in test_sentences:
-        input_sentence = en if dt.in_lang == 'eng' else fr
-        expected_sentence = fr if dt.in_lang == 'eng' else en
+        input_sentence = (en if dt.in_lang == 'eng' else fr).lower()
+        expected_sentence = (fr if dt.in_lang == 'eng' else en).lower()
         
         output_words, attentions = evaluate(model, input_sentence, dt)
         attentions.squeeze_(3).squeeze_()
@@ -2139,7 +2171,9 @@ evaluate_and_visualize_attention()
 
 #%%
 # as you can see when the sentences are short, we can quickly get pretty good results!
-# longer sentences on other hand are not as good!
+# longer sentences on the other hand are not as good!(this seems to have been imprpved
+# by disabling the truncated BPTT in our code earlier! lstms are do not work well on 
+# long bodies of texts in general but as we saw our change did infact improve our baseline!)
 # anyway, the vocab and training part needs refactoring and we will hopefully do that in the
 # next round. 
 # meanwhile the official pytorch code example can be read/used as well. 
@@ -2152,7 +2186,7 @@ evaluate_and_visualize_attention()
 #%%
 
 
-#%% my old implementation- remove later
+#%% my old implementation- contains my comments and parts of my old debugging remove later
 # # french vocab
 # input_vocab_size = 4601
 # # english vocab
