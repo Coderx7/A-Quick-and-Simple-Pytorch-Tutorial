@@ -221,6 +221,8 @@ for i in range(iteration):
         ## Representing Memory ##
         # make a new variable for hidden and detach the hidden state from its history
         # this way, we don't backpropagate through the entire history
+        # This is called truncated backprogation through time (Truncated BPTT)
+        # its handy for stable training but be aware that it hurts long dependencies
         hidden_state = hidden_state.data
         # make sure the dims for output and label are the same
         # otherwise, you may not get an error, but a sckewed result
@@ -626,7 +628,32 @@ for e in range(epochs):
         label = label.to(device)
 
         output , hidden_states = model(data, hidden_states)
-     
+
+        # note what we do here is effectively truncated backprogapation through time (truncated BPTT)
+        # if we dont detach the hidden state the computational graph from previous batches
+        # will still be connected and cause the backward pass to try to traverse through
+        # the entire sequence (which is too long and not what we want) and so we 
+        # will get a long error like this: 
+        #  "RuntimeError: Trying to backward through the graph a second time 
+        #   (or directly access saved tensors after they have already been freed). 
+        #   Saved intermediate values of the graph are freed when you call .backward() or 
+        #   autograd.grad(). Specify retain_graph=True if you need to backward through the 
+        #   graph a second time or if you need to access saved tensors after calling backward."
+        # 
+        # we use the hidden state from the previous batch to initialize the current batch,
+        # and we want to truncate the gradient flow across batches (but not within the sequence
+        # of one batch we'll see more in attention section).
+        # therefore we must detach the hidden state from the previous batch to 
+        # prevent gradients from flowing back to them a second time (which would cause the graph
+        # to be too deep and also would be incorrect).
+        # when we do not detach the hidden state like this, the hidden state from the previous
+        # batch will be part of the computational graph of the current batch. then when we 
+        # compute the loss for the current batch and call loss.backward() the gradients would
+        # try to flow back through the entire sequence of batches which as you can guess
+        # result in a very deep computational graph (which is neither feasible nor what we want
+        # here). furthermore if we try to do this for multiple batches without truncation,
+        # we get the error because the graph from the previous backward pass has been freed!
+        # unless we use retain_graph=True which the error message also clearly points out
         if model.rnn_type == 'lstm':
             hidden_states = tuple(h.data for h in hidden_states)
         else:#RNN, GRU
@@ -1239,10 +1266,39 @@ class BahdanauAttentionDecoder(nn.Module):
             output_t, hidden_state, attention_weights = self.forward_attention(input_t, encoder_states, hidden_state)
             
             # truncated BPTT, I initially enabled it to help with more stable training, 
-            # and everything went smoothly. later on however I notice this 
-            # hurts long term learning/dependencies! so I'm disabling it now
+            # and everything seemingly went smoothly. later on however I notice this 
+            # hurts long term learning/dependencies! so I'm disabling it now!
+            # update:
             # after disabling it, we got much faster convergence rate(at least 3x)
-            # and lower loss 
+            # and lower loss. 
+            # note that we can disable it here, because we are doing the whole operation
+            # in a step by step fashion. in our previous examples, we didnt have a loop to 
+            # get the outputs, the whole sequence was fed to the model forward at once and
+            # we'd get the result. also we didnt need the hiddenstates gradients
+            # from the previous batch so we truncated it after each batch! (the standard practice
+            # for TBPTT is to detach the hidden state after each batch). if we didnt, we would 
+            # be traversing the previous compulation graph (which was freed) a second time and face an error!
+            # 
+            # this is not the case hre, here we are generating the output sequence step by step,
+            # which means we are still within the same batch(so no cross batch issues here), 
+            # so we are safe not to detach the hidden state. if we want we can detach it at 
+            # each step (or after some step-interval) (to avoid backpropagating through the entire generation loop)
+            # but as we saw it will hurt the performance! so not detaching it is not only ok 
+            # here but the absoluetly correct thing to do! as we are in the same batch!
+            # 
+            # (also the hidden state is reset for each batch already(each time forward is called 
+            # for a new batch we start off with a new hiddenstate). therefore, we dont have the
+            # issue of carrying the hidden state across batches like our previous examples anyway!)
+            # 
+            # so to cut a long story short, we were detaching the hidden state within the same
+            # batch (across output timesteps) to avoid a very deep graph (and to simulate a 
+            # truncated BPTT within the batch) but since we werent carrying the hidden state across 
+            # batches (it is reset for each batch) we dont have the same cross-batch issue we
+            # face in our previous examples (and also detaching it was a bad idea in first place
+            # as our sequence length is not large to pose an issue!(>1oo would be when we think about using truncated bptt)
+            # and even if it was detaching at every single step isnt right and will hurt the model performance) so it was not useful at all!
+            # also I found out that the standard practice for seq2seq is NOT to detach within a batch anyway!
+            # 
             # hidden_state = tuple(h.detach()for h in hidden_state)
             
             # output_t is (2,1,7) (7 is hidden-size here), so we need the classifier to give
