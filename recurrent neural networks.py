@@ -3560,24 +3560,18 @@ print(f'Total number of words in the corpus: {total_count:,}')
 # now lets remove scarce/rarely used words!
 min_word_count = 5
 words_in_corpus = [word for word in words_in_corpus if word_counts[word] > min_word_count]
-print(f'Total number of words in the corpus: {len(words_in_corpus):,}')
+print(f'Total number after removing words with count<{min_word_count}: {len(words_in_corpus):,}')
 # now lets get the new words count again
 word_counts = Counter(words_in_corpus)
-# and sort them in a deceinding fashion so that the 
-# most frequent ones come first. the sorting comes 
-# handy later on for visualization purposes
-word_list = sorted(word_counts, key=word_counts.get, reverse=True)
-# and now lets create the dictionaries for word2int and int2word
-int2word = dict(enumerate(word_list))
-word2int = {word:idx for idx,word in int2word.items()}
-print(f'{len(int2word)=:,}')
-print(f'{len(word2int)=:,}')
+#update total_count based on latest words_in_corpus
+total_count = len(words_in_corpus) # or we could also do sum(word_counts.values())
+
 # subsampling
 # now its time to apply the mikolove formula/method. 
 # for this we need to first calculate the word
 # frequencies with respect to the whole corpus
 word_freqs = {word: freq/total_count for word, freq in word_counts.items()}
-print(f'{word_freqs['the']=:.4f}')
+print(f'number of times "the" is repeated in the corpus: {word_freqs['the']:.4f}')
 # this is the 
 threshold = 1e-5
 # here we calculate the mikolov formula (1-sqrt(t/f(w)))
@@ -3594,82 +3588,70 @@ threshold = 1e-5
 # (1-sqrt(t/f(w)))
 probablity_drop = {word: 1 - np.sqrt(threshold / word_freqs[word]) for word in word_counts}
 print(f'{len(probablity_drop)=:,}')
-#%%
-# since here we want to grab the words, we use 1-prob, which means grab the words
-# that are more probable than being discarded(grab rare words more ofthen than words
-# such as the, of, and which are much more frequent)
-# note that if we dont do 1-prob, obviously we will be having larger word_list, and it 
-# would take much longer to train to say the least. this would also have 
-# more important implications than simply a longer training process.
-# This simple change, is infact the opposite of mikolov's approach which means 
-# frequent words (with high probablity_drop[word] such as the, of, etc)
-# will be more likely to be kept.
-# likewise, rare words (the ones with low probablity_drop[word]) will therefore be
-# less likely to be kept.
-# This essentially reverses the intended effect of Mikolov's subsampling which in turn results in :
-# 1.Frequent words being overrepresented:
-# recall that in the Mikolov’s method, frequent words like "the", "and",
-# and "is" are intentionally downsampled to avoid overwhelming the model
-# with redundant, less informative patterns. while in our modified approach,
-# these frequent words are retained at a higher rate, leading to their 
-# overrepresentation in the training data.
-# 
-# 2. Rare words being undersampled
-# Likewise, Rare or contextually rich words (which provide valuable information
-# for learning and happen to be much less frequent than the likes of 'the','is',etc)
-# are more likely to be dropped under this modification.
-# This decreases the diversity of the training data and makes it harder for the
-# model to learn meaningful embeddings for these words.
-# 
-# 3. Negative Impact on Training Efficiency
-# Frequent words often dominate the corpus but contribute less 
-# to learning meaningful representations.
-# Retaining them disproportionately increases computational overhead 
-# without improving model quality, as the model wastes time optimizing
-# for frequent, less informative words.
-# 
-# 4. Poor Embedding Quality
-# Word embeddings rely on the contextual diversity provided by various words. 
-# By discarding rare words and retaining frequent ones, the model may fail to
-# capture meaningful semantic relationships.
-# This could lead to embeddings that perform poorly on downstream tasks,
-# such as semantic similarity, word analogy tasks, or other NLP benchmarks.
-# and it shows in our result as well. 
-#
-# In my experience, the loss decreases much better, and the outcome, at least
-# breifly looking at them, looks pretty the same! 
-# #TODO : check more. I dont see any worse outcome! just the contrary it seems better!
-# however, if you look closer
-# you'll see the meanings are not as closely related as when we follow the mikoloves
-# method. our changes will capture a general relationship between words, but fails
-# to capture detail relationship. to give you a better mental image, compare the two
-# outcomes, trained with the same paramters, but trained with different approaches
-# 1.sample following mikolov method: 
-# -any       | if, be, otherwise, certain, must
-# -english   | french, scottish, british, welsh, dictionary
-# -being     | as, been, or, less, but
-# -then      | if, a, the, x, function
-# -wheel     | wheels, switches, rear, brakes, drive
-# -timeline  | sites, com, modern, links, timelines
-# -coined    | term, describe, phrase, popularized, synonymously
-# -graduate  | undergraduate, education, college, faculty, students
-# -Epoch 5/50 | Iter 3600 | Loss: 9.3952
-#
-# 2. sample not following mikolov method:
-# -english   | french, british, german, italian, spanish
-# -coined    | invented, introduced, discovered, replaced, installed
-# -wheel     | engine, electric, steam, armour, muscle
-# -graduate  | students, college, undergraduate, university, school
+# the probablity of 1-probablity_drop (which means the probablity of being kept!)
+# make our new word_list out of our original corpus
 word_list = [word for word in words_in_corpus if random.random() < (1-probablity_drop[word])]
+
+# m2 This is the probability of KEEPING a word
+# prob_keep = {word: (np.sqrt(word_freqs[word] / threshold) + 1) * (threshold / word_freqs[word]) for word in word_counts}
+# now, create the final training sequence by subsampling
+# word_list = [word for word in words_in_corpus if random.random() < prob_keep.get(word, 1.0)]
+
+#sidenote:
+# since here we want to grab the words(keep them instead of discarding them),
+# we use 1-prob, which means grab the words that are more probable than being
+# discarded(grab less frequent words more often than words such as 'the', 'of',
+# 'and' which are much more frequent)
+# note that if we dont do this obviously we will be having a larger word_list, 
+# and it would take much longer to train our model and have other serious implications 
+# that is, no Mikolov's subsampling is done which means frequent words are overrepresented
+# and rare words are undersampled.
+# not only this has a negative impact on training efficiency but worse results in 
+# low embedding quality as well.
+# (basically failing to do this leads to overrepresentation of these words in our training data
+# and because they are too frequent they are less informative and thus contribute less
+# to learning meaningful representations. retaining them therefore only increases computational
+# overhead. moreover, rare or contextually important/rich words (which provide valuable information
+# for learning but are less frequent) will also be more likely to be dropped! this 
+# impacts the diversity of our training data lowering it making it harder(or even impossible)
+# for the model to learn meaningful embeddings and capture meaningful semantic
+# relationships for these words.
+# after all word embeddings rely on the contextual diversity provided by various words
+# and discarding rare words and retaining frequent ones like that, will lead to embeddings
+# that perform poorly on downstream tasks, such as semantic similarity, word analogy tasks,
+# or other NLP related tasks)
+
+# now based on this filter, we now have 4,655,219 words! out of the original 17m words!
 print(f'{len(word_list)=:,}')
-# create word2int and int2word dicts
-# int2word = dict(enumerate(word_list))
-# word2int = {word:idx for idx,word in int2word.items()}
-# print(f'{len(int2word)=:,}')
-# print(f'{len(word2int)=:,}')
+# now lets get the new words count again
+word_counts = Counter(word_list)
+# and sort them in a descending fashion so that the 
+# most frequent ones come first. the sorting comes 
+# handy later on for visualization and evaluation purposes
+#sidenote: 
+# previously I had done a grave mistake and it was to assign
+# this to word_list instead! this not only destroyed our training data
+# making it 63k instead of 4.6m! but even worst it destroys the context
+# the whole dataset was gone, and we only were left with 63 indivisual words!
+vocab_words = sorted(word_counts, key=word_counts.get, reverse=True)
+# and now lets create the dictionaries for word2int and int2word
+int2word = dict(enumerate(vocab_words))
+word2int = {word:idx for idx,word in int2word.items()}
+print(f'{len(int2word)=:,}')
+print(f'{len(word2int)=:,}')
+# # get digitized word
+# word_list_digitized = [word2int[word] for word in word_list]
+
 #%%
-print(f'{int2word=}')
-print(f'{word2int=}')
+# some common-uncommon words. 
+# earlier words are more frequently used in our dataset
+# while the later indexes are less frequent. we go from
+# most frequent words to the least frequenet words!
+# we can use these later to assess how our model is doing
+base_common=250
+base_uncommon=2000
+print(f'int2word[250:260]: {[int2word[base_common+i] for i in range(10)]}')
+print(f'int2word[2000:2010]{[int2word[base_uncommon+i] for i in range(10)]}')
 
 # ok now we need to get the target words for each word. we define a function that 
 # accepts a input list, index, windows size 
@@ -3743,10 +3725,10 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
                         common_start_index=0, uncommon_start_index=2000):
     # first lets create some random word indexes 
     # we get some common words and some uncommon words. if you recall, we sorted
-    # our words based on their frequencies, so that the most frequent ones stay 
-    # atop and less frequent ones stay at the bottom, therefore choosing a smaller 
-    # common_start_index means choose more frequently used words, and a larger uncommon_start_index
-    # means, choose less frequently used words.
+    # our vocab based on their frequencies, so that the most frequent ones stay 
+    # at the very begining and less frequent ones stay at the very end, therefore
+    # choosing a smaller common_start_index means choose more frequently used words,
+    # and a larger uncommon_start_index means, choose less frequently used words.
     device = next(embedding_layer.parameters()).device
     # random.sample(sequence, k)
     # Parameters:
@@ -3763,7 +3745,7 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     return val_words, similarity 
 
 
-def test_similarity(model, int2word, window_size, validation_size, common_start_index=100, uncommon_start_index=4000):
+def test_similarity(model, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
     # get examples and their similarities 
     valid_examples, valid_similarities = evaluate_embeddings(model.embedding_layer,
                                                             window_size=window_size,
@@ -3837,7 +3819,7 @@ for epoch in range(num_epochs):
         
         if i%interval==0:
             test_similarity(model, int2word, window_size, validation_size, 
-                            common_start_index=100, uncommon_start_index=4000)
+                            common_start_index=250, uncommon_start_index=2000)#4000
 
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
 
