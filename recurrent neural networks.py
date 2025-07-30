@@ -3737,11 +3737,10 @@ def cosine_similarity(word2int, embedding_layer, word, topk=5, device='cpu'):
 # lets create a cosine similarity for validation words, to see how certain words
 # are doing. we create some random words, and take their cosine simlarity in the 
 # embeddings. if their target words are plausible then we are good! lets do this 
-import numpy as np
+# import numpy as np
 
 def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
-                                 common_start_index=0,
-                                 uncommon_start_index=2000):
+                        common_start_index=0, uncommon_start_index=2000):
     # first lets create some random word indexes 
     # we get some common words and some uncommon words. if you recall, we sorted
     # our words based on their frequencies, so that the most frequent ones stay 
@@ -3761,9 +3760,25 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(0)
 
     similarity = torch.mm(embeddings,embedding_layer.weight.t())/magnitutes 
-
     return val_words, similarity 
 
+
+def test_similarity(model, int2word, window_size, validation_size, common_start_index=100, uncommon_start_index=4000):
+    # get examples and their similarities 
+    valid_examples, valid_similarities = evaluate_embeddings(model.embedding_layer,
+                                                            window_size=window_size,
+                                                            validation_size=validation_size,
+                                                            common_start_index=common_start_index,
+                                                            uncommon_start_index=uncommon_start_index)
+    # get topk highest similar words
+    _, closest_idxs = valid_similarities.topk(6) 
+    valid_examples = valid_examples.to('cpu')
+    closest_idxs =  closest_idxs.to('cpu')
+  
+    print(f' Validation similarity test:')
+    for i, valid_idx in enumerate(valid_examples):
+        closest_words = [int2word[idx.item()] for idx in closest_idxs[i]][1:]
+        print(f"  -{int2word[valid_idx.item()]:<10}| {', '.join(closest_words)}")
 
 #%% 
 random.seed(10)
@@ -3811,36 +3826,19 @@ for epoch in range(num_epochs):
         X = torch.LongTensor(X).to(device)
         Y = torch.LongTensor(Y).to(device)
         
-        # Forward pass
-        optimizer.zero_grad()
         output = model(X)
         
-        # Compute loss
         loss = criterion(output, Y)
         losses.append(loss.item())
         
-        # Backward pass and optimization
+        optimizer.zero_grad()        
         loss.backward()
         optimizer.step()
         
         if i%interval==0:
-            # getting examples and similarities      
-            valid_examples, valid_similarities = evaluate_embeddings(model.embedding_layer,
-                                                                     window_size=window_size,
-                                                                     validation_size=validation_size,
-                                                                     common_start_index=100,
-                                                                     uncommon_start_index=4000)
-            # get topk highest similar words
-            _, closest_idxs = valid_similarities.topk(6) 
-            
-            valid_examples = valid_examples.to('cpu')
-            closest_idxs =  closest_idxs.to('cpu')
-            
-            print(f' Validation similarity test:')
-            for ii, valid_idx in enumerate(valid_examples):
-                closest_words = [int2word[idx.item()] for idx in closest_idxs[ii]][1:]
-                print(f"  -{int2word[valid_idx.item()]:<10}| {', '.join(closest_words)}")
-            
+            test_similarity(model, int2word, window_size, validation_size, 
+                            common_start_index=100, uncommon_start_index=4000)
+
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
 
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
@@ -3903,7 +3901,7 @@ for epoch in range(num_epochs):
 #  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
 # Epoch 15/50, Loss: 9.1774
 
-# second run
+# second run (each epoch takes around 4-5 minutes on my system(rtx3080))
 # Epoch 13/50, Loss: 9.1927
 #  Validation similarity test:
 #   -being     | as, were, been, but, although
