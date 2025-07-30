@@ -2137,6 +2137,24 @@ train(train_dataloader, model, epochs=80, interval=5, checkpoint_path='./weights
 # 100%|██████████| 4245/4245 [00:50<00:00, 84.67it/s]
 # 100%|██████████| 4245/4245 [00:49<00:00, 84.91it/s]
 # 100%|██████████| 4245/4245 [00:50<00:00, 84.32it/s]
+# second run:
+# 65/80 | Loss: 0.5032
+# 100%|██████████| 4245/4245 [00:51<00:00, 82.51it/s]
+# 100%|██████████| 4245/4245 [00:51<00:00, 82.38it/s]
+# 100%|██████████| 4245/4245 [00:51<00:00, 82.23it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.93it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 86.01it/s]
+# 70/80 | Loss: 0.4949
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.58it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.11it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.52it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.32it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.59it/s]
+# 75/80 | Loss: 0.4893
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.31it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.48it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.17it/s]
+# 100%|██████████| 4245/4245 [00:49<00:00, 85.21it/s]
 #%%
 #%%
 # torch.save({"state_dict":model.state_dict(),
@@ -2206,11 +2224,21 @@ def evaluate_and_visualize_attention():
     # it couldnt create a big enough vocab for the language. limitting the sequence length
     # too much can result in this error.
     # also note we use lowercase letters in our vocab, so we can use upper case letters here
-    # if we do we need to make them lower case before feeding them to our model
+    # if we do we need to make them lower case before feeding them to our model (also remove dots as well)
+    # todo: preprocess the text properly so the user is not bothered with anything except 
+    # inputing the texts
     test_sentences = [("he is not as tall as his father", "il n'est pas aussi grand que son pere"),
                       ("I am too tired to drive", "je suis trop fatigue pour conduire"),
                       ("I am sorry if this is a silly question", "je suis desole si c'est une question idiote"),
-                      ("I am really proud of you", "je suis reellement fiere de vous")]
+                      ("I am really proud of you", "je suis reellement fiere de vous"),
+                      ("I don't trust anybody", "Je ne me fie à personne"),
+                      ("He can swim like a fish", "Il est capable de nager comme un poisson"),
+                      ("Don't mind me Just keep doing what you were doing", "Ne fais pas attention à moi. Continue ce que tu étais en train de faire"),
+                      # starting with larger sequences, we can see how trimming the sequences
+                      # during dataset creating results in model outputs.
+                      ("I can't believe that you aren't at least willing to consider the possibility of other alternatives", "Je n'arrive pas à croire que vous ne soyez pas tout au moins disposées à envisager d'autres possibilités"),
+                      ("It may be impossible to get a completely error free corpus due to the nature of this kind of collaborative effort However if we encourage members to contribute sentences in their own languages rather than experiment in languages they are learning we might be able to minimize errors", "Il est peut-être impossible d'obtenir un Corpus complètement dénué de fautes, étant donnée la nature de ce type d'entreprise collaborative. Cependant, si nous encourageons les membres à produire des phrases dans leurs propres langues plutôt que d'expérimenter dans les langues qu'ils apprennent, nous pourrions être en mesure de réduire les erreurs"),
+                      ]
 
     for en,fr in test_sentences:
         input_sentence = (en if dt.in_lang == 'eng' else fr).lower()
@@ -2227,18 +2255,23 @@ evaluate_and_visualize_attention()
 
 #%%
 # as you can see when the sentences are short, we can quickly get pretty good results!
-# longer sentences on the other hand are not as good!(this seems to have been imprpved
-# by disabling the truncated BPTT in our code earlier! lstms are do not work well on 
+# longer sentences on the other hand are not as good!(this seems to have been improved
+# by disabling the truncated BPTT in our code earlier! lstms do not work well on 
 # long bodies of texts in general but as we saw our change did infact improve our baseline!)
 # anyway, the vocab and training part needs refactoring and we will hopefully do that in the
 # next round. 
 # meanwhile the official pytorch code example can be read/used as well. 
-# I found the dataset that we used from the official docs, and used their training loop
-# as the starting point for our own training loop, I only needed to changed a few parts
+# I found the dataset that we used here from the official docs, and used their training loop
+# as a starting point for our own training loop, I only needed to changed a few parts
 # to make it compatible with our own codebase here. so its a decent source you may want to have
-# alook at as well.
+# a look at as well.
 # with this we conclude our bahdanau attention section and go to the next section 
 # which is sentiment analysis!)
+# also note that we didnt pick the best model here, just trained for some epochs and then
+# ran some quick tests to see if our implementation is correct and working as expected, so
+# our intention wasnt to get the best out of these models. in a real situation we would spend
+# a lot of time finetuning all aspects of our training in order to achieve the best performance
+# so keep that in mind!
 #%%
 
 
@@ -3361,10 +3394,8 @@ outputs, hidden_states = model(review_padded, hidden_states)
 
 pred = torch.round(outputs)
 
-if pred.item() == 0:
-    print('negative')
-else:
-    print('postive')
+print(f"review: '{test_review_neg}'")
+print(f"The review is {'negative' if pred.item() == 0 else 'positive'}")
 
 # while this might work, this is in no way a good model, to get a decent performance we 
 # would want to use a better/larger model/better regularization/optimization regime
@@ -3871,6 +3902,31 @@ for epoch in range(num_epochs):
 #   -coined    | describe, term, surrealism, popularized, myth
 #  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
 # Epoch 15/50, Loss: 9.1774
+
+# second run
+# Epoch 13/50, Loss: 9.1927
+#  Validation similarity test:
+#   -being     | as, were, been, but, although
+#   -english   | french, american, d, welsh, british
+#   -then      | if, y, f, set, n
+#   -city      | cities, town, towns, capital, located
+#   -coined    | term, thought, usage, terms, popularized
+#   -wheel     | wheels, axle, cylinder, rear, brake
+#   -timeline  | external, links, history, detailed, site
+#   -graduate  | undergraduate, university, college, colleges, graduating
+#  -Epoch 14/50 | Iter 9000 | Loss: 9.1827
+# Epoch 14/50, Loss: 9.1840
+#  Validation similarity test:
+#   -city      | cities, town, located, capital, towns
+#   -being     | were, been, has, from, was
+#   -any       | this, be, although, it, require
+#   -english   | american, d, french, james, poet
+#   -viii      | iv, vii, xii, pope, vi
+#   -wheel     | wheels, tires, rear, toyota, cylinder
+#   -timeline  | external, links, history, site, com
+#   -coined    | term, popularized, thought, romance, describe
+#  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
+# Epoch 15/50, Loss: 9.1774
 #%%
 # torch.save({"state_dict":model.state_dict(),
 #             "epochs":epoch,
@@ -4247,6 +4303,29 @@ for epoch in range(num_epochs):
 # whitgift  : arrigo, berengar, excommunicates, tunis, donati
 #  -Epoch 17/50 | Iter 7 | Loss: 1.8327
 # Epoch 17/50, Loss: 1.8331
+#
+# second test
+# Epoch 14/50, Loss: 1.8662
+# order     : to, their, certain, given, when
+# party     : election, democratic, parties, elections, elected
+# president : elected, presidential, presidency, cabinet, legislative
+# political : politics, social, government, leaders, politicians
+# shortlist : seanad, latvijas, supranationalism, nominations, wirtschaftswunder
+# theophylline: theobromine, glucose, soluble, chloroform, photosensitivity
+# esta      : ffff, exclamation, tele, tria, gg
+# whitgift  : charenton, preacher, marpeck, degli, tyrone
+#  -Epoch 15/50 | Iter 7 | Loss: 1.8503
+# Epoch 15/50, Loss: 1.8506
+# order     : orders, knights, ordered, their, to
+# usually   : are, or, can, sometimes, typically
+# president : presidential, elected, presidency, cabinet, election
+# party     : democratic, election, parties, seats, elected
+# ahman     : caldwell, roberts, sawyer, korchnoi, trot
+# esta      : ffff, tria, gg, clickable, corbusier
+# whitgift  : marpeck, degli, episcopacy, prelate, charenton
+# theophylline: theobromine, photosensitivity, cholesterol, methanol, chloroform
+#  -Epoch 16/50 | Iter 7 | Loss: 1.8367
+# Epoch 16/50, Loss: 1.8371
 #%%
 # Test after each epoch
 valid_examples, valid_similarities = evaluate_embeddings(model,
