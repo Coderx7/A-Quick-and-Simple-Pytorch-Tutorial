@@ -4169,30 +4169,30 @@ def create_noise_distribution(word_freqs, power=0.75):
     noise_distribution = unigram_dist ** power/torch.sum(unigram_dist**power)
     return noise_distribution
 
-def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=250, uncommon_start_index=2000):
-    """
-    Validate the quality of embeddings using cosine similarity.
-    """
-    device = next(model.parameters()).device
-    # Randomly select common and uncommon words
-    common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index + window_size), validation_size // 2))
-    uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index + window_size), validation_size // 2))
-    val_words = torch.concat((common_words_idx, uncommon_words_idx)).to(device)
-    # Get embeddings from input_embedding
-    embeddings = model.input_embedding(val_words)
-    # previously we calculate the cosine similarty ourseleves
-    # pytorch also offers a builtin cosine_similarity function
-    # lets use that this time!
-    # note that pytorch's version works with a single embedding, 
-    # so we have to call it for each embedding in a loop
-    similarities = []
-    for embed in embeddings:
-        sim = F.cosine_similarity(embed.unsqueeze(0), model.input_embedding.weight)
-        similarities.append(sim)
-    cosine_similarities = torch.stack(similarities)  # (N, vocab_size)
-    # print(f'{val_words.shape=}')
-    # print(f'{cosine_similarities.shape=}')
-    return val_words, cosine_similarities
+# def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=250, uncommon_start_index=2000):
+#     """
+#     Validate the quality of embeddings using cosine similarity.
+#     """
+#     device = next(model.parameters()).device
+#     # Randomly select common and uncommon words
+#     common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index + window_size), validation_size // 2))
+#     uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index + window_size), validation_size // 2))
+#     val_words = torch.concat((common_words_idx, uncommon_words_idx)).to(device)
+#     # Get embeddings from input_embedding
+#     embeddings = model.input_embedding(val_words)
+#     # previously we calculate the cosine similarty ourseleves
+#     # pytorch also offers a builtin cosine_similarity function
+#     # lets use that this time!
+#     # note that pytorch's version works with a single embedding, 
+#     # so we have to call it for each embedding in a loop
+#     similarities = []
+#     for embed in embeddings:
+#         sim = F.cosine_similarity(embed.unsqueeze(0), model.input_embedding.weight)
+#         similarities.append(sim)
+#     cosine_similarities = torch.stack(similarities)  # (N, vocab_size)
+#     # print(f'{val_words.shape=}')
+#     # print(f'{cosine_similarities.shape=}')
+#     return val_words, cosine_similarities
 
 #%%
 # before we continue with training lets first see
@@ -4225,7 +4225,7 @@ model.to(device)
 criterion = SkipGramNegativeSamplingLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.003)
 
-num_epochs = 50
+num_epochs = 20
 batch_size = 512
 window_size = 5
 validation_size = 8
@@ -4238,19 +4238,18 @@ for epoch in range(num_epochs):
         X = torch.LongTensor(X).to(device)
         Y = torch.LongTensor(Y).to(device)
 
-        # Forward pass
-        optimizer.zero_grad()
         input_embeds, target_embeds, noise_embeds = model(X, Y, n_samples=5)
         loss = criterion(input_embeds, target_embeds, noise_embeds)
         
-        # Backward pass and optimization
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         losses.append(loss.item())
         
         if i % interval == 0:
-            test_similarity(model,
+            test_similarity(model.input_embedding,
+                            int2word,
                             validation_size=8,
                             window_size=window_size, 
                             common_start_index=256, 
