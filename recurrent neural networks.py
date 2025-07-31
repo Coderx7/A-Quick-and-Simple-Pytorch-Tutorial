@@ -4385,45 +4385,52 @@ test_similarity(model.input_embedding,
                             common_start_index=256, 
                             uncommon_start_index=2000)
 #%%
-def check_semantic_analogy(embedding_layer, word2int,device):
-    test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
+import pandas as pd
+def check_semantic_analogy(test_words, embedding_layer, word2int,device):
     test_indices = [word2int[word] for word in test_words if word in word2int]
-
-# Get their embeddings
-    test_embeddings = embedding_layer(torch.tensor(test_indices).to(device))
-
-# Compute pairwise cosine similarity to see how each word is related to eachother
-    similarities = torch.mm(test_embeddings, test_embeddings.t()).cpu().detach().numpy()
-
-# Display similarity matrix
-    import pandas as pd
+    # get their embeddings
+    embeddings = embedding_layer(torch.tensor(test_indices).to(device))
+    # to get cosine similarity we need to calculate the itsnorm and then do dotprodcut
+    embeddings_norm = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+    # Compute pairwise cosine similarity to see how each word is related to eachother
+    similarities = torch.mm(embeddings_norm, embeddings_norm.t()).cpu().detach().numpy()
+    # display similarity matrix
     df = pd.DataFrame(similarities, index=test_words, columns=test_words)
     print(df)
+    print()
 
-check_semantic_analogy(model.input_embedding, word2int, device)
+test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
+check_semantic_analogy(test_words, model.input_embedding, word2int, device)
 
-def nearest_neighbors(word, model, word2int, int2word, k=5):
-    if word not in word2int:
-        print(f"Word '{word}' not in vocabulary.")
+test_words2 = ['father', 'mother', 'man','woman','son','daughter']
+check_semantic_analogy(test_words2, model.input_embedding, word2int, device)
+
+def check_nearest_neighbors(word, embedding_layer, word2int, int2word, topk=5):
+    # check if its already in vocab
+    if word.lower() not in word2int:
+        print(f"Word '{word}' does NOT exist in vocabulary.")
         return
-    idx = word2int[word]
-    embedding = model.input_embedding(torch.tensor([idx]).to(device))
-    
-    # Compute cosine similarity with all embeddings
-    all_embeddings = model.input_embedding.weight
+    # grab the index and embedding
+    idx = word2int[word.lower()]
+    embedding = embedding_layer(torch.tensor([idx]).to(device))
+    # compute cosine similarity with all embeddings
+    all_embeddings = embedding_layer.weight
     # print(f'{all_embeddings.shape=}')
     # print(f'{embedding.shape=}')
+    # since we are dealing with one word, we can use pytorch's consine_similarity
     similarity = F.cosine_similarity(embedding, all_embeddings)
     # print(f'{similarity.shape=}')
-    # Get top-k similar words
-    closest_indices = similarity.topk(k + 1).indices.cpu().numpy()  # k+1 to include the word itself
+    # get top-k similar words 
+    # get k+1 to include the word itself
+    closest_indices = similarity.topk(topk + 1).indices.cpu().numpy()
     closest_words = [int2word[i] for i in closest_indices if i != idx]
     
     print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
 
 # Test with some words
 # Given a word, find its nearest neighbors:
-nearest_neighbors('king', model, word2int, int2word)
+check_nearest_neighbors('king', model, word2int, int2word)
+check_nearest_neighbors('Iran', model, word2int, int2word)
 #%%
 #%%
 %matplotlib inline
