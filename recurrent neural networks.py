@@ -3701,29 +3701,13 @@ w,t = next(iter(get_batch(word_list_digitized, 3)))
 print(f'{w=}')
 print(f'{t=}')
 
-# now lets define cosine similarity 
-def cosine_similarity(word2int, embedding_layer, word, topk=5, device='cpu'):
-    # get word index
-    word_idx = torch.tensor(word2int[word], device=device).long()
-    # print(f'{word_idx=}')
-    # get word embedding
-    embeddings = embedding_layer(word_idx)
-    embeddings = embeddings.unsqueeze(0) # add a batch dimension
-    # now cosine similarity is word embedding 
-    # embeddings = torch.LongTensor(embeddings)
-    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(dim=0)
-    similarity = torch.mm(embeddings, embedding_layer.weight.t())/magnitutes 
-
-    return similarity 
-
 # lets create a cosine similarity for validation words, to see how certain words
 # are doing. we create some random words, and take their cosine simlarity in the 
 # embeddings. if their target words are plausible then we are good! lets do this 
-# import numpy as np
 
 def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
                         common_start_index=0, uncommon_start_index=2000):
-    # first lets create some random word indexes 
+    # first lets create some random word indexes
     # we get some common words and some uncommon words. if you recall, we sorted
     # our vocab based on their frequencies, so that the most frequent ones stay 
     # at the very begining and less frequent ones stay at the very end, therefore
@@ -3738,10 +3722,22 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index+window_size), validation_size//2))
     # append both more common and less common word ids together  
     val_words = torch.concat((common_words_idx ,uncommon_words_idx)).to(device)
-    embeddings = embedding_layer(val_words)
-    magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(0)
+    embeddings = embedding_layer(val_words) #(K,E)
 
-    similarity = torch.mm(embeddings,embedding_layer.weight.t())/magnitutes 
+    # calculate cosine similarity
+    # the formula for cosine similarity:
+    # (A, B) = (A · B) / (||A|| * ||B||)
+    # calculate norms-p2(magnitude) for denominator (||A||*||B||)
+    # use keepdim so the shape is retained for our next multiplication
+    embeddings_norm = embeddings.pow(2).sum(dim=1,keepdim=True).sqrt() #(K,1)
+    # for calculating norms we can also use torch.linalg.norm(embedding_layer.weight, dim=1, keepdim=True)
+    all_embeddings_norm = embedding_layer.weight.pow(2).sum(dim=1,keepdim=True).sqrt() #(N,1)
+    # calculate (||A|| * ||B||) it should give us a tensor of shape (K,N) 
+    magnitutes = torch.mm(embeddings_norm, all_embeddings_norm.t())
+    # and finally calculate the similarity
+    # note the epsilon(1e-8) is there for numerical stability in case magnitudes 
+    # face underflow (due to tiny float numbers being multiplied!)
+    similarity = torch.mm(embeddings,embedding_layer.weight.t())/ (magnitutes + 1e-8)
     # or we can use pytorch's builtin cosine_similarity function
     # note that pytorch's version works with a single embedding, 
     # so we have to call it for each embedding in a loop
@@ -3750,7 +3746,21 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     #     sim = F.cosine_similarity(embed.unsqueeze(0), embedding_layer.weight)
     #     similarity.append(sim)
     # similarity = torch.stack(similarity)  # (N, vocab_size)
-    # I prefer our oneliner better!
+    # 
+    # update:
+    # F.cosine_similarity can also be used with vectors!
+    # it can compare a set of vectors to another set using broadcasting! 
+    # so if we unsqueeze the tensors to make their 
+    # dimensions compatible for broadcasting:
+    # embeddings: [16, 300] -> [16, 1, 300]
+    # all_embeddings(embedding_layer.weight): [60k, 300] -> [1, 60k, 300]
+    # pytorch broadcasts these to a common shape [16, 60k, 300] and computes the
+    # similarity along the last dimension (dim=2).
+    # The result is the desired [16, 60k] similarity matrix.
+    # so this oneliner is much better!
+    # 
+    similarity = F.cosine_similarity(embeddings.unsqueeze(1), embedding_layer.weight.unsqueeze(0), dim=2)
+    # assert torch.allclose(similarity,similarity2, atol=1e-7) ,'not the same!'
     
     return val_words, similarity 
 
@@ -3787,7 +3797,13 @@ class SkipGram(nn.Module):
         x = self.fc(x)
         log_probs = F.log_softmax(x,dim=1)
         return log_probs
-    
+
+# model = SkipGram(len(word2int), 300)
+# evaluate_embeddings(model.embedding_layer,
+#                     window_size=5,
+#                     validation_size=8,
+#                     common_start_index=100,
+#                     uncommon_start_index=2000)
 #%%
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -3936,6 +3952,55 @@ print(f"{loss=}")
 print(f"{embedding_size=}")
 print(f"{vocab_size=:,}")
 
+#%%
+# lets run some checks on our model and see how well it works
+# import pandas as pd
+# lets grab a few words and see if the model can correctly identify 
+# any underlying relationship between them 
+def check_semantic_analogy(test_words, embedding_layer, word2int,device):
+    test_indices = [word2int[word] for word in test_words if word in word2int]
+    # get their embeddings
+    embeddings = embedding_layer(torch.tensor(test_indices).to(device))
+    # to get cosine similarity we need to calculate the itsnorm and then do dotprodcut
+    embeddings_norm = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+    # Compute pairwise cosine similarity to see how each word is related to eachother
+    similarities = torch.mm(embeddings_norm, embeddings_norm.t()).cpu().detach().numpy()
+    # display similarity matrix
+    df = pd.DataFrame(similarities, index=test_words, columns=test_words)
+    print(df)
+    print()
+
+def check_nearest_neighbors(word, embedding_layer, word2int, int2word, topk=5):
+    # check if its already in vocab
+    if word.lower() not in word2int:
+        print(f"Word '{word}' does NOT exist in vocabulary.")
+        return
+    # grab the index and embedding
+    idx = word2int[word.lower()]
+    embedding = embedding_layer(torch.tensor([idx]).to(device))
+    # compute cosine similarity with all embeddings
+    all_embeddings = embedding_layer.weight
+    # print(f'{all_embeddings.shape=}')
+    # print(f'{embedding.shape=}')
+    # since we are dealing with one word, we can use pytorch's consine_similarity
+    similarity = F.cosine_similarity(embedding, all_embeddings)
+    # print(f'{similarity.shape=}')
+    # get top-k similar words 
+    # get k+1 to include the word itself
+    closest_indices = similarity.topk(topk + 1).indices.cpu().numpy()
+    closest_words = [int2word[i] for i in closest_indices if i != idx]
+    
+    print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
+
+# lets see if the model can correctly identify their relationships
+test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
+check_semantic_analogy(test_words, model.embedding_layer, word2int, device)
+test_words2 = ['father', 'mother', 'man','woman','son','daughter']
+check_semantic_analogy(test_words2, model.embedding_layer, word2int, device)
+
+# find nearest neighbors to each word
+check_nearest_neighbors('king', model.embedding_layer, word2int, int2word, topk=5)
+check_nearest_neighbors('Iran', model.embedding_layer, word2int, int2word, topk=5)
 #%%
 # now lets visualize them 
 import matplotlib.pyplot as plt
@@ -4169,31 +4234,6 @@ def create_noise_distribution(word_freqs, power=0.75):
     noise_distribution = unigram_dist ** power/torch.sum(unigram_dist**power)
     return noise_distribution
 
-# def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=250, uncommon_start_index=2000):
-#     """
-#     Validate the quality of embeddings using cosine similarity.
-#     """
-#     device = next(model.parameters()).device
-#     # Randomly select common and uncommon words
-#     common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index + window_size), validation_size // 2))
-#     uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index + window_size), validation_size // 2))
-#     val_words = torch.concat((common_words_idx, uncommon_words_idx)).to(device)
-#     # Get embeddings from input_embedding
-#     embeddings = model.input_embedding(val_words)
-#     # previously we calculate the cosine similarty ourseleves
-#     # pytorch also offers a builtin cosine_similarity function
-#     # lets use that this time!
-#     # note that pytorch's version works with a single embedding, 
-#     # so we have to call it for each embedding in a loop
-#     similarities = []
-#     for embed in embeddings:
-#         sim = F.cosine_similarity(embed.unsqueeze(0), model.input_embedding.weight)
-#         similarities.append(sim)
-#     cosine_similarities = torch.stack(similarities)  # (N, vocab_size)
-#     # print(f'{val_words.shape=}')
-#     # print(f'{cosine_similarities.shape=}')
-#     return val_words, cosine_similarities
-
 #%%
 # before we continue with training lets first see
 # what words pop up at which indexes, this gives us
@@ -4254,21 +4294,7 @@ for epoch in range(num_epochs):
                             window_size=window_size, 
                             common_start_index=256, 
                             uncommon_start_index=2000)
-            # valid_examples, valid_similarities = evaluate_embeddings(model,
-            #                                              validation_size=8,
-            #                                              window_size=window_size, 
-            #                                              common_start_index=200, 
-            #                                              uncommon_start_index=60000)
 
-            # valid_examples = valid_examples.cpu()
-            # valid_similarities = valid_similarities.cpu()
-
-            # # Find the top-k most similar words for each validation example
-            # for i, valid_idx in enumerate(valid_examples):
-            #     closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
-            #     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
-            #     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
-            
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
             
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
@@ -4365,19 +4391,6 @@ print(f"{loss=}")
 print(f"{embedding_size=}")
 print(f"{vocab_size=:,}")
 #%%
-# Test after each epoch
-# valid_examples, valid_similarities = evaluate_embeddings(model,
-#                                                          validation_size=16,
-#                                                          window_size=10, 
-#                                                          common_start_index=200, 
-#                                                          uncommon_start_index=2000)
-# valid_examples = valid_examples.cpu()
-# valid_similarities = valid_similarities.cpu()
-# # Find the top-k most similar words for each validation example
-# for i, valid_idx in enumerate(valid_examples):
-#     closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
-#     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
-#     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
 test_similarity(model.input_embedding,
                             int2word,
                             validation_size=8,
@@ -4385,53 +4398,17 @@ test_similarity(model.input_embedding,
                             common_start_index=256, 
                             uncommon_start_index=2000)
 #%%
-import pandas as pd
-def check_semantic_analogy(test_words, embedding_layer, word2int,device):
-    test_indices = [word2int[word] for word in test_words if word in word2int]
-    # get their embeddings
-    embeddings = embedding_layer(torch.tensor(test_indices).to(device))
-    # to get cosine similarity we need to calculate the itsnorm and then do dotprodcut
-    embeddings_norm = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-    # Compute pairwise cosine similarity to see how each word is related to eachother
-    similarities = torch.mm(embeddings_norm, embeddings_norm.t()).cpu().detach().numpy()
-    # display similarity matrix
-    df = pd.DataFrame(similarities, index=test_words, columns=test_words)
-    print(df)
-    print()
 
+# lets see if the model can correctly identify their relationships
 test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
 check_semantic_analogy(test_words, model.input_embedding, word2int, device)
-
 test_words2 = ['father', 'mother', 'man','woman','son','daughter']
 check_semantic_analogy(test_words2, model.input_embedding, word2int, device)
 
-def check_nearest_neighbors(word, embedding_layer, word2int, int2word, topk=5):
-    # check if its already in vocab
-    if word.lower() not in word2int:
-        print(f"Word '{word}' does NOT exist in vocabulary.")
-        return
-    # grab the index and embedding
-    idx = word2int[word.lower()]
-    embedding = embedding_layer(torch.tensor([idx]).to(device))
-    # compute cosine similarity with all embeddings
-    all_embeddings = embedding_layer.weight
-    # print(f'{all_embeddings.shape=}')
-    # print(f'{embedding.shape=}')
-    # since we are dealing with one word, we can use pytorch's consine_similarity
-    similarity = F.cosine_similarity(embedding, all_embeddings)
-    # print(f'{similarity.shape=}')
-    # get top-k similar words 
-    # get k+1 to include the word itself
-    closest_indices = similarity.topk(topk + 1).indices.cpu().numpy()
-    closest_words = [int2word[i] for i in closest_indices if i != idx]
-    
-    print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
+# find nearest neighbors to each word
+check_nearest_neighbors('king', model.input_embedding, word2int, int2word, topk=5)
+check_nearest_neighbors('Iran', model.input_embedding, word2int, int2word, topk=5)
 
-# Test with some words
-# Given a word, find its nearest neighbors:
-check_nearest_neighbors('king', model, word2int, int2word)
-check_nearest_neighbors('Iran', model, word2int, int2word)
-#%%
 #%%
 %matplotlib inline
 %config InlineBackend.figure_format = 'retina'
