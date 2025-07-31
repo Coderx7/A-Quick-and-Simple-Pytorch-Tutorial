@@ -3742,12 +3742,21 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     magnitutes = embedding_layer.weight.pow(2).sum(dim=1).sqrt().unsqueeze(0)
 
     similarity = torch.mm(embeddings,embedding_layer.weight.t())/magnitutes 
+    # or we can use pytorch's builtin cosine_similarity function
+    # note that pytorch's version works with a single embedding, 
+    # so we have to call it for each embedding in a loop
+    # similarity = []
+    # for embed in embeddings:
+    #     sim = F.cosine_similarity(embed.unsqueeze(0), embedding_layer.weight)
+    #     similarity.append(sim)
+    # similarity = torch.stack(similarity)  # (N, vocab_size)
+    # I prefer our oneliner better!
+    
     return val_words, similarity 
 
-
-def test_similarity(model, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
+def test_similarity(embedding_layer, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
     # get examples and their similarities 
-    valid_examples, valid_similarities = evaluate_embeddings(model.embedding_layer,
+    valid_examples, valid_similarities = evaluate_embeddings(embedding_layer,
                                                             window_size=window_size,
                                                             validation_size=validation_size,
                                                             common_start_index=common_start_index,
@@ -3778,7 +3787,8 @@ class SkipGram(nn.Module):
         x = self.fc(x)
         log_probs = F.log_softmax(x,dim=1)
         return log_probs
-
+    
+#%%
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Define the model, loss, and optimizer
@@ -3818,7 +3828,7 @@ for epoch in range(num_epochs):
         optimizer.step()
         
         if i%interval==0:
-            test_similarity(model, int2word, window_size, validation_size, 
+            test_similarity(model.embedding_layer, int2word, window_size, validation_size, 
                             common_start_index=250, uncommon_start_index=2000)#4000
 
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
@@ -3827,6 +3837,7 @@ for epoch in range(num_epochs):
     torch.save({"state_dict":model.state_dict(),
                 "epochs":epoch,
                 "loss":np.mean(losses),
+                "vocab_size":vocab_size,
                 "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
 
 # after 5 epochs this is what we get: 
@@ -3908,20 +3919,28 @@ for epoch in range(num_epochs):
 #  -Epoch 15/50 | Iter 9000 | Loss: 9.1761
 # Epoch 15/50, Loss: 9.1774
 #%%
-# torch.save({"state_dict":model.state_dict(),
-#             "epochs":epoch,
-#             "loss":np.mean(losses),
-#             "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
-# now lets visualize them 
-#%%
+# load checkpoint
 checkpoint = torch.load("./weights/skipgram_model.pth")
+embedding_size = checkpoint['embedding_size']
+vocab_size = checkpoint['vocab_size']
+epoch = checkpoint['epochs']
+loss = checkpoint['loss']
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+model = SkipGram(vocab_size, embedding_size)
+model.to(device)
 model.load_state_dict(checkpoint['state_dict'])
-print(f'embedding_size = {checkpoint["embedding_size"]}')
+print(f'skipgram model loaded!')
+print(f"{epoch=}")
+print(f"{loss=}")
+print(f"{embedding_size=}")
+print(f"{vocab_size=:,}")
+
 #%%
+# now lets visualize them 
+import matplotlib.pyplot as plt
 %matplotlib inline
 %config InlineBackend.figure_format = 'retina'
-
-import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
@@ -3937,20 +3956,21 @@ for idx in range(viz_words):
 #%%
 # Save embeddings
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-np.save("./weights/word_embeddings_skipgram_nonmikolve.npy", embeddings)
+np.save("./weights/word_embeddings_skipgram_mikolve.npy", embeddings)
 
 from sklearn.decomposition import PCA
 
 pca = PCA(n_components=2)
 # plot the first 50 words
-reduced_embeddings = pca.fit_transform(embeddings[:50])  
+embed_pca = pca.fit_transform(embeddings[:50])  
 # use a large figsize so points are not crammed into a tiny plot
 plt.figure(figsize=(24,16))
-plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
+plt.scatter(embed_pca[:, 0], embed_pca[:, 1])
 for i, word in enumerate(word_list[:50]):
-    plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
+    plt.annotate(word, (embed_pca[i, 0], embed_pca[i, 1]))
 plt.show()
 
+    
 #%%
 # ok, now lets create word emebedding using skipgram with negative sampling 
 # why? becasue negative sampling significantly reduces the computation of 
@@ -4149,25 +4169,17 @@ def create_noise_distribution(word_freqs, power=0.75):
     noise_distribution = unigram_dist ** power/torch.sum(unigram_dist**power)
     return noise_distribution
 
-def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=200, uncommon_start_index=2000):
+def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_index=250, uncommon_start_index=2000):
     """
     Validate the quality of embeddings using cosine similarity.
     """
     device = next(model.parameters()).device
-
     # Randomly select common and uncommon words
-    common_words_idx = torch.tensor(random.sample(range(common_start_index, 
-                                                        common_start_index + window_size),
-                                                  validation_size // 2))
-    uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, 
-                                                          uncommon_start_index + window_size),
-                                                    validation_size // 2))
-
+    common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index + window_size), validation_size // 2))
+    uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index + window_size), validation_size // 2))
     val_words = torch.concat((common_words_idx, uncommon_words_idx)).to(device)
-
     # Get embeddings from input_embedding
     embeddings = model.input_embedding(val_words)
-    
     # previously we calculate the cosine similarty ourseleves
     # pytorch also offers a builtin cosine_similarity function
     # lets use that this time!
@@ -4178,7 +4190,6 @@ def evaluate_embeddings(model, validation_size=8, window_size=5, common_start_in
         sim = F.cosine_similarity(embed.unsqueeze(0), model.input_embedding.weight)
         similarities.append(sim)
     cosine_similarities = torch.stack(similarities)  # (N, vocab_size)
-    
     # print(f'{val_words.shape=}')
     # print(f'{cosine_similarities.shape=}')
     return val_words, cosine_similarities
@@ -4239,20 +4250,26 @@ for epoch in range(num_epochs):
         losses.append(loss.item())
         
         if i % interval == 0:
-            valid_examples, valid_similarities = evaluate_embeddings(model,
-                                                         validation_size=8,
-                                                         window_size=window_size, 
-                                                         common_start_index=200, 
-                                                         uncommon_start_index=60000)
+            test_similarity(model,
+                            validation_size=8,
+                            window_size=window_size, 
+                            common_start_index=256, 
+                            uncommon_start_index=2000)
+            # valid_examples, valid_similarities = evaluate_embeddings(model,
+            #                                              validation_size=8,
+            #                                              window_size=window_size, 
+            #                                              common_start_index=200, 
+            #                                              uncommon_start_index=60000)
 
-            valid_examples = valid_examples.cpu()
-            valid_similarities = valid_similarities.cpu()
+            # valid_examples = valid_examples.cpu()
+            # valid_similarities = valid_similarities.cpu()
 
-            # Find the top-k most similar words for each validation example
-            for i, valid_idx in enumerate(valid_examples):
-                closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
-                closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
-                print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+            # # Find the top-k most similar words for each validation example
+            # for i, valid_idx in enumerate(valid_examples):
+            #     closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
+            #     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
+            #     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+            
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
             
     print(f"Epoch {epoch}/{num_epochs}, Loss: {np.mean(losses):.4f}")
@@ -4260,6 +4277,7 @@ for epoch in range(num_epochs):
     torch.save({"state_dict":model.state_dict(),
                 "epochs":epoch,
                 "loss":np.mean(losses),
+                "vocab_size":vocab_size,
                 "embedding_size":embedding_size}, "./weights/skipgram_negativesampling_model.pth")
 # 
 # Epoch 15/50, Loss: 1.8525
@@ -4306,6 +4324,7 @@ for epoch in range(num_epochs):
 # theophylline: theobromine, photosensitivity, cholesterol, methanol, chloroform
 #  -Epoch 16/50 | Iter 7 | Loss: 1.8367
 # Epoch 16/50, Loss: 1.8371
+
 #%%
 # Test after each epoch
 valid_examples, valid_similarities = evaluate_embeddings(model,
@@ -4322,6 +4341,8 @@ for i, valid_idx in enumerate(valid_examples):
     closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+    
+    
 #%%
 test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
 test_indices = [word2int[word] for word in test_words if word in word2int]
