@@ -4323,40 +4323,84 @@ for epoch in range(num_epochs):
 # theophylline: theobromine, photosensitivity, cholesterol, methanol, chloroform
 #  -Epoch 16/50 | Iter 7 | Loss: 1.8367
 # Epoch 16/50, Loss: 1.8371
+# 
+# Epoch 8/20, Loss: 2.0512
+#  Validation similarity test:
+#   -born      | actor, american, actress, singer, writer
+#   -without   | so, not, is, to, if
+#   -article   | history, links, articles, external, includes
+#   -home      | team, stadium, club, run, chicago
+#   -worldwide | uk, million, world, updated, videos
+#   -solar     | earth, orbit, sun, planetary, lunar
+#   -easy      | learn, users, beginners, use, version
+#   -bad       | go, little, make, avoid, out
+#  -Epoch 9/20 | Iter 9000 | Loss: 2.0097
+# Epoch 9/20, Loss: 2.0097
+#  Validation similarity test:
+#   -times     | before, years, in, which, over
+#   -home      | stadium, run, team, season, runs
+#   -without   | be, not, when, them, to
+#   -article   | external, history, see, main, links
+#   -bus       | buses, rail, operates, street, transit
+#   -easy      | users, more, something, provide, make
+#   -solar     | earth, planets, sun, lunar, orbit
+#   -bad       | when, you, waiting, get, couldn
+#  -Epoch 10/20 | Iter 9000 | Loss: 1.9729
+# Epoch 10/20, Loss: 1.9729
+#%%
+# load checkpoint
+checkpoint = torch.load("./weights/skipgram_negativesampling_model.pth")
+embedding_size = checkpoint['embedding_size']
+vocab_size = checkpoint['vocab_size']
+epoch = checkpoint['epochs']
+loss = checkpoint['loss']
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+model = SkipGramWithNegativeSampling(vocab_size, embedding_size)
+model.to(device)
+model.load_state_dict(checkpoint['state_dict'])
+print(f'SkipGramWithNegativeSampling model loaded!')
+print(f"{epoch=}")
+print(f"{loss=}")
+print(f"{embedding_size=}")
+print(f"{vocab_size=:,}")
 #%%
 # Test after each epoch
-valid_examples, valid_similarities = evaluate_embeddings(model,
-                                                         validation_size=16,
-                                                         window_size=10, 
-                                                         common_start_index=200, 
-                                                         uncommon_start_index=2000)
-
-valid_examples = valid_examples.cpu()
-valid_similarities = valid_similarities.cpu()
-
-# Find the top-k most similar words for each validation example
-for i, valid_idx in enumerate(valid_examples):
-    closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
-    closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
-    print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
-    
-    
+# valid_examples, valid_similarities = evaluate_embeddings(model,
+#                                                          validation_size=16,
+#                                                          window_size=10, 
+#                                                          common_start_index=200, 
+#                                                          uncommon_start_index=2000)
+# valid_examples = valid_examples.cpu()
+# valid_similarities = valid_similarities.cpu()
+# # Find the top-k most similar words for each validation example
+# for i, valid_idx in enumerate(valid_examples):
+#     closest_idxs = valid_similarities[i].topk(6).indices.tolist()  # Top-6 words (including itself)
+#     closest_words = [int2word[idx] for idx in closest_idxs if idx != valid_idx.item()]  # Skip itself
+#     print(f"{int2word[valid_idx.item()]:<10}: {', '.join(closest_words)}")
+test_similarity(model.input_embedding,
+                            int2word,
+                            validation_size=8,
+                            window_size=window_size, 
+                            common_start_index=256, 
+                            uncommon_start_index=2000)
 #%%
-test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
-test_indices = [word2int[word] for word in test_words if word in word2int]
+def check_semantic_analogy(embedding_layer, word2int,device):
+    test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
+    test_indices = [word2int[word] for word in test_words if word in word2int]
 
 # Get their embeddings
-test_embeddings = model.input_embedding(torch.tensor(test_indices).to(device))
+    test_embeddings = embedding_layer(torch.tensor(test_indices).to(device))
 
 # Compute pairwise cosine similarity to see how each word is related to eachother
-similarities = torch.mm(test_embeddings, test_embeddings.t()).cpu().detach().numpy()
+    similarities = torch.mm(test_embeddings, test_embeddings.t()).cpu().detach().numpy()
 
 # Display similarity matrix
-import pandas as pd
-df = pd.DataFrame(similarities, index=test_words, columns=test_words)
-print(df)
+    import pandas as pd
+    df = pd.DataFrame(similarities, index=test_words, columns=test_words)
+    print(df)
 
+check_semantic_analogy(model.input_embedding, word2int, device)
 
 def nearest_neighbors(word, model, word2int, int2word, k=5):
     if word not in word2int:
