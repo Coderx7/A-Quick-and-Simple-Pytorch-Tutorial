@@ -3711,6 +3711,21 @@ w,t = next(iter(get_batch(word_list_digitized, 3)))
 print(f'{w=}')
 print(f'{t=}')
 
+#%% 
+# now ok. its time to create our model for embedding learning using skipgram model!
+class SkipGram(nn.Module):
+    def __init__(self, vocab_size, embedding_size=300):
+        super().__init__()
+
+        self.embedding_layer = nn.Embedding(vocab_size, embedding_size)
+        self.fc = nn.Linear(embedding_size, vocab_size)
+        
+    def forward(self, x):
+        x = self.embedding_layer(x)
+        x = self.fc(x)
+        log_probs = F.log_softmax(x,dim=1)
+        return log_probs
+#%%
 # lets create a cosine similarity for validation words, to see how certain words
 # are doing. we create some random words, and take their cosine simlarity in the 
 # embeddings. if their target words are plausible then we are good! lets do this 
@@ -3719,62 +3734,73 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
                         common_start_index=0, uncommon_start_index=2000):
     # first lets create some random word indexes
     # we get some common words and some uncommon words. if you recall, we sorted
-    # our vocab based on their frequencies, so that the most frequent ones stay 
-    # at the very begining and less frequent ones stay at the very end, therefore
-    # choosing a smaller common_start_index means choose more frequently used words,
-    # and a larger uncommon_start_index means, choose less frequently used words.
+    # our vocab based on word frequencies, so that the most frequent ones stay 
+    # at the very begining and the less frequent ones stay at the very end, therefore
+    # choosing a smaller index(i.e. common_start_index) means choosing more frequently
+    # used words, and a larger index(i.e. uncommon_start_index) means, choosing less
+    # frequently used words.
     device = next(embedding_layer.parameters()).device
-    # random.sample(sequence, k)
-    # Parameters:
-    # sequence: Can be a list, tuple, string, or set.
-    # k: An Integer value, it specify the length of a sample.
-    common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index+window_size), validation_size//2) )
+    # random.sample(sequence, k) accepts a list/tuple/string or set with
+    # an integer value k as the length of a sample.
+    common_words_idx = torch.tensor(random.sample(range(common_start_index, common_start_index+window_size), validation_size//2))
     uncommon_words_idx = torch.tensor(random.sample(range(uncommon_start_index, uncommon_start_index+window_size), validation_size//2))
     # append both more common and less common word ids together  
     val_words = torch.concat((common_words_idx ,uncommon_words_idx)).to(device)
     embeddings = embedding_layer(val_words) #(K,E)
 
     # calculate cosine similarity
-    # the formula for cosine similarity:
-    # (A, B) = (A · B) / (||A|| * ||B||)
-    # calculate norms-p2(magnitude) for denominator (||A||*||B||)
-    # use keepdim so the shape is retained for our next multiplication
+    # the formula for cosine similarity is (A, B) = (A · B) / (||A|| * ||B||)
+    # ||A|| means L2 norm (euclidian norm) or p2-norm(magnitude) for A,
+    # so ||A||*||B|| means our denominator
+    # is the multiplication of l2-norms of both tensors.
+    # for calculating norms, we have a few options. we can use the old schoolway
+    # which is embeddings.pow(2).sum(dim=1,keepdim=True).sqrt()
+    # we use keepdim so the shape is retained for our next multiplication
+    # we can also use torch.linalg.norm(embeddings, dim=1, keepdim=True) for this
+    #
     # embeddings_norm = embeddings.pow(2).sum(dim=1,keepdim=True).sqrt() #(K,1)
-    # for calculating norms we can also use torch.linalg.norm(embedding_layer.weight, dim=1, keepdim=True)
     # all_embeddings_norm = embedding_layer.weight.pow(2).sum(dim=1,keepdim=True).sqrt() #(N,1)
-    # calculate (||A|| * ||B||) it should give us a tensor of shape (K,N) 
+    # 
+    # our denominator (||A||*||B||) should have a shape (K,N) 
     # magnitutes = torch.mm(embeddings_norm, all_embeddings_norm.t())
-    # and finally calculate the similarity
+    # 
+    # and finally to calculate the similarity we put all of this together
     # note the epsilon(1e-8) is there for numerical stability in case magnitudes 
     # face underflow (due to tiny float numbers being multiplied!)
-    # similarity = torch.mm(embeddings,embedding_layer.weight.t())/ (magnitutes + 1e-8)
-    # or we can use pytorch's builtin cosine_similarity function
-    # note that pytorch's version works with a single embedding, 
-    # so we have to call it for each embedding in a loop
-    # similarity = []
-    # for embed in embeddings:
-    #     sim = F.cosine_similarity(embed.unsqueeze(0), embedding_layer.weight)
-    #     similarity.append(sim)
-    # similarity = torch.stack(similarity)  # (N, vocab_size)
+    # similarity1 = torch.mm(embeddings, embedding_layer.weight.t())/ (magnitutes + 1e-8)
     # 
-    # update:
-    # F.cosine_similarity can also be used with vectors!
-    # it can compare a set of vectors to another set using broadcasting! 
-    # so if we unsqueeze the tensors to make their 
-    # dimensions compatible for broadcasting:
-    # embeddings: [16, 300] -> [16, 1, 300]
-    # all_embeddings(embedding_layer.weight): [60k, 300] -> [1, 60k, 300]
-    # pytorch broadcasts these to a common shape [16, 60k, 300] and computes the
-    # similarity along the last dimension (dim=2).
-    # The result is the desired [16, 60k] similarity matrix.
-    # so this oneliner is much better!
+    # or we can use pytorch's builtin cosine_similarity function
+    # this is how we use a single embedding example using pytorch's function
+    # since we have more than 1 embedding, we have to call it for 
+    # each embedding in a loop
+    # similarities = []
+    # for embedding in embeddings:
+    #     similarity_score = F.cosine_similarity(embedding.unsqueeze(0), embedding_layer.weight)
+    #     similarities.append(similarity_score)
+    # similarities = torch.stack(similarities)  # (N, vocab_size)
+    # 
+    # this is not efficent though!, we can do better!
+    # F.cosine_similarity can also be used with vectors! it can compare 
+    # a set of vectors to another set using broadcasting! so if we unsqueeze
+    # the tensors to make their dimensions compatible for broadcasting, we can
+    # have a oneliner!
+    # for example if our embeddings shape is [16, 300] and 
+    # mbedding_layer.weight shape is [60k, 300] we can do the broadcasting like this
+    # embeddings:            [16 , 300] -> [16, 1, 300]
+    # mbedding_layer.weight: [60k, 300] -> [1, 60k, 300]
+    # now pytorch can broadcast them to a common shape [16, 60k, 300] and compute
+    # the similarity along the last dimension (dim=2).
+    # The result is [16, 60k] and is exactly what we want!
     # 
     similarity = F.cosine_similarity(embeddings.unsqueeze(1), embedding_layer.weight.unsqueeze(0), dim=2)
-    # assert torch.allclose(similarity,similarity2, atol=1e-7) ,'not the same!'
+    # we can check our implementation is the same as pytorchs by comparing the two results
+    # note because of numerical instabilities in floating point operations, our version
+    # is only 1e-7 accurate and its ok for us if not we can use pytorchs version
+    # assert torch.allclose(similarity1,similarity, atol=1e-7) ,'not the same!'
     return val_words, similarity 
 
-# lets check the analogy test (i.e. a is to b as c is to d).
-# like king to man is queen to woman
+# lets have an analogy test (i.e. a is to b as c is to d).
+# like king to man is queen to woman, things like that
 # its a simple arithmetic operation vec(a) - vec(b) + vec(c) = vec(d)
 def check_analogy_test(word_a, word_b, word_c, embedding_layer, word2int, int2word, top_k=5):
     for w in [word_a, word_b, word_c]:
@@ -3782,7 +3808,7 @@ def check_analogy_test(word_a, word_b, word_c, embedding_layer, word2int, int2wo
             print(f"Error: word '{w}' does NOT exist in the vocabulary!")
             return
 
-    # normalize the entire vocabulary embedding matrix once for efficiency
+    # we normalize the entire vocabulary embedding matrix once for efficiency
     # after this using a simple dotproduct we can get consine similarity!
     all_embeddings_norm = F.normalize(embedding_layer.weight, p=2, dim=1)
     
@@ -3801,7 +3827,7 @@ def check_analogy_test(word_a, word_b, word_c, embedding_layer, word2int, int2wo
     # dont forget to exclude input words from top results (forexample woman
     # shouldnt be in the results if its in the query!)
     exclude_indices = [word2int[w] for w in [word_a, word_b, word_c]]
-    # we disable them by setting a very low number denoting their rank/similarity rate
+    # we disable them by assigning thme a very low number denoting their rank/similarity score
     similarities[exclude_indices] = -10.0
     
     # get the top k results
@@ -3813,10 +3839,10 @@ def check_analogy_test(word_a, word_b, word_c, embedding_layer, word2int, int2wo
         idx = top_indices[i].item()
         word = int2word[idx]
         score = top_scores[i].item()
-        print(f"  - {word:<15} (Score: {score:.4f})")
+        print(f"  - {word:<15} (score: {score:.4f})")
     # print()
 
-def evalualte_model_quality(embedding_layer, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
+def evalualte_model_quality(embedding_layer, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000,topk=6):
     # get examples and their similarities 
     valid_examples, valid_similarities = evaluate_embeddings(embedding_layer,
                                                             window_size=window_size,
@@ -3824,7 +3850,7 @@ def evalualte_model_quality(embedding_layer, int2word, window_size, validation_s
                                                             common_start_index=common_start_index,
                                                             uncommon_start_index=uncommon_start_index)
     # get topk highest similar words
-    _, closest_idxs = valid_similarities.topk(6)
+    _, closest_idxs = valid_similarities.topk(topk)
     valid_examples = valid_examples.cpu()
     closest_idxs =  closest_idxs.cpu()
   
@@ -3835,30 +3861,17 @@ def evalualte_model_quality(embedding_layer, int2word, window_size, validation_s
     
     # run some analogy tests at the end, note since our dataset is very limited
     # we cant do many diverse tests for example I cant do Iran/Tehran, there are
-    # only 4 sentences about Iran in the whole dataset if im not mistaken so 
-    # this should be enough for testing purposes.
+    # only 4 sentences about Iran in the whole dataset, so is the case for many
+    # many other things, like Japan, China, other countries, verb tenses, things, etc
+    # so we have to keep it simple here. 
+    # this should be enough for our evaluation/testing purposes.
     # we are checking analogies like a:b :: c:d
-    # king:man :: queen:woman 
+    # king:man :: queen:woman (we should get woman!)
     check_analogy_test('king', 'man', 'woman', embedding_layer, word2int, int2word)
+    # we should get mother
     check_analogy_test('father', 'man', 'woman', embedding_layer, word2int, int2word)
+    # we should get wife
     check_analogy_test('husband', 'man', 'woman', embedding_layer, word2int, int2word)
-
-#%% 
-random.seed(10)
-np.random.seed(10)
-# now ok. its time to create our model for embedding learning using skipgram! model
-class SkipGram(nn.Module):
-    def __init__(self, vocab_size, embedding_size=300):
-        super().__init__()
-
-        self.embedding_layer = nn.Embedding(vocab_size, embedding_size)
-        self.fc = nn.Linear(embedding_size, vocab_size)
-        
-    def forward(self, x):
-        x = self.embedding_layer(x)
-        x = self.fc(x)
-        log_probs = F.log_softmax(x,dim=1)
-        return log_probs
 
 # model = SkipGram(len(word2int), 300)
 # evaluate_embeddings(model.embedding_layer,
@@ -3866,17 +3879,21 @@ class SkipGram(nn.Module):
 #                     validation_size=8,
 #                     common_start_index=100,
 #                     uncommon_start_index=2000)
+
 #%%
+# random.seed(10)
+# np.random.seed(10)
+# 
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# Define the model, loss, and optimizer
+
 embedding_size = 300
 vocab_size = len(word2int)
 
 model = SkipGram(vocab_size, embedding_size)
 model.to(device)
 # note we are using log_softmax, so we must use nllloss here,
-criterion = nn.NLLLoss()  # or implement negative sampling
+criterion = nn.NLLLoss()  # or implement negative sampling (our next implementation)
 optimizer = optim.Adam(model.parameters(), lr=0.003)
 
 # Training loop
@@ -3884,15 +3901,15 @@ num_epochs = 50
 batch_size = 512
 window_size = 5
 validation_size = 8
-# a batchsize of 64, results in around 1000 iterations
-# with a batchsize of 512, there is around 9000 iterations
+# with 4.6m words in our dataset after all normalization/cleaning,
+# with a batchsize of 512, there will be around 9000 iterations
 interval = 9000
 
 for epoch in range(num_epochs):
     losses = []
-    for i,(X, Y) in enumerate(get_batch(word_list_digitized, 
+    for i,(X, Y) in tqdm(enumerate(get_batch(word_list_digitized, 
                                         batch_size=batch_size, 
-                                        window_size=window_size), start=1):
+                                        window_size=window_size), start=1)):
         X = torch.LongTensor(X).to(device)
         Y = torch.LongTensor(Y).to(device)
         
