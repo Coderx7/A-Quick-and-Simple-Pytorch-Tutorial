@@ -3447,10 +3447,20 @@ print(f"The review is {'negative' if pred.item() == 0 else 'positive'}")
 # High similarity between input and actual context words and
 # Low similarity between input and randomly sampled negative words.
 
-import random 
+import random
 import numpy as np 
 import string
 from collections import Counter
+
+import pandas as pd
+
+# for visualizations that need dimensionality reduction
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+
+import matplotlib.pyplot as plt
+%matplotlib inline
+%config InlineBackend.figure_format = 'retina'
 
 import torch
 import torch.nn as nn
@@ -3729,15 +3739,15 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     # (A, B) = (A · B) / (||A|| * ||B||)
     # calculate norms-p2(magnitude) for denominator (||A||*||B||)
     # use keepdim so the shape is retained for our next multiplication
-    embeddings_norm = embeddings.pow(2).sum(dim=1,keepdim=True).sqrt() #(K,1)
+    # embeddings_norm = embeddings.pow(2).sum(dim=1,keepdim=True).sqrt() #(K,1)
     # for calculating norms we can also use torch.linalg.norm(embedding_layer.weight, dim=1, keepdim=True)
-    all_embeddings_norm = embedding_layer.weight.pow(2).sum(dim=1,keepdim=True).sqrt() #(N,1)
+    # all_embeddings_norm = embedding_layer.weight.pow(2).sum(dim=1,keepdim=True).sqrt() #(N,1)
     # calculate (||A|| * ||B||) it should give us a tensor of shape (K,N) 
-    magnitutes = torch.mm(embeddings_norm, all_embeddings_norm.t())
+    # magnitutes = torch.mm(embeddings_norm, all_embeddings_norm.t())
     # and finally calculate the similarity
     # note the epsilon(1e-8) is there for numerical stability in case magnitudes 
     # face underflow (due to tiny float numbers being multiplied!)
-    similarity = torch.mm(embeddings,embedding_layer.weight.t())/ (magnitutes + 1e-8)
+    # similarity = torch.mm(embeddings,embedding_layer.weight.t())/ (magnitutes + 1e-8)
     # or we can use pytorch's builtin cosine_similarity function
     # note that pytorch's version works with a single embedding, 
     # so we have to call it for each embedding in a loop
@@ -3761,10 +3771,52 @@ def evaluate_embeddings(embedding_layer, window_size=100, validation_size=16,
     # 
     similarity = F.cosine_similarity(embeddings.unsqueeze(1), embedding_layer.weight.unsqueeze(0), dim=2)
     # assert torch.allclose(similarity,similarity2, atol=1e-7) ,'not the same!'
-    
     return val_words, similarity 
 
-def test_similarity(embedding_layer, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
+# lets check the analogy test (i.e. a is to b as c is to d).
+# like king to man is queen to woman
+# its a simple arithmetic operation vec(a) - vec(b) + vec(c) = vec(d)
+def check_analogy_test(word_a, word_b, word_c, embedding_layer, word2int, int2word, top_k=5):
+    for w in [word_a, word_b, word_c]:
+        if w not in word2int:
+            print(f"Error: word '{w}' does NOT exist in the vocabulary!")
+            return
+
+    # normalize the entire vocabulary embedding matrix once for efficiency
+    # after this using a simple dotproduct we can get consine similarity!
+    all_embeddings_norm = F.normalize(embedding_layer.weight, p=2, dim=1)
+    
+    # get the normalized vectors for our three words
+    vec_a = all_embeddings_norm[word2int[word_a]] #e.g. king
+    vec_b = all_embeddings_norm[word2int[word_b]] #e.g. man
+    vec_c = all_embeddings_norm[word2int[word_c]] #e.g. woman
+    
+    # its anologous to d ≈ a-b + c
+    result_vec =  vec_a - vec_b + vec_c
+    
+    # find the cosine similarity between our result vector and all words in the vocab
+    # torch.mv does matrix-vector multiplication but 
+    similarities = torch.mv(all_embeddings_norm, result_vec)
+    
+    # dont forget to exclude input words from top results (forexample woman
+    # shouldnt be in the results if its in the query!)
+    exclude_indices = [word2int[w] for w in [word_a, word_b, word_c]]
+    # we disable them by setting a very low number denoting their rank/similarity rate
+    similarities[exclude_indices] = -10.0
+    
+    # get the top k results
+    top_scores, top_indices = torch.topk(similarities, k=top_k)
+    
+    print(f"Analogy: {word_a} - {word_b} + {word_c} = ?")
+    print("Top results:")
+    for i in range(top_k):
+        idx = top_indices[i].item()
+        word = int2word[idx]
+        score = top_scores[i].item()
+        print(f"  - {word:<15} (Score: {score:.4f})")
+    # print()
+
+def evalualte_model_quality(embedding_layer, int2word, window_size, validation_size, common_start_index=250, uncommon_start_index=2000):
     # get examples and their similarities 
     valid_examples, valid_similarities = evaluate_embeddings(embedding_layer,
                                                             window_size=window_size,
@@ -3772,14 +3824,24 @@ def test_similarity(embedding_layer, int2word, window_size, validation_size, com
                                                             common_start_index=common_start_index,
                                                             uncommon_start_index=uncommon_start_index)
     # get topk highest similar words
-    _, closest_idxs = valid_similarities.topk(6) 
-    valid_examples = valid_examples.to('cpu')
-    closest_idxs =  closest_idxs.to('cpu')
+    _, closest_idxs = valid_similarities.topk(6)
+    valid_examples = valid_examples.cpu()
+    closest_idxs =  closest_idxs.cpu()
   
     print(f' Validation similarity test:')
     for i, valid_idx in enumerate(valid_examples):
         closest_words = [int2word[idx.item()] for idx in closest_idxs[i]][1:]
         print(f"  -{int2word[valid_idx.item()]:<10}| {', '.join(closest_words)}")
+    
+    # run some analogy tests at the end, note since our dataset is very limited
+    # we cant do many diverse tests for example I cant do Iran/Tehran, there are
+    # only 4 sentences about Iran in the whole dataset if im not mistaken so 
+    # this should be enough for testing purposes.
+    # we are checking analogies like a:b :: c:d
+    # king:man :: queen:woman 
+    check_analogy_test('king', 'man', 'woman', embedding_layer, word2int, int2word)
+    check_analogy_test('father', 'man', 'woman', embedding_layer, word2int, int2word)
+    check_analogy_test('husband', 'man', 'woman', embedding_layer, word2int, int2word)
 
 #%% 
 random.seed(10)
@@ -3844,8 +3906,8 @@ for epoch in range(num_epochs):
         optimizer.step()
         
         if i%interval==0:
-            test_similarity(model.embedding_layer, int2word, window_size, validation_size, 
-                            common_start_index=250, uncommon_start_index=2000)#4000
+            evalualte_model_quality(model.embedding_layer, int2word, window_size, validation_size, 
+                                    common_start_index=250, uncommon_start_index=2000)#4000
 
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
 
@@ -3954,17 +4016,19 @@ print(f"{vocab_size=:,}")
 
 #%%
 # lets run some checks on our model and see how well it works
-# import pandas as pd
+
 # lets grab a few words and see if the model can correctly identify 
 # any underlying relationship between them 
 def check_semantic_analogy(test_words, embedding_layer, word2int,device):
     test_indices = [word2int[word] for word in test_words if word in word2int]
     # get their embeddings
     embeddings = embedding_layer(torch.tensor(test_indices).to(device))
-    # to get cosine similarity we need to calculate the itsnorm and then do dotprodcut
+    # to get cosine similarity we need to unit normalize the embeddings
     embeddings_norm = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-    # Compute pairwise cosine similarity to see how each word is related to eachother
+    # since the vectors are normalized this dot product is exactly equal to
+    # the cosine similarity
     similarities = torch.mm(embeddings_norm, embeddings_norm.t()).cpu().detach().numpy()
+    
     # display similarity matrix
     df = pd.DataFrame(similarities, index=test_words, columns=test_words)
     print(df)
@@ -3992,21 +4056,30 @@ def check_nearest_neighbors(word, embedding_layer, word2int, int2word, topk=5):
     
     print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
 
+#%%
+evalualte_model_quality(model.embedding_layer,
+                int2word,
+                validation_size=8,
+                window_size=window_size, 
+                common_start_index=256, 
+                uncommon_start_index=2000)
+
 # lets see if the model can correctly identify their relationships
 test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
 check_semantic_analogy(test_words, model.embedding_layer, word2int, device)
 test_words2 = ['father', 'mother', 'man','woman','son','daughter']
 check_semantic_analogy(test_words2, model.embedding_layer, word2int, device)
 
+# should give us son and price
+check_analogy_test('daughter', 'woman', 'man', model.embedding_layer, word2int, int2word)
+check_analogy_test('princess', 'woman', 'man', model.embedding_layer, word2int, int2word)
+
 # find nearest neighbors to each word
 check_nearest_neighbors('king', model.embedding_layer, word2int, int2word, topk=5)
 check_nearest_neighbors('Iran', model.embedding_layer, word2int, int2word, topk=5)
 #%%
 # now lets visualize them 
-import matplotlib.pyplot as plt
-%matplotlib inline
-%config InlineBackend.figure_format = 'retina'
-from sklearn.manifold import TSNE
+
 
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
 viz_words = 200
@@ -4022,8 +4095,6 @@ for idx in range(viz_words):
 # Save embeddings
 embeddings = model.embedding_layer.weight.detach().cpu().numpy()
 np.save("./weights/word_embeddings_skipgram_mikolve.npy", embeddings)
-
-from sklearn.decomposition import PCA
 
 pca = PCA(n_components=2)
 # plot the first 50 words
@@ -4288,12 +4359,12 @@ for epoch in range(num_epochs):
         losses.append(loss.item())
         
         if i % interval == 0:
-            test_similarity(model.input_embedding,
-                            int2word,
-                            validation_size=8,
-                            window_size=window_size, 
-                            common_start_index=256, 
-                            uncommon_start_index=2000)
+            evalualte_model_quality(model.input_embedding,
+                                    int2word,
+                                    validation_size=8,
+                                    window_size=window_size, 
+                                    common_start_index=256, 
+                                    uncommon_start_index=2000)
 
             print(f' -Epoch {epoch}/{num_epochs} | Iter {i} | Loss: {np.mean(losses):.4f}')
             
@@ -4328,51 +4399,29 @@ for epoch in range(num_epochs):
 # Epoch 17/50, Loss: 1.8331
 #
 # second test
-# Epoch 14/50, Loss: 1.8662
-# order     : to, their, certain, given, when
-# party     : election, democratic, parties, elections, elected
-# president : elected, presidential, presidency, cabinet, legislative
-# political : politics, social, government, leaders, politicians
-# shortlist : seanad, latvijas, supranationalism, nominations, wirtschaftswunder
-# theophylline: theobromine, glucose, soluble, chloroform, photosensitivity
-# esta      : ffff, exclamation, tele, tria, gg
-# whitgift  : charenton, preacher, marpeck, degli, tyrone
-#  -Epoch 15/50 | Iter 7 | Loss: 1.8503
-# Epoch 15/50, Loss: 1.8506
-# order     : orders, knights, ordered, their, to
-# usually   : are, or, can, sometimes, typically
-# president : presidential, elected, presidency, cabinet, election
-# party     : democratic, election, parties, seats, elected
-# ahman     : caldwell, roberts, sawyer, korchnoi, trot
-# esta      : ffff, tria, gg, clickable, corbusier
-# whitgift  : marpeck, degli, episcopacy, prelate, charenton
-# theophylline: theobromine, photosensitivity, cholesterol, methanol, chloroform
-#  -Epoch 16/50 | Iter 7 | Loss: 1.8367
-# Epoch 16/50, Loss: 1.8371
-# 
-# Epoch 8/20, Loss: 2.0512
+# Epoch 17/20, Loss: 1.8329
 #  Validation similarity test:
-#   -born      | actor, american, actress, singer, writer
-#   -without   | so, not, is, to, if
-#   -article   | history, links, articles, external, includes
-#   -home      | team, stadium, club, run, chicago
-#   -worldwide | uk, million, world, updated, videos
-#   -solar     | earth, orbit, sun, planetary, lunar
-#   -easy      | learn, users, beginners, use, version
-#   -bad       | go, little, make, avoid, out
-#  -Epoch 9/20 | Iter 9000 | Loss: 2.0097
-# Epoch 9/20, Loss: 2.0097
+#   -east      | west, north, eastern, central, city
+#   -air       | aircraft, force, ground, navy, bomber
+#   -members   | leaders, organizations, many, membership, joined
+#   -thus      | to, this, that, same, constantly
+#   -expression| expressions, term, variable, values, pi
+#   -argue     | argued, proponents, deconstructive, critique, believe
+#   -processing| processed, electronics, data, outputs, computational
+#   -solid     | liquid, plastic, metal, crystalline, fed
+#  -Epoch 18/20 | Iter 9000 | Loss: 1.8241
+# Epoch 18/20, Loss: 1.8242
 #  Validation similarity test:
-#   -times     | before, years, in, which, over
-#   -home      | stadium, run, team, season, runs
-#   -without   | be, not, when, them, to
-#   -article   | external, history, see, main, links
-#   -bus       | buses, rail, operates, street, transit
-#   -easy      | users, more, something, provide, make
-#   -solar     | earth, planets, sun, lunar, orbit
-#   -bad       | when, you, waiting, get, couldn
-#  -Epoch 10/20 | Iter 9000 | Loss: 1.9729
-# Epoch 10/20, Loss: 1.9729
+#   -members   | membership, groups, member, parliament, majority
+#   -air       | force, aircraft, airborne, boeing, aviation
+#   -thus      | this, when, as, to, another
+#   -east      | west, south, north, eastern, southwest
+#   -solid     | liquid, electrolyte, heating, plastic, glass
+#   -processing| outputs, processed, electronics, program, computational
+#   -argue     | proponents, reject, critics, advocates, argued
+#   -expression| expressions, is, term, expressed, formal
+#  -Epoch 19/20 | Iter 9000 | Loss: 1.8160
+# Epoch 19/20, Loss: 1.8162
 #%%
 # load checkpoint
 checkpoint = torch.load("./weights/skipgram_negativesampling_model.pth")
@@ -4391,12 +4440,12 @@ print(f"{loss=}")
 print(f"{embedding_size=}")
 print(f"{vocab_size=:,}")
 #%%
-test_similarity(model.input_embedding,
-                            int2word,
-                            validation_size=8,
-                            window_size=window_size, 
-                            common_start_index=256, 
-                            uncommon_start_index=2000)
+evalualte_model_quality(model.input_embedding,
+                int2word,
+                validation_size=8,
+                window_size=window_size, 
+                common_start_index=256, 
+                uncommon_start_index=2000)
 #%%
 
 # lets see if the model can correctly identify their relationships
@@ -4404,6 +4453,10 @@ test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
 check_semantic_analogy(test_words, model.input_embedding, word2int, device)
 test_words2 = ['father', 'mother', 'man','woman','son','daughter']
 check_semantic_analogy(test_words2, model.input_embedding, word2int, device)
+
+# should give us son and price
+check_analogy_test('daughter', 'woman', 'man', model.embedding_layer, word2int, int2word)
+check_analogy_test('princess', 'woman', 'man', model.embedding_layer, word2int, int2word)
 
 # find nearest neighbors to each word
 check_nearest_neighbors('king', model.input_embedding, word2int, int2word, topk=5)
@@ -4443,7 +4496,6 @@ plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
 for i, word in enumerate(word_list[:50]):
     plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
 plt.show()
-
 
 # recap
 # we used cosine similarity values to show High similarity for semantically related words.
