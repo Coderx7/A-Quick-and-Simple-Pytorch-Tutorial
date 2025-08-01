@@ -3402,8 +3402,10 @@ print(f"The review is {'negative' if pred.item() == 0 else 'positive'}")
 # we usually dont bother using lstms for these kinds of tasks anymore, we now use transformers!
 # transformers are our goto models when dealing with anything nlp! we will cover transformers in later chapters. 
 #%%
-# word embedding 
-# for word embedding training we have several methods, word2vec is one of them
+# 
+# Word Embedding - SkipGram
+# 
+# For word embedding training we have several methods, word2vec is one of them
 # here we will be using the skipgram model. we can train skipgram model with negative sampling
 # we will implement both!
 # the skipgram model is simply an embedding layer with a fullyconnected/linear layer 
@@ -3419,33 +3421,31 @@ print(f"The review is {'negative' if pred.item() == 0 else 'positive'}")
 # Here, we’ll focus on the Skip-Gram model, and implement it with and without Negative Sampling.
 #
 # the normal skip-gram model works this way:
-# given a center word (input word), it predicts the context words(surrounding words)
-# the model itself is pretty simple. its made of : 
-# An embedding layer, which maps input words to a vector representation.
-# followed by a fully connected layer/linear layer, which transforms the embeddings
-# which finally is fed into a log-softmax layer, to output the probabilities of context words.
-# The model is trained to maximize the probability of correct context words appearing around 
-# a given input word.
+# given a center word (input word), the model predicts the context words i.e. the
+# surrounding words. the model itself is pretty simple. its made of an embedding
+# layer, to map input words to a vector representation then a fully connected layer/
+# linear layer, which transforms the embeddings from previous stage to be fed into
+# a log-softmax layer, to output the probabilities of said context words.
+# The model is trained to maximize the probability of correct context words 
+# appearing around a given input word.
 
 # Skip-Gram with Negative Sampling
-# In the Skip-Gram with Negative Sampling (SGNS) variant, we modify the architecture and loss function
-# for efficiency and effectiveness.
-# in our model, we now have two embedding layers, one for the input words and
-# one for the output (context) words.
-# The embeddings from these layers are adjusted separately.
-# 
-# the training prcess goes this way: 
-# we Feed an input word into the input embedding layer to get its vector representation.
-# we Use this representation to predict multiple target context words by/through the output embedding layer.
-# Instead of updating all context word probabilities (as in the full softmax),
-# we use Negative Sampling:
-# in which we Select a small number of positive pairs (input word and actual context words).
-# and then randomly sample several negative pairs (input word and random/non-context words) 
-# from a noise distribution.
-#
-# this will make sure :
-# High similarity between input and actual context words and
-# Low similarity between input and randomly sampled negative words.
+# In the Skip-Gram with Negative Sampling variant, we modify the architecture
+# and the loss function to be more efficient and effective as well. the skipgram
+# model incurs a lot of overhead simply because of the way it works. in this version
+# we now have two embedding layers, one for the input words and one for the output 
+# (context) words. the embeddings from these layers are adjusted separately.
+# the training prcess goes like this: 
+# we feed an input word into the input embedding layer to get its vector representation.
+# we then use this representation to predict multiple target context words by/through
+# the output embedding layer.
+# instead of updating all context word probabilities (as in the full softmax like before),
+# we use negative sampling in which we select a small number of positive pairs 
+# (input word and actual context words) and then randomly sample several negative 
+# pairs (input word and random/non-context words) from a noise distribution.
+# this allows us to have high similarity between input and actual context words
+# and low similarity between input and randomly sampled negative words.
+# and it works much better and trais much faster than the simple skipgram as well see!
 
 import random
 import numpy as np 
@@ -3484,7 +3484,8 @@ with open(dataset_path,'r') as file :
 # but first lets do : 
 # 1. remove punctuations ,actually replacing them with proper symbols
 # 2. remove less frequent words 
-# 3. remove some common/uncommen words based on mikolove criteria
+# 3. balance words based on mikolove criteria to address imbalanced data
+#
 # removing punctuations 
 def remove_punctuations(input_corpus):
     # this is kind of a glorified version of replace()!
@@ -3512,56 +3513,12 @@ def remove_punctuations(input_corpus):
 
 corpus = remove_punctuations(corpus_raw)
 # now remove less frequent words 
-# sort the word list 
-# create word2int int2word 
 # calculate mikolove formula
-# create subsampling 
+# create subsampling and get final dataset
+# create and sort vocab from word counts from final dataset
+# create word2int int2word using vocab
+# convert dataset to digitize for training
 
-# note: 
-# Ive got this wrong initially, so I leave this portion of it commented out here
-# and explain why this is wrong and how I went wrong! the correct implementation 
-# follows afterwards.
-# lets calculate each words frequency (count) in our dataset
-# we need this for both filtering the least/most used words and
-# also for mikolov formula
-# word_counts = Counter(corpus.split())
-# word_frequency_min = 5
-# word_counts_filtered = {word:freq for word,freq in word_counts.items() if freq>word_frequency_min}
-# get a sorted list of words, ordered in a decending fashion!
-# word_list = sorted(word_counts_filtered, key=word_counts_filtered.get, reverse=True)
-# 
-# should be 'the'
-# print(f'{word_list[0]=}')
-# print(f'{len(word_list)=}')
-# create word2int and int2word dicts
-# int2word = dict(enumerate(word_list))
-# word2int = {word:idx for idx,word in int2word.items()}
-# print(f'{int2word=}')
-# print(f'{word2int=}')
-# 
-# now lets do subsampling, we'll remove some common and uncommon words. 
-# using mikolov formula w = sqrt(t/word_freq)
-# lets calculate word frequencies
-# temp_dic = Counter(word_list)
-# word_frq_dict = {word:1-math.sqrt(freq/len(word_list)) for (word,freq) in temp_dic.items()}
-# threshold = 1e-5 
-# word_list = [word for word in word_list if random.random() < word_frq_dict[word]]
-# print(f'{word_list[0]=}')
-# print(f'{len(word_list)=}')
-######
-# whats wrong with this? 
-# first of all I failed to apply the actual Mikolov's formula!(I found out it doesnt work during training!)
-# second of all, I filtered the words based on a probability which 
-# is not correct. freq/len(word_list) does not correctly calculate the word frequency.
-# I should have divided the word count by the total number of words in the corpus, 
-# not the number of unique words in the vocabulary.
-# I also pretty obviously didnt use threshold t, which is central to Mikolov's method and instead used my own
-# thresholding procedure!
-# third, my filtering step is inconsistent because word_list is reused without recalculating 
-# valid probabilities after filtering (im using the opposite of mikolove's method here basically
-# see my explanation below)
-#
-# Correct implementation
 words_in_corpus = corpus.split() # should be 253,854 words
 word_counts = Counter(words_in_corpus)
 # total number of words in the corpus
@@ -3582,8 +3539,10 @@ total_count = len(words_in_corpus) # or we could also do sum(word_counts.values(
 # frequencies with respect to the whole corpus
 word_freqs = {word: freq/total_count for word, freq in word_counts.items()}
 print(f'number of times "the" is repeated in the corpus: {word_freqs['the']:.4f}')
-# this is the 
-threshold = 1e-5
+# this is the threshold, see the notes ahead 
+# for how to choose the right value
+threshold = 1e-4 # 1e-5
+print(f'subsampling threshold: {threshold}')
 # here we calculate the mikolov formula (1-sqrt(t/f(w)))
 # where t is the threshold parameter and f(w_i) is the 
 # frequency of the ith word (w_i) in the whole dataset.
@@ -3596,17 +3555,70 @@ threshold = 1e-5
 # This process is called subsampling by Mikolov. 
 # For each word in the training set, we'll discard it with probability given by
 # (1-sqrt(t/f(w)))
-probablity_drop = {word: 1 - np.sqrt(threshold / word_freqs[word]) for word in word_counts}
-print(f'{len(probablity_drop)=:,}')
+print(f'dataset before subsamping:')
+print(f"{' '.join(words_in_corpus[:50])}")
+
+# probablity_drop = {word: 1 - np.sqrt(threshold / word_freqs[word]) for word in word_counts}
+# print(f'{probablity_drop=:}')
 # the probablity of 1-probablity_drop (which means the probablity of being kept!)
 # make our new word_list out of our original corpus
-word_list = [word for word in words_in_corpus if random.random() < (1-probablity_drop[word])]
+# word_list = [word for word in words_in_corpus if random.random() < (1-probablity_drop[word])]
 
-# m2 This is the probability of KEEPING a word
-# prob_keep = {word: (np.sqrt(word_freqs[word] / threshold) + 1) * (threshold / word_freqs[word]) for word in word_counts}
-# now, create the final training sequence by subsampling
-# word_list = [word for word in words_in_corpus if random.random() < prob_keep.get(word, 1.0)]
+# we can simply directly calculate keep_probablity! 
+probablity_keep = {word: np.sqrt(threshold / word_freqs[word]) for word in word_counts}
+# print(f'{probablity_keep=:}')
+#todo: change word_list to dataset or corpus
+word_list = [word for word in words_in_corpus if random.random() < probablity_keep[word]]
+print(f'dataset after subsamping:')
+print(f"{' '.join(word_list[:50])}")
 
+# sidenote:
+# concerning the value for threshold, heres a quick rule of thumb:
+# we use threshold to control how aggressively frequent words are discarded
+# its basically our attempt at balancing the words in our dataset so
+# a lower threshold (1e-5) = more aggressive subsampling of common words
+# a higher threshold (1e-3) = less aggressive subsampling
+#
+# the formula was 1-√(t/f(w)) which is the probablity of discarding a word,
+# √(t/f(w)) therefore is the probablity of keeping word w (prob_keep(w)) so
+# when f(w)>t it means the word is common so lower keep probability
+# when f(w)<t it means the word is rare so higher keep probability 
+# 
+# what values are usually good to use?
+# the default is 1e-5 which is mikolov's original recommendation in the paper
+# and has been used on large datasets. for small datasets a value like 1e-4 to
+# 1e-3 seems fine. for specialized vocabularies we need to experiment with 
+# 1e-5 to 1e-3!
+#
+# here is a quick table showing what each value for threshold means in practice: 
+#    Word                   Keep Prob   Keep Prob     Effect Change
+#  Frequency                (t=1e-4)    (t=1e-3)
+# Very common(f=0.05)         1.4%	       14%	      10× more common words kept
+# Common(f=0.01)	          3.2%	       31.6%	  10× more kept
+# Medium(f=0.001)	          10%	       100%    	  No subsampling
+# Rare(f=0.0001)              100%	       100%	      No change
+# Very rare(f=0.00002)	      100%	       100%	      No change
+# 
+# as you can see, the threshold value first and formost affects the very common
+# wordsand for medium or rare/very rare words, they are all included basically no
+# subsampling happens for them!
+#
+# so low threhsolds like 1e-5 is recommended for most applications,
+# we especially use it when we need more aggressive subsampling
+# especially when we are dealing with large datasets with extreme
+# word frequency imbalances, not only it reduces the trainig time
+# it will also improve representation of less common/medium-frequency
+# words and result in a higher quality embeddings.
+# 
+# higher threshold such as 1e-3 on the other hand, are used for
+# less aggressive subsampling process, for cases where the dataset
+# is not that large and we want to keep more context words,
+# its useful when common words carry important meaning
+# and obviously it imposes more overhead on our training (it will
+# take longer to train because there will be more words to work with!)
+# we can always query the dataset before and after our subsampling and 
+# have an indea where we're going with our changes!
+#
 #sidenote:
 # since here we want to grab the words(keep them instead of discarding them),
 # we use 1-prob, which means grab the words that are more probable than being
@@ -3614,22 +3626,23 @@ word_list = [word for word in words_in_corpus if random.random() < (1-probablity
 # 'and' which are much more frequent)
 # note that if we dont do this obviously we will be having a larger word_list, 
 # and it would take much longer to train our model and have other serious implications 
-# that is, no Mikolov's subsampling is done which means frequent words are overrepresented
-# and rare words are undersampled.
+# that is, no mikolov's subsampling is done which means frequent words are
+# overrepresented and rare words are undersampled.
 # not only this has a negative impact on training efficiency but worse results in 
 # low embedding quality as well.
-# (basically failing to do this leads to overrepresentation of these words in our training data
-# and because they are too frequent they are less informative and thus contribute less
-# to learning meaningful representations. retaining them therefore only increases computational
-# overhead. moreover, rare or contextually important/rich words (which provide valuable information
-# for learning but are less frequent) will also be more likely to be dropped! this 
-# impacts the diversity of our training data lowering it making it harder(or even impossible)
-# for the model to learn meaningful embeddings and capture meaningful semantic
-# relationships for these words.
-# after all word embeddings rely on the contextual diversity provided by various words
-# and discarding rare words and retaining frequent ones like that, will lead to embeddings
-# that perform poorly on downstream tasks, such as semantic similarity, word analogy tasks,
-# or other NLP related tasks)
+# (basically not doing this leads to overrepresentation of these words in our 
+# training data and because they are too frequent they are less informative and
+# thus contribute less to learning meaningful representations. 
+# keeping them therefore only increases the computational overhead. moreover, 
+# rare or contextually important/rich words (which provide valuable information
+# for learning but are less frequent) will also be more likely to be dropped! 
+# this impacts the diversity of our training data lowering it making it harder
+# (or even impossible) for the model to learn meaningful embeddings and capture 
+# meaningful semantic relationships for these words.
+# after all word embeddings rely on the contextual diversity provided by different
+# words and discarding rare words and keeping frequent ones like that, will lead 
+# to low quality embeddings that perform badly/poorly on downstream tasks, such 
+# as semantic similarity, word analogy tasks etc)
 
 # now based on this filter, we now have 4,655,219 words! out of the original 17m words!
 print(f'{len(word_list)=:,}')
@@ -4180,7 +4193,7 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         
         batch_size = input_embeddings.size(0)
         embedding_size = input_embeddings.size(1)
-        # reshape them so we can multiply them 
+        # reshape them so we can multiply them (or we can use unsqueeze()!)
         input_embeddings = input_embeddings.view(batch_size, embedding_size, 1)
         output_embeddings = output_embeddings.view(batch_size, 1, embedding_size)
         # reminder: log(1) = 0, log(0)=undefined! 
@@ -4235,8 +4248,9 @@ class SkipGramNegativeSamplingLoss(nn.Module):
         # and we add them both and try to minize the whole loss
         return -torch.mean(loss1+loss2)
 
-# we could simply our loss further like this 
+# we could simplify our loss further like this
 # this is a numerically stable version because of logsigmoid!
+# and a bit consiser and clearer!
 # class SkipGramNegativeSamplingLoss(nn.Module):
 #     def __init__(self):
 #         super().__init__()
