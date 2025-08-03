@@ -3404,7 +3404,8 @@ print(f"The review is {'negative' if pred.item() == 0 else 'positive'}")
 #%%
 # 
 # Word Embedding - SkipGram
-# 
+# Add the intro from my old word2vec.py
+#
 # For word embedding training we have several methods, word2vec is one of them
 # here we will be using the skipgram model. we can train skipgram model with negative sampling
 # we will implement both!
@@ -3898,10 +3899,13 @@ def evalualte_model_quality(embedding_layer, int2word, window_size, validation_s
 #%%
 # random.seed(10)
 # np.random.seed(10)
-# 
+seed = 10
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 embedding_size = 300
 vocab_size = len(word2int)
 
@@ -3948,7 +3952,9 @@ for epoch in range(num_epochs):
                 "epochs":epoch,
                 "loss":np.mean(losses),
                 "vocab_size":vocab_size,
-                "embedding_size":embedding_size}, "./weights/skipgram_model.pth")
+                "embedding_size":embedding_size,
+                "word2int": word2int,
+                "int2word": int2word}, "./weights/skipgram_model.pth")
 
 # after 5 epochs this is what we get: 
 # the loss doesnt show it properly, but using similarity check
@@ -4363,7 +4369,7 @@ for epoch in range(num_epochs):
 #  -Epoch 10/50 | Iter 9000 | Loss: 8.7980
 #%%
 # load checkpoint
-checkpoint = torch.load("./weights/skipgram_model.pth")
+checkpoint = torch.load("./weights/skipgram_model_e9_1e-4.pth")
 embedding_size = checkpoint['embedding_size']
 vocab_size = checkpoint['vocab_size']
 epoch = checkpoint['epochs']
@@ -4373,7 +4379,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = SkipGram(vocab_size, embedding_size)
 model.to(device)
 model.load_state_dict(checkpoint['state_dict'])
-model.eval()
+
 print(f'skipgram model loaded!')
 print(f"{epoch=}")
 print(f"{loss=}")
@@ -4674,9 +4680,14 @@ print(f'words starting at {start}:')
 for i in range(start,start+window_size):
     print(f'{i}: {int2word[i]}')
 #%%
+seed = 10
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
 # now lets start the actual training!
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 embedding_size = 300
 vocab_size = len(word2int)
 # initialize noise distribution
@@ -4691,9 +4702,12 @@ optimizer = optim.Adam(model.parameters(), lr=0.003)
 
 num_epochs = 20
 batch_size = 512
-window_size = 5
+window_size = 10#5
 validation_size = 8
 interval = 9000
+
+print(f'training skipgram with negative sampling...')
+
 for epoch in range(num_epochs):
     losses = []
     for i, (X, Y) in enumerate(get_batch(word_list_digitized, 
@@ -4708,7 +4722,8 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
+        
+        
         losses.append(loss.item())
         
         if i % interval == 0:
@@ -4727,7 +4742,9 @@ for epoch in range(num_epochs):
                 "epochs":epoch,
                 "loss":np.mean(losses),
                 "vocab_size":vocab_size,
-                "embedding_size":embedding_size}, "./weights/skipgram_negativesampling_model.pth")
+                "embedding_size":embedding_size,
+                "word2int": word2int,
+                "int2word": int2word}, "./weights/skipgram_negativesampling_model.pth")
 # 
 # Epoch 15/50, Loss: 1.8525
 # president : presidential, elected, executive, minister, elections
@@ -4751,422 +4768,648 @@ for epoch in range(num_epochs):
 #  -Epoch 17/50 | Iter 7 | Loss: 1.8327
 # Epoch 17/50, Loss: 1.8331
 #
-# second test
+# second test (using lr=0.001)
+# training skipgram with negative sampling...
 #  Validation similarity test:
-#   -does      | not, that, can, it, to
-#   -countries | united, during, years, war, government
-#   -science   | and, that, for, the, of
-#   -h         | g, c, r, number, then
-#   -widespread| support, gibbon, accepted, days, most
-#   -selected  | test, episcopal, prs, piano, generous
-#   -algebra   | spectral, eyed, versa, replace, tonalsoft
-#   -magnetic  | landfill, amplifier, transcendental, dusty, direction
+#   -back      | on, in, towards, and, it
+#   -central   | pakistan, border, s, comets, was
+#   -age       | fantastical, earliest, keypad, organizers, population
+#   -make      | immediately, complete, to, that, sept
+#   -festival  | questions, supposed, joliet, frequent, slavs
+#   -algebra   | whether, center, raiders, to, advocacy
+#   -blues     | eruptions, initiated, pierre, spliced, communes
+#   -selected  | was, museums, alive, naval, zero
 # Analogy: king - man + woman = ?
 # Top results:
-#   - relationship    (score: 0.4089)
-#   - text            (score: 0.3936)
-#   - born            (score: 0.3865)
-#   - verifies        (score: 0.3862)
-#   - herbert         (score: 0.3653)
+#   - permitted       (score: 0.4091)
+#   - indicator       (score: 0.4091)
+#   - portrayed       (score: 0.4027)
+#   - lle             (score: 0.3952)
+#   - wheels          (score: 0.3939)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - bow             (score: 0.3616)
-#   - verifies        (score: 0.3449)
-#   - explaining      (score: 0.3439)
-#   - mica            (score: 0.3427)
-#   - wearing         (score: 0.3329)
+#   - aarhus          (score: 0.4941)
+#   - dates           (score: 0.4401)
+#   - whig            (score: 0.4378)
+#   - spiritual       (score: 0.4204)
+#   - islam           (score: 0.4092)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - este            (score: 0.3920)
-#   - taika           (score: 0.3590)
-#   - studios         (score: 0.3537)
-#   - boggy           (score: 0.3523)
-#   - stimulate       (score: 0.3486)
-#  -Epoch 0/20 | Iter 9000 | Loss: 13.0399
-# Epoch 0/20, Loss: 9.1208
+#   - resolved        (score: 0.4447)
+#   - compiler        (score: 0.4330)
+#   - casta           (score: 0.3935)
+#   - nihilist        (score: 0.3869)
+#   - portrayed       (score: 0.3840)
+#  -Epoch 0/20 | Iter 9000 | Loss: 20.2548
+# Epoch 0/20, Loss: 14.7005
 #  Validation similarity test:
-#   -science   | fiction, philosophy, scientific, sciences, study
-#   -countries | european, nations, states, europe, united
-#   -h         | r, j, o, c, l
-#   -thus      | not, to, it, that, be
-#   -magnetic  | electric, direction, field, particle, electrical
-#   -selected  | s, published, author, and, by
-#   -pop       | album, song, music, artists, songs
-#   -widespread| numerous, particularly, of, widely, far
+#   -control   | its, for, an, to, the
+#   -age       | he, children, years, s, his
+#   -others    | of, to, as, in, that
+#   -central   | east, north, largest, europe, south
+#   -speakers  | paved, tournaments, magistracies, languages, secede
+#   -pop       | hands, volunteer, originally, microphones, stories
+#   -festival  | charles, andy, criticism, relies, repel
+#   -alliance  | russia, policy, primarily, armed, reign
 # Analogy: king - man + woman = ?
 # Top results:
-#   - married         (score: 0.6816)
-#   - son             (score: 0.6632)
-#   - born            (score: 0.6577)
-#   - prince          (score: 0.6566)
-#   - reign           (score: 0.6558)
+#   - one             (score: 0.6986)
+#   - england         (score: 0.6928)
+#   - five            (score: 0.6845)
+#   - six             (score: 0.6840)
+#   - nine            (score: 0.6822)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.6960)
-#   - wife            (score: 0.6429)
-#   - son             (score: 0.6426)
-#   - born            (score: 0.6426)
-#   - died            (score: 0.6336)
+#   - she             (score: 0.6926)
+#   - her             (score: 0.6766)
+#   - one             (score: 0.6683)
+#   - died            (score: 0.6641)
+#   - england         (score: 0.6620)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.7593)
-#   - wife            (score: 0.6314)
-#   - mother          (score: 0.6196)
-#   - sister          (score: 0.6050)
-#   - prince          (score: 0.5872)
-#  -Epoch 1/20 | Iter 9000 | Loss: 3.0823
-# Epoch 1/20, Loss: 2.8990
+#   - newspaper       (score: 0.3659)
+#   - retaliated      (score: 0.3622)
+#   - townes          (score: 0.3280)
+#   - arroyo          (score: 0.3202)
+#   - outstretched    (score: 0.3171)
+#  -Epoch 1/20 | Iter 9000 | Loss: 4.9935
+# Epoch 1/20, Loss: 4.4391
 #  Validation similarity test:
-#   -does      | that, makes, not, any, true
-#   -thus      | to, this, can, be, that
-#   -h         | r, j, w, p, l
-#   -countries | nations, regional, europe, country, united
-#   -pop       | music, song, songs, rock, album
-#   -algebra   | theorem, finite, mathematics, mathematical, define
-#   -magnetic  | electric, electrical, field, electron, energy
-#   -selected  | by, of, press, and, s
+#   -others    | as, among, become, their, of
+#   -case      | is, any, be, given, example
+#   -st        | saint, seven, john, william, th
+#   -man       | his, story, love, he, him
+#   -magnetic  | electric, speed, field, objects, particle
+#   -selected  | magazine, student, museum, york, news
+#   -ft        | km, area, m, total, miles
+#   -alliance  | democratic, leaders, party, government, elections
 # Analogy: king - man + woman = ?
 # Top results:
-#   - prince          (score: 0.7077)
-#   - daughter        (score: 0.6769)
-#   - succeeded       (score: 0.6583)
-#   - throne          (score: 0.6569)
-#   - emperor         (score: 0.6519)
+#   - son             (score: 0.9126)
+#   - prince          (score: 0.8932)
+#   - died            (score: 0.8914)
+#   - queen           (score: 0.8754)
+#   - born            (score: 0.8727)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.7700)
-#   - daughter        (score: 0.7342)
-#   - wife            (score: 0.7016)
-#   - died            (score: 0.6937)
-#   - her             (score: 0.6701)
+#   - son             (score: 0.9187)
+#   - wife            (score: 0.9122)
+#   - married         (score: 0.9023)
+#   - daughter        (score: 0.8975)
+#   - mother          (score: 0.8811)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.8230)
-#   - wife            (score: 0.6830)
-#   - daughter        (score: 0.6627)
-#   - her             (score: 0.6554)
-#   - marriage        (score: 0.6536)
-#  -Epoch 2/20 | Iter 9000 | Loss: 2.4543
-# Epoch 2/20, Loss: 2.4083
+#   - wife            (score: 0.6733)
+#   - married         (score: 0.6701)
+#   - she             (score: 0.6457)
+#   - her             (score: 0.6281)
+#   - daughter        (score: 0.6259)
+#  -Epoch 2/20 | Iter 9000 | Loss: 3.1395
+# Epoch 2/20, Loss: 2.9816
 #  Validation similarity test:
-#   -countries | nations, europe, eu, european, membership
-#   -thus      | to, this, it, be, because
-#   -does      | that, if, not, do, cannot
-#   -h         | r, j, l, o, g
-#   -selected  | editor, s, references, of, publication
-#   -widespread| throughout, growing, affected, countries, perceived
-#   -pop       | album, song, music, songs, albums
-#   -algebra   | theorem, linear, mathematics, mathematical, algebraic
+#   -age       | children, years, male, birth, living
+#   -st        | saint, william, seven, founded, th
+#   -back      | up, off, away, down, behind
+#   -central   | east, north, south, northern, largest
+#   -widespread| largely, particularly, increasingly, been, especially
+#   -ft        | km, miles, m, area, feet
+#   -speakers  | spoken, languages, speaking, language, dialects
+#   -selected  | s, review, published, student, magazine
 # Analogy: king - man + woman = ?
 # Top results:
-#   - daughter        (score: 0.6895)
-#   - son             (score: 0.6350)
-#   - married         (score: 0.6317)
-#   - throne          (score: 0.5925)
-#   - mother          (score: 0.5871)
+#   - prince          (score: 0.9494)
+#   - daughter        (score: 0.9295)
+#   - married         (score: 0.9202)
+#   - son             (score: 0.9146)
+#   - brother         (score: 0.8934)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.7084)
-#   - mother          (score: 0.7019)
-#   - son             (score: 0.6953)
-#   - wife            (score: 0.6778)
-#   - children        (score: 0.6679)
+#   - married         (score: 0.9863)
+#   - daughter        (score: 0.9713)
+#   - mother          (score: 0.9460)
+#   - son             (score: 0.9433)
+#   - wife            (score: 0.9183)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.8169)
-#   - wife            (score: 0.6822)
-#   - children        (score: 0.6815)
-#   - her             (score: 0.6517)
-#   - daughter        (score: 0.6461)
-#  -Epoch 3/20 | Iter 9000 | Loss: 2.2669
-# Epoch 3/20, Loss: 2.2413
+#   - married         (score: 0.9475)
+#   - daughter        (score: 0.8827)
+#   - mother          (score: 0.8464)
+#   - wife            (score: 0.8405)
+#   - her             (score: 0.8367)
+#  -Epoch 3/20 | Iter 9000 | Loss: 2.5561
+# Epoch 3/20, Loss: 2.4889
 #  Validation similarity test:
-#   -science   | fiction, scientific, research, sciences, cambridge
-#   -does      | not, cannot, do, that, is
-#   -countries | nations, states, europe, governments, australia
-#   -h         | r, j, m, l, g
-#   -algebra   | theorem, algebraic, mathematics, calculus, vector
-#   -magnetic  | electric, electromagnetic, voltage, field, electrical
-#   -widespread| widely, popularity, caused, throughout, resulted
-#   -selected  | office, papers, of, articles, by
+#   -age       | years, children, birth, female, male
+#   -others    | as, some, considered, have, what
+#   -st        | saint, nd, th, founded, rd
+#   -case      | any, if, be, instance, is
+#   -selected  | review, press, published, introduction, publishing
+#   -speakers  | spoken, languages, dialects, speaking, dialect
+#   -algebra   | infinite, mathematics, notation, theorem, finite
+#   -magnetic  | electric, particles, particle, speed, mechanical
 # Analogy: king - man + woman = ?
 # Top results:
-#   - daughter        (score: 0.6238)
-#   - kings           (score: 0.5930)
-#   - son             (score: 0.5848)
-#   - brother         (score: 0.5835)
-#   - throne          (score: 0.5731)
+#   - son             (score: 0.9049)
+#   - prince          (score: 0.8950)
+#   - daughter        (score: 0.8637)
+#   - married         (score: 0.8578)
+#   - throne          (score: 0.8527)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - mother          (score: 0.7235)
-#   - her             (score: 0.6960)
-#   - daughter        (score: 0.6920)
-#   - brother         (score: 0.6474)
-#   - son             (score: 0.6437)
+#   - married         (score: 0.9658)
+#   - mother          (score: 0.9396)
+#   - daughter        (score: 0.9325)
+#   - son             (score: 0.9242)
+#   - wife            (score: 0.9147)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.7426)
-#   - marriage        (score: 0.6941)
-#   - daughter        (score: 0.6630)
-#   - mother          (score: 0.6535)
-#   - her             (score: 0.6345)
-#  -Epoch 4/20 | Iter 9000 | Loss: 2.1593
-# Epoch 4/20, Loss: 2.1405
+#   - married         (score: 0.9533)
+#   - marriage        (score: 0.8764)
+#   - mother          (score: 0.8711)
+#   - child           (score: 0.8590)
+#   - wife            (score: 0.8553)
+#  -Epoch 4/20 | Iter 9000 | Loss: 2.2938
+# Epoch 4/20, Loss: 2.2602
 #  Validation similarity test:
-#   -science   | fiction, scientific, sciences, scientists, books
-#   -does      | if, that, will, can, not
-#   -thus      | all, because, to, always, this
-#   -countries | nations, europe, union, country, united
-#   -magnetic  | electromagnetic, electric, magnets, radiation, electrical
-#   -widespread| widely, caused, resulted, although, popular
-#   -algebra   | algebraic, theorem, isomorphism, multiplication, mathematics
-#   -pop       | album, song, songs, rock, hop
+#   -man       | love, my, story, she, girl
+#   -st        | saint, nd, rd, louis, william
+#   -make      | them, they, makes, without, give
+#   -countries | nations, country, european, foreign, europe
+#   -speakers  | spoken, dialects, languages, speaking, dialect
+#   -ft        | km, miles, meters, feet, metres
+#   -pop       | albums, songs, band, music, album
+#   -widespread| increasingly, largely, especially, particularly, recent
 # Analogy: king - man + woman = ?
 # Top results:
-#   - daughter        (score: 0.6226)
-#   - wife            (score: 0.5514)
-#   - daughters       (score: 0.5400)
-#   - queen           (score: 0.5190)
-#   - marriage        (score: 0.5120)
+#   - prince          (score: 0.9154)
+#   - son             (score: 0.8859)
+#   - married         (score: 0.8568)
+#   - daughter        (score: 0.8508)
+#   - throne          (score: 0.8425)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - wife            (score: 0.7266)
-#   - mother          (score: 0.7074)
-#   - married         (score: 0.6983)
-#   - daughter        (score: 0.6667)
-#   - husband         (score: 0.6603)
+#   - married         (score: 0.9918)
+#   - mother          (score: 0.9585)
+#   - daughter        (score: 0.9476)
+#   - wife            (score: 0.9347)
+#   - marriage        (score: 0.9337)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.8605)
-#   - daughter        (score: 0.7502)
-#   - wife            (score: 0.7382)
-#   - she             (score: 0.7136)
-#   - marriage        (score: 0.7071)
-#  -Epoch 5/20 | Iter 9000 | Loss: 2.0831
-# Epoch 5/20, Loss: 2.0693
+#   - married         (score: 0.9997)
+#   - marriage        (score: 0.9300)
+#   - child           (score: 0.9113)
+#   - mother          (score: 0.8870)
+#   - wife            (score: 0.8850)
+#  -Epoch 5/20 | Iter 9000 | Loss: 2.1568
+# Epoch 5/20, Loss: 2.1380
 #  Validation similarity test:
-#   -countries | nations, europe, country, africa, america
-#   -does      | not, will, that, so, it
-#   -h         | r, g, j, o, l
-#   -science   | fiction, scientific, sciences, philosophy, novels
-#   -selected  | all, references, by, included, contain
-#   -algebra   | algebraic, theorem, algebras, multiplication, associative
-#   -magnetic  | electric, electromagnetic, field, magnets, radiation
-#   -pop       | songs, song, rock, album, musicians
+#   -countries | nations, country, european, europe, foreign
+#   -central   | east, south, west, north, region
+#   -man       | love, portrayed, story, girl, said
+#   -case      | any, may, instance, is, be
+#   -festival  | festivals, celebrated, holiday, theatre, christmas
+#   -blues     | jazz, band, pop, song, musicians
+#   -ft        | meters, metres, km, miles, feet
+#   -alliance  | party, leadership, democratic, communist, coalition
 # Analogy: king - man + woman = ?
 # Top results:
-#   - daughter        (score: 0.5960)
-#   - throne          (score: 0.5796)
-#   - prince          (score: 0.5753)
-#   - succeeded       (score: 0.5554)
-#   - princess        (score: 0.5461)
+#   - prince          (score: 0.9312)
+#   - married         (score: 0.8955)
+#   - son             (score: 0.8925)
+#   - daughter        (score: 0.8880)
+#   - throne          (score: 0.8736)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.6661)
-#   - son             (score: 0.6574)
-#   - daughter        (score: 0.6312)
-#   - her             (score: 0.6304)
-#   - wife            (score: 0.6173)
+#   - married         (score: 1.0549)
+#   - mother          (score: 1.0211)
+#   - daughter        (score: 1.0013)
+#   - wife            (score: 0.9801)
+#   - husband         (score: 0.9795)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.8350)
-#   - daughter        (score: 0.7452)
-#   - wife            (score: 0.7177)
-#   - her             (score: 0.6851)
-#   - marriage        (score: 0.6514)
-#  -Epoch 6/20 | Iter 9000 | Loss: 2.0326
-# Epoch 6/20, Loss: 2.0215
+#   - married         (score: 1.0919)
+#   - child           (score: 0.9874)
+#   - marriage        (score: 0.9846)
+#   - daughter        (score: 0.9668)
+#   - mother          (score: 0.9628)
+#  -Epoch 6/20 | Iter 9000 | Loss: 2.0772
+# Epoch 6/20, Loss: 2.0660
 #  Validation similarity test:
-#   -does      | do, will, if, that, may
-#   -h         | g, r, j, l, m
-#   -thus      | this, to, because, that, always
-#   -countries | nations, europe, america, states, asia
-#   -widespread| practices, caused, historically, resulted, popularity
-#   -algebra   | algebraic, algebras, multiplication, commutative, associative
-#   -selected  | references, office, papers, ed, publication
-#   -magnetic  | electric, electromagnetic, field, magnets, vacuum
+#   -age       | years, birth, children, female, older
+#   -central   | east, west, south, north, region
+#   -others    | some, considered, themselves, reasons, among
+#   -man       | girl, love, woman, my, evil
+#   -algebra   | theorem, finite, mathematics, mathematical, algebraic
+#   -alliance  | party, leadership, communist, leaders, leader
+#   -festival  | festivals, celebrated, theatre, holiday, summer
+#   -pop       | albums, music, band, songs, album
 # Analogy: king - man + woman = ?
 # Top results:
-#   - throne          (score: 0.6585)
-#   - daughter        (score: 0.5633)
-#   - queen           (score: 0.5586)
-#   - prince          (score: 0.5406)
-#   - married         (score: 0.5274)
+#   - prince          (score: 0.8658)
+#   - son             (score: 0.8433)
+#   - daughter        (score: 0.8364)
+#   - throne          (score: 0.8360)
+#   - queen           (score: 0.8208)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.7180)
-#   - mother          (score: 0.6810)
-#   - son             (score: 0.6596)
-#   - daughter        (score: 0.6343)
-#   - wife            (score: 0.6261)
+#   - mother          (score: 1.0211)
+#   - married         (score: 1.0057)
+#   - daughter        (score: 0.9678)
+#   - wife            (score: 0.9631)
+#   - husband         (score: 0.9586)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.7837)
-#   - daughter        (score: 0.7466)
-#   - marriage        (score: 0.6879)
-#   - female          (score: 0.6442)
-#   - mother          (score: 0.6296)
-#  -Epoch 7/20 | Iter 9000 | Loss: 1.9952
-# Epoch 7/20, Loss: 1.9868
+#   - married         (score: 1.0396)
+#   - marriage        (score: 0.9965)
+#   - mother          (score: 0.9694)
+#   - daughter        (score: 0.9330)
+#   - wife            (score: 0.9234)
+#  -Epoch 7/20 | Iter 9000 | Loss: 2.0286
+# Epoch 7/20, Loss: 2.0212
 #  Validation similarity test:
-#   -thus      | this, in, to, therefore, that
-#   -does      | not, if, that, do, any
-#   -science   | fiction, scientific, sciences, scientists, criticism
-#   -h         | r, g, j, w, m
-#   -magnetic  | electromagnetic, magnets, magnet, resonance, electric
-#   -widespread| widely, growing, caused, illegal, especially
-#   -algebra   | algebras, associative, multiplication, algebraic, isomorphic
-#   -pop       | songs, rock, song, album, blues
+#   -others    | some, among, reasons, considered, noted
+#   -age       | years, birth, children, female, older
+#   -back      | away, off, down, behind, up
+#   -make      | so, them, they, making, give
+#   -blues     | jazz, band, songs, guitar, pop
+#   -selected  | review, pdf, publishing, edition, publication
+#   -algebra   | finite, theorem, algebraic, mathematics, mathematical
+#   -alliance  | party, leadership, leader, coalition, leaders
 # Analogy: king - man + woman = ?
 # Top results:
-#   - daughter        (score: 0.5488)
-#   - throne          (score: 0.5142)
-#   - queen           (score: 0.4847)
-#   - married         (score: 0.4660)
-#   - ruled           (score: 0.4557)
+#   - son             (score: 0.8640)
+#   - daughter        (score: 0.8534)
+#   - married         (score: 0.8516)
+#   - prince          (score: 0.8502)
+#   - brother         (score: 0.8247)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.7426)
-#   - wife            (score: 0.6207)
-#   - daughter        (score: 0.6187)
-#   - son             (score: 0.6065)
-#   - mother          (score: 0.5999)
+#   - married         (score: 1.0658)
+#   - mother          (score: 1.0378)
+#   - wife            (score: 1.0038)
+#   - daughter        (score: 0.9956)
+#   - marriage        (score: 0.9503)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.8132)
-#   - daughter        (score: 0.7025)
-#   - wife            (score: 0.6421)
-#   - she             (score: 0.5992)
-#   - mother          (score: 0.5850)
-#  -Epoch 8/20 | Iter 9000 | Loss: 1.9678
-# Epoch 8/20, Loss: 1.9609
+#   - married         (score: 1.1016)
+#   - marriage        (score: 1.0158)
+#   - mother          (score: 0.9671)
+#   - wife            (score: 0.9614)
+#   - she             (score: 0.9433)
+#  -Epoch 8/20 | Iter 9000 | Loss: 1.9960
+# Epoch 8/20, Loss: 1.9912
 #  Validation similarity test:
-#   -h         | r, g, w, j, l
-#   -countries | nations, europe, trade, governments, agencies
-#   -science   | fiction, scientific, novels, research, novel
-#   -thus      | this, all, it, less, even
-#   -magnetic  | magnets, electric, disk, magnet, vacuum
-#   -algebra   | algebras, associative, multiplication, isomorphic, finite
-#   -pop       | songs, album, music, musicians, rock
-#   -widespread| caused, spread, widely, western, owing
+#   -case      | any, cases, example, may, instance
+#   -age       | years, children, birth, female, older
+#   -make      | them, makes, they, so, making
+#   -man       | woman, girl, love, evil, story
+#   -ft        | meters, metres, feet, miles, height
+#   -alliance  | party, coalition, leadership, leader, democratic
+#   -widespread| recent, widely, particularly, increasingly, largely
+#   -algebra   | finite, theorem, algebraic, mathematics, mathematical
 # Analogy: king - man + woman = ?
 # Top results:
-#   - kings           (score: 0.4873)
-#   - daughter        (score: 0.4764)
-#   - marrying        (score: 0.4744)
-#   - throne          (score: 0.4537)
-#   - queen           (score: 0.4483)
+#   - daughter        (score: 0.8335)
+#   - married         (score: 0.8202)
+#   - son             (score: 0.8113)
+#   - prince          (score: 0.8043)
+#   - throne          (score: 0.7995)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.6034)
-#   - son             (score: 0.5445)
-#   - her             (score: 0.5432)
-#   - daughter        (score: 0.5397)
-#   - wife            (score: 0.5331)
+#   - married         (score: 1.0564)
+#   - mother          (score: 1.0443)
+#   - wife            (score: 0.9912)
+#   - daughter        (score: 0.9898)
+#   - husband         (score: 0.9866)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.6737)
-#   - daughter        (score: 0.6536)
-#   - marriage        (score: 0.5979)
-#   - female          (score: 0.5911)
-#   - her             (score: 0.5776)
-#  -Epoch 9/20 | Iter 9000 | Loss: 1.9468
-# Epoch 9/20, Loss: 1.9407
+#   - married         (score: 1.1079)
+#   - marriage        (score: 1.0030)
+#   - mother          (score: 0.9727)
+#   - wife            (score: 0.9517)
+#   - daughter        (score: 0.9502)
+#  -Epoch 9/20 | Iter 9000 | Loss: 1.9736
+# Epoch 9/20, Loss: 1.9697
 #  Validation similarity test:
-#   -thus      | however, cannot, this, not, because
-#   -h         | r, g, j, k, l
-#   -science   | fiction, scientific, research, scientists, theory
-#   -countries | nations, country, europe, continent, united
-#   -pop       | songs, rock, album, punk, jazz
-#   -selected  | wrote, books, published, national, works
-#   -widespread| widely, particularly, popular, sparked, caused
-#   -magnetic  | electric, magnets, field, electromagnetic, magnet
+#   -others    | some, many, among, noted, have
+#   -back      | behind, off, down, away, up
+#   -age       | years, female, birth, children, older
+#   -st        | saint, nd, th, thomas, rd
+#   -festival  | festivals, celebrated, celebration, holiday, theatre
+#   -algebra   | algebraic, finite, theorem, mathematics, mathematical
+#   -selected  | review, presented, published, pdf, general
+#   -blues     | jazz, guitar, musicians, band, songs
 # Analogy: king - man + woman = ?
 # Top results:
-#   - princess        (score: 0.5206)
-#   - kings           (score: 0.5156)
-#   - queen           (score: 0.5113)
-#   - throne          (score: 0.5113)
-#   - marriage        (score: 0.4894)
+#   - daughter        (score: 0.8117)
+#   - married         (score: 0.8065)
+#   - son             (score: 0.7994)
+#   - queen           (score: 0.7963)
+#   - prince          (score: 0.7758)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - marriage        (score: 0.6334)
-#   - mother          (score: 0.6261)
-#   - married         (score: 0.6221)
-#   - wife            (score: 0.5810)
-#   - daughter        (score: 0.5655)
+#   - married         (score: 1.0498)
+#   - mother          (score: 1.0377)
+#   - wife            (score: 1.0014)
+#   - daughter        (score: 0.9919)
+#   - husband         (score: 0.9782)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.7355)
-#   - marriage        (score: 0.7231)
-#   - daughter        (score: 0.6626)
-#   - her             (score: 0.6264)
-#   - pregnant        (score: 0.5971)
-#  -Epoch 10/20 | Iter 9000 | Loss: 1.9301
-# Epoch 10/20, Loss: 1.9245
+#   - married         (score: 1.1202)
+#   - marriage        (score: 1.0134)
+#   - wife            (score: 0.9844)
+#   - mother          (score: 0.9681)
+#   - daughter        (score: 0.9670)
+#  -Epoch 10/20 | Iter 9000 | Loss: 1.9573
+# Epoch 10/20, Loss: 1.9544
 #  Validation similarity test:
-#   -does      | not, therefore, will, do, if
-#   -h         | r, g, w, j, k
-#   -thus      | is, not, generally, because, rather
-#   -science   | fiction, scientific, scientists, pseudoscience, idea
-#   -selected  | edited, wrote, books, excerpts, of
-#   -pop       | rock, blues, songs, song, jazz
-#   -widespread| severe, spread, serious, occurred, common
-#   -algebra   | algebras, associative, mathematics, algebraic, multiplication
+#   -control   | controlled, effectively, controls, controlling, allowing
+#   -central   | east, west, south, region, north
+#   -countries | nations, europe, eu, country, european
+#   -back      | off, behind, away, down, when
+#   -algebra   | algebraic, theorem, finite, mathematics, mathematical
+#   -alliance  | party, coalition, leadership, leader, democratic
+#   -speakers  | spoken, dialects, languages, speaking, dialect
+#   -widespread| recent, widely, especially, particularly, largely
 # Analogy: king - man + woman = ?
 # Top results:
-#   - iii             (score: 0.5261)
-#   - ii              (score: 0.5169)
-#   - queen           (score: 0.5080)
-#   - philip          (score: 0.4960)
-#   - monarchs        (score: 0.4867)
+#   - married         (score: 0.8087)
+#   - daughter        (score: 0.8037)
+#   - son             (score: 0.7808)
+#   - wife            (score: 0.7737)
+#   - throne          (score: 0.7612)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - son             (score: 0.6498)
-#   - wife            (score: 0.6422)
-#   - daughter        (score: 0.6014)
-#   - married         (score: 0.6009)
-#   - husband         (score: 0.5730)
+#   - married         (score: 1.0675)
+#   - mother          (score: 1.0370)
+#   - wife            (score: 1.0188)
+#   - daughter        (score: 0.9899)
+#   - husband         (score: 0.9684)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - married         (score: 0.6910)
-#   - marriage        (score: 0.6802)
-#   - wife            (score: 0.6470)
-#   - daughter        (score: 0.5899)
-#   - her             (score: 0.5845)
-#  -Epoch 11/20 | Iter 9000 | Loss: 1.9165
-# Epoch 11/20, Loss: 1.9114
+#   - married         (score: 1.1246)
+#   - marriage        (score: 1.0401)
+#   - wife            (score: 1.0041)
+#   - her             (score: 0.9712)
+#   - daughter        (score: 0.9639)
+#  -Epoch 11/20 | Iter 9000 | Loss: 1.9444
+# Epoch 11/20, Loss: 1.9419
 #  Validation similarity test:
-#   -h         | g, r, j, w, l
-#   -science   | fiction, scientific, evolution, scientists, novels
-#   -countries | nations, united, europe, country, states
-#   -does      | not, will, if, may, might
-#   -pop       | rock, music, songs, song, hop
-#   -widespread| popularity, occurred, primarily, widely, spread
-#   -algebra   | algebras, algebraic, commutative, associative, mathematics
-#   -selected  | edited, published, all, overview, richard
+#   -age       | years, older, ages, males, female
+#   -case      | cases, any, example, instance, if
+#   -st        | saint, nd, th, rd, thomas
+#   -countries | nations, europe, eu, country, belgium
+#   -blues     | jazz, songs, musicians, band, guitar
+#   -alliance  | coalition, party, leadership, leader, allies
+#   -festival  | festivals, celebrated, celebration, holiday, celebrations
+#   -pop       | album, band, rock, songs, albums
 # Analogy: king - man + woman = ?
 # Top results:
-#   - kings           (score: 0.5010)
-#   - princess        (score: 0.4897)
-#   - queen           (score: 0.4774)
-#   - daughter        (score: 0.4764)
-#   - ii              (score: 0.4465)
+#   - son             (score: 0.7758)
+#   - daughter        (score: 0.7743)
+#   - married         (score: 0.7513)
+#   - wife            (score: 0.7396)
+#   - throne          (score: 0.7289)
 # Analogy: father - man + woman = ?
 # Top results:
-#   - married         (score: 0.6015)
-#   - daughter        (score: 0.5978)
-#   - husband         (score: 0.5633)
-#   - mother          (score: 0.5599)
-#   - son             (score: 0.5539)
+#   - mother          (score: 1.0699)
+#   - married         (score: 1.0312)
+#   - wife            (score: 0.9905)
+#   - daughter        (score: 0.9802)
+#   - husband         (score: 0.9426)
 # Analogy: husband - man + woman = ?
 # Top results:
-#   - marriage        (score: 0.6221)
-#   - married         (score: 0.6128)
-#   - female          (score: 0.6096)
-#   - her             (score: 0.5737)
-#   - boyfriend       (score: 0.5512)
-#  -Epoch 12/20 | Iter 9000 | Loss: 1.9058
+#   - married         (score: 1.1109)
+#   - marriage        (score: 1.0095)
+#   - wife            (score: 0.9848)
+#   - her             (score: 0.9646)
+#   - she             (score: 0.9626)
+#  -Epoch 12/20 | Iter 9000 | Loss: 1.9329
+# Epoch 12/20, Loss: 1.9313
+#  Validation similarity test:
+#   -make      | give, making, they, them, enough
+#   -countries | nations, europe, eu, country, belgium
+#   -case      | cases, instance, example, may, if
+#   -man       | evil, woman, girl, my, life
+#   -blues     | jazz, musicians, songs, guitar, band
+#   -festival  | festivals, celebrated, celebration, holiday, celebrations
+#   -algebra   | algebraic, theorem, finite, mathematics, mathematical
+#   -magnetic  | electromagnetic, electrical, electric, electrons, optical
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7958)
+#   - son             (score: 0.7888)
+#   - married         (score: 0.7618)
+#   - wife            (score: 0.7524)
+#   - throne          (score: 0.7441)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0559)
+#   - married         (score: 1.0444)
+#   - daughter        (score: 1.0024)
+#   - wife            (score: 1.0012)
+#   - son             (score: 0.9319)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.1266)
+#   - wife            (score: 1.0101)
+#   - marriage        (score: 1.0043)
+#   - her             (score: 0.9882)
+#   - daughter        (score: 0.9787)
+#  -Epoch 13/20 | Iter 9000 | Loss: 1.9246
+# Epoch 13/20, Loss: 1.9225
+#  Validation similarity test:
+#   -central   | east, west, north, southeast, region
+#   -age       | years, older, males, ages, children
+#   -others    | some, among, many, have, themselves
+#   -case      | cases, instance, example, any, if
+#   -selected  | review, bibliography, collected, serve, presented
+#   -widespread| recent, widely, especially, resulted, been
+#   -speakers  | spoken, dialects, speak, languages, dialect
+#   -festival  | festivals, celebrated, celebration, holiday, celebrations
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7672)
+#   - queen           (score: 0.7619)
+#   - wife            (score: 0.7457)
+#   - princess        (score: 0.7415)
+#   - married         (score: 0.7356)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0566)
+#   - married         (score: 1.0182)
+#   - wife            (score: 1.0101)
+#   - daughter        (score: 0.9923)
+#   - son             (score: 0.9180)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.1096)
+#   - marriage        (score: 1.0223)
+#   - wife            (score: 1.0159)
+#   - daughter        (score: 0.9609)
+#   - her             (score: 0.9598)
+#  -Epoch 14/20 | Iter 9000 | Loss: 1.9159
+# Epoch 14/20, Loss: 1.9140
+#  Validation similarity test:
+#   -age       | years, older, ages, males, children
+#   -back      | off, behind, when, down, up
+#   -case      | cases, any, instance, example, if
+#   -make      | making, them, makes, way, enough
+#   -magnetic  | electromagnetic, electrical, electric, electrons, optical
+#   -selected  | review, bibliography, presented, collected, references
+#   -speakers  | spoken, dialects, speak, languages, speaking
+#   -blues     | jazz, musicians, guitar, rhythm, band
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7642)
+#   - throne          (score: 0.7470)
+#   - son             (score: 0.7299)
+#   - queen           (score: 0.7256)
+#   - married         (score: 0.7227)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0483)
+#   - married         (score: 0.9981)
+#   - wife            (score: 0.9847)
+#   - daughter        (score: 0.9536)
+#   - son             (score: 0.9085)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.0787)
+#   - marriage        (score: 0.9954)
+#   - wife            (score: 0.9677)
+#   - her             (score: 0.9441)
+#   - daughter        (score: 0.9266)
+#  -Epoch 15/20 | Iter 9000 | Loss: 1.9088
+# Epoch 15/20, Loss: 1.9069
+#  Validation similarity test:
+#   -back      | off, behind, down, when, again
+#   -countries | nations, europe, european, eu, belgium
+#   -central   | east, west, south, north, southeast
+#   -man       | my, girl, woman, evil, boy
+#   -ft        | metres, meters, feet, height, miles
+#   -widespread| especially, widely, recent, increasingly, resulted
+#   -festival  | festivals, celebrated, celebration, holiday, celebrations
+#   -selected  | bibliography, review, collected, presented, edited
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7732)
+#   - queen           (score: 0.7447)
+#   - throne          (score: 0.7318)
+#   - princess        (score: 0.7115)
+#   - wife            (score: 0.7037)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0395)
+#   - wife            (score: 0.9857)
+#   - married         (score: 0.9754)
+#   - daughter        (score: 0.9684)
+#   - son             (score: 0.9014)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.0723)
+#   - marriage        (score: 1.0133)
+#   - her             (score: 0.9791)
+#   - wife            (score: 0.9690)
+#   - she             (score: 0.9533)
+#  -Epoch 16/20 | Iter 9000 | Loss: 1.9023
+# Epoch 16/20, Loss: 1.9008
+#  Validation similarity test:
+#   -make      | making, give, makes, them, way
+#   -central   | east, west, north, south, southeast
+#   -countries | nations, europe, belgium, united, european
+#   -man       | woman, girl, my, boy, himself
+#   -blues     | jazz, musicians, guitar, rhythm, band
+#   -festival  | festivals, celebrated, celebration, holiday, celebrations
+#   -widespread| widely, especially, recent, increasingly, popularity
+#   -pop       | rock, album, songs, albums, music
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7341)
+#   - queen           (score: 0.7173)
+#   - throne          (score: 0.7163)
+#   - son             (score: 0.6827)
+#   - princess        (score: 0.6705)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0332)
+#   - wife            (score: 0.9588)
+#   - daughter        (score: 0.9406)
+#   - married         (score: 0.9332)
+#   - son             (score: 0.8914)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.0267)
+#   - marriage        (score: 0.9787)
+#   - her             (score: 0.9685)
+#   - wife            (score: 0.9391)
+#   - she             (score: 0.9208)
+#  -Epoch 17/20 | Iter 9000 | Loss: 1.8961
+# Epoch 17/20, Loss: 1.8952
+#  Validation similarity test:
+#   -age       | years, older, males, ages, females
+#   -control   | controlled, controlling, controls, effectively, power
+#   -man       | woman, my, girl, boy, himself
+#   -central   | east, west, north, south, region
+#   -alliance  | coalition, party, allies, parties, faction
+#   -blues     | jazz, musicians, rhythm, guitar, songs
+#   -speakers  | spoken, dialects, languages, speak, speaking
+#   -ft        | metres, meters, feet, height, miles
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7423)
+#   - queen           (score: 0.7169)
+#   - throne          (score: 0.7051)
+#   - princess        (score: 0.6854)
+#   - wife            (score: 0.6826)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0395)
+#   - wife            (score: 0.9643)
+#   - married         (score: 0.9339)
+#   - daughter        (score: 0.9331)
+#   - son             (score: 0.8815)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.0486)
+#   - marriage        (score: 0.9674)
+#   - her             (score: 0.9502)
+#   - wife            (score: 0.9494)
+#   - she             (score: 0.9208)
+#  -Epoch 18/20 | Iter 9000 | Loss: 1.8916
+# Epoch 18/20, Loss: 1.8906
+#  Validation similarity test:
+#   -make      | making, makes, way, so, give
+#   -back      | off, behind, down, when, again
+#   -countries | nations, europe, belgium, united, european
+#   -age       | years, older, males, ages, household
+#   -widespread| widely, recent, popularity, especially, resulted
+#   -blues     | jazz, musicians, guitar, rhythm, folk
+#   -festival  | festivals, celebration, celebrated, holiday, celebrations
+#   -selected  | bibliography, review, presented, each, papers
+# Analogy: king - man + woman = ?
+# Top results:
+#   - daughter        (score: 0.7362)
+#   - queen           (score: 0.7346)
+#   - throne          (score: 0.7092)
+#   - princess        (score: 0.6694)
+#   - son             (score: 0.6652)
+# Analogy: father - man + woman = ?
+# Top results:
+#   - mother          (score: 1.0157)
+#   - daughter        (score: 0.9478)
+#   - married         (score: 0.9284)
+#   - wife            (score: 0.9217)
+#   - son             (score: 0.8943)
+# Analogy: husband - man + woman = ?
+# Top results:
+#   - married         (score: 1.0187)
+#   - marriage        (score: 0.9636)
+#   - her             (score: 0.9381)
+#   - daughter        (score: 0.9375)
+#   - wife            (score: 0.9078)
+#  -Epoch 19/20 | Iter 9000 | Loss: 1.8869
+# Epoch 19/20, Loss: 1.8861
 #%%
 # load checkpoint
 checkpoint = torch.load("./weights/skipgram_negativesampling_model.pth")
@@ -5200,8 +5443,8 @@ test_words2 = ['father', 'mother', 'man','woman','son','daughter']
 check_semantic_analogy(test_words2, model.input_embedding, word2int, device)
 
 # should give us son and price
-check_analogy_test('daughter', 'woman', 'man', model.embedding_layer, word2int, int2word)
-check_analogy_test('princess', 'woman', 'man', model.embedding_layer, word2int, int2word)
+check_analogy_test('daughter', 'woman', 'man', model.input_embedding, word2int, int2word)
+check_analogy_test('princess', 'woman', 'man', model.input_embedding, word2int, int2word)
 
 # find nearest neighbors to each word
 check_nearest_neighbors('king', model.input_embedding, word2int, int2word, topk=5)
@@ -5220,8 +5463,8 @@ visualize_embedding_space(model.input_embedding, int2word, words_to_visualize=20
 # 
 # in order to improve our results we need to fine-tune our training regime, 
 # from better hyperparamter selection (we saw one example using threshold but
-# there are more to this such as e.g. picking better learning rate, embedding
-# size, etc) to training for longer periods.
+# there are more to this such as e.g. choosing better learning rate and its
+# decaying strategy, embeddingsize, etc) to training for longer periods.
 # also in subsampling part, making sure frequent words are not overly dominant 
 # improves the results as we saw first hand and finally its important to use a
 # large enough validation set to assess embedding quality better. needless to say
