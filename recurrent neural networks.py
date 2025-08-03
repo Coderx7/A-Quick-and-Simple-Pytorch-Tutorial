@@ -4373,6 +4373,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = SkipGram(vocab_size, embedding_size)
 model.to(device)
 model.load_state_dict(checkpoint['state_dict'])
+model.eval()
 print(f'skipgram model loaded!')
 print(f"{epoch=}")
 print(f"{loss=}")
@@ -4381,7 +4382,6 @@ print(f"{vocab_size=:,}")
 
 #%%
 # lets run some checks on our model and see how well it works
-
 # lets grab a few words and see if the model can correctly identify 
 # any underlying relationship between them 
 def check_semantic_analogy(test_words, embedding_layer, word2int,device):
@@ -4421,13 +4421,26 @@ def check_nearest_neighbors(word, embedding_layer, word2int, int2word, topk=5):
     
     print(f"Nearest neighbors for '{word}': {', '.join(closest_words)}")
 
+# now lets also visualize the embeddings space
+def visualize_embedding_space(embedding_layer, int2word, words_to_visualize=200, use_pca=False, figsize=(24,16)):
+    # choose between pca or tsne for diminsionality reduction
+    reducer = PCA(n_components=2) if use_pca else TSNE()
+    embeddings = embedding_layer.weight.detach().cpu().numpy()
+    embd_reduced = reducer.fit_transform(embeddings[:words_to_visualize, :])
+
+    plt.figure(figsize=(24,16))
+    plt.title(f'Visualizing Embedding Space Using {"PCA" if use_pca else "TSNE"}')
+    for idx in range(words_to_visualize):
+        plt.scatter(*embd_reduced[idx, :], color='steelblue')
+        plt.annotate(int2word[idx], (embd_reduced[idx, 0], embd_reduced[idx, 1]), alpha=0.7)
+
 #%%
 evalualte_model_quality(model.embedding_layer,
-                int2word,
-                validation_size=8,
-                window_size=window_size, 
-                common_start_index=256, 
-                uncommon_start_index=2000)
+                        int2word,
+                        window_size=5,
+                        validation_size=8,
+                        common_start_index=256,
+                        uncommon_start_index=2000)
 
 # lets see if the model can correctly identify their relationships
 test_words = ['king', 'queen', 'man', 'woman', 'prince', 'princess']
@@ -4443,30 +4456,9 @@ check_analogy_test('princess', 'woman', 'man', model.embedding_layer, word2int, 
 check_nearest_neighbors('king', model.embedding_layer, word2int, int2word, topk=5)
 check_nearest_neighbors('Iran', model.embedding_layer, word2int, int2word, topk=5)
 #%%
-# now lets visualize them 
-embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-viz_words = 200
-tsne = TSNE()
-embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
+visualize_embedding_space(model.embedding_layer, int2word, words_to_visualize=200)
+visualize_embedding_space(model.embedding_layer, int2word, words_to_visualize=200, use_pca=True)
 
-plt.figure(figsize=(24,16))
-fig, ax = plt.subplots(figsize=(16, 16))
-for idx in range(viz_words):
-    plt.scatter(*embed_tsne[idx, :], color='steelblue')
-    plt.annotate(int2word[idx], (embed_tsne[idx, 0], embed_tsne[idx, 1]), alpha=0.7)
-#%%
-# Save embeddings
-embeddings = model.embedding_layer.weight.detach().cpu().numpy()
-pca = PCA(n_components=2)
-# plot the first 50 words
-embed_pca = pca.fit_transform(embeddings[:50])  
-# use a large figsize so points are not crammed into a tiny plot
-plt.figure(figsize=(24,16))
-plt.scatter(embed_pca[:, 0], embed_pca[:, 1])
-for i, word in enumerate(word_list[:50]):
-    plt.annotate(word, (embed_pca[i, 0], embed_pca[i, 1]))
-plt.show()
-    
 #%%
 # ok, now lets create word emebedding using skipgram with negative sampling 
 # why? becasue negative sampling significantly reduces the computation of 
@@ -5216,28 +5208,8 @@ check_nearest_neighbors('king', model.input_embedding, word2int, int2word, topk=
 check_nearest_neighbors('Iran', model.input_embedding, word2int, int2word, topk=5)
 
 #%%
-embeddings = model.input_embedding.weight.detach().cpu().numpy()
-viz_words = 200
-tsne = TSNE()
-embed_tsne = tsne.fit_transform(embeddings[:viz_words, :])
-
-plt.figure(figsize=(24,16))
-fig, ax = plt.subplots(figsize=(16, 16))
-for idx in range(viz_words):
-    plt.scatter(*embed_tsne[idx, :], color='steelblue')
-    plt.annotate(int2word[idx], (embed_tsne[idx, 0], embed_tsne[idx, 1]), alpha=0.7)
-#%%
-# Save embeddings
-embeddings = model.input_embedding.weight.detach().cpu().numpy()
-
-pca = PCA(n_components=2)
-reduced_embeddings = pca.fit_transform(embeddings[:50])
-
-plt.figure(figsize=(24,16))
-plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1])
-for i, word in enumerate(word_list[:50]):
-    plt.annotate(word, (reduced_embeddings[i, 0], reduced_embeddings[i, 1]))
-plt.show()
+visualize_embedding_space(model.input_embedding, int2word, words_to_visualize=200, use_pca=False)
+visualize_embedding_space(model.input_embedding, int2word, words_to_visualize=200, use_pca=True)
 
 # recap
 # we used cosine similarity values to show high similarity for semantically related words.
