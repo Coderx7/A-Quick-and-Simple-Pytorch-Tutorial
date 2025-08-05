@@ -411,6 +411,11 @@ torch.set_printoptions(profile='default')
 torch.manual_seed(15)
 random_tensor_1 = torch.randn(size=(2,2))
 # now lets create a new tensor this time using a generator
+# lets set the default device to cpu otherwise our tensors will be on cuda
+# while our generator would be on cpu and it would cause an error (both
+# generator and tensor need to be on the same device)
+torch.set_default_device('cpu')
+# ok now lets create the generator on cpu
 generator = torch.Generator(device='cpu').manual_seed(5)
 random_tensor_2 = torch.randn(size=(2,2,), generator=generator)
 random_tensor_3 = torch.randn(size=(2,2,), generator=generator)
