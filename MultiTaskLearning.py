@@ -1154,7 +1154,7 @@ def train_val(model, dataloader, optimizer, criterion_1, criterion_2, is_trainin
                             'all_accs_avg':all_accs_avg,
                             'accuracies':accuracies,
                             'subset_accuracy':subset_accuracy,
-                            'perlabel_accuracy':perlabel_accuracy},"mtl_anime.pt")
+                            'perlabel_accuracy':perlabel_accuracy},"./weights/mtl_animestyles.pt")
             
             if is_training:
                 optimizer.zero_grad()
@@ -1319,11 +1319,11 @@ def show_predictions(imgs, preds, rows=32, cols=1):
         str_info = f'gender: {gdr} | adulthood: {adl} |' \
                    f'hair length: {len} | hair color: {hclr}\noutfit color:{oclr}'
         ax.set_title(str_info)
-        
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 device = 'cpu'
 # load the best model first 
-statedicts = torch.load('mtl_anime.pt')
+statedicts = torch.load('./weights/mtl_animestyles.pt')
 model.load_state_dict(statedicts['weights'])
 model.to(device)
 
