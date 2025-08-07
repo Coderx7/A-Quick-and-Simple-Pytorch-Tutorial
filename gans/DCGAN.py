@@ -19,7 +19,7 @@ import pickle as pkl
 batch_size = 128
 # check what happens if we use augmentations here?! aka us transforms.Compose
 transform = transforms.ToTensor()
-train_dataset = datasets.SVHN('SVHN', split='train', transform=transform, download=True)
+train_dataset = datasets.SVHN('../data/SVHN', split='train', transform=transform, download=True)
 train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
 #visualize 
@@ -37,10 +37,10 @@ for i in range (20):
     ax.imshow(imgs[i])
     ax.set_title(labels[i].item())
 
-# we need to check the minimum and maximum values of each pixel so we can scale them between -1and 1
-# how to do that ? lets see
-# 
-
+# we need to check the minimum and maximum 
+# values of each pixel so we can scale them
+# between -1and 1 
+# how to do that? lets see
 print(f'min: {imgs[0].min()}')
 print(f'max: {imgs[0].max()}')
 
@@ -56,8 +56,6 @@ print(imgs.max())
 
 print(img0.min())
 print(img0.max())
-
-
 
 #
  # if we wanted to work a batch, and calculate min/max for all images in 
@@ -171,7 +169,7 @@ print(img0.max())
 #%%
 def conv_batch(in_, out_, kernelsize, stride=2, padding=1, batchnorm=False):
     layers = []
-    # we do subsamling by using st ride =2 as well!
+    # we do subsamling by using stride =2 as well!
     conv = nn.Conv2d(in_, out_, kernelsize,stride, padding)
     layers.append(conv)
     if batchnorm:
@@ -345,7 +343,7 @@ for e in range(epochs):
 
         if i% interval==0:
             # append discriminator loss and generator loss
-            losses.append((d_loss.item,real_loss_g.item()))
+            losses.append((d_loss.item(),real_loss_g.item()))
             # print discriminator and generator loss
             print('Epoch [{:5d}/{:5d}] | d_loss: {:6.4f} | g_loss: {:6.4f}'.format(
                     e, epochs, d_loss.item(), real_loss_g.item()))
@@ -362,8 +360,8 @@ fig, axes = plt.subplots()
 losses = np.array(losses)
 print(losses)
 
-plt.plot(losses.T[0],label='D loss')
-plt.plot(losses.T[1],label='G loss')
+plt.plot(losses[:,0],label='D loss')
+plt.plot(losses[:,1],label='G loss')
 plt.title('loss')
 plt.legend()
 plt.show()

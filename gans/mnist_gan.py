@@ -2,11 +2,13 @@
 # in the name of God the most compassionate the most merciful
 # 
 # sidenote:
-# I wrote these back in 2018/2019 much of the information here may now
-# be considered obsolete and we have much more powerful methods for 
-# generations that these early architectures. we will cover some newer
-# GAN architectures that vastly improved upon these early architectures.
-# having said that, I only retain them for historical references.
+# I wrote these back in 2018/2019 much of the information here are now
+# either considered completely obsolete or evolved in a way, only a fraction
+# still apply unchanged. we will have a look at these later on as we have 
+# much more powerful methods for generations than these early architectures
+# and tips and tricks around them that were needed to get the most out of them!
+# we will cover some newer GAN architectures that vastly improved upon these
+# early architectures. having said that, I only retain them for historical references.
 #  
 # Here we are going to create a simple GAN network. a GAN network 
 # consists of a generator network and a discriminator network. 
