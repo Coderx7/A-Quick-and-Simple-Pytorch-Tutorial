@@ -150,6 +150,13 @@ ax.imshow(image, cmap='gray')
 
 
 #%%
+#sidenot:
+# this implements the early version of GAN. obviously using linear
+# layers is not anywhere near optimal choice when it comes to iamges
+# however, in order to keep things simple and replicate the early architectures
+# we used linear layers here. we see much improvements using dcgan ahead which
+# utilizes cnn and few other enhancements to get much better results!
+#
 # now lets define our models 
 # the discriminator first, its a simple normal network! 
 # accepts something and says if its something legit or not!!!
@@ -199,7 +206,9 @@ class GeneratorNet(nn.Module):
 
     def forward(self, input):
         # the choice of activation function seems not really that 
-        # decisive, I mean, relu works fine as well! 
+        # decisive, I mean, relu works fine as well! (for mnist
+        # and this architecture, but when dataset becomes larger 
+        # and more complex things change quite a bit!)
         output = self.act(self.fc1(input))
         output = self.dropout(output)
         output = self.act(self.fc2(output))
