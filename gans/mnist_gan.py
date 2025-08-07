@@ -1,14 +1,24 @@
 #%% 
 # in the name of God the most compassionate the most merciful
+# 
+# sidenote:
+# I wrote these back in 2018/2019 much of the information here may now
+# be considered obsolete and we have much more powerful methods for 
+# generations that these early architectures. we will cover some newer
+# GAN architectures that vastly improved upon these early architectures.
+# having said that, I only retain them for historical references.
+#  
 # Here we are going to create a simple GAN network. a GAN network 
-# consists of a generator part and a discriminator part. 
-# the generator parts job is to get a vector of some length 
-# and generate an image so and the discriminators job is simply
-# identfying if its a correct image or not. the catch here is 
-# the generator will try and ultimately create real life looking iamges
-# that can fool discriminator! this means, it will learn a latent space 
-# that the real images belog and simply sampling from them can result in 
-# real looking images. so lets see how we can do this 
+# consists of a generator network and a discriminator network. 
+# the generator part's job is to get a vector of some length 
+# and generate an image and the discriminators job is simply
+# identfying if its a real image or not (that is is it generated or not).
+# the catch here is the generator will try and ultimately create 
+# real life looking iamges that can fool discriminator! 
+# this means, it will learn a latent space that the real images
+# belong to and simply sampling from it can result in 
+# real looking images. 
+# so lets see how we can do this 
 import torch 
 import numpy as np 
 from torchvision import datasets, transforms, models
@@ -23,18 +33,17 @@ n_workers = 2
 
 #create our transformer 
 transform = transforms.ToTensor()
-train_dataset = datasets.MNIST('MNIST',True, transform=transform,download=True)
-train_dataloader = torch.utils.data.DataLoader(train_dataset,batch_size=batch_size, shuffle=True)
+train_dataset = datasets.MNIST('../data/MNIST',True, transform=transform, download=True)
+train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
 # lets see a sample bacth 
 imgs, labels = next(iter(train_dataloader))
-fig = plt.figure(figsize=(3,3))
+fig = plt.figure(figsize=(4,3))
 ax = fig.add_subplot(111)
 image = imgs.numpy()[0].squeeze()
-ax.imshow(image,cmap='gray')
+ax.imshow(image, cmap='gray')
 
-
-# Before we go, make sure you DO read this :
+# Before we go on, make sure you DO read this :
 #    https://github.com/soumith/ganhacks#16-discrete-variables-in-conditional-gans
 # they directly affect how GANs are trained!
 # dont use relu! use guassian distribution instead of uniform!
@@ -44,8 +53,9 @@ ax.imshow(image,cmap='gray')
 # use adam for generator, and you can use sgd with discriminator! 
 
 # How to Train a GAN? Tips and tricks to make GANs work
-# While research in Generative Adversarial Networks (GANs) continues to improve the fundamental stability of these models, 
-# we use a bunch of tricks to train them and make them stable day to day.
+# While research in Generative Adversarial Networks (GANs) continues to improve 
+# the fundamental stability of these models, we use a bunch of tricks to train 
+# them and make them stable day to day.
 # Here are a summary of some of the tricks.
 # Here's a link to the authors of this document
 # If you find a trick that is particularly useful in practice, please open a Pull Request to add it to the document. 
@@ -54,21 +64,24 @@ ax.imshow(image,cmap='gray')
 #     normalize the images between -1 and 1
 #     Tanh as the last layer of the generator output
 # 2: A modified loss function
-# In GAN papers, the loss function to optimize G is min (log 1-D), but in practice folks practically use max log D
-#     because the first formulation has vanishing gradients early on
-#     Goodfellow et. al (2014)
+# In GAN papers, the loss function to optimize G is min (log 1-D), but in practice
+# folks practically use max log D because the first formulation has vanishing gradients
+# early on Goodfellow et. al (2014)
 # In practice, works well:
 #     Flip labels when training generator: real = fake, fake = real
 # 3: Use a spherical Z
 #     Dont sample from a Uniform distribution
-# cube
+# cube.png
 #     Sample from a gaussian distribution
-# sphere
-#     When doing interpolations, do the interpolation via a great circle, rather than a straight line from point A to point B
+# sphere.png
+#     When doing interpolations, do the interpolation via a great circle, rather than
+#     a straight line from point A to point B
 #     Tom White's Sampling Generative Networks ref code https://github.com/dribnet/plat has more details
 # 4: BatchNorm
-#     Construct different mini-batches for real and fake, i.e. each mini-batch needs to contain only all real images or all generated images.
-#     when batchnorm is not an option use instance normalization (for each sample, subtract mean and divide by standard deviation).
+#     Construct different mini-batches for real and fake, i.e. each mini-batch needs to 
+#     contain only all real images or all generated images.
+#     when batchnorm is not an option use instance normalization (for each sample, 
+#     subtract mean and divide by standard deviation).
 # batchmix
 # 5: Avoid Sparse Gradients: ReLU, MaxPool
 #     the stability of the GAN game suffers if you have sparse gradients
@@ -77,16 +90,20 @@ ax.imshow(image,cmap='gray')
 #     For Upsampling, use: PixelShuffle, ConvTranspose2d + stride
 #         PixelShuffle: https://arxiv.org/abs/1609.05158
 # 6: Use Soft and Noisy Labels
-#     Label Smoothing, i.e. if you have two target labels: Real=1 and Fake=0, then for each incoming sample, if it is real, then replace the label with a random number between 0.7 and 1.2, and if it is a fake sample, replace it with 0.0 and 0.3 (for example).
-#         Salimans et. al. 2016
-#     make the labels the noisy for the discriminator: occasionally flip the labels when training the discriminator
+#     Label Smoothing, i.e. if you have two target labels: Real=1 and Fake=0, 
+#     then for each incoming sample, if it is real, then replace the label with
+#     a random number between 0.7 and 1.2, and if it is a fake sample, replace 
+#     it with 0.0 and 0.3 (for example). Salimans et. al. 2016
+#     make the labels the noisy for the discriminator: occasionally flip the labels
+#     when training the discriminator
 # 7: DCGAN / Hybrid Models
 #     Use DCGAN when you can. It works!
 #     if you cant use DCGANs and no model is stable, use a hybrid model : KL + GAN or VAE + GAN
 # 8: Use stability tricks from RL
 #     Experience Replay
 #         Keep a replay buffer of past generations and occassionally show them
-#         Keep checkpoints from the past of G and D and occassionaly swap them out for a few iterations
+#         Keep checkpoints from the past of G and D and occassionaly swap them 
+#         out for a few iterations
 #     All stability tricks that work for deep deterministic policy gradients
 #     See Pfau & Vinyals (2016)
 # 9: Use the ADAM Optimizer
@@ -132,11 +149,11 @@ ax.imshow(image,cmap='gray')
 #     https://arxiv.org/pdf/1611.07004v1.pdf
 
 
-
 #%%
 # now lets define our models 
-# the discriminator first, its a simple normal network! accepts something and says if its something!!!
-# the catche is, we seem to need to use leaky relu only!!!!!! 
+# the discriminator first, its a simple normal network! 
+# accepts something and says if its something legit or not!!!
+# the catch is, we seem to need to use leaky relu only!!!!!! 
 class DiscriminatorNet (torch.nn.Module):
     def __init__(self, input_dim, hidden_size, output_dim, act = nn.LeakyReLU(0.2)):
         super().__init__()
@@ -149,17 +166,9 @@ class DiscriminatorNet (torch.nn.Module):
 
         self.dropout = nn.Dropout(0.3)
 
-    def forward(self, x):
+    def forward(self, x:torch.Tensor):
 
-        x = x.view(-1, 28*28)
-        # if isinstance(self.act, nn.LeakyReLU):
-        #     output = F.leaky_relu(self.fc1(x), negative_slope=0.2)
-        #     output = self.dropout(output)
-        #     output = F.leaky_relu(self.fc2(output), negative_slope=0.2)
-        #     output = self.dropout(output)
-        #     output = F.leaky_relu(self.fc3(output), negative_slope=0.2)
-        #     output = self.dropout(output)
-        # else: 
+        x = x.flatten(start_dim=1)
         output = self.act(self.fc1(x))
         output = self.dropout(output)
         output = self.act(self.fc2(output))
@@ -168,14 +177,14 @@ class DiscriminatorNet (torch.nn.Module):
         output = self.dropout(output)
         # raw scores!
         output = self.fc4(output)
-
         return output
 
-
-# now the generator network. its the same as our discriminator network but !!! 
-# becasue we are trying to create images, our outputs should produce values  that are sensible for 
-# images. we can use sigmoid, but it turns out that tanh works better! so our input should also be
-# scaled between -1 and 1 instead of 0 anad 1! lets create our generator network!!
+# now the generator network. its the same as our discriminator network but 
+# becasue we are trying to create images, our outputs should produce values
+# that are sensible for images. 
+# we can use sigmoid, but it turns out that tanh works better! so our input
+# should also be scaled between -1 and 1 instead of 0 anad 1! 
+# lets create our generator network!!
 
 class GeneratorNet(nn.Module):
     def __init__(self, input_dim, hidden_size, output_size, act=nn.LeakyReLU(0.2)):
@@ -189,15 +198,6 @@ class GeneratorNet(nn.Module):
         self.dropout = nn.Dropout(0.3)
 
     def forward(self, input):
-
-        # if isinstance(self.act, nn.LeakyReLU):
-        #     output = F.leaky_relu(self.fc1(input),0.2)
-        #     output = self.dropout(output)
-        #     output = F.leaky_relu(self.fc2(output),0.2)
-        #     output = self.dropout(output)
-        #     output = F.leaky_relu(self.fc3(output),0.2)
-        #     output = self.dropout(output)
-        # else:
         # the choice of activation function seems not really that 
         # decisive, I mean, relu works fine as well! 
         output = self.act(self.fc1(input))
@@ -206,21 +206,23 @@ class GeneratorNet(nn.Module):
         output = self.dropout(output)
         output = self.act(self.fc3(output))
         output = self.dropout(output)
-        # if we use sigmoid here, regardless of scaling our input between -1 and 1
-        # we will not succeed! the discriminators loss decreases well but generators goes up!
+        # if we use sigmoid here, regardless of scaling
+        # our input between -1 and 1 we will not succeed!
+        # the discriminators loss decreases well but generators goes up!
         output = F.tanh(self.fc4(output))
-
         return output
 
 
 #%%
-# for the loss criterion, we shuod know that our DIscriminators job is to 
+# for the loss criterion, we shuod know that our Discriminators job is to 
 # successfuly recognize which image is fake and which image is real!
 # so we should create labels for each image. the real images will have label=1
 # becasue they are real! duh?!! and the fake ones are the ones generated by our
-# generator network! we will use Binary CrossEntropy with Logitsc (BCEntropyWithlogits)
-# as our criterion. There is also one minor trick. instead of label =1.0 we actually 
-# smooth out our labels, meaning we set labels = 0.9 instead of 1.0 so the discriminator has easier time!
+# generator network!
+# we will use Binary CrossEntropy with Logitsc (BCEntropyWithlogits)
+# as our criterion. There is also one minor trick. 
+# instead of label =1.0 we actually smooth out our labels, meaning we set 
+# labels = 0.9 instead of 1.0 so the discriminator has easier time!
 # why does that work? I dont know yet! lets find out!
 
 def real_loss(Discriminators_output, is_smoothed=False):
@@ -269,15 +271,18 @@ optimizer_G = torch.optim.Adam(G.parameters(), lr=0.002)
 
 
 #%%
-#training. the training proceduere is like this, first we train our discriminator net, on real images, 
-# then get its loss, then imiediately, we generate some images using our generator, and feed its output
-# to our discrinimator, and get an output, now, we use the fake_loss and calculate the loss, 
-# then we add these two losses, create a final loss, do backprop, update the weigts and 
-# now before going for the next batch of images, we turn to our generatornetwork, its his turn now!
-# we again generate some random vectorm feed our generator, get an output, feed our it to our Discriminator
-# again, and this time for loss, we use the real labels since we want to see, how well we are doing in creating
-# real looking images! and then do backward and update on generator network and go for thenext batches
-# lets see how to do this in action!
+#training. the training proceduere is like this, 
+# first we train our discriminator net, on real images, 
+# then get its loss, then imiediately, we generate some images
+# using our generator, and feed its output to our discrinimator,
+# and get an output, now, we use the fake_loss and calculate the loss, 
+# then we add these two losses, create a final loss, do backprop, update the weigts 
+# now before going for the next batch of images, we turn to our generatornetwork,
+# its his turn now! we again generate some random vector feed our generator, 
+# get an output, feed our it to our Discriminator again, and this time for loss,
+# we use the real labels since we want to see, how well we are doing in creating
+# real looking images! and then do backward and update on generator network and
+# go for thenext batches lets see how to do this in action!
 
 epochs = 100
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
@@ -338,7 +343,7 @@ for e in range(epochs):
 
 import pickle as pkl 
 from Cython.Shadow import inline
-with open('samples.pkl', 'wb') as file : 
+with open('../weights/samples.pkl', 'wb') as file : 
     pkl.dump(samples, file)
 #%%
 fig, axes = plt.subplots()
