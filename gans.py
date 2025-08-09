@@ -469,6 +469,8 @@ class ConvBlock(nn.Module):
         return self.block(x)
 
 # for upsamling we use ConvTranspose2d (previously incorrectly known as deconvolution)
+# we make our generator block more powerful so it has easier time learning
+# how to generate better images otherwise it will be dominated by our discriminator!
 class ConvTransBlock(nn.Module):
     def __init__(self,  in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False):
@@ -477,8 +479,23 @@ class ConvTransBlock(nn.Module):
                                              stride, padding, bias=not batch_norm),
                                    nn.BatchNorm2d(out_channels) if batch_norm else
                                    nn.Identity())
+        # add residual connection, grab the input upsample it 
+        # so it matches the shape of our convtrans block and
+        # add them together 
+        self.residual = nn.Sequential(nn.Upsample(scale_factor=stride, mode='nearest'),
+                                      nn.Conv2d(in_channels=in_channels, out_channels=out_channels,kernel_size=1,
+                                                stride=1, bias=not batch_norm),
+                                      nn.BatchNorm2d(out_channels) if batch_norm else
+                                      nn.Identity(),
+                                      )
+                
     def forward(self, x):
-        return self.block(x)
+        out = self.block(x)
+        x_res = self.residual(x)
+        # used relu on (out+x_res) and it completely destroys generatioN!
+        out = out+x_res
+        # print(f'{out.shape=}')
+        return out
 
 class DiscriminatorCNN(nn.Module):
     def __init__(self, hidden_size, act=nn.LeakyReLU(0.2)):
@@ -499,11 +516,14 @@ class DiscriminatorCNN(nn.Module):
                                  ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=True, act_func=act),
                                  # flatten the input to linear layer
                                  nn.Flatten(),
-                                 # classifier recieves a 4x4 featuremap, 
-                                 # so to account for all elements we multiply
+                                 # classifier recieves a 4x4 featuremap, and
+                                 # outputs a single number needed for classifying
+                                 # real or fake images. 
+                                 # since its a linear layer accepting 3d featuremap
+                                 # to account for all elements we multiply
                                  # the previous layer's output_channels which
                                  # is hidden_size*4 by the featuremap size (4x4) 
-                                 nn.Linear(hidden_size*4 * 4*4, hidden_size),
+                                 nn.Linear(hidden_size*4 * 4*4, 1),
                                  act)
 
     def forward(self, x):
@@ -524,21 +544,29 @@ class GeneratorCNN(nn.Module):
         # crude architecture while we can build much powerful architectures.
         # though since we did the same for discriminator and used a simple architecture we
         # dont go overboard with this either!        
-        self.fc = nn.Linear(z_size, hidden_size*4 * 4*4)
-        self.net = nn.Sequential(ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True), #8x8
+        self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
+                                 # unflatten the output of linear layer back to 3d
+                                 # shape to be fed to convtranspos2d. we use Unflatten()
+                                 # specify the dim we want to unflatten which is 1 
+                                 # (cuz linear is 2d (batch, dim)) and then reshape it to
+                                 # (out_channels, h,w) 
+                                 nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
+                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True), #8x8
                                  ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True),   #16x16
                                  # disable batchnorm for last layer of generator so 
                                  # it doesnt normalize the image values!
                                  ConvTransBlock(hidden_size, 3, 4, batch_norm=False),              #32x32
                                  nn.Tanh())   
     def forward(self, x): 
-        x = self.fc(x)
-        # unflatten the output back to 3d shape to be fed to convtranspos2d
+        # we could have also done it in functional form for that we had to
+        # make the fc stand alone and the reshape its output to be 3d
+        # x = self.fc(x)
+        # and unflatten the output back to 3d shape to be fed to convtranspos2d
         # we use the in_channels of the immediate first layer after linear layer
         # and multiply it by the featuremap size which is 4x4
         # print the generatorcnn model and you'll see how we accessed each layer
         # like this 
-        x = x.view(-1, self.net[0].block[0].in_channels, 4, 4)
+        # x = x.view(-1, self.net[0].block[0].in_channels, 4, 4)
         return self.net(x)
 
 x = torch.randn((5,3,32,32))
@@ -566,10 +594,10 @@ def real_loss(preds_real, smooth=True, strict_DCGAN=False, device='cuda'):
         # like this. it used 0.9 instead of 1 and it worked reall well.
         # other variations also were introduced like sampling from 0.7-0.9
         # to make it harder for discriminator to overfit and force it to learn
-        # more robust features
-        # labels = labels * torch.distributions.Uniform(0.7,0.9).sample()
-        # labels = labels * 0.9 if smooth else labels
-        labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
+        # more robust features in practice however, I found .9 to work much better!
+        # labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
+        labels = labels * 0.9 if smooth else labels
+        
     return criterion(preds_real, labels)
 
 def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
@@ -634,119 +662,92 @@ print(f'scaled max:  {imgs.max()}')
 
 #%% training!
 
-#discriminator
-input_size = 32
-discriminatorcnn = DiscriminatorCNN(input_size, hidden_size=32)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-#generator
-z_size = 100
-conv_fmap_n = input_size 
-generatorcnn = GeneratorCNN(z_size, hidden_size=32)
+hidden_size = 32
+z_size = 128
 
 epochs = 50 
-interval = 300
+interval = 5000
 
-beta1=0.5
-beta2=0.999 # default value
-optimizer_d = torch.optim.Adam(D.parameters(), 0.0002, [beta1, beta2])
-optimizer_g = torch.optim.Adam(G.parameters(), 0.0002, [beta1, beta2])
+#discriminator
+discriminatorcnn = DiscriminatorCNN(hidden_size=16)
+discriminatorcnn = discriminatorcnn.to(device)
+#generator
+generatorcnn = GeneratorCNN(z_size, hidden_size=32)
+generatorcnn = generatorcnn.to(device)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-D = D.to(device)
-G = G.to(device)
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0002, [0.5, 0.999])
+gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
+
+gen_num_samples = 64
+fixed_z = torch.distributions.Uniform(-1,1).sample((gen_num_samples,z_size)).to(device)
 
 losses = []
-samples = []
 
-z_vec_fixed = np.random.uniform(-1,1,size=(16, z_size))
-z_tensor_fixed = torch.from_numpy(z_vec_fixed).float().to(device)
+for epoch in range(epochs):
 
-for e in range(epochs):
+    discriminatorcnn.train()
+    generatorcnn.train()
 
-    D.train()
-    G.train()
+    for i, (imgs_real, _) in enumerate(train_loader):
 
-    for i, (imgs, _) in enumerate(train_dataloader):
-
-        batch_size = imgs.size(0)
-
-        #scale input*(max-min) + min
-        imgs = imgs *(1-(-1))+ (-1)
-
-        imgs = imgs.to(device)
+        #scale input to [-1,1]
+        imgs_real = (2*imgs_real-1).to(device)
+        
         # train discriminator! 
-
-        outputs = D(imgs)
-        real_loss_ = real_loss(outputs, False, device)
+        # real image predictions
+        preds_real = discriminatorcnn(imgs_real)
+        disc_real_loss = real_loss(preds_real, smooth=True, device=device)
+        
         # generate an image using generator 
-        z_vector = np.random.uniform(-1,1, size=(batch_size, z_size))
-        z_tensor = torch.from_numpy(z_vector).float().to(device)
-        image_output_g = G(z_tensor)
-        if i==0:
-            print(image_output_g.shape)
-        outputs_fake = D(image_output_g)
-        fake_loss_ = fake_loss(outputs_fake, False, device)
-        d_loss = real_loss_ + fake_loss_
+        z_vector = torch.distributions.Uniform(-1,1).sample((imgs_real.size(0), z_size)).to(device)
+        imgs_fake = generatorcnn(z_vector)
+        preds_fake = discriminatorcnn(imgs_fake)
+        disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
+        # calculate discrimiator loss out of real and fake losses
+        disc_loss = disc_real_loss + disc_fake_loss
+        # and optimize discrimnator 
+        disc_optimizer.zero_grad()
+        disc_loss.backward()
+        disc_optimizer.step()
 
-        optimizer_d.zero_grad()
-        d_loss.backward()
-        optimizer_d.step()
-
-        # train genertor !
-        z_vector = np.random.uniform(-1,1,size=(batch_size, z_size))
-        z_tensor = torch.from_numpy(z_vector).float().to(device)
-        fake_image_g = G(z_tensor)
-        fake_output = D(fake_image_g)
-        # swap loss! 
-        real_loss_g = real_loss(fake_output, smooth=False, device=device)
-
-        optimizer_g.zero_grad()
-        real_loss_g.backward()
-        optimizer_g.step()
+        # now train genertor to create images that look real
+        z_vector = torch.distributions.Uniform(-1,1).sample((imgs_real.size(0),z_size)).to(device)
+        fake_imgs = generatorcnn(z_vector)
+        preds_fake = discriminatorcnn(fake_imgs)
+        # swap loss! treat fake images as real images
+        gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        # optimize generator
+        gen_optimizer.zero_grad()
+        gen_real_loss.backward()
+        gen_optimizer.step()
 
         if i% interval==0:
             # append discriminator loss and generator loss
-            losses.append((d_loss.item(),real_loss_g.item()))
+            losses.append((disc_loss.item(), gen_real_loss.item()))
             # print discriminator and generator loss
-            print('Epoch [{:5d}/{:5d}] | d_loss: {:6.4f} | g_loss: {:6.4f}'.format(
-                    e, epochs, d_loss.item(), real_loss_g.item()))
+            print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Discriminator Loss: {disc_loss:6.4f} | Generator Loss: {gen_real_loss:6.4f}')
+
+    losses.append((disc_loss.item(), gen_real_loss.item()))
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Discriminator Loss : {np.mean(np.array(losses)[:,0]):.4f} | Generator loss: {np.mean(np.array(losses)[:,1]):.4f} ')
+    # generate some images mid training to evaluate our model's performance 
+    generatorcnn.eval()
+    # reshape images back to 32x32x3
+    generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
+    display_images(generated_images, 
+                   rows=gen_num_samples//8,
+                   title=f'Generated Images at Epoch {epoch}',
+                   unnormalize=True)
     
-    G.eval()
-    images = G(z_tensor_fixed)
-    samples.append(images)
-with open('dcgan_images.pkl','wb') as f: 
-    pkl.dump(samples, f)
-
 #%%
-#visualization!
-fig, axes = plt.subplots()
 losses = np.array(losses)
-print(losses)
 
-plt.plot(losses[:,0],label='D loss')
-plt.plot(losses[:,1],label='G loss')
-plt.title('loss')
+plt.plot(losses[:,0],label="Discriminator's loss")
+plt.plot(losses[:,1],label="Generator's loss")
+plt.title('Loss')
 plt.legend()
 plt.show()
-
-
-#%%
-# lets visualize our samples in each epoch
-def vis_samples(samples, title):
-    fig, axes = plt.subplots(4, 4, sharex=True, sharey=True)
-    samples = samples.cpu().detach().numpy().transpose(0,2,3,1)
-    
-    for ax, img in zip(axes.flatten(), samples) :
-        img = ((img +1)*255 / (2)).astype(np.uint8) # rescale to pixel range (0-255)
-        ax.imshow(img.reshape((32,32,3)))
-        ax.xaxis.set_visible(False)
-        ax.yaxis.set_visible(False) 
-        ax.set_title(title)
-with open('dcgan_images.pkl','rb') as f: 
-    samples = pkl.load(f)
-
-for i in range(len(samples)):    
-    vis_samples(samples[i],str(i))
 
 #%%
 
