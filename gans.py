@@ -495,9 +495,9 @@ class ConvTransBlock(nn.Module):
                 
     def forward(self, x):
         out = self.block(x)
-        x_res = self.residual(x)
+        # x_res = self.residual(x)
         # used relu on (out+x_res) and it completely destroys generatioN!
-        out = out+x_res
+        # out = out+x_res
         # print(f'{out.shape=}')
         return out
 
@@ -623,8 +623,8 @@ def real_loss(preds_real, smooth=True, strict_DCGAN=False, device='cuda'):
         # other variations also were introduced like sampling from 0.7-0.9
         # to make it harder for discriminator to overfit and force it to learn
         # more robust features in practice however, I found .9 to work much better!
-        labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
-        # labels = labels * 0.9 if smooth else labels
+        # labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
+        labels = labels * 0.9 if smooth else labels
         
     return criterion(preds_real, labels)
 
