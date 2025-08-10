@@ -660,7 +660,8 @@ def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
 # or the lmdb versions other people put up later on because the princeton university
 # that hosted the dataset no longer offers any download links.
 # 
-batch_size = 64
+# a larger batchsize provides more stablity
+batch_size = 128
 num_workers = 8
 # check what happens if we use augmentations here?! aka us transforms.Compose
 transform = transforms.Compose([
@@ -698,7 +699,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 disc_hidden_size = 32
 gen_hidden_size = 64
-z_size = 128
+# dcgan used 100 if I recall correctly
+z_size = 100
 
 epochs = 50 
 interval = 5000
@@ -800,7 +802,7 @@ for epoch in range(epochs):
     # reshape images back to 32x32x3
     generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
     display_images(generated_images, 
-                   rows=gen_num_samples//8,
+                   rows=gen_num_samples//16,
                    title=f'Generated Images at Epoch {epoch}',
                    unnormalize=True)
     
