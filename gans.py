@@ -664,17 +664,18 @@ print(f'scaled max:  {imgs.max()}')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-hidden_size = 32
+disc_hidden_size = 32
+gen_hidden_size = 64
 z_size = 128
 
 epochs = 50 
 interval = 5000
 
 #discriminator
-discriminatorcnn = DiscriminatorCNN(hidden_size=16)
+discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
 discriminatorcnn = discriminatorcnn.to(device)
 #generator
-generatorcnn = GeneratorCNN(z_size, hidden_size=32)
+generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
 
 disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0002, [0.5, 0.999])
