@@ -479,7 +479,11 @@ class ConvTransBlock(nn.Module):
                                              stride, padding, bias=not batch_norm),
                                    nn.BatchNorm2d(out_channels) if batch_norm else
                                    nn.Identity())
-        # add residual connection, grab the input upsample it 
+        # add residual connection, its not part of DCGAN
+        # but since we are doing on smaller datasets I decided
+        # to give it a shot just to get better output. we should 
+        # be able to get results without it but its for less headache!
+        # here we grab the input and upsample it 
         # so it matches the shape of our convtrans block and
         # add them together 
         self.residual = nn.Sequential(nn.Upsample(scale_factor=stride, mode='nearest'),
@@ -496,6 +500,17 @@ class ConvTransBlock(nn.Module):
         out = out+x_res
         # print(f'{out.shape=}')
         return out
+
+# we also need to initialize the weights the same way DCGAN paper did
+def weights_init_dcgan(module):
+    if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+        nn.init.normal_(module.weight.data, 0.0, 0.02)
+        if module.bias is not None:
+            nn.init.constant_(module.bias.data, 0)
+    elif isinstance(module, nn.BatchNorm2d):
+        nn.init.normal_(module.weight.data, 1.0, 0.02)
+        nn.init.constant_(module.bias.data, 0)
+
 
 class DiscriminatorCNN(nn.Module):
     def __init__(self, hidden_size, act=nn.LeakyReLU(0.2)):
@@ -525,7 +540,15 @@ class DiscriminatorCNN(nn.Module):
                                  # is hidden_size*4 by the featuremap size (4x4) 
                                  nn.Linear(hidden_size*4 * 4*4, 1),
                                  act)
-
+        
+        # initialize weights
+        # to check if our initialization is done correctly
+        # lets check mean/std before after init
+        # print(f'Conv mean: {self.net[2].block[0].weight.data.mean():.4f} | std: {self.net[0].block[0].weight.data.std():.4f}')
+        self.apply(weights_init_dcgan)
+        # print(f'Conv mean: {self.net[0].block[0].weight.data.mean():.4f} | std: {self.net[0].block[0].weight.data.std():.4f}')
+        
+        
     def forward(self, x):
         return self.net(x)
 
@@ -556,7 +579,12 @@ class GeneratorCNN(nn.Module):
                                  # disable batchnorm for last layer of generator so 
                                  # it doesnt normalize the image values!
                                  ConvTransBlock(hidden_size, 3, 4, batch_norm=False),              #32x32
-                                 nn.Tanh())   
+                                 nn.Tanh())
+        
+        # initialize weights
+        self.apply(weights_init_dcgan)
+
+        
     def forward(self, x): 
         # we could have also done it in functional form for that we had to
         # make the fc stand alone and the reshape its output to be 3d
@@ -595,8 +623,8 @@ def real_loss(preds_real, smooth=True, strict_DCGAN=False, device='cuda'):
         # other variations also were introduced like sampling from 0.7-0.9
         # to make it harder for discriminator to overfit and force it to learn
         # more robust features in practice however, I found .9 to work much better!
-        # labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
-        labels = labels * 0.9 if smooth else labels
+        labels = labels * torch.distributions.Uniform(0.7,0.9).sample() if smooth else labels
+        # labels = labels * 0.9 if smooth else labels
         
     return criterion(preds_real, labels)
 
@@ -724,6 +752,15 @@ for epoch in range(epochs):
         disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
         # calculate discrimiator loss out of real and fake losses
         disc_loss = disc_real_loss + disc_fake_loss
+        
+        # for debugging purposes
+        # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
+        # then it means our discriminator is strong but if both are near the same
+        # value and the loss is low then it means our discriminator is confused
+        # or is over-regularized.
+        disc_real_mean = preds_real.mean().item()
+        disc_fake_mean = preds_fake.mean().item()
+        
         # and optimize discrimnator 
         disc_optimizer.zero_grad()
         disc_loss.backward()
@@ -752,10 +789,12 @@ for epoch in range(epochs):
             # append discriminator loss and generator loss
             losses.append((disc_loss.item(), gen_real_loss.item()))
             # print discriminator and generator loss
-            print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Discriminator Loss: {disc_loss:6.4f} | Generator Loss: {gen_real_loss:6.4f}')
+            print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:6.4f} | Gen Loss: {gen_real_loss:6.4f}')
 
     losses.append((disc_loss.item(), gen_real_loss.item()))
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Discriminator Loss : {np.mean(np.array(losses)[:,0]):.4f} | Generator loss: {np.mean(np.array(losses)[:,1]):.4f} ')
+    
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {np.mean(np.array(losses)[:,0]):.4f} | Gen loss: {np.mean(np.array(losses)[:,1]):.4f} ')
+    print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
     # generate some images mid training to evaluate our model's performance 
     generatorcnn.eval()
     # reshape images back to 32x32x3
@@ -799,8 +838,29 @@ plt.show()
 #      -- no visible change!
 # # disabled the data-augmentation - increased discrimnators lr to 2e-4 fro 1e-4: 
 #      -- no luck
-# # disabled the data-augmentation - increased discrimnators lr to 1e-4 fro 1e-3: 
-# #    --
+# # disabled the data-augmentation - increased discrimnators lr to 2e-4 fro 2e-3: 
+# #    -- generator loss stays at around 2.7 now but a lot of similar/repeated patterns 
+# #    -- are being generated! discriminator loss is around 0.396 at epoch 20!
+# #    -- but the gans loss is not decreasing, its stuck at 2.8x and fluctuattes aorund that
+# # the previous config + now we initialized the weights according to dcgan:
+# #    -- checking the disc_real_mean and disc_fake_mean shows they are far away
+# #    -- signaling our discrimnator is strong! to be more exact we have 
+#      -- Epoch/Epochs: 0/50 | Disc Loss : 0.4475 | Gen loss: 2.2510 
+#           -- Discriminator's real mean: 3.1040 | Discriminator's fake mean = -2.7766
+#      -- 3.1 and -2.7 are our discriminator raw logits (before sigmoid, remember
+#      -- we have BCE as loss it applies the sigmoid internally and then it will 
+#      -- affect the gradient (the gradient will be very small as you can imagine))
+#      -- sigmoid(3)=~0.95 which means our discriminator is predicting around 95% 
+#      -- real images as real! and sigmoid(-2.7)=0.06 meaning discriminator is 
+#      -- predicting ~94.3% fake for generated images (and up to epoch 5 it becomes -5 
+#      -- which makes it 99%). this means our generator is getting very small gradients 
+#      -- because the discriminator's outputs are far into the saturated regions of
+#      -- the sigmoid, where slope goes toward 0 and also we are not using the batchnorm
+#      -- layer at the final layer of generator either because that would cause another issue
+#      -- thats why by epoch 5 our generator loss is still around 3~4! the discriminator 
+#      is winning too easily, starving the generator of signal.
+#      -- so Im using stronger label smoothing (using 0.7-0.9 instead of 0.9 for real images)
+# 
 # our first training log where we had 
 # mode collapse and high generators loss
 # Epoch/Epochs: 0/50 | Iter: 0/8299 | Discriminator Loss: 1.3818 | Generator Loss: 0.7014
