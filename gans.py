@@ -635,7 +635,11 @@ def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
 batch_size = 64
 num_workers = 8
 # check what happens if we use augmentations here?! aka us transforms.Compose
-transform = transforms.ToTensor()
+transform = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    transforms.ToTensor()
+])
 
 train_dataset = datasets.SVHN('./data/SVHN', split='extra', transform=transform, download=True)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -677,8 +681,9 @@ discriminatorcnn = discriminatorcnn.to(device)
 #generator
 generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
-
-disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0002, [0.5, 0.999])
+# DCGAN used [0.5,0.999] for betas for adams for better training stability
+# we lower the lr for disciminator so it doesnt learn too fast!
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, [0.5, 0.999])
 gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
 
 gen_num_samples = 64
@@ -696,6 +701,11 @@ for epoch in range(epochs):
         #scale input to [-1,1]
         imgs_real = (2*imgs_real-1).to(device)
         
+        # before we go on lets add small gaussian noise to real images
+        # I add this later when I noticed heavy mode collapse happining
+        # we do this to both real and fake images to fight mode collapse
+        imgs_real += 0.05 * torch.randn_like(imgs_real)
+               
         # train discriminator! 
         # real image predictions
         preds_real = discriminatorcnn(imgs_real)
@@ -703,7 +713,13 @@ for epoch in range(epochs):
         
         # generate an image using generator 
         z_vector = torch.distributions.Uniform(-1,1).sample((imgs_real.size(0), z_size)).to(device)
-        imgs_fake = generatorcnn(z_vector)
+        # we detach the imgs_fake so the discriminator cant use the gradients
+        # from the generator and quickly learn!
+        imgs_fake = generatorcnn(z_vector).detach()
+        
+        # add noise to fake images as well
+        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        
         preds_fake = discriminatorcnn(imgs_fake)
         disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
         # calculate discrimiator loss out of real and fake losses
@@ -717,8 +733,16 @@ for epoch in range(epochs):
         z_vector = torch.distributions.Uniform(-1,1).sample((imgs_real.size(0),z_size)).to(device)
         fake_imgs = generatorcnn(z_vector)
         preds_fake = discriminatorcnn(fake_imgs)
+        
         # swap loss! treat fake images as real images
-        gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        # gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        # ok that doesnt work properly and we are seeing mode collapse so
+        # instead occasionally (around 5% of the times) flip labels 
+        if torch.rand(1).item() < 0.05:
+            gen_real_loss = fake_loss(preds_fake, device=device)
+        else:
+            gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+            
         # optimize generator
         gen_optimizer.zero_grad()
         gen_real_loss.backward()
@@ -740,6 +764,10 @@ for epoch in range(epochs):
                    rows=gen_num_samples//8,
                    title=f'Generated Images at Epoch {epoch}',
                    unnormalize=True)
+    
+    
+    
+    
     
 #%%
 losses = np.array(losses)
