@@ -211,10 +211,14 @@ def display_images(imgs, rows=8, title='',unnormalize=False, save_path=None):
     imgs = imgs.cpu().detach()
     # rescale back to 0-1 range from -1/1 range
     imgs = (imgs+1)/2 if unnormalize else imgs
+    # when we unnormalize, some values will be a tiny bit lower or
+    # higher than [0-1] range, so we clip those values here!
+    imgs = imgs.clamp(0, 1)
     # print(f'{imgs.min()=}')
     # print(f'{imgs.max()=}')
     images = utils.make_grid(imgs,nrow=rows).cpu().numpy().transpose(1,2,0) # c,h,w -> h,w,c
-    plt.imshow(images, cmap='gray')
+
+    plt.imshow(images)
     if save_path:
         os.makedirs(os.path.split(save_path)[0], exist_ok=True)
         plt.savefig(save_path, bbox_inches='tight')
@@ -707,7 +711,7 @@ imgs = imgs*2-1
 # now lets see one example!
 print(f'scaled min: {imgs.min()}')
 print(f'scaled max:  {imgs.max()}')
-
+print(f'{len(train_loader)=}')
 #%% training!
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -718,7 +722,7 @@ gen_hidden_size = 64
 z_size = 100
 
 epochs = 50 
-interval = 5000
+interval = len(train_loader)//2
 
 #discriminator
 discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
@@ -734,7 +738,6 @@ gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999]
 gen_num_samples = 64
 fixed_z = torch.distributions.Uniform(-1,1).sample((gen_num_samples,z_size)).to(device)
 
-
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 losses = []
 
@@ -749,9 +752,12 @@ for epoch in range(epochs):
         imgs_real = (2*imgs_real-1).to(device)
         
         # before we go on lets add small gaussian noise to real images
-        # I add this later when I noticed heavy mode collapse happining
+        # I added this later when I noticed heavy mode collapse happining
         # we do this to both real and fake images to fight mode collapse
-        imgs_real += 0.05 * torch.randn_like(imgs_real)
+        # this is not needed in dcgan but having it enabled helps with 
+        # training we'll talk about this in future I'll leave this here
+        # for now - see training remarks ahead for an intersting find!
+        # imgs_real += 0.05 * torch.randn_like(imgs_real)
                
         # train discriminator! 
         # real image predictions
@@ -764,8 +770,8 @@ for epoch in range(epochs):
         # from the generator and quickly learn!
         imgs_fake = generatorcnn(z_vector).detach()
         
-        # add noise to fake images as well
-        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        # add noise to fake images as well(not needed for dcgan)
+        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
         
         preds_fake = discriminatorcnn(imgs_fake)
         disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
@@ -916,7 +922,17 @@ plt.show()
 #      -- we can still get result but obviously residuals help well. 
 #      -- I test both so you see the difference (having residual makes sharper 
 #      -- and better well formed images)
-#      -- 
+#      -- I also disabled gaussian noise addition trick because its not needed for dcgan
+#      -- I ran a test without it so we know the model would still be able to perform
+#      -- without it, though having it enabled is good fortraining stability
+#      -- (sidenote: I noticed when I disabled gausian noise trick, the generation
+#      -- looked funny, like some adjacent images, would eerily look as if they are
+#      -- connected as if they form one number. its intersting, you can see these images
+#      -- in results/gan/dcgan/20250811144424 directory you can compare it against
+#      -- the /20250811135652 directory that uses gausian noise and this doesnt happen
+#      -- could be a coincidence but could also be due to added randomness that helps with
+#      -- more diversity of samples in anycase its really intersting result)
+#
 # our first training log where we had 
 # mode collapse and high generators loss
 # Epoch/Epochs: 0/50 | Iter: 0/8299 | Discriminator Loss: 1.3818 | Generator Loss: 0.7014
