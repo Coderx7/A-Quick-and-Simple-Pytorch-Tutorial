@@ -473,12 +473,13 @@ class ConvBlock(nn.Module):
 # how to generate better images otherwise it will be dominated by our discriminator!
 class ConvTransBlock(nn.Module):
     def __init__(self,  in_channels, out_channels, kernel_size,
-                 stride=2, padding=1, batch_norm=False):
+                 stride=2, padding=1, batch_norm=False, act_func=nn.ReLU(inplace=True)):
         super().__init__()
         self.block = nn.Sequential(nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
                                              stride, padding, bias=not batch_norm),
                                    nn.BatchNorm2d(out_channels) if batch_norm else
-                                   nn.Identity())
+                                   nn.Identity(),
+                                   act_func if act_func else nn.Identity())
         # add residual connection, its not part of DCGAN
         # but since we are doing on smaller datasets I decided
         # to give it a shot just to get better output. we should 
@@ -492,12 +493,12 @@ class ConvTransBlock(nn.Module):
                                       nn.BatchNorm2d(out_channels) if batch_norm else
                                       nn.Identity(),
                                       )
-                
+ 
     def forward(self, x):
         out = self.block(x)
-        # x_res = self.residual(x)
+        x_res = self.residual(x)
         # used relu on (out+x_res) and it completely destroys generatioN!
-        # out = out+x_res
+        out = out+x_res
         # print(f'{out.shape=}')
         return out
 
@@ -568,18 +569,20 @@ class GeneratorCNN(nn.Module):
         # though since we did the same for discriminator and used a simple architecture we
         # dont go overboard with this either!        
         self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
+                                 nn.BatchNorm1d(hidden_size*4* 4*4),
+                                 nn.ReLU(inplace=True),
                                  # unflatten the output of linear layer back to 3d
                                  # shape to be fed to convtranspos2d. we use Unflatten()
                                  # specify the dim we want to unflatten which is 1 
                                  # (cuz linear is 2d (batch, dim)) and then reshape it to
                                  # (out_channels, h,w) 
                                  nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
-                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True), #8x8
-                                 ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True),   #16x16
+                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
+                                 ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act),   #16x16
                                  # disable batchnorm for last layer of generator so 
                                  # it doesnt normalize the image values!
-                                 ConvTransBlock(hidden_size, 3, 4, batch_norm=False),              #32x32
-                                 nn.Tanh())
+                                 ConvTransBlock(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),              #32x32
+                                 )
         
         # initialize weights
         self.apply(weights_init_dcgan)
@@ -697,7 +700,7 @@ print(f'scaled max:  {imgs.max()}')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-disc_hidden_size = 32
+disc_hidden_size = 16
 gen_hidden_size = 64
 # dcgan used 100 if I recall correctly
 z_size = 100
@@ -713,7 +716,7 @@ generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
 # DCGAN used [0.5,0.999] for betas for adams for better training stability
 # we lower the lr for disciminator so it doesnt learn too fast!
-disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.002, [0.5, 0.999])
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, [0.5, 0.999])
 gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
 
 gen_num_samples = 64
@@ -777,10 +780,10 @@ for epoch in range(epochs):
         # gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
         # ok that doesnt work properly and we are seeing mode collapse so
         # instead occasionally (around 5% of the times) flip labels 
-        if torch.rand(1).item() < 0.05:
-            gen_real_loss = fake_loss(preds_fake, device=device)
-        else:
-            gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        # if torch.rand(1).item() < 0.1:
+        #     gen_real_loss = fake_loss(preds_fake, device=device)
+        # else:
+        gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
             
         # optimize generator
         gen_optimizer.zero_grad()
@@ -802,7 +805,7 @@ for epoch in range(epochs):
     # reshape images back to 32x32x3
     generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
     display_images(generated_images, 
-                   rows=gen_num_samples//16,
+                   rows=gen_num_samples//8,
                    title=f'Generated Images at Epoch {epoch}',
                    unnormalize=True)
     
@@ -862,6 +865,26 @@ plt.show()
 #      -- thats why by epoch 5 our generator loss is still around 3~4! the discriminator 
 #      is winning too easily, starving the generator of signal.
 #      -- so Im using stronger label smoothing (using 0.7-0.9 instead of 0.9 for real images)
+#      -- that didnt solve the issue, reverted the smoothing back to 0.9 and instead
+#      -- decreased discrimnator's capacity (hiddensize down to 16 instead of 32) and
+#      -- that alone didnt do anythig, so I decreased the discriminators lr down to 0.0001
+#      -- from 0.002. for the initial epochs, the mean became much lower (0.4 vs 2 / -0.2 vs -2.9) 
+#      -- but as the training progrssed, they fluctuated to larger values like 1.7, 3,-2 etc
+#      -- both discriminator and generator loss are different. discriminator loss is higher
+#      -- compared to before (0.8 vs 0.3) and generators loss is larger (0.6 vs 1.4)
+#      -- as the traiing progressed, the discriminators loss gets better (0.65) while
+#      -- the generator's loss gets worse (1.76 epoch 24) 
+#      -- so I increased the label swap rate from 5% to 10% and imediately noticed
+#      -- the discriminator and generators loss stay roughly the same (0.986 vs 1~1.2)
+#      -- the real and fake means for discriminator is also around 1 for both but
+#      -- as training progressed, they took different values (2.42 for real and -1.5 for fake)
+#      -- discrimnator's loss very slowly decreases and generator's increases
+#      -- but the rate of change is very small 
+#      -- disabling label swap for generator 
+#      -- OK! I made a ridiculous mistake, when creating ConvTranspose, I missed
+#      -- the nonlinearity! so we were dealing with a linear generator and that 
+#      -- was the reason why we were having this much issues! after fixing that
+#      -- and also disabling label swap for generator its doing way better!
 # 
 # our first training log where we had 
 # mode collapse and high generators loss
