@@ -694,7 +694,7 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, nu
 
 #visualize 
 (imgs, labels) = next(iter(train_loader))
-display_images(imgs, title='svhn samples')
+display_images(imgs, title='svhn samples',rows=16)
 
 # we need to check the minimum and maximum 
 # values of each pixel so we can scale them
@@ -755,9 +755,9 @@ for epoch in range(epochs):
         # I added this later when I noticed heavy mode collapse happining
         # we do this to both real and fake images to fight mode collapse
         # this is not needed in dcgan but having it enabled helps with 
-        # training we'll talk about this in future I'll leave this here
+        # training/generation we'll talk about this in future I'll leave this here
         # for now - see training remarks ahead for an intersting find!
-        # imgs_real += 0.05 * torch.randn_like(imgs_real)
+        imgs_real += 0.05 * torch.randn_like(imgs_real)
                
         # train discriminator! 
         # real image predictions
@@ -771,7 +771,7 @@ for epoch in range(epochs):
         imgs_fake = generatorcnn(z_vector).detach()
         
         # add noise to fake images as well(not needed for dcgan)
-        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
         
         preds_fake = discriminatorcnn(imgs_fake)
         disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
@@ -812,7 +812,7 @@ for epoch in range(epochs):
         gen_real_loss.backward()
         gen_optimizer.step()
 
-        if i+1% interval==0:
+        if i+1%interval==0:
             # append discriminator loss and generator loss
             losses.append((disc_loss.item(), gen_real_loss.item()))
             # print discriminator and generator loss
@@ -820,8 +820,18 @@ for epoch in range(epochs):
 
     losses.append((disc_loss.item(), gen_real_loss.item()))
     
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {np.mean(np.array(losses)[:,0]):.4f} | Gen loss: {np.mean(np.array(losses)[:,1]):.4f} ')
+    d_loss_mean = np.mean(np.array(losses)[:,0])
+    g_loss_mean = np.mean(np.array(losses)[:,1])
+    
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} ')
     print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
+    
+    #save model weights at each epoch
+    torch.save({"state_dict":generatorcnn.state_dict(),
+                "epoch":epoch,
+                "loss":g_loss_mean
+                }, f"./weights/dcgan_generatorcnn_{experiment_date}.pt")
+    
     # generate some images mid training to evaluate our model's performance 
     generatorcnn.eval()
     # reshape images back to 32x32x3
@@ -841,6 +851,11 @@ plt.title('Loss')
 plt.legend()
 plt.show()
 
+#%%
+states = torch.load('./weights/dcgan_generatorcnn_20250811195800.pt')
+generatorcnn.load_state_dict(states["state_dict"])
+
+#%%
 # remarks:
 # ok early on we faced high generator's loss and mode collapse
 # then we added data-aumentation and noise to images and beafed up
@@ -932,6 +947,58 @@ plt.show()
 #      -- the /20250811135652 directory that uses gausian noise and this doesnt happen
 #      -- could be a coincidence but could also be due to added randomness that helps with
 #      -- more diversity of samples in anycase its really intersting result)
+#      -- update:
+#      -- I did a bit more research and it seems our initial assesment was spot on. 
+#      -- basically the effect we saw when we didnt use noise (adjacent images look as
+#      -- if they form part of a bigger image) is a sign of latent space entanglement
+#      -- that is caused by overfitting to a few discriminator weaknesses. 
+#      -- meaning our generator probably overfitted to a small set of latent-output mappings and
+#      -- the discriminator wasnt forcing variety).
+#      -- 
+#      quicknote:
+#      -- (latent space entanglement simply means in our generator's latent space, a single latent
+#      -- dimension controls many unrelated things at once! instead of just neatly controlling one
+#      -- interpretable feature/elemnt of variation)
+#      -- when we train a gan (or a vae or any generator model for that matter) the generator learns a
+#      -- mapping from z -> image but by default nothing in our training procedure is forcing each element of z to 
+#      -- correspond to a single disentangled property like for example hair color/length or smile intensity!
+#      -- instead each latent dimension usually affects multiple features simultaneously because
+#      -- first of all the generator is just trying to produce realistic outputs not to align dimensions with 
+#      -- our human interpretable factors and second because the underlying data distribution itself can 
+#      -- have correlations between factors (e.g. in our dataset beard might correlate with male and
+#      -- short hair), so the model learns those entangled relationships aswell.
+#      -- (during interpolations we'll see this when for example if we change only 
+#      -- z7 (7th element in our z vector which we feed to our generator) we might expect just 
+#      -- one property in the image (e.g. rotate head) to change but in practice we see several
+#      -- things change altogether! (e.g. hair color the background the face, etc changes)
+#      -- this is entanglement, one element/coordinate is tangled up with many factors.
+#      -- 
+#      -- in other words, the gaussian noise here acts like a regularizer and forces 
+#      -- the generator to explore more of the distribution and in doing so it learns
+#      -- more robust features/patterns so it makes adjacent samples less likely to 
+#      -- be visually related. however without it the generator overfits to some simple/safe features 
+#      -- that allows it to act real while discriminator is fine with it and doesnt force it
+#      -- to change and improve its result (since for what discriminator is concerned, it just
+#      -- cares about if it looks real or not, if it keeps repeating a simple yet realistic sample
+#      -- it would be fine for the discriminator! but oviously not us! we want diversity!)
+#      -- if you think about it it makes complete sense 
+#      -- the discriminator sees crystal-clear images so it can and does find very sharp and easily 
+#      -- deterministic features that separate real/fake especially early in training.
+#      -- in turn, the generator goes and learns about a few safe patterns that consistently
+#      -- pass as real and keeps using them! 
+#      -- since our latent space interpolation isnt being pushed toward diverse modes,
+#      -- small changes in the latent vector can produce outputs that look connected 
+#      -- rather than independent! almost like they are tiles of a bigger texture!
+#      -- (neighboring seeds that look too similar is a also symptom of poor mode coverage)
+#      -- now with gaussian noise added, each real/fake image fed to discriminator has
+#      -- a small random change/purterbation. this will force the discriminator to learn more 
+#      -- robust/generalizable features instead of pixel perfect cues (since now both real and fake
+#      -- iamges have noise they have in common so to separate between them it needs better features!).
+#      -- at the same time the generator can no longer rely on one/few brittle patterns that easily fail, 
+#      -- it must spread across more modes to fool discrimnitaor consistently.
+#      -- this added randomness/stochasticity in the training signal helps to break up those connected
+#      -- patterns in the latent space and ultimately lead to a more independent/varied generation.
+#      --
 #
 # our first training log where we had 
 # mode collapse and high generators loss
