@@ -480,6 +480,7 @@ class ConvTransBlock(nn.Module):
                                    nn.BatchNorm2d(out_channels) if batch_norm else
                                    nn.Identity(),
                                    act_func if act_func else nn.Identity())
+        
         # add residual connection, its not part of DCGAN
         # but since we are doing on smaller datasets I decided
         # to give it a shot just to get better output. we should 
@@ -496,10 +497,14 @@ class ConvTransBlock(nn.Module):
  
     def forward(self, x):
         out = self.block(x)
+        # residual connection like this is not part of dcgan
+        # but it can imporve our result. try it out and see how
+        # ita ffects the whole process and final output. 
+        # uncomment the following two lines to test it:
         x_res = self.residual(x)
-        # used relu on (out+x_res) and it completely destroys generatioN!
+        # using activation functions like relu on (out+x_res) will
+        # completely destroy generation! so dont apply any activations
         out = out+x_res
-        # print(f'{out.shape=}')
         return out
 
 # we also need to initialize the weights the same way DCGAN paper did
@@ -700,7 +705,7 @@ print(f'scaled max:  {imgs.max()}')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-disc_hidden_size = 16
+disc_hidden_size = 32#16
 gen_hidden_size = 64
 # dcgan used 100 if I recall correctly
 z_size = 100
@@ -777,13 +782,15 @@ for epoch in range(epochs):
         preds_fake = discriminatorcnn(fake_imgs)
         
         # swap loss! treat fake images as real images
-        # gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
-        # ok that doesnt work properly and we are seeing mode collapse so
-        # instead occasionally (around 5% of the times) flip labels 
-        # if torch.rand(1).item() < 0.1:
+        gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        # 
+        # we are seeing mode collapse it might be due to discriminator is
+        # doing great too early so lets mess it up!
+        # so occasionally (around 5% of the times) flip labels 
+        # if torch.rand(1).item() < 0.05:
         #     gen_real_loss = fake_loss(preds_fake, device=device)
         # else:
-        gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
+        #     gen_real_loss = real_loss(preds_fake, smooth=False, device=device)
             
         # optimize generator
         gen_optimizer.zero_grad()
@@ -884,8 +891,22 @@ plt.show()
 #      -- OK! I made a ridiculous mistake, when creating ConvTranspose, I missed
 #      -- the nonlinearity! so we were dealing with a linear generator and that 
 #      -- was the reason why we were having this much issues! after fixing that
-#      -- and also disabling label swap for generator its doing way better!
-# 
+#      -- and also disabling label swap for generator its doing way better! the rea;
+#      -- and fake means are also now in a much better place (0.19 / -0.19) which 
+#      -- signals the discriminator is struggling and it shows from its loss thats 
+#      -- been stuck at 1.37 while generators loss has been stuck around 0.79
+#      -- so we are going to increase discriminators capacity (even with these conditions)
+#      -- we are seeing way better generations. very diverse outputs but low quality
+#      -- unline before that we faced mode collapse all the time (many repeated patterns)
+#      -- increased discriminator hidden_size from 16 to 32 (lr is still 1e-4) and right away image quality
+#      -- got a lot better. the discriminators loss decreased to 1.28 from 1.37
+#      --  and real and fake images mean are mostly in a good range (0.1 and -0.2) 
+#      -- all showing good gradient flow.im satisfied with the result 
+#      -- also note that we used residual connection in generator. without it
+#      -- we can still get result but obviously residuals help well. 
+#      -- I test both so you see the difference (having residual makes sharper 
+#      -- and better well formed images)
+#      -- 
 # our first training log where we had 
 # mode collapse and high generators loss
 # Epoch/Epochs: 0/50 | Iter: 0/8299 | Discriminator Loss: 1.3818 | Generator Loss: 0.7014
