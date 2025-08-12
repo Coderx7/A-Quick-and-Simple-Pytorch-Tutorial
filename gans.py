@@ -21,6 +21,7 @@
 # so lets see how we can do this
 import os
 from datetime import datetime
+from pathlib import Path
 
 import torch 
 import numpy as np 
@@ -578,22 +579,33 @@ def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
 # or the lmdb versions other people put up later on because the princeton university
 # that hosted the dataset no longer offers any download links.
 # 
-# a larger batchsize provides more stablity
-batch_size = 128
-num_workers = 8
-# check what happens if we use augmentations here?! aka us transforms.Compose
-transform = transforms.Compose([
-    # transforms.RandomHorizontalFlip(),
-    # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-    transforms.ToTensor()
-])
+def get_dataloader(dataset_name="SVHN", resize_dims=(32,32),batch_size=128, num_workers=8, store_path="./data/"):
+    dataset_name = dataset_name.lower()
 
-train_dataset = datasets.SVHN('./data/SVHN', split='extra', transform=transform, download=True)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    if dataset_name == 'svhn':
+        transform = transforms.Compose([
+        # transforms.RandomHorizontalFlip(),
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor()])
+        train_dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split='extra', transform=transform, download=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    elif dataset_name == 'celeba':
+        transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
+        train_dataset = datasets.CelebA(os.path.join(store_path), split='train', transform=transform, download=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    else:
+        raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
 
+    return train_loader
+
+
+dataset_name = 'svhn'
+train_loader = get_dataloader(dataset_name=dataset_name)
 #visualize 
 (imgs, labels) = next(iter(train_loader))
-display_images(imgs, title='svhn samples',rows=16)
+display_images(imgs, title=f'{dataset_name} samples',rows=16)
 
 # we need to check the minimum and maximum 
 # values of each pixel so we can scale them
@@ -612,8 +624,14 @@ print(f'scaled min: {imgs.min()}')
 print(f'scaled max:  {imgs.max()}')
 print(f'{len(train_loader)=}')
 #%% training!
+# svhn or celeba
+dataset_name='svhn'
+# a larger batchsize provides more stablity
+batch_size = 128
+train_loader = get_dataloader(dataset_name=dataset_name, batch_size=batch_size)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 disc_hidden_size = 32#16
 gen_hidden_size = 64
@@ -727,8 +745,11 @@ for epoch in range(epochs):
     
     #save model weights at each epoch
     torch.save({"state_dict":generatorcnn.state_dict(),
+                "hidden_size":gen_hidden_size,
+                "z_size":z_size,
                 "epoch":epoch,
-                "loss":g_loss_mean
+                "losses":losses,
+                "dataset_name":dataset_name,
                 }, f"./weights/dcgan_generatorcnn_{experiment_date}.pt")
     
     # generate some images mid training to evaluate our model's performance 
@@ -897,46 +918,15 @@ plt.show()
 #      -- it must spread across more modes to fool discrimnitaor consistently.
 #      -- this added randomness/stochasticity in the training signal helps to break up those connected
 #      -- patterns in the latent space and ultimately lead to a more independent/varied generation.
-#      --
-#
-# our first training log where we had 
-# mode collapse and high generators loss
-# Epoch/Epochs: 0/50 | Iter: 0/8299 | Discriminator Loss: 1.3818 | Generator Loss: 0.7014
-# Epoch/Epochs: 0/50 | Iter: 5000/8299 | Discriminator Loss: 0.3742 | Generator Loss: 4.8500
-# Epoch/Epochs: 0/50 | Discriminator Loss : 0.7194 | Generator loss: 3.6977 
-# Epoch/Epochs: 1/50 | Iter: 0/8299 | Discriminator Loss: 0.4485 | Generator Loss: 2.7390
-# Epoch/Epochs: 1/50 | Iter: 5000/8299 | Discriminator Loss: 0.3596 | Generator Loss: 10.5628
-# Epoch/Epochs: 1/50 | Discriminator Loss : 0.5544 | Generator loss: 4.9144 
-# ...
-# Epoch/Epochs: 48/50 | Iter: 0/8299 | Discriminator Loss: 0.3389 | Generator Loss: 5.8874
-# Epoch/Epochs: 48/50 | Iter: 5000/8299 | Discriminator Loss: 0.3448 | Generator Loss: 5.8812
-# Epoch/Epochs: 48/50 | Discriminator Loss : 0.3805 | Generator loss: 5.0053 
-# Epoch/Epochs: 49/50 | Iter: 0/8299 | Discriminator Loss: 0.3380 | Generator Loss: 4.2348
-# Epoch/Epochs: 49/50 | Iter: 5000/8299 | Discriminator Loss: 0.3422 | Generator Loss: 6.3342
-# Epoch/Epochs: 49/50 | Discriminator Loss : 0.3798 | Generator loss: 5.0151 
-# 
-# second try with noise addition/data agugmentation 
-# and larger generator: 
-# 
-# Epoch/Epochs: 0/50 | Iter: 0/8299 | Discriminator Loss: 1.3796 | Generator Loss: 0.6428
-# Epoch/Epochs: 0/50 | Iter: 5000/8299 | Discriminator Loss: 0.4917 | Generator Loss: 2.1808
-# Epoch/Epochs: 0/50 | Discriminator Loss : 0.8358 | Generator loss: 0.9456 
-# Epoch/Epochs: 1/50 | Iter: 0/8299 | Discriminator Loss: 0.6822 | Generator Loss: 0.0559
-# Epoch/Epochs: 1/50 | Iter: 5000/8299 | Discriminator Loss: 0.5547 | Generator Loss: 0.7232
-# Epoch/Epochs: 1/50 | Discriminator Loss : 0.7084 | Generator loss: 0.7354 
-# ...
-# Epoch/Epochs: 48/50 | Iter: 0/8299 | Discriminator Loss: 0.3256 | Generator Loss: 0.0465
-# Epoch/Epochs: 48/50 | Iter: 5000/8299 | Discriminator Loss: 0.3264 | Generator Loss: 0.0961
-# Epoch/Epochs: 48/50 | Discriminator Loss : 0.3633 | Generator loss: 0.3232 
-# Epoch/Epochs: 49/50 | Iter: 0/8299 | Discriminator Loss: 0.3286 | Generator Loss: 0.1229
-# Epoch/Epochs: 49/50 | Iter: 5000/8299 | Discriminator Loss: 0.3398 | Generator Loss: 0.6905
-# Epoch/Epochs: 49/50 | Discriminator Loss : 0.3627 | Generator loss: 0.3244 
+#      -- 
 #
 #%%
 # Before we continue if you remember we said getting a GAN to work is 
 # an involved effort and requires a few tips and tricks at the very least 
-# to work properly. when DCGAN came out, it provided many of such tips and 
-# the authors posted a list of them in their github repo. 
+# to get it to work properly. when DCGAN came out, it provided a few of such 
+# tips, we used some in our previous examples, one of the main authors later
+# posted a list of such tricks in his github repository and it became one of the early
+# sources we could get our hands on latest tips and tricks that work! 
 # while some of these tips and tricks are still valid, some have gone obsolote
 # in newer architectures, and some have also evolved. having said that, for now
 # lets review these tips we expand on them later. 
@@ -945,7 +935,7 @@ plt.show()
 # https://github.com/soumith/ganhacks#16-discrete-variables-in-conditional-gans
 # they directly affect how GANs are trained!
 # 
-# quick summary of the points:
+# Quick summary of the points that we covered:
 # dont use relu in discriminator! 
 # use Guassian/normal distribution instead of uniform for sampling
 # in batch use different batches for real and fake separately (especially if you use batchnorm!)
@@ -953,6 +943,7 @@ plt.show()
 # use label smoothing
 # use adam for generator, and you can use sgd with discriminator!
 # 
+# and heres the whole list 
 # Main post at github:  
 # How to Train a GAN? Tips and tricks to make GANs work
 # While research in Generative Adversarial Networks (GANs) continues to improve the fundamental stability of these models, we use a bunch of tricks to train them and make them stable day to day.
@@ -1040,6 +1031,10 @@ plt.show()
 #     Apply on several layers of our generator at both training and test time
 #     https://arxiv.org/pdf/1611.07004v1.pdf
 #%%
+# now we have implemented some of these points already, lets implement a few more
+# in our dcgan and see what happens!
+# maybe lets add normal smapling to the existing trainig loop and let the rest be 
+# covered in our next implementations? (like conditional gan?)
 
 #%%
 # back to improvements new architecture 
