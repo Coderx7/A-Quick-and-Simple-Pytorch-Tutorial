@@ -350,116 +350,15 @@ plt.show()
 # and using gray-scale/black and white/single channeled images like mnist!
 # as it truns out, when dealing with images, Conv layers are a much better 
 # choice as they take the image features such into consideration!
-
-#%%
-# move after DCGAN impl
-# Before we continue if you remember we said getting a GAN to work is 
-# an involved effort and requires a few tips and tricks at the very least 
-# to work properly. when DCGAN came out, it provided many of such tips and 
-# the authors posted a list of them in their github repo. 
-# while some of these tips and tricks are still valid, some have gone obsolote
-# in newer architectures, and some have also evolved. having said that, for now
-# lets review these tips we expand on them later. 
-# sidenote:
-# this is from 2016 by the way
-# https://github.com/soumith/ganhacks#16-discrete-variables-in-conditional-gans
-# they directly affect how GANs are trained!
-# 
-# quick summary of the points:
-# dont use relu in discriminator! 
-# use Guassian/normal distribution instead of uniform in weight initialization!
-# in batch use different batches for real and fake separately (especially if you use batchnorm!)
-# use tanh for generator's last layer
-# use label smoothing
-# use adam for generator, and you can use sgd with discriminator!
-# 
-# Main post at github:  
-# How to Train a GAN? Tips and tricks to make GANs work
-# While research in Generative Adversarial Networks (GANs) continues to improve the fundamental stability of these models, we use a bunch of tricks to train them and make them stable day to day.
-# Here are a summary of some of the tricks.
-# Here's a link to the authors of this document
-# If you find a trick that is particularly useful in practice, please open a Pull Request to add it to the document. If we find it to be reasonable and verified, we will merge it in.
-# 1. Normalize the inputs
-#     normalize the images between -1 and 1
-#     Tanh as the last layer of the generator output
-# 2: A modified loss function
-# In GAN papers, the loss function to optimize G is min (log 1-D), but in practice folks practically use max log D
-#     because the first formulation has vanishing gradients early on
-#     Goodfellow et. al (2014)
-# In practice, works well:
-#     Flip labels when training generator: real = fake, fake = real
-# 3: Use a spherical Z
-#     Dont sample from a Uniform distribution
-# cube.png
-#     Sample from a gaussian distribution
-# sphere.png
-#     When doing interpolations, do the interpolation via a great circle, rather than a straight line from point A to point B
-#     Tom White's Sampling Generative Networks ref code https://github.com/dribnet/plat has more details
-# 4: BatchNorm
-#     Construct different mini-batches for real and fake, i.e. each mini-batch needs to contain only all real images or all generated images.
-#     when batchnorm is not an option use instance normalization (for each sample, subtract mean and divide by standard deviation).
-# batchmix
-# 5: Avoid Sparse Gradients: ReLU, MaxPool
-#     the stability of the GAN game suffers if you have sparse gradients
-#     LeakyReLU = good (in both G and D)
-#     For Downsampling, use: Average Pooling, Conv2d + stride
-#     For Upsampling, use: PixelShuffle, ConvTranspose2d + stride
-#         PixelShuffle: https://arxiv.org/abs/1609.05158
-# 6: Use Soft and Noisy Labels
-#     Label Smoothing, i.e. if you have two target labels: Real=1 and Fake=0, then for each incoming sample, if it is real, then replace the label with a random number between 0.7 and 1.2, and if it is a fake sample, replace it with 0.0 and 0.3 (for example).
-#         Salimans et. al. 2016
-#     make the labels the noisy for the discriminator: occasionally flip the labels when training the discriminator
-# 7: DCGAN / Hybrid Models
-#     Use DCGAN when you can. It works!
-#     if you cant use DCGANs and no model is stable, use a hybrid model : KL + GAN or VAE + GAN
-# 8: Use stability tricks from RL
-#     Experience Replay
-#         Keep a replay buffer of past generations and occassionally show them
-#         Keep checkpoints from the past of G and D and occassionaly swap them out for a few iterations
-#     All stability tricks that work for deep deterministic policy gradients
-#     See Pfau & Vinyals (2016)
-# 9: Use the ADAM Optimizer
-#     optim.Adam rules!
-#         See Radford et. al. 2015
-#     Use SGD for discriminator and ADAM for generator
-# 10: Track failures early
-#     D loss goes to 0: failure mode
-#     check norms of gradients: if they are over 100 things are screwing up
-#     when things are working, D loss has low variance and goes down over time vs having huge variance and spiking
-#     if loss of generator steadily decreases, then it's fooling D with garbage (says martin)
-# 11: Dont balance loss via statistics (unless you have a good reason to)
-#     Dont try to find a (number of G / number of D) schedule to uncollapse training
-#     It's hard and we've all tried it.
-#     If you do try it, have a principled approach to it, rather than intuition
-# For example
-# 
-# while lossD > A:
-#   train D
-# while lossG > B:
-#   train G
-# 
-# 12: If you have labels, use them
-#     if you have labels available, training the discriminator to also classify the samples: auxillary GANs
-# 13: Add noise to inputs, decay over time
-#     Add some artificial noise to inputs to D (Arjovsky et. al., Huszar, 2016)
-#         http://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
-#         https://openreview.net/forum?id=Hk4_qw5xe
-#     adding gaussian noise to every layer of generator (Zhao et. al. EBGAN)
-#         Improved GANs: OpenAI code also has it (commented out)
-# 14: [notsure] Train discriminator more (sometimes)
-#     especially when you have noise
-#     hard to find a schedule of number of D iterations vs G iterations
-# 15: [notsure] Batch Discrimination
-#     Mixed results
-# 16: Discrete variables in Conditional GANs
-#     Use an Embedding layer
-#     Add as additional channels to images
-#     Keep embedding dimensionality low and upsample to match image channel size
-# 17: Use Dropouts in G in both train and test phase
-#     Provide noise in the form of dropout (50%).
-#     Apply on several layers of our generator at both training and test time
-#     https://arxiv.org/pdf/1611.07004v1.pdf
-
+# a few tips and tricks in the DCGAN paper. 
+# for now lets stick to a few rules:
+# 1. normalize input to -1,1
+# 2. use tanh at the final layer of generator so output range is also -1,1
+# 3. use leaky_relu in discriminator 
+# 4. initialize the model weights according to dcgan papepr for more stable trainig
+# 5. use label smoothing (soft(as against hard(not i.e 0/1)) and noisy labels)
+# 6. dont use relu, maxpool in discriminator(avoid sparse gradients)
+# there are more tips but for now lets keep it simple we'll cover more in a moment
 #%%
 # now lets create our models with what we learned just now
 # 
@@ -852,8 +751,8 @@ plt.legend()
 plt.show()
 
 #%%
-states = torch.load('./weights/dcgan_generatorcnn_20250811195800.pt')
-generatorcnn.load_state_dict(states["state_dict"])
+# states = torch.load('./weights/dcgan_generatorcnn_20250811195800.pt')
+# generatorcnn.load_state_dict(states["state_dict"])
 
 #%%
 # remarks:
@@ -1008,144 +907,7 @@ generatorcnn.load_state_dict(states["state_dict"])
 # Epoch/Epochs: 1/50 | Iter: 0/8299 | Discriminator Loss: 0.4485 | Generator Loss: 2.7390
 # Epoch/Epochs: 1/50 | Iter: 5000/8299 | Discriminator Loss: 0.3596 | Generator Loss: 10.5628
 # Epoch/Epochs: 1/50 | Discriminator Loss : 0.5544 | Generator loss: 4.9144 
-# Epoch/Epochs: 2/50 | Iter: 0/8299 | Discriminator Loss: 0.3457 | Generator Loss: 7.2209
-# Epoch/Epochs: 2/50 | Iter: 5000/8299 | Discriminator Loss: 0.4086 | Generator Loss: 4.7951
-# Epoch/Epochs: 2/50 | Discriminator Loss : 0.4964 | Generator loss: 5.0215 
-# Epoch/Epochs: 3/50 | Iter: 0/8299 | Discriminator Loss: 0.3463 | Generator Loss: 7.7827
-# Epoch/Epochs: 3/50 | Iter: 5000/8299 | Discriminator Loss: 0.3952 | Generator Loss: 7.4056
-# Epoch/Epochs: 3/50 | Discriminator Loss : 0.4632 | Generator loss: 5.6637 
-# Epoch/Epochs: 4/50 | Iter: 0/8299 | Discriminator Loss: 0.3533 | Generator Loss: 6.6564
-# Epoch/Epochs: 4/50 | Iter: 5000/8299 | Discriminator Loss: 0.3868 | Generator Loss: 3.9747
-# Epoch/Epochs: 4/50 | Discriminator Loss : 0.4462 | Generator loss: 5.6578 
-# Epoch/Epochs: 5/50 | Iter: 0/8299 | Discriminator Loss: 0.4926 | Generator Loss: 3.4306
-# Epoch/Epochs: 5/50 | Iter: 5000/8299 | Discriminator Loss: 0.3742 | Generator Loss: 6.7072
-# Epoch/Epochs: 5/50 | Discriminator Loss : 0.4460 | Generator loss: 5.4157 
-# Epoch/Epochs: 6/50 | Iter: 0/8299 | Discriminator Loss: 0.5397 | Generator Loss: 3.2851
-# Epoch/Epochs: 6/50 | Iter: 5000/8299 | Discriminator Loss: 0.3896 | Generator Loss: 3.3385
-# Epoch/Epochs: 6/50 | Discriminator Loss : 0.4458 | Generator loss: 5.1422 
-# Epoch/Epochs: 7/50 | Iter: 0/8299 | Discriminator Loss: 0.4388 | Generator Loss: 3.9077
-# Epoch/Epochs: 7/50 | Iter: 5000/8299 | Discriminator Loss: 0.4192 | Generator Loss: 3.1753
-# Epoch/Epochs: 7/50 | Discriminator Loss : 0.4408 | Generator loss: 5.0697 
-# Epoch/Epochs: 8/50 | Iter: 0/8299 | Discriminator Loss: 0.3691 | Generator Loss: 5.5397
-# Epoch/Epochs: 8/50 | Iter: 5000/8299 | Discriminator Loss: 0.4798 | Generator Loss: 3.4502
-# Epoch/Epochs: 8/50 | Discriminator Loss : 0.4408 | Generator loss: 5.0244 
-# Epoch/Epochs: 9/50 | Iter: 0/8299 | Discriminator Loss: 0.3967 | Generator Loss: 3.7294
-# Epoch/Epochs: 9/50 | Iter: 5000/8299 | Discriminator Loss: 0.3992 | Generator Loss: 3.8892
-# Epoch/Epochs: 9/50 | Discriminator Loss : 0.4386 | Generator loss: 4.9025 
-# Epoch/Epochs: 10/50 | Iter: 0/8299 | Discriminator Loss: 0.4434 | Generator Loss: 3.0252
-# Epoch/Epochs: 10/50 | Iter: 5000/8299 | Discriminator Loss: 0.4099 | Generator Loss: 3.3124
-# Epoch/Epochs: 10/50 | Discriminator Loss : 0.4366 | Generator loss: 4.7645 
-# Epoch/Epochs: 11/50 | Iter: 0/8299 | Discriminator Loss: 0.4566 | Generator Loss: 3.3419
-# Epoch/Epochs: 11/50 | Iter: 5000/8299 | Discriminator Loss: 0.4031 | Generator Loss: 3.6082
-# Epoch/Epochs: 11/50 | Discriminator Loss : 0.4346 | Generator loss: 4.6863 
-# Epoch/Epochs: 12/50 | Iter: 0/8299 | Discriminator Loss: 0.3736 | Generator Loss: 4.5408
-# Epoch/Epochs: 12/50 | Iter: 5000/8299 | Discriminator Loss: 0.3928 | Generator Loss: 4.0038
-# Epoch/Epochs: 12/50 | Discriminator Loss : 0.4314 | Generator loss: 4.6957 
-# Epoch/Epochs: 13/50 | Iter: 0/8299 | Discriminator Loss: 0.3939 | Generator Loss: 4.5121
-# Epoch/Epochs: 13/50 | Iter: 5000/8299 | Discriminator Loss: 0.3907 | Generator Loss: 3.9596
-# Epoch/Epochs: 13/50 | Discriminator Loss : 0.4278 | Generator loss: 4.6483 
-# Epoch/Epochs: 14/50 | Iter: 0/8299 | Discriminator Loss: 0.4002 | Generator Loss: 3.7172
-# Epoch/Epochs: 14/50 | Iter: 5000/8299 | Discriminator Loss: 0.3666 | Generator Loss: 5.4941
-# Epoch/Epochs: 14/50 | Discriminator Loss : 0.4245 | Generator loss: 4.6557 
-# Epoch/Epochs: 15/50 | Iter: 0/8299 | Discriminator Loss: 0.4076 | Generator Loss: 3.7309
-# Epoch/Epochs: 15/50 | Iter: 5000/8299 | Discriminator Loss: 0.4487 | Generator Loss: 3.0717
-# Epoch/Epochs: 15/50 | Discriminator Loss : 0.4235 | Generator loss: 4.6138 
-# Epoch/Epochs: 16/50 | Iter: 0/8299 | Discriminator Loss: 0.4148 | Generator Loss: 3.3697
-# Epoch/Epochs: 16/50 | Iter: 5000/8299 | Discriminator Loss: 0.3830 | Generator Loss: 3.7170
-# Epoch/Epochs: 16/50 | Discriminator Loss : 0.4215 | Generator loss: 4.5914 
-# Epoch/Epochs: 17/50 | Iter: 0/8299 | Discriminator Loss: 0.3547 | Generator Loss: 4.8107
-# Epoch/Epochs: 17/50 | Iter: 5000/8299 | Discriminator Loss: 0.3798 | Generator Loss: 3.5328
-# Epoch/Epochs: 17/50 | Discriminator Loss : 0.4190 | Generator loss: 4.5633 
-# Epoch/Epochs: 18/50 | Iter: 0/8299 | Discriminator Loss: 0.3932 | Generator Loss: 3.5611
-# Epoch/Epochs: 18/50 | Iter: 5000/8299 | Discriminator Loss: 0.3501 | Generator Loss: 5.9975
-# Epoch/Epochs: 18/50 | Discriminator Loss : 0.4161 | Generator loss: 4.5836 
-# Epoch/Epochs: 19/50 | Iter: 0/8299 | Discriminator Loss: 0.3643 | Generator Loss: 6.1004
-# Epoch/Epochs: 19/50 | Iter: 5000/8299 | Discriminator Loss: 0.3477 | Generator Loss: 6.0416
-# Epoch/Epochs: 19/50 | Discriminator Loss : 0.4139 | Generator loss: 4.6642 
-# Epoch/Epochs: 20/50 | Iter: 0/8299 | Discriminator Loss: 0.3797 | Generator Loss: 5.4030
-# Epoch/Epochs: 20/50 | Iter: 5000/8299 | Discriminator Loss: 0.3783 | Generator Loss: 4.4055
-# Epoch/Epochs: 20/50 | Discriminator Loss : 0.4117 | Generator loss: 4.7086 
-# Epoch/Epochs: 21/50 | Iter: 0/8299 | Discriminator Loss: 0.3521 | Generator Loss: 6.0425
-# Epoch/Epochs: 21/50 | Iter: 5000/8299 | Discriminator Loss: 0.3771 | Generator Loss: 5.4637
-# Epoch/Epochs: 21/50 | Discriminator Loss : 0.4096 | Generator loss: 4.7307 
-# Epoch/Epochs: 22/50 | Iter: 0/8299 | Discriminator Loss: 0.3609 | Generator Loss: 3.6636
-# Epoch/Epochs: 22/50 | Iter: 5000/8299 | Discriminator Loss: 0.3611 | Generator Loss: 3.8999
-# Epoch/Epochs: 22/50 | Discriminator Loss : 0.4074 | Generator loss: 4.7055 
-# Epoch/Epochs: 23/50 | Iter: 0/8299 | Discriminator Loss: 0.3523 | Generator Loss: 5.6232
-# Epoch/Epochs: 23/50 | Iter: 5000/8299 | Discriminator Loss: 0.3531 | Generator Loss: 5.1195
-# Epoch/Epochs: 23/50 | Discriminator Loss : 0.4051 | Generator loss: 4.7278 
-# Epoch/Epochs: 24/50 | Iter: 0/8299 | Discriminator Loss: 0.3555 | Generator Loss: 4.7999
-# Epoch/Epochs: 24/50 | Iter: 5000/8299 | Discriminator Loss: 0.3376 | Generator Loss: 5.1868
-# Epoch/Epochs: 24/50 | Discriminator Loss : 0.4038 | Generator loss: 4.7352 
-# Epoch/Epochs: 25/50 | Iter: 0/8299 | Discriminator Loss: 0.3545 | Generator Loss: 5.9432
-# Epoch/Epochs: 25/50 | Iter: 5000/8299 | Discriminator Loss: 0.4008 | Generator Loss: 4.7830
-# Epoch/Epochs: 25/50 | Discriminator Loss : 0.4025 | Generator loss: 4.7671 
-# Epoch/Epochs: 26/50 | Iter: 0/8299 | Discriminator Loss: 0.3459 | Generator Loss: 5.1820
-# Epoch/Epochs: 26/50 | Iter: 5000/8299 | Discriminator Loss: 0.3469 | Generator Loss: 5.1300
-# Epoch/Epochs: 26/50 | Discriminator Loss : 0.4004 | Generator loss: 4.7628 
-# Epoch/Epochs: 27/50 | Iter: 0/8299 | Discriminator Loss: 0.3515 | Generator Loss: 4.4014
-# Epoch/Epochs: 27/50 | Iter: 5000/8299 | Discriminator Loss: 0.3486 | Generator Loss: 4.8296
-# Epoch/Epochs: 27/50 | Discriminator Loss : 0.3988 | Generator loss: 4.7638 
-# Epoch/Epochs: 28/50 | Iter: 0/8299 | Discriminator Loss: 0.3418 | Generator Loss: 5.4003
-# Epoch/Epochs: 28/50 | Iter: 5000/8299 | Discriminator Loss: 0.3619 | Generator Loss: 7.6773
-# Epoch/Epochs: 28/50 | Discriminator Loss : 0.3970 | Generator loss: 4.8114 
-# Epoch/Epochs: 29/50 | Iter: 0/8299 | Discriminator Loss: 0.3570 | Generator Loss: 5.5610
-# Epoch/Epochs: 29/50 | Iter: 5000/8299 | Discriminator Loss: 0.3540 | Generator Loss: 5.2090
-# Epoch/Epochs: 29/50 | Discriminator Loss : 0.3956 | Generator loss: 4.8174 
-# Epoch/Epochs: 30/50 | Iter: 0/8299 | Discriminator Loss: 0.3555 | Generator Loss: 5.5297
-# Epoch/Epochs: 30/50 | Iter: 5000/8299 | Discriminator Loss: 0.3408 | Generator Loss: 5.3928
-# Epoch/Epochs: 30/50 | Discriminator Loss : 0.3941 | Generator loss: 4.8391 
-# Epoch/Epochs: 31/50 | Iter: 0/8299 | Discriminator Loss: 0.3472 | Generator Loss: 4.7879
-# Epoch/Epochs: 31/50 | Iter: 5000/8299 | Discriminator Loss: 0.3685 | Generator Loss: 6.2318
-# Epoch/Epochs: 31/50 | Discriminator Loss : 0.3928 | Generator loss: 4.8645 
-# Epoch/Epochs: 32/50 | Iter: 0/8299 | Discriminator Loss: 0.3520 | Generator Loss: 5.4744
-# Epoch/Epochs: 32/50 | Iter: 5000/8299 | Discriminator Loss: 0.3889 | Generator Loss: 3.7217
-# Epoch/Epochs: 32/50 | Discriminator Loss : 0.3920 | Generator loss: 4.8626 
-# Epoch/Epochs: 33/50 | Iter: 0/8299 | Discriminator Loss: 0.3474 | Generator Loss: 4.8153
-# Epoch/Epochs: 33/50 | Iter: 5000/8299 | Discriminator Loss: 0.3539 | Generator Loss: 5.7329
-# Epoch/Epochs: 33/50 | Discriminator Loss : 0.3907 | Generator loss: 4.8721 
-# Epoch/Epochs: 34/50 | Iter: 0/8299 | Discriminator Loss: 0.3354 | Generator Loss: 5.6520
-# Epoch/Epochs: 34/50 | Iter: 5000/8299 | Discriminator Loss: 0.3589 | Generator Loss: 6.0369
-# Epoch/Epochs: 34/50 | Discriminator Loss : 0.3896 | Generator loss: 4.9051 
-# Epoch/Epochs: 35/50 | Iter: 0/8299 | Discriminator Loss: 0.3423 | Generator Loss: 5.5350
-# Epoch/Epochs: 35/50 | Iter: 5000/8299 | Discriminator Loss: 0.3553 | Generator Loss: 3.7807
-# Epoch/Epochs: 35/50 | Discriminator Loss : 0.3887 | Generator loss: 4.9045 
-# Epoch/Epochs: 36/50 | Iter: 0/8299 | Discriminator Loss: 0.3349 | Generator Loss: 5.3008
-# Epoch/Epochs: 36/50 | Iter: 5000/8299 | Discriminator Loss: 0.3452 | Generator Loss: 4.7669
-# Epoch/Epochs: 36/50 | Discriminator Loss : 0.3878 | Generator loss: 4.9115 
-# Epoch/Epochs: 37/50 | Iter: 0/8299 | Discriminator Loss: 0.3737 | Generator Loss: 4.7639
-# Epoch/Epochs: 37/50 | Iter: 5000/8299 | Discriminator Loss: 0.3928 | Generator Loss: 2.7415
-# Epoch/Epochs: 37/50 | Discriminator Loss : 0.3874 | Generator loss: 4.8838 
-# Epoch/Epochs: 38/50 | Iter: 0/8299 | Discriminator Loss: 0.3481 | Generator Loss: 2.8839
-# Epoch/Epochs: 38/50 | Iter: 5000/8299 | Discriminator Loss: 0.3440 | Generator Loss: 4.6328
-# Epoch/Epochs: 38/50 | Discriminator Loss : 0.3865 | Generator loss: 4.8668 
-# Epoch/Epochs: 39/50 | Iter: 0/8299 | Discriminator Loss: 0.3822 | Generator Loss: 5.8024
-# Epoch/Epochs: 39/50 | Iter: 5000/8299 | Discriminator Loss: 0.4669 | Generator Loss: 2.3760
-# Epoch/Epochs: 39/50 | Discriminator Loss : 0.3869 | Generator loss: 4.8567 
-# Epoch/Epochs: 40/50 | Iter: 0/8299 | Discriminator Loss: 0.3510 | Generator Loss: 6.6908
-# Epoch/Epochs: 40/50 | Iter: 5000/8299 | Discriminator Loss: 0.3430 | Generator Loss: 6.2795
-# Epoch/Epochs: 40/50 | Discriminator Loss : 0.3859 | Generator loss: 4.8776 
-# Epoch/Epochs: 41/50 | Iter: 0/8299 | Discriminator Loss: 0.3502 | Generator Loss: 6.1670
-# Epoch/Epochs: 41/50 | Iter: 5000/8299 | Discriminator Loss: 0.3504 | Generator Loss: 6.2387
-# Epoch/Epochs: 41/50 | Discriminator Loss : 0.3850 | Generator loss: 4.9123 
-# Epoch/Epochs: 42/50 | Iter: 0/8299 | Discriminator Loss: 0.3311 | Generator Loss: 5.6953
-# Epoch/Epochs: 42/50 | Iter: 5000/8299 | Discriminator Loss: 0.3554 | Generator Loss: 5.9011
-# Epoch/Epochs: 42/50 | Discriminator Loss : 0.3842 | Generator loss: 4.9358 
-# Epoch/Epochs: 43/50 | Iter: 0/8299 | Discriminator Loss: 0.3394 | Generator Loss: 6.0122
-# Epoch/Epochs: 43/50 | Iter: 5000/8299 | Discriminator Loss: 0.3325 | Generator Loss: 6.4785
-# Epoch/Epochs: 43/50 | Discriminator Loss : 0.3831 | Generator loss: 4.9670 
-# Epoch/Epochs: 44/50 | Iter: 0/8299 | Discriminator Loss: 0.3555 | Generator Loss: 6.6303
-# Epoch/Epochs: 44/50 | Iter: 5000/8299 | Discriminator Loss: 0.3529 | Generator Loss: 5.0026
-# Epoch/Epochs: 44/50 | Discriminator Loss : 0.3824 | Generator loss: 4.9875 
-# Epoch/Epochs: 45/50 | Iter: 0/8299 | Discriminator Loss: 0.3768 | Generator Loss: 5.8738
-# Epoch/Epochs: 45/50 | Iter: 5000/8299 | Discriminator Loss: 0.3433 | Generator Loss: 4.3444
-# Epoch/Epochs: 45/50 | Discriminator Loss : 0.3829 | Generator loss: 4.9778 
-# Epoch/Epochs: 46/50 | Iter: 0/8299 | Discriminator Loss: 0.3613 | Generator Loss: 4.2595
-# Epoch/Epochs: 46/50 | Iter: 5000/8299 | Discriminator Loss: 0.3372 | Generator Loss: 5.3025
-# Epoch/Epochs: 46/50 | Discriminator Loss : 0.3820 | Generator loss: 4.9928 
-# Epoch/Epochs: 47/50 | Iter: 0/8299 | Discriminator Loss: 0.3356 | Generator Loss: 6.1092
-# Epoch/Epochs: 47/50 | Iter: 5000/8299 | Discriminator Loss: 0.3525 | Generator Loss: 3.9497
-# Epoch/Epochs: 47/50 | Discriminator Loss : 0.3812 | Generator loss: 4.9977 
+# ...
 # Epoch/Epochs: 48/50 | Iter: 0/8299 | Discriminator Loss: 0.3389 | Generator Loss: 5.8874
 # Epoch/Epochs: 48/50 | Iter: 5000/8299 | Discriminator Loss: 0.3448 | Generator Loss: 5.8812
 # Epoch/Epochs: 48/50 | Discriminator Loss : 0.3805 | Generator loss: 5.0053 
@@ -1162,144 +924,7 @@ generatorcnn.load_state_dict(states["state_dict"])
 # Epoch/Epochs: 1/50 | Iter: 0/8299 | Discriminator Loss: 0.6822 | Generator Loss: 0.0559
 # Epoch/Epochs: 1/50 | Iter: 5000/8299 | Discriminator Loss: 0.5547 | Generator Loss: 0.7232
 # Epoch/Epochs: 1/50 | Discriminator Loss : 0.7084 | Generator loss: 0.7354 
-# Epoch/Epochs: 2/50 | Iter: 0/8299 | Discriminator Loss: 0.4608 | Generator Loss: 0.3528
-# Epoch/Epochs: 2/50 | Iter: 5000/8299 | Discriminator Loss: 0.4051 | Generator Loss: 0.1116
-# Epoch/Epochs: 2/50 | Discriminator Loss : 0.6175 | Generator loss: 0.9389 
-# Epoch/Epochs: 3/50 | Iter: 0/8299 | Discriminator Loss: 0.4187 | Generator Loss: 0.1164
-# Epoch/Epochs: 3/50 | Iter: 5000/8299 | Discriminator Loss: 0.4851 | Generator Loss: 0.4418
-# Epoch/Epochs: 3/50 | Discriminator Loss : 0.5727 | Generator loss: 0.7746 
-# Epoch/Epochs: 4/50 | Iter: 0/8299 | Discriminator Loss: 0.3884 | Generator Loss: 0.1763
-# Epoch/Epochs: 4/50 | Iter: 5000/8299 | Discriminator Loss: 0.4051 | Generator Loss: 0.2293
-# Epoch/Epochs: 4/50 | Discriminator Loss : 0.5359 | Generator loss: 0.6685 
-# Epoch/Epochs: 5/50 | Iter: 0/8299 | Discriminator Loss: 0.4432 | Generator Loss: 0.1180
-# Epoch/Epochs: 5/50 | Iter: 5000/8299 | Discriminator Loss: 0.3688 | Generator Loss: 0.3176
-# Epoch/Epochs: 5/50 | Discriminator Loss : 0.5115 | Generator loss: 0.5889 
-# Epoch/Epochs: 6/50 | Iter: 0/8299 | Discriminator Loss: 0.3572 | Generator Loss: 0.1740
-# Epoch/Epochs: 6/50 | Iter: 5000/8299 | Discriminator Loss: 0.3309 | Generator Loss: 0.0688
-# Epoch/Epochs: 6/50 | Discriminator Loss : 0.4873 | Generator loss: 0.5261 
-# Epoch/Epochs: 7/50 | Iter: 0/8299 | Discriminator Loss: 0.3373 | Generator Loss: 0.4239
-# Epoch/Epochs: 7/50 | Iter: 5000/8299 | Discriminator Loss: 0.3464 | Generator Loss: 0.1138
-# Epoch/Epochs: 7/50 | Discriminator Loss : 0.4696 | Generator loss: 0.4903 
-# Epoch/Epochs: 8/50 | Iter: 0/8299 | Discriminator Loss: 0.3348 | Generator Loss: 0.1290
-# Epoch/Epochs: 8/50 | Iter: 5000/8299 | Discriminator Loss: 0.3407 | Generator Loss: 0.0633
-# Epoch/Epochs: 8/50 | Discriminator Loss : 0.4547 | Generator loss: 0.4485 
-# Epoch/Epochs: 9/50 | Iter: 0/8299 | Discriminator Loss: 0.3283 | Generator Loss: 0.0771
-# Epoch/Epochs: 9/50 | Iter: 5000/8299 | Discriminator Loss: 0.3641 | Generator Loss: 0.6683
-# Epoch/Epochs: 9/50 | Discriminator Loss : 0.4434 | Generator loss: 0.4354 
-# Epoch/Epochs: 10/50 | Iter: 0/8299 | Discriminator Loss: 0.3435 | Generator Loss: 0.0830
-# Epoch/Epochs: 10/50 | Iter: 5000/8299 | Discriminator Loss: 0.3538 | Generator Loss: 0.0962
-# Epoch/Epochs: 10/50 | Discriminator Loss : 0.4342 | Generator loss: 0.4106 
-# Epoch/Epochs: 11/50 | Iter: 0/8299 | Discriminator Loss: 0.3334 | Generator Loss: 0.2468
-# Epoch/Epochs: 11/50 | Iter: 5000/8299 | Discriminator Loss: 0.3316 | Generator Loss: 3.0445
-# Epoch/Epochs: 11/50 | Discriminator Loss : 0.4289 | Generator loss: 0.4870 
-# Epoch/Epochs: 12/50 | Iter: 0/8299 | Discriminator Loss: 0.3672 | Generator Loss: 0.8241
-# Epoch/Epochs: 12/50 | Iter: 5000/8299 | Discriminator Loss: 0.3357 | Generator Loss: 0.1275
-# Epoch/Epochs: 12/50 | Discriminator Loss : 0.4225 | Generator loss: 0.4794 
-# Epoch/Epochs: 13/50 | Iter: 0/8299 | Discriminator Loss: 0.3435 | Generator Loss: 0.3437
-# Epoch/Epochs: 13/50 | Iter: 5000/8299 | Discriminator Loss: 0.3278 | Generator Loss: 0.0659
-# Epoch/Epochs: 13/50 | Discriminator Loss : 0.4162 | Generator loss: 0.4567 
-# Epoch/Epochs: 14/50 | Iter: 0/8299 | Discriminator Loss: 0.5264 | Generator Loss: 0.0307
-# Epoch/Epochs: 14/50 | Iter: 5000/8299 | Discriminator Loss: 0.3273 | Generator Loss: 0.0589
-# Epoch/Epochs: 14/50 | Discriminator Loss : 0.4148 | Generator loss: 0.4299 
-# Epoch/Epochs: 15/50 | Iter: 0/8299 | Discriminator Loss: 0.3303 | Generator Loss: 0.1005
-# Epoch/Epochs: 15/50 | Iter: 5000/8299 | Discriminator Loss: 0.3600 | Generator Loss: 2.8284
-# Epoch/Epochs: 15/50 | Discriminator Loss : 0.4103 | Generator loss: 0.4716 
-# Epoch/Epochs: 16/50 | Iter: 0/8299 | Discriminator Loss: 0.3402 | Generator Loss: 0.3626
-# Epoch/Epochs: 16/50 | Iter: 5000/8299 | Discriminator Loss: 0.3335 | Generator Loss: 0.3848
-# Epoch/Epochs: 16/50 | Discriminator Loss : 0.4058 | Generator loss: 0.4607 
-# Epoch/Epochs: 17/50 | Iter: 0/8299 | Discriminator Loss: 0.3613 | Generator Loss: 0.0929
-# Epoch/Epochs: 17/50 | Iter: 5000/8299 | Discriminator Loss: 0.3282 | Generator Loss: 0.0538
-# Epoch/Epochs: 17/50 | Discriminator Loss : 0.4025 | Generator loss: 0.4389 
-# Epoch/Epochs: 18/50 | Iter: 0/8299 | Discriminator Loss: 0.3261 | Generator Loss: 0.0782
-# Epoch/Epochs: 18/50 | Iter: 5000/8299 | Discriminator Loss: 0.3324 | Generator Loss: 0.2204
-# Epoch/Epochs: 18/50 | Discriminator Loss : 0.3991 | Generator loss: 0.4229 
-# Epoch/Epochs: 19/50 | Iter: 0/8299 | Discriminator Loss: 0.3296 | Generator Loss: 0.0993
-# Epoch/Epochs: 19/50 | Iter: 5000/8299 | Discriminator Loss: 0.3280 | Generator Loss: 2.2213
-# Epoch/Epochs: 19/50 | Discriminator Loss : 0.3956 | Generator loss: 0.4426 
-# Epoch/Epochs: 20/50 | Iter: 0/8299 | Discriminator Loss: 0.3275 | Generator Loss: 0.1223
-# Epoch/Epochs: 20/50 | Iter: 5000/8299 | Discriminator Loss: 0.3455 | Generator Loss: 0.3317
-# Epoch/Epochs: 20/50 | Discriminator Loss : 0.3926 | Generator loss: 0.4306 
-# Epoch/Epochs: 21/50 | Iter: 0/8299 | Discriminator Loss: 0.3372 | Generator Loss: 0.0628
-# Epoch/Epochs: 21/50 | Iter: 5000/8299 | Discriminator Loss: 0.3269 | Generator Loss: 0.0592
-# Epoch/Epochs: 21/50 | Discriminator Loss : 0.3898 | Generator loss: 0.4144 
-# Epoch/Epochs: 22/50 | Iter: 0/8299 | Discriminator Loss: 0.3290 | Generator Loss: 0.1799
-# Epoch/Epochs: 22/50 | Iter: 5000/8299 | Discriminator Loss: 0.3324 | Generator Loss: 0.3507
-# Epoch/Epochs: 22/50 | Discriminator Loss : 0.3872 | Generator loss: 0.4057 
-# Epoch/Epochs: 23/50 | Iter: 0/8299 | Discriminator Loss: 0.3283 | Generator Loss: 0.1559
-# Epoch/Epochs: 23/50 | Iter: 5000/8299 | Discriminator Loss: 0.3261 | Generator Loss: 0.0584
-# Epoch/Epochs: 23/50 | Discriminator Loss : 0.3847 | Generator loss: 0.3923 
-# Epoch/Epochs: 24/50 | Iter: 0/8299 | Discriminator Loss: 0.3257 | Generator Loss: 0.0387
-# Epoch/Epochs: 24/50 | Iter: 5000/8299 | Discriminator Loss: 0.3329 | Generator Loss: 0.2434
-# Epoch/Epochs: 24/50 | Discriminator Loss : 0.3826 | Generator loss: 0.3814 
-# Epoch/Epochs: 25/50 | Iter: 0/8299 | Discriminator Loss: 0.3330 | Generator Loss: 0.0755
-# Epoch/Epochs: 25/50 | Iter: 5000/8299 | Discriminator Loss: 0.3304 | Generator Loss: 0.0804
-# Epoch/Epochs: 25/50 | Discriminator Loss : 0.3806 | Generator loss: 0.3703 
-# Epoch/Epochs: 26/50 | Iter: 0/8299 | Discriminator Loss: 0.3265 | Generator Loss: 0.1570
-# Epoch/Epochs: 26/50 | Iter: 5000/8299 | Discriminator Loss: 0.3319 | Generator Loss: 0.0708
-# Epoch/Epochs: 26/50 | Discriminator Loss : 0.3786 | Generator loss: 0.3611 
-# Epoch/Epochs: 27/50 | Iter: 0/8299 | Discriminator Loss: 0.3311 | Generator Loss: 0.1208
-# Epoch/Epochs: 27/50 | Iter: 5000/8299 | Discriminator Loss: 0.3282 | Generator Loss: 0.1310
-# Epoch/Epochs: 27/50 | Discriminator Loss : 0.3769 | Generator loss: 0.3527 
-# Epoch/Epochs: 28/50 | Iter: 0/8299 | Discriminator Loss: 0.3273 | Generator Loss: 0.1171
-# Epoch/Epochs: 28/50 | Iter: 5000/8299 | Discriminator Loss: 0.3507 | Generator Loss: 0.1679
-# Epoch/Epochs: 28/50 | Discriminator Loss : 0.3755 | Generator loss: 0.3452 
-# Epoch/Epochs: 29/50 | Iter: 0/8299 | Discriminator Loss: 0.3279 | Generator Loss: 0.1068
-# Epoch/Epochs: 29/50 | Iter: 5000/8299 | Discriminator Loss: 0.3298 | Generator Loss: 0.2010
-# Epoch/Epochs: 29/50 | Discriminator Loss : 0.3739 | Generator loss: 0.3487 
-# Epoch/Epochs: 30/50 | Iter: 0/8299 | Discriminator Loss: 0.3377 | Generator Loss: 0.3742
-# Epoch/Epochs: 30/50 | Iter: 5000/8299 | Discriminator Loss: 0.3375 | Generator Loss: 0.2570
-# Epoch/Epochs: 30/50 | Discriminator Loss : 0.3726 | Generator loss: 0.3459 
-# Epoch/Epochs: 31/50 | Iter: 0/8299 | Discriminator Loss: 0.3273 | Generator Loss: 0.1375
-# Epoch/Epochs: 31/50 | Iter: 5000/8299 | Discriminator Loss: 0.3599 | Generator Loss: 0.7176
-# Epoch/Epochs: 31/50 | Discriminator Loss : 0.3716 | Generator loss: 0.3551 
-# Epoch/Epochs: 32/50 | Iter: 0/8299 | Discriminator Loss: 0.3398 | Generator Loss: 1.1232
-# Epoch/Epochs: 32/50 | Iter: 5000/8299 | Discriminator Loss: 0.3258 | Generator Loss: 0.0987
-# Epoch/Epochs: 32/50 | Discriminator Loss : 0.3704 | Generator loss: 0.3592 
-# Epoch/Epochs: 33/50 | Iter: 0/8299 | Discriminator Loss: 0.3291 | Generator Loss: 0.2774
-# Epoch/Epochs: 33/50 | Iter: 5000/8299 | Discriminator Loss: 0.3288 | Generator Loss: 0.1186
-# Epoch/Epochs: 33/50 | Discriminator Loss : 0.3692 | Generator loss: 0.3529 
-# Epoch/Epochs: 34/50 | Iter: 0/8299 | Discriminator Loss: 0.3263 | Generator Loss: 3.2918
-# Epoch/Epochs: 34/50 | Iter: 5000/8299 | Discriminator Loss: 0.3514 | Generator Loss: 0.0371
-# Epoch/Epochs: 34/50 | Discriminator Loss : 0.3682 | Generator loss: 0.3756 
-# Epoch/Epochs: 35/50 | Iter: 0/8299 | Discriminator Loss: 0.3296 | Generator Loss: 0.1227
-# Epoch/Epochs: 35/50 | Iter: 5000/8299 | Discriminator Loss: 0.4661 | Generator Loss: 0.1242
-# Epoch/Epochs: 35/50 | Discriminator Loss : 0.3684 | Generator loss: 0.3733 
-# Epoch/Epochs: 36/50 | Iter: 0/8299 | Discriminator Loss: 0.3359 | Generator Loss: 0.4327
-# Epoch/Epochs: 36/50 | Iter: 5000/8299 | Discriminator Loss: 0.3276 | Generator Loss: 0.1187
-# Epoch/Epochs: 36/50 | Discriminator Loss : 0.3674 | Generator loss: 0.3705 
-# Epoch/Epochs: 37/50 | Iter: 0/8299 | Discriminator Loss: 0.3273 | Generator Loss: 0.1299
-# Epoch/Epochs: 37/50 | Iter: 5000/8299 | Discriminator Loss: 0.3326 | Generator Loss: 0.2645
-# Epoch/Epochs: 37/50 | Discriminator Loss : 0.3664 | Generator loss: 0.3687 
-# Epoch/Epochs: 38/50 | Iter: 0/8299 | Discriminator Loss: 0.3678 | Generator Loss: 0.4906
-# Epoch/Epochs: 38/50 | Iter: 5000/8299 | Discriminator Loss: 0.3311 | Generator Loss: 0.0654
-# Epoch/Epochs: 38/50 | Discriminator Loss : 0.3659 | Generator loss: 0.3650 
-# Epoch/Epochs: 39/50 | Iter: 0/8299 | Discriminator Loss: 0.3276 | Generator Loss: 0.1085
-# Epoch/Epochs: 39/50 | Iter: 5000/8299 | Discriminator Loss: 0.3274 | Generator Loss: 0.1476
-# Epoch/Epochs: 39/50 | Discriminator Loss : 0.3651 | Generator loss: 0.3605 
-# Epoch/Epochs: 40/50 | Iter: 0/8299 | Discriminator Loss: 0.3345 | Generator Loss: 0.2792
-# Epoch/Epochs: 40/50 | Iter: 5000/8299 | Discriminator Loss: 0.3276 | Generator Loss: 0.0541
-# Epoch/Epochs: 40/50 | Discriminator Loss : 0.3642 | Generator loss: 0.3549 
-# Epoch/Epochs: 41/50 | Iter: 0/8299 | Discriminator Loss: 0.3434 | Generator Loss: 0.0634
-# Epoch/Epochs: 41/50 | Iter: 5000/8299 | Discriminator Loss: 0.3268 | Generator Loss: 0.0858
-# Epoch/Epochs: 41/50 | Discriminator Loss : 0.3635 | Generator loss: 0.3481 
-# Epoch/Epochs: 42/50 | Iter: 0/8299 | Discriminator Loss: 0.3258 | Generator Loss: 0.0578
-# Epoch/Epochs: 42/50 | Iter: 5000/8299 | Discriminator Loss: 0.3689 | Generator Loss: 2.0997
-# Epoch/Epochs: 42/50 | Discriminator Loss : 0.3630 | Generator loss: 0.3571 
-# Epoch/Epochs: 43/50 | Iter: 0/8299 | Discriminator Loss: 0.3363 | Generator Loss: 0.0501
-# Epoch/Epochs: 43/50 | Iter: 5000/8299 | Discriminator Loss: 0.3264 | Generator Loss: 0.1211
-# Epoch/Epochs: 43/50 | Discriminator Loss : 0.3622 | Generator loss: 0.3508 
-# Epoch/Epochs: 44/50 | Iter: 0/8299 | Discriminator Loss: 0.3271 | Generator Loss: 0.0656
-# Epoch/Epochs: 44/50 | Iter: 5000/8299 | Discriminator Loss: 0.3971 | Generator Loss: 0.0756
-# Epoch/Epochs: 44/50 | Discriminator Loss : 0.3620 | Generator loss: 0.3444 
-# Epoch/Epochs: 45/50 | Iter: 0/8299 | Discriminator Loss: 0.3262 | Generator Loss: 0.0580
-# Epoch/Epochs: 45/50 | Iter: 5000/8299 | Discriminator Loss: 0.3265 | Generator Loss: 0.2380
-# Epoch/Epochs: 45/50 | Discriminator Loss : 0.3612 | Generator loss: 0.3396 
-# Epoch/Epochs: 46/50 | Iter: 0/8299 | Discriminator Loss: 0.3282 | Generator Loss: 0.0776
-# Epoch/Epochs: 46/50 | Iter: 5000/8299 | Discriminator Loss: 0.3345 | Generator Loss: 0.0745
-# Epoch/Epochs: 46/50 | Discriminator Loss : 0.3633 | Generator loss: 0.3337 
-# Epoch/Epochs: 47/50 | Iter: 0/8299 | Discriminator Loss: 0.5611 | Generator Loss: 0.0289
-# Epoch/Epochs: 47/50 | Iter: 5000/8299 | Discriminator Loss: 0.3264 | Generator Loss: 0.1181
-# Epoch/Epochs: 47/50 | Discriminator Loss : 0.3641 | Generator loss: 0.3281 
+# ...
 # Epoch/Epochs: 48/50 | Iter: 0/8299 | Discriminator Loss: 0.3256 | Generator Loss: 0.0465
 # Epoch/Epochs: 48/50 | Iter: 5000/8299 | Discriminator Loss: 0.3264 | Generator Loss: 0.0961
 # Epoch/Epochs: 48/50 | Discriminator Loss : 0.3633 | Generator loss: 0.3232 
@@ -1307,7 +932,113 @@ generatorcnn.load_state_dict(states["state_dict"])
 # Epoch/Epochs: 49/50 | Iter: 5000/8299 | Discriminator Loss: 0.3398 | Generator Loss: 0.6905
 # Epoch/Epochs: 49/50 | Discriminator Loss : 0.3627 | Generator loss: 0.3244 
 #
-
+#%%
+# Before we continue if you remember we said getting a GAN to work is 
+# an involved effort and requires a few tips and tricks at the very least 
+# to work properly. when DCGAN came out, it provided many of such tips and 
+# the authors posted a list of them in their github repo. 
+# while some of these tips and tricks are still valid, some have gone obsolote
+# in newer architectures, and some have also evolved. having said that, for now
+# lets review these tips we expand on them later. 
+# sidenote:
+# this is from 2016 by the way
+# https://github.com/soumith/ganhacks#16-discrete-variables-in-conditional-gans
+# they directly affect how GANs are trained!
+# 
+# quick summary of the points:
+# dont use relu in discriminator! 
+# use Guassian/normal distribution instead of uniform for sampling
+# in batch use different batches for real and fake separately (especially if you use batchnorm!)
+# use tanh for generator's last layer
+# use label smoothing
+# use adam for generator, and you can use sgd with discriminator!
+# 
+# Main post at github:  
+# How to Train a GAN? Tips and tricks to make GANs work
+# While research in Generative Adversarial Networks (GANs) continues to improve the fundamental stability of these models, we use a bunch of tricks to train them and make them stable day to day.
+# Here are a summary of some of the tricks.
+# Here's a link to the authors of this document
+# If you find a trick that is particularly useful in practice, please open a Pull Request to add it to the document. If we find it to be reasonable and verified, we will merge it in.
+# 1. Normalize the inputs
+#     normalize the images between -1 and 1
+#     Tanh as the last layer of the generator output
+# 2: A modified loss function
+# In GAN papers, the loss function to optimize G is min (log 1-D), but in practice folks practically use max log D
+#     because the first formulation has vanishing gradients early on
+#     Goodfellow et. al (2014)
+# In practice, works well:
+#     Flip labels when training generator: real = fake, fake = real
+# 3: Use a spherical Z
+#     Dont sample from a Uniform distribution
+# cube.png
+#     Sample from a gaussian distribution
+# sphere.png
+#     When doing interpolations, do the interpolation via a great circle, rather than a straight line from point A to point B
+#     Tom White's Sampling Generative Networks ref code https://github.com/dribnet/plat has more details
+# 4: BatchNorm
+#     Construct different mini-batches for real and fake, i.e. each mini-batch needs to contain only all real images or all generated images.
+#     when batchnorm is not an option use instance normalization (for each sample, subtract mean and divide by standard deviation).
+# batchmix
+# 5: Avoid Sparse Gradients: ReLU, MaxPool
+#     the stability of the GAN game suffers if you have sparse gradients
+#     LeakyReLU = good (in both G and D)
+#     For Downsampling, use: Average Pooling, Conv2d + stride
+#     For Upsampling, use: PixelShuffle, ConvTranspose2d + stride
+#         PixelShuffle: https://arxiv.org/abs/1609.05158
+# 6: Use Soft and Noisy Labels
+#     Label Smoothing, i.e. if you have two target labels: Real=1 and Fake=0, then for each incoming sample, if it is real, then replace the label with a random number between 0.7 and 1.2, and if it is a fake sample, replace it with 0.0 and 0.3 (for example).
+#         Salimans et. al. 2016
+#     make the labels the noisy for the discriminator: occasionally flip the labels when training the discriminator
+# 7: DCGAN / Hybrid Models
+#     Use DCGAN when you can. It works!
+#     if you cant use DCGANs and no model is stable, use a hybrid model : KL + GAN or VAE + GAN
+# 8: Use stability tricks from RL
+#     Experience Replay
+#         Keep a replay buffer of past generations and occassionally show them
+#         Keep checkpoints from the past of G and D and occassionaly swap them out for a few iterations
+#     All stability tricks that work for deep deterministic policy gradients
+#     See Pfau & Vinyals (2016)
+# 9: Use the ADAM Optimizer
+#     optim.Adam rules!
+#         See Radford et. al. 2015
+#     Use SGD for discriminator and ADAM for generator
+# 10: Track failures early
+#     D loss goes to 0: failure mode
+#     check norms of gradients: if they are over 100 things are screwing up
+#     when things are working, D loss has low variance and goes down over time vs having huge variance and spiking
+#     if loss of generator steadily decreases, then it's fooling D with garbage (says martin)
+# 11: Dont balance loss via statistics (unless you have a good reason to)
+#     Dont try to find a (number of G / number of D) schedule to uncollapse training
+#     It's hard and we've all tried it.
+#     If you do try it, have a principled approach to it, rather than intuition
+# For example
+# 
+# while lossD > A:
+#   train D
+# while lossG > B:
+#   train G
+# 
+# 12: If you have labels, use them
+#     if you have labels available, training the discriminator to also classify the samples: auxillary GANs
+# 13: Add noise to inputs, decay over time
+#     Add some artificial noise to inputs to D (Arjovsky et. al., Huszar, 2016)
+#         http://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
+#         https://openreview.net/forum?id=Hk4_qw5xe
+#     adding gaussian noise to every layer of generator (Zhao et. al. EBGAN)
+#         Improved GANs: OpenAI code also has it (commented out)
+# 14: [notsure] Train discriminator more (sometimes)
+#     especially when you have noise
+#     hard to find a schedule of number of D iterations vs G iterations
+# 15: [notsure] Batch Discrimination
+#     Mixed results
+# 16: Discrete variables in Conditional GANs
+#     Use an Embedding layer
+#     Add as additional channels to images
+#     Keep embedding dimensionality low and upsample to match image channel size
+# 17: Use Dropouts in G in both train and test phase
+#     Provide noise in the form of dropout (50%).
+#     Apply on several layers of our generator at both training and test time
+#     https://arxiv.org/pdf/1611.07004v1.pdf
 #%%
 
 #%%
