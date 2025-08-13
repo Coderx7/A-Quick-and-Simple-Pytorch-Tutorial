@@ -773,9 +773,86 @@ plt.legend()
 plt.show()
 
 #%%
-# states = torch.load('./weights/dcgan_generatorcnn_20250811195800.pt')
-# generatorcnn.load_state_dict(states["state_dict"])
+# load a checkpoint and lets run some experiments on latent space
+states = torch.load('./weights/dcgan_generatorcnn_20250812172504.pt', weights_only=False)
+z_size = states["z_size"]
+hidden_size = states["hidden_size"]
+dataset_name = states["dataset_name"]
+generatorcnn = GeneratorCNN(z_size, hidden_size)
+generatorcnn.load_state_dict(states["state_dict"])
+generatorcnn.eval()
+print(f"Generator's weights for {dataset_name.upper()} loaded!")
+#%%
+# one interesting thing the authors of dcgan did was they showed the 
+# latent space learned using GANs learned disentangled features which 
+# and you could for example just like wordembeddings, do some arithmetic
+# operations and get meaningful outcomes. 
+# for examples, if we subtracted the latent vectors for man with glasses
+# from man without glasses and then add woman without glasses we would get
+# woman with glasses! 
+# this is usually done with conditional versions where we can specify each 
+# attribute, in unconditional version where no labels are used, like ours here
+# we need to comeup with a way to get images with the same attribute first 
+# and then use those latent vectors to do the arthimetics
+# note we said images and not just a single image, because we need to average
+# those vectors to get rid of their specific nuacenses and only capture the 
+# essense of said attribute, otherwise it wouldnt work properly as not all features
+# are disentangled properly.
+# so what we do is we are going to create bunch of latents and see what we find
+# we need to control the seeds so we can repreduce this
+np.random.seed(66)
+random_gen = torch.manual_seed(66)
 
+@torch.no_grad()
+def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
+    generator.eval()
+    alphas = torch.linspace(0, 1, steps)
+    grids = []
+    for a in alphas:
+        z_interp = (1-a)*z1 + a*z2 + eps
+        imgs = generator(z_interp)
+        imgs_grid = torch.cat((*imgs,), dim=1)
+        # print(f'{imgs_grid.shape=}')
+        grids.append(imgs_grid)
+    return torch.cat((*grids,), dim=2)
+
+def plot_images(imgs, title, figsize=(4,3)):
+    imgs = ((imgs+1)/2).clamp(0,1)
+    imgs = imgs.permute(1, 2, 0).numpy()
+    plt.figure(figsize=figsize)
+    plt.imshow(imgs)
+    plt.axis("off")
+    plt.title(title)
+    plt.show()
+
+# z1 = 2*torch.rand(generatorcnn.z_size)-1
+# z2 = 2*torch.rand(generatorcnn.z_size)-1
+steps = 8
+num_smaples=10
+z1 = torch.rand(size=(num_smaples, generatorcnn.z_size), generator=random_gen)
+z2 = torch.rand(size=(num_smaples, generatorcnn.z_size), generator=random_gen)
+
+imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-1)
+title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, len(imgs))])
+plot_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
+
+
+@torch.no_grad()
+def latent_arithmetic_unconditional(G, z_with_attr, z_without_attr, z_target, alpha_values):
+    # 1. Compute attribute direction
+    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
+    # 2. Generate modified latents
+    results = []
+    for alpha in alpha_values:
+        z_mod = z_target + alpha * direction
+        img = G(z_mod.unsqueeze(0)).cpu()
+        results.append(img)
+    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
+
+# imgs = latent_arithmetic_unconditional(generatorcnn, z_with_attr, z_without_attr, z_target, alphas)
+# plot_images(imgs, alphas)
+
+# 
 #%%
 # remarks:
 # ok early on we faced high generator's loss and mode collapse
@@ -1167,13 +1244,13 @@ train_loader = get_dataloader(dataset_name=dataset_name, batch_size=batch_size)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
 disc_hidden_size = 32#16
 gen_hidden_size = 64
 # dcgan used 100 if I recall correctly
 z_size = 100
 
-epochs = 50 
+# celeba requires more epochs 
+epochs = 100#50 
 interval = len(train_loader)//2
 
 #discriminator
@@ -1190,12 +1267,38 @@ gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999]
 gen_num_samples = 80
 # use normal for sampling
 fixed_z = torch.randn(size=(gen_num_samples, z_size), device=device)
-# create a few samples for each class so we 
-# see different variations in each class
+# create a few samples for each class so we see different variations in each class
+samples_count = gen_num_samples // num_classes
 # fixed_labels = (torch.arange(0,num_classes).view(num_classes,1)*torch.ones(size=(1,gen_num_samples//num_classes))).view(-1)
-fixed_labels = torch.arange(num_classes).repeat(gen_num_samples // num_classes, 1).t().flatten()
+fixed_labels = torch.arange(num_classes).repeat(samples_count, 1).t().flatten()
 # print(f'{fixed_labels=}')
 fixed_labels = F.one_hot(fixed_labels.long(), num_classes=num_classes).to(device)
+
+# for celeba we need a bit more to do 
+if dataset_name =='celeba':
+    # first pick a few attribute indexes we want to vary
+    # we can look at the list_attr_celeba.txt in our celeba folder
+    # which contains 40 attribues which are as follows: 
+    attributes = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
+                  'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
+                  'Blurry','Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 
+                  'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', 
+                  'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard', 
+                  'Oval_Face','Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks', 
+                  'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
+                  'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
+    # to make it easier lets create a dictionary and pick the attributes that way!
+    atrributes_dict = {name:i for i,name in enumerate(attributes)}
+    attr_selection = ["Male",'Bald',"Eyeglasses","Smiling",'Young','Wearing_Hat','Black_Hair','Mustache']
+    samples_count = gen_num_samples//len(attr_selection)
+    fixed_labels = torch.zeros(size=(gen_num_samples, num_classes),device=device)
+    # ids = [torch.tensor(atrributes_dict[a]).repeat(samples_count) for a in attr_selection]
+    # ids = torch.cat(tuple(ids), dim=0)
+    ids = torch.repeat_interleave(torch.tensor([atrributes_dict[a] for a in attr_selection]),samples_count)
+    fixed_labels[torch.arange(gen_num_samples), ids] = 1
+    # print(f'{fixed_labels.shape=}')
+    # torch.set_printoptions(profile="full")
+    # print(f'{fixed_labels=}')
 
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 losses = []
@@ -1215,13 +1318,13 @@ for epoch in range(epochs):
         if dataset_name != 'celeba':
             labels = F.one_hot(labels, num_classes=num_classes).to(device)
         
-        # before we go on lets add small gaussian noise to real images
-        # I added this later when I noticed heavy mode collapse happining
-        # we do this to both real and fake images to fight mode collapse
-        # this is not needed in dcgan but having it enabled helps with 
-        # training/generation we'll talk about this in future I'll leave this here
-        # for now - see training remarks ahead for an intersting find!
-        imgs_real += 0.05 * torch.randn_like(imgs_real)
+        # for celeba, when we go conditional, this will hurt the performance
+        # drastically, as there are many labels, and the netowrk needs to
+        # comeup with robust features to disentangle them properly, this is
+        # hard by itself, given our simple architectures, so adding noise like his
+        # will complicate this further. 
+        # enable this and see what happens!
+        # imgs_real += 0.05 * torch.randn_like(imgs_real)
                
         # train discriminator! 
         # real image predictions
@@ -1234,8 +1337,8 @@ for epoch in range(epochs):
         # from the generator and quickly learn!
         imgs_fake = generatorcnn(z_vector, labels).detach()
         
-        # add noise to fake images as well(not needed for dcgan)
-        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        # add noise to fake images as well(not needed for dcgan)-
+        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
         
         preds_fake = discriminatorcnn(imgs_fake, labels)
         disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
@@ -1305,11 +1408,11 @@ for epoch in range(epochs):
         # reshape images back to 32x32x3
         generated_images = generatorcnn(fixed_z, fixed_labels).view(-1,*imgs_real.shape[1:])
         display_images(generated_images, 
-                    cols=gen_num_samples//num_classes,
+                    cols=samples_count,
                     title=f'Generated Images at Epoch {epoch}',
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan/{experiment_date}/epoch_{epoch}.jpg')
-    
+
 #%%
 losses = np.array(losses)
 
