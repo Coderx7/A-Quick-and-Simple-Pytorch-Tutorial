@@ -782,76 +782,6 @@ generatorcnn = GeneratorCNN(z_size, hidden_size)
 generatorcnn.load_state_dict(states["state_dict"])
 generatorcnn.eval()
 print(f"Generator's weights for {dataset_name.upper()} loaded!")
-#%%
-# one interesting thing the authors of dcgan did was they showed the 
-# latent space learned using GANs learned disentangled features which 
-# and you could for example just like wordembeddings, do some arithmetic
-# operations and get meaningful outcomes. 
-# for examples, if we subtracted the latent vectors for man with glasses
-# from man without glasses and then add woman without glasses we would get
-# woman with glasses! 
-# this is usually done with conditional versions where we can specify each 
-# attribute, in unconditional version where no labels are used, like ours here
-# we need to comeup with a way to get images with the same attribute first 
-# and then use those latent vectors to do the arthimetics
-# note we said images and not just a single image, because we need to average
-# those vectors to get rid of their specific nuacenses and only capture the 
-# essense of said attribute, otherwise it wouldnt work properly as not all features
-# are disentangled properly.
-# so what we do is we are going to create bunch of latents and see what we find
-# we need to control the seeds so we can repreduce this
-np.random.seed(66)
-random_gen = torch.manual_seed(66)
-
-@torch.no_grad()
-def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
-    generator.eval()
-    alphas = torch.linspace(0, 1, steps)
-    grids = []
-    for a in alphas:
-        z_interp = (1-a)*z1 + a*z2 + eps
-        imgs = generator(z_interp)
-        imgs_grid = torch.cat((*imgs,), dim=1)
-        # print(f'{imgs_grid.shape=}')
-        grids.append(imgs_grid)
-    return torch.cat((*grids,), dim=2)
-
-def plot_images(imgs, title, figsize=(4,3)):
-    imgs = ((imgs+1)/2).clamp(0,1)
-    imgs = imgs.permute(1, 2, 0).numpy()
-    plt.figure(figsize=figsize)
-    plt.imshow(imgs)
-    plt.axis("off")
-    plt.title(title)
-    plt.show()
-
-# z1 = 2*torch.rand(generatorcnn.z_size)-1
-# z2 = 2*torch.rand(generatorcnn.z_size)-1
-steps = 8
-num_smaples=10
-z1 = torch.rand(size=(num_smaples, generatorcnn.z_size), generator=random_gen)
-z2 = torch.rand(size=(num_smaples, generatorcnn.z_size), generator=random_gen)
-
-imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-1)
-title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, len(imgs))])
-plot_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
-
-
-@torch.no_grad()
-def latent_arithmetic_unconditional(G, z_with_attr, z_without_attr, z_target, alpha_values):
-    # 1. Compute attribute direction
-    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
-    # 2. Generate modified latents
-    results = []
-    for alpha in alpha_values:
-        z_mod = z_target + alpha * direction
-        img = G(z_mod.unsqueeze(0)).cpu()
-        results.append(img)
-    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
-
-# imgs = latent_arithmetic_unconditional(generatorcnn, z_with_attr, z_without_attr, z_target, alphas)
-# plot_images(imgs, alphas)
-
 # 
 #%%
 # remarks:
@@ -998,6 +928,157 @@ def latent_arithmetic_unconditional(G, z_with_attr, z_without_attr, z_target, al
 #      -- patterns in the latent space and ultimately lead to a more independent/varied generation.
 #      -- 
 #
+#%%
+# one interesting thing the authors of dcgan did was they showed the 
+# latent space learned using GAN learned disentangled features which 
+# we could for example just like wordembeddings, do some arithmetic
+# operations and get meaningful outcomes. 
+# for examples, if we subtracted the latent vectors for man with glasses
+# from man without glasses and then add woman without glasses we would get
+# woman with glasses! 
+# this is usually done with conditional versions where we can specify each 
+# attribute, in unconditional version where no labels are used, like ours here
+# we need to comeup with a way to get images with the same attribute first 
+# and then use those latent vectors to do the arthimetics.
+# note we said images and not just a single image, because we need to average
+# those vectors to get rid of their specific nuacenses and only capture the 
+# essense of said attribute(i.e. the direction of change if you will), 
+# otherwise it wouldnt work properly as not all features are disentangled prefectly.
+# so we need a way to identify the existence of an attribute in an image,
+# one way would be to use a classifier on our generator's outputs and save the
+# z vectors that resulted in a specific attribute e.g. smile, and do this for 
+# other attributes like having galsses, being bald, etc.
+# since we dont have a specific classifier for stuff like this, we can also start 
+# generating randomly and grab the vectors that result in certain attributes. 
+# though we could also do it manually. if you recall in autoencoders section
+# we had a similar problem back then and we saw we could use std/mean to specify
+# the direction of change. we can do the same here and by playing with different
+# std/mean find our vectors and use them in our experiment.
+# to make it more managble we use opencv's picker so it becomes easy to change
+# and see the outcomes.
+#%%
+import cv2
+# np.random.seed(66)
+# random_gen = torch.manual_seed(66)
+
+# define our simple gui 
+def onchange(x):
+    pass
+
+@torch.no_grad()
+def choose_meanstd(generator, num_samples,ncols=8):
+    generator.eval()
+    
+    cv2.namedWindow('std_mu_finder')
+    
+    # create trackbars for std and mean 
+    # opencv trackbar only supports ints, 
+    # so we specify our desired range as int
+    # and then in code divide them to get fractions
+    # std: 0.01 - 1
+    # mean: 0.0001 - 1
+    cv2.createTrackbar('std', 'std_mu_finder', 0, 100, onchange)
+    cv2.createTrackbar('mean', 'std_mu_finder', 0, 10_000, onchange)
+    # to be able to sample new values we use this
+    cv2.createTrackbar('resample', 'std_mu_finder', 0, 1, onchange)
+    
+    z = torch.randn(size=(num_samples, generator.z_size))
+    old_std, old_mean, old_resample=None,None,None
+    imgs=None
+        
+    while True:
+        std = cv2.getTrackbarPos('std','std_mu_finder',)
+        mean = cv2.getTrackbarPos('mean','std_mu_finder')
+        resample = cv2.getTrackbarPos('resample','std_mu_finder')
+        
+        frac_std = std/100
+        frac_mean = mean/10_000
+        
+        if old_resample!=resample:
+            z = torch.randn(size=(num_samples, generator.z_size))
+            old_resample = resample
+            print(f'new z is created!')
+            
+        # only generate when values change so 
+        # we dont waste too much cpu and hug the system!
+        if old_std!=std or old_mean!=mean or old_resample!=resample:
+            new_z = frac_std * z + frac_mean
+            imgs = generator(new_z)
+                       
+            img = utils.make_grid(imgs, nrow=ncols, normalize=True, value_range=(-1, 1))
+            img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            img = cv2.resize(img, dsize=None, fx=2.0, fy=2.0)
+            
+            old_std, old_mean = std, mean
+            print(f'new image generated using std:{frac_std:5f} mu:{frac_mean:.5f}')
+            
+        if img is not None:
+            cv2.imshow('std_mu_finder', img)
+            
+        # break loop when 'q' is pressed
+        # also note we dont need to check this every 1 ms!
+        # waiting every 30ms/90ms suffices, I chose 320ms
+        if cv2.waitKey(320) & 0xFF == ord('q'):
+            break
+    cv2.destroyAllWindows()
+
+steps = 8
+num_samples=16
+choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+#%%
+@torch.no_grad()
+def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
+    generator.eval()
+    alphas = torch.linspace(0, 1, steps)
+    grids = []
+    for a in alphas:
+        z_interp = (1-a)*z1 + a*z2 + eps
+        imgs = generator(z_interp)
+        imgs_grid = torch.cat((*imgs,), dim=1)
+        # print(f'{imgs_grid.shape=}')
+        grids.append(imgs_grid)
+    return torch.cat((*grids,), dim=2)
+
+def plot_images(imgs, title, cols=8, figsize=(4,3)):
+    imgs = ((imgs+1)/2).clamp(0,1)
+    if imgs.ndim>3:
+        imgs = utils.make_grid(imgs,nrow=cols)
+    imgs = imgs.permute(1, 2, 0).numpy()
+    plt.figure(figsize=figsize)
+    plt.imshow(imgs)
+    plt.axis("off")
+    plt.title(title)
+    plt.show()
+
+# z1 = 2*torch.rand(generatorcnn.z_size)-1
+# z2 = 2*torch.rand(generatorcnn.z_size)-1
+steps = 8
+num_samples=5
+std = 0.6
+mean = 0.00001
+z1 = std * torch.randn(size=(num_samples, generatorcnn.z_size)) + mean
+z2 = std * torch.randn(size=(num_samples, generatorcnn.z_size)) + mean
+
+imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-8)
+title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, len(imgs))])
+plot_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
+
+
+@torch.no_grad()
+def latent_arithmetic_unconditional(G, z_with_attr, z_without_attr, z_target, alpha_values):
+    # 1. Compute attribute direction
+    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
+    # 2. Generate modified latents
+    results = []
+    for alpha in alpha_values:
+        z_mod = z_target + alpha * direction
+        img = G(z_mod.unsqueeze(0)).cpu()
+        results.append(img)
+    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
+
+# imgs = latent_arithmetic_unconditional(generatorcnn, z_with_attr, z_without_attr, z_target, alphas)
+# plot_images(imgs, alphas)
 #%%
 # Before we continue if you remember we said getting a GAN to work is 
 # an involved effort and requires a few tips and tricks at the very least 
