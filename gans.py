@@ -958,8 +958,8 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # and see the outcomes.
 #%%
 import cv2
-# np.random.seed(66)
-# random_gen = torch.manual_seed(66)
+np.random.seed(66)
+random_gen = torch.manual_seed(66)
 
 # define our simple gui 
 def onchange(x):
@@ -975,14 +975,14 @@ def choose_meanstd(generator, num_samples,ncols=8):
     # opencv trackbar only supports ints, 
     # so we specify our desired range as int
     # and then in code divide them to get fractions
-    # std: 0.01 - 1
-    # mean: 0.0001 - 1
-    cv2.createTrackbar('std', 'std_mu_finder', 0, 100, onchange)
-    cv2.createTrackbar('mean', 'std_mu_finder', 0, 10_000, onchange)
+    # std: 0.0 - 1.0
+    # mean: 0.0 - 1
+    cv2.createTrackbar('std', 'std_mu_finder', 400, 2000, onchange)
+    cv2.createTrackbar('mean', 'std_mu_finder', 0, 1000, onchange)
     # to be able to sample new values we use this
     cv2.createTrackbar('resample', 'std_mu_finder', 0, 1, onchange)
     
-    z = torch.randn(size=(num_samples, generator.z_size))
+    z = torch.randn(size=(num_samples, generator.z_size),generator=random_gen)
     old_std, old_mean, old_resample=None,None,None
     imgs=None
         
@@ -991,13 +991,12 @@ def choose_meanstd(generator, num_samples,ncols=8):
         mean = cv2.getTrackbarPos('mean','std_mu_finder')
         resample = cv2.getTrackbarPos('resample','std_mu_finder')
         
-        frac_std = std/100
-        frac_mean = mean/10_000
+        frac_std = std/2000
+        frac_mean = mean/1000
         
-        if old_resample!=resample:
-            z = torch.randn(size=(num_samples, generator.z_size))
-            old_resample = resample
-            print(f'new z is created!')
+        if old_resample != resample:
+            z = torch.randn(size=(num_samples, generator.z_size),generator=random_gen)
+            print(f'New z sampled!')
             
         # only generate when values change so 
         # we dont waste too much cpu and hug the system!
@@ -1010,22 +1009,23 @@ def choose_meanstd(generator, num_samples,ncols=8):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             img = cv2.resize(img, dsize=None, fx=2.0, fy=2.0)
             
-            old_std, old_mean = std, mean
-            print(f'new image generated using std:{frac_std:5f} mu:{frac_mean:.5f}')
+            old_std, old_mean, old_resample = std, mean, resample
+            print(f'Generated using std:{frac_std:5f} mu:{frac_mean:.5f}')
             
         if img is not None:
             cv2.imshow('std_mu_finder', img)
             
         # break loop when 'q' is pressed
         # also note we dont need to check this every 1 ms!
-        # waiting every 30ms/90ms suffices, I chose 320ms
-        if cv2.waitKey(320) & 0xFF == ord('q'):
+        # waiting every 30ms/90ms suffices, I chose 60ms
+        if cv2.waitKey(60) & 0xFF == ord('q'):
             break
     cv2.destroyAllWindows()
+    return z, frac_std, frac_mean
 
 steps = 8
 num_samples=16
-choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
 #%%
 @torch.no_grad()
 def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
