@@ -956,6 +956,74 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # std/mean find our vectors and use them in our experiment.
 # to make it more managble we use opencv's picker so it becomes easy to change
 # and see the outcomes.
+#update: I gave it a try but not only finding proper attributes this way is hard
+# simply because we are just biasing the sampling distribution which only changes 
+# style/noise intensity but not semantic attributes, unlike our vae case, the mean/stds
+# are not that well defined so that by managing it we access different attributes, 
+# we may be able to narrow it down to some attribute but the process is involved to say
+# the least, at least I give up in part because we have other more stream lined ways to
+# do this, using conditional version aside, I have also seen (and tested as well) with
+# some newer approaches which I didnt get desired result either because of our simplistic
+# architecture and features not being properly developed I guess. 
+# the methods I tested include Sefa method by Shen&Zhou 2020(paper link) and clip method
+# where we use the clip model to identify latents that have the attributes we want.
+# neigther of these methods worked well for me most probably because our model itself
+# is not only powerful by any means, the learned features are not that high quality(disentangled properly)
+# so I'll redo this test using our next experiment which is conditional GAN. 
+# 
+# sidenote:
+# concerning how sefa method works, basically this method sugggests we use 
+# eigen decomposition of our generator's weights(linear layer weight) to get meaningful directions without 
+# data or labels and then use those to create the attributes we want. (why the linear layer? 
+# because its the layer that does the mapping!)
+# its basically doing torch.linalg.eigh(W.T @ W) ,W being our linear layer's weights
+# and then picking top k eigenvectors as attribute directions.
+# to refresh your memories, eigenvectors show directions towards maximum variation (like pca).
+# so the top eigenvectors in our generator are the directions in the latent space
+# that affect the output by a lot/heavily/strongly. (how much exactly? its specified by the eigenvalues!)
+# these directions most of the time, corrolate with/corrospond to different attributes (liek pose, color, eyeglasses, hair,etc)
+# so much so if we move along said directions, we can see different attributes change in the input.
+# as we just said, while the eigenvectors are (semantic) directions, the eigenvalues are 
+# their values/magnitude, they show how strong they are, i.e. larger values mean more impact on the output
+# and viceversa.
+# sidenote2:
+# you may also see some people refer to (W.t() @ W) as a gram matrix so be aware of that!
+# also as to why we are doing this in first place? so we can see the effect of each input 
+# feature on all other input features. its basically done to capture correlations/co-variances
+# of input features after being passed through the linear layer of our generator.
+# (each column in W corresponds to how one input dimension (i.e. latent feature) contributes 
+# to all outputs. so gram matrix measures how similar input features i and j are, in terms 
+# of their effect on the output).
+# (we can think of this operation (gram matrix) as a way to summarize how the generator's 
+# weights couple latent dimensions together so by factorizing it, we can uncover latent 
+# axes/drections of variation that our GAN has learned so we can use it to our advantge!)
+#
+@torch.no_grad()
+def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
+    # first linear layer that maps z
+    W = generator.net[0].weight.data
+    gram_matrix = W.t() @ W
+    eigen_vals, eigen_vecs = torch.linalg.eigh(gram_matrix)
+    print(f'{eigen_vals[0:3]}=')
+    print(f'{eigen_vals[-1:-4]}=')
+    #we flip the values so they are ordered 
+    # from largest values to smallests
+    eigen_vals = eigen_vals.flip(0)
+    eigen_vecs = eigen_vecs.flip(1)
+    print(f'{eigen_vecs.shape[1]=}')
+    topk = min(topk, eigen_vecs.shape[1])
+    return eigen_vals[:topk].contiguous(), eigen_vecs[:, :topk].contiguous()
+
+@torch.no_grad()
+def traverse(generator, z, eigen_vec, alphas=(-3,-2,-1,0,1,2,3)):
+    if eigen_vec.dim() == 2 and eigen_vec.shape[1] == 1:
+        eigen_vec = eigen_vec[:, 0]
+    outs = []
+    for a in alphas:
+        z_mod = z + float(a) * eigen_vec.unsqueeze(0)
+        imgs = generator(z_mod)
+        outs.append(imgs)
+    return torch.cat(outs, dim=0)
 #%%
 import cv2
 np.random.seed(66)
@@ -977,13 +1045,13 @@ def choose_meanstd(generator, num_samples,ncols=8):
     # and then in code divide them to get fractions
     # std: 0.0 - 1.0
     # mean: 0.0 - 1
-    cv2.createTrackbar('std', 'std_mu_finder', 400, 2000, onchange)
+    cv2.createTrackbar('std', 'std_mu_finder', 500, 1000, onchange)
     cv2.createTrackbar('mean', 'std_mu_finder', 0, 1000, onchange)
     # to be able to sample new values we use this
     cv2.createTrackbar('resample', 'std_mu_finder', 0, 1, onchange)
     
-    z = torch.randn(size=(num_samples, generator.z_size),generator=random_gen)
-    old_std, old_mean, old_resample=None,None,None
+    z = torch.randn(size=(num_samples, generator.z_size), generator=random_gen)
+    old_std, old_mean, old_minus,old_resample=None,None,None,None
     imgs=None
         
     while True:
@@ -991,7 +1059,7 @@ def choose_meanstd(generator, num_samples,ncols=8):
         mean = cv2.getTrackbarPos('mean','std_mu_finder')
         resample = cv2.getTrackbarPos('resample','std_mu_finder')
         
-        frac_std = std/2000
+        frac_std = std/1000
         frac_mean = mean/1000
         
         if old_resample != resample:
@@ -1025,7 +1093,10 @@ def choose_meanstd(generator, num_samples,ncols=8):
 
 steps = 8
 num_samples=16
+generatorcnn.to('cpu')
+# women!
 z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+
 #%%
 @torch.no_grad()
 def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
@@ -1057,28 +1128,35 @@ steps = 8
 num_samples=5
 std = 0.6
 mean = 0.00001
-z1 = std * torch.randn(size=(num_samples, generatorcnn.z_size)) + mean
-z2 = std * torch.randn(size=(num_samples, generatorcnn.z_size)) + mean
+z1 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
+z2 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
 
 imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-8)
-title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, len(imgs))])
+title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, steps)])
 plot_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
-
+#%%
 
 @torch.no_grad()
-def latent_arithmetic_unconditional(G, z_with_attr, z_without_attr, z_target, alpha_values):
-    # 1. Compute attribute direction
+def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_target, alpha_values):
+    # getting the actual attribute (direction)
     direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
-    # 2. Generate modified latents
+    print(f'{direction.shape=}')
     results = []
+    # calculate new z based on new direction + add a bit of variety using alpha
+    # to see other variations
     for alpha in alpha_values:
-        z_mod = z_target + alpha * direction
-        img = G(z_mod.unsqueeze(0)).cpu()
+        z_new = z_target + alpha * direction
+        img = generator(z_new.unsqueeze(0)).cpu()
         results.append(img)
     return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
 
-# imgs = latent_arithmetic_unconditional(generatorcnn, z_with_attr, z_without_attr, z_target, alphas)
-# plot_images(imgs, alphas)
+z_target = torch.randn_like(z)[0]
+print(f'{z_target.shape=}')
+alphas = torch.linspace(0,1,steps=8)
+imgs = latent_arithmetic_unconditional(generatorcnn, new_z2, new_z, z_target, alphas)
+plot_images(imgs, alphas,figsize=(12,6))
+
+
 #%%
 # Before we continue if you remember we said getting a GAN to work is 
 # an involved effort and requires a few tips and tricks at the very least 
