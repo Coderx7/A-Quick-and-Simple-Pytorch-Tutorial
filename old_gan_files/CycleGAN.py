@@ -3,7 +3,8 @@
 # here we will be creating a CycleGAN, a type of GAN that 
 # works on image 2 image translation, which means, in simple terms
 # does style transfer! (kind of!), it gives us the ability to map 
-# one image from anothe rimages domain (turn a summer image, into a winder looking one!!)
+# one image from anothe rimages domain (turn a summer image, into 
+# a winder looking one!!)
 
 import torch 
 import numpy as np 

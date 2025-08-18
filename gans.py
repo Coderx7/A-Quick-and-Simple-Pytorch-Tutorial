@@ -956,21 +956,28 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # std/mean find our vectors and use them in our experiment.
 # to make it more managble we use opencv's picker so it becomes easy to change
 # and see the outcomes.
-#update: I gave it a try but not only finding proper attributes this way is hard
-# simply because we are just biasing the sampling distribution which only changes 
-# style/noise intensity but not semantic attributes, unlike our vae case, the mean/stds
-# are not that well defined so that by managing it we access different attributes, 
-# we may be able to narrow it down to some attribute but the process is involved to say
-# the least, at least I give up in part because we have other more stream lined ways to
-# do this, using conditional version aside, I have also seen (and tested as well) with
-# some newer approaches which I didnt get desired result either because of our simplistic
-# architecture and features not being properly developed I guess. 
-# the methods I tested include Sefa method by Shen&Zhou 2020(paper link) and clip method
-# where we use the clip model to identify latents that have the attributes we want.
+#update:
+# I gave it a try but not only finding proper attributes this way is hard but ineffcient
+# what we are doing here doesnt work properly simply because we are just biasing the 
+# distribution we sample from which only changes style/noise intensity but not semantic 
+# attributes, unlike our vae case, the mean/stds are not that well defined so that by 
+# managing them we access different attributes. we may be able to narrow it down to some
+# attributes but the process is cumbersome to say the least, at least I give up in part 
+# because we have other more streamlined ways to do this, using conditional version aside,
+# I have also seen (and tested as well) with some newer approaches which I didnt get tge 
+# desired result either because of our simplistic architecture and features not being properly
+# developed I guess. 
+# the methods I tested include Sefa by Shen&Zhou 2020(https://arxiv.org/abs/2007.06600) and 
+# clip where we use the clip model to identify latents that have the attributes we want.
 # neigther of these methods worked well for me most probably because our model itself
-# is not only powerful by any means, the learned features are not that high quality(disentangled properly)
+# is not only not powerful by any means, the learned features are not that high quality(disentangled properly)
 # so I'll redo this test using our next experiment which is conditional GAN. 
-# 
+# for the record, the sefa was trained on stylegan2 architecture which is one of the best gans
+# architectures and features are very well disenangled compared to our simplistic model here
+# the paper shows it can work pretty well on stylegan see https://genforce.github.io/sefa/
+# there are other papers as well but I didnt bother implementing them as it would be invein
+# we might come back to this when we covered stylegan papers, but for now we wont go any deeper!
+#
 # sidenote:
 # concerning how sefa method works, basically this method sugggests we use 
 # eigen decomposition of our generator's weights(linear layer weight) to get meaningful directions without 
@@ -996,39 +1003,54 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # of their effect on the output).
 # (we can think of this operation (gram matrix) as a way to summarize how the generator's 
 # weights couple latent dimensions together so by factorizing it, we can uncover latent 
-# axes/drections of variation that our GAN has learned so we can use it to our advantge!)
-#
-@torch.no_grad()
-def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
-    # first linear layer that maps z
-    W = generator.net[0].weight.data
-    gram_matrix = W.t() @ W
-    eigen_vals, eigen_vecs = torch.linalg.eigh(gram_matrix)
-    print(f'{eigen_vals[0:3]}=')
-    print(f'{eigen_vals[-1:-4]}=')
-    #we flip the values so they are ordered 
-    # from largest values to smallests
-    eigen_vals = eigen_vals.flip(0)
-    eigen_vecs = eigen_vecs.flip(1)
-    print(f'{eigen_vecs.shape[1]=}')
-    topk = min(topk, eigen_vecs.shape[1])
-    return eigen_vals[:topk].contiguous(), eigen_vecs[:, :topk].contiguous()
-
-@torch.no_grad()
-def traverse(generator, z, eigen_vec, alphas=(-3,-2,-1,0,1,2,3)):
-    if eigen_vec.dim() == 2 and eigen_vec.shape[1] == 1:
-        eigen_vec = eigen_vec[:, 0]
-    outs = []
-    for a in alphas:
-        z_mod = z + float(a) * eigen_vec.unsqueeze(0)
-        imgs = generator(z_mod)
-        outs.append(imgs)
-    return torch.cat(outs, dim=0)
+# axes/drections of variation that our GAN has learned!)
+# see my implementation below (after opencv example)
 #%%
-import cv2
+#%%
+# playing with attributes by changing std/mean 
+# tldr this is hard this way see the next approach below
 np.random.seed(66)
 random_gen = torch.manual_seed(66)
 
+@torch.no_grad()
+def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
+    generator.eval()
+    alphas = torch.linspace(0, 1, steps)
+    grids = []
+    for a in alphas:
+        z_interp = (1-a)*z1 + a*z2 + eps
+        imgs = generator(z_interp)
+        imgs_grid = torch.cat((*imgs,), dim=1)
+        # print(f'{imgs_grid.shape=}')
+        grids.append(imgs_grid)
+    return torch.cat((*grids,), dim=2)
+
+def show_images(imgs, title, cols=8, figsize=(4,3)):
+    imgs = ((imgs+1)/2).clamp(0,1)
+    # imgs = (imgs*255).round().to(torch.uint8)
+    if imgs.ndim>3:
+        imgs = utils.make_grid(imgs,nrow=cols)
+    imgs = imgs.permute(1, 2, 0).numpy()
+    plt.figure(figsize=figsize)
+    plt.imshow(imgs)
+    plt.axis("off")
+    plt.title(title)
+    plt.show()
+
+# z1 = 2*torch.rand(generatorcnn.z_size)-1
+# z2 = 2*torch.rand(generatorcnn.z_size)-1
+steps = 8
+num_samples=5
+std = 0.6
+mean = 0.00001
+z1 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
+z2 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
+
+imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-8)
+title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, steps)])
+show_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
+#%%
+import cv2
 # define our simple gui 
 def onchange(x):
     pass
@@ -1097,45 +1119,143 @@ generatorcnn.to('cpu')
 # women!
 z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
 
+
 #%%
 @torch.no_grad()
-def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
-    generator.eval()
-    alphas = torch.linspace(0, 1, steps)
-    grids = []
+def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
+    # first linear layer that maps z
+    W = generator.net[0].weight.data
+    gram_matrix = W.t() @ W
+    eigen_vals, eigen_vecs = torch.linalg.eigh(gram_matrix)
+    # by default the eigenvalues/vectors are orderer ascendingly
+    # from smallest to the larges, however we flip order to descending
+    # so the strongest eigenvectors/directions come first and then easily
+    # do topk
+    # print(f'{eigen_vals[0:3]}=')
+    # print(f'{eigen_vals[-3:]}=')
+    eigen_vals = eigen_vals.flip(0)
+    eigen_vecs = eigen_vecs.flip(1)
+    # print(f'after flipping:')
+    # print(f'{eigen_vals[0:3]}=')
+    # print(f'{eigen_vals[-3:]}=')
+    # print(f'{eigen_vals.shape=}')#n
+    # print(f'{eigen_vecs.shape=}')#nxn
+    return eigen_vals[:topk], eigen_vecs[:, :topk]
+
+@torch.no_grad()
+def traverse(generator, z, eigen_vec, alphas):
+    outs = []
     for a in alphas:
-        z_interp = (1-a)*z1 + a*z2 + eps
-        imgs = generator(z_interp)
-        imgs_grid = torch.cat((*imgs,), dim=1)
-        # print(f'{imgs_grid.shape=}')
-        grids.append(imgs_grid)
-    return torch.cat((*grids,), dim=2)
+        z_mod = z + a * eigen_vec.unsqueeze(0)
+        imgs = generator(z_mod)
+        outs.append(imgs)
+    return torch.cat(outs, dim=0)
 
-def plot_images(imgs, title, cols=8, figsize=(4,3)):
-    imgs = ((imgs+1)/2).clamp(0,1)
-    if imgs.ndim>3:
-        imgs = utils.make_grid(imgs,nrow=cols)
-    imgs = imgs.permute(1, 2, 0).numpy()
-    plt.figure(figsize=figsize)
-    plt.imshow(imgs)
-    plt.axis("off")
-    plt.title(title)
-    plt.show()
-
-# z1 = 2*torch.rand(generatorcnn.z_size)-1
-# z2 = 2*torch.rand(generatorcnn.z_size)-1
-steps = 8
-num_samples=5
-std = 0.6
-mean = 0.00001
-z1 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
-z2 = std * torch.randn(size=(num_samples, generatorcnn.z_size),generator=random_gen) + mean
-
-imgs = interpolate_latents(generatorcnn, z1, z2, steps=steps,eps=1e-8)
-title =  " ".join([f"{a:.2f}" for a in torch.linspace(0, 1, steps)])
-plot_images(imgs, f'Latent Arithmetic: alphas {title}',figsize=(12,6))
+eigen_vals, eigne_vectors = sefa_linear_eigenvectors(generatorcnn,topk=10)
+# print(f'{eigne_vectors.shape=}') #(n,topk)
+topk = eigne_vectors.size(1)
+z = torch.randn(size=(8,generatorcnn.z_size),generator=random_gen)
+# the original sefa was used on stylegan and these alphas work well
+# however on our model they are simply too much so we use smaller ones
+# even with that we dont see any meaningful change!
+# alphas=(-3.0,-2.0,-1.0,0.0,1.0,2.0,3.0)
+alphas=(-0.7,-0.3,-0.1,0,0.1,0.3,0.7)
+for i in range(topk):
+    print(f'trying direction {i}/{topk}:')
+    eigen_vec = eigne_vectors[:,i]
+    imgs = traverse(generatorcnn, z, eigen_vec, alphas)
+    show_images(imgs,f'direction {i}/{topk}',figsize=(12,6))
+   
 #%%
+# clip experiment
+import math
+import clip  # pip install ftfy regex tqdm && pip install git+https://github.com/openai/CLIP.git
 
+@torch.no_grad()
+def clip_normalize_image(imgs, size = 224) :
+    imgs = (imgs+1.0)*0.5# or imgs+1/2
+    device = imgs.device
+    # since torchvision transforms doesnt support batches (e.g. Normalize() doesnt,
+    # we have to do the preprocessing manually. we can use interpolate for
+    # resizing, normalizng mean/std is straight forward we just need to get
+    # the shape right!)
+    imgs = F.interpolate(imgs, size=(size, size), mode="bilinear", align_corners=False)
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=device).view(1,3,1,1)
+    std  = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=device).view(1,3,1,1)
+    return (imgs - mean) / std
+
+@torch.no_grad()
+def calculate_direction_using_clip(generator, text_positive, text_negative, num_samples,
+    random_gen, batch_size=32, top_ratio=0.10, device="cpu"):
+
+    generator = generator.to(device).eval()
+
+    print(f'available models: {clip.available_models()}')
+    # available models:['RN50','RN101','RN50x4','RN50x16',
+    # 'RN50x64','ViT-B/32','ViT-B/16','ViT-L/14','ViT-L/14@336px']
+    clip_model, _ = clip.load("ViT-B/32", device=device)
+    clip_model.eval()
+    
+    # tokenize our input and feed it to the clip so we get the features
+    text_tokens = clip.tokenize([text_positive, text_negative]).to(device)
+    text_feats = clip_model.encode_text(text_tokens)
+    # normalize the features
+    text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)  # [2,D]
+
+    Z = torch.randn(num_samples, generator.z_size, generator=random_gen, device=device)
+    margins = []
+    for i in range(0, num_samples, batch_size):
+        z = Z[i:i+batch_size]
+        imgs = generator(z)
+        imgs = clip_normalize_image(imgs)
+        img_feats = clip_model.encode_image(imgs)
+        img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
+        sim = img_feats @ text_feats.t()  # [B,2]
+        margin = sim[:,0] - sim[:,1]
+        margins.append(margin)
+    margins = torch.cat(margins, dim=0)
+
+    k = max(1, int(math.ceil(top_ratio * num_samples)))
+    top_idx = torch.topk(margins, k, largest=True).indices
+    bot_idx = torch.topk(margins, k, largest=False).indices
+
+    z_pos = Z[top_idx]
+    z_neg = Z[bot_idx]
+    direction = (z_pos.mean(dim=0) - z_neg.mean(dim=0))
+    direction = direction / (direction.norm() + 1e-8)
+
+    info = {"k": k, 
+            "top_margin_mean": float(margins[top_idx].mean().cpu()),
+            "bottom_margin_mean": float(margins[bot_idx].mean().cpu()),}
+    return direction.cpu(), info
+
+@torch.no_grad()
+def apply_direction(generator, z, direction, alphas=(-3,-2,-1,0,1,2,3)):
+    direction = direction.to(z.device)
+    imgs = []
+    # print(f'direction vector = {direction}')
+    for a in alphas:
+        z_new = z + a * direction.unsqueeze(0)
+        img = generator(z_new)
+        imgs.append(img)
+    return torch.cat(imgs, dim=0)
+
+# calculate the direction for glasses attribute
+direction, info = calculate_direction_using_clip(generatorcnn, 
+                                               text_positive="wearing eyeglasses",
+                                               text_negative="without eyeglasses",
+                                               num_samples=1024,
+                                               random_gen=random_gen,
+                                               batch_size=64,
+                                               top_ratio=0.10,
+                                               device="cpu",)
+print("CLIP direction stats:", info)
+
+z = torch.randn(8, generatorcnn.z_size, generator=random_gen)
+imgs = apply_direction(generatorcnn, z, direction, alphas=(2,3,4,5))
+show_images(imgs,'CLIP direction',figsize=(12,6))
+
+#%%
 @torch.no_grad()
 def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_target, alpha_values):
     # getting the actual attribute (direction)
