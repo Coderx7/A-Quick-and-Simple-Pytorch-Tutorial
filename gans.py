@@ -968,39 +968,52 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # desired result either because of our simplistic architecture and features not being properly
 # developed I guess. 
 # the methods I tested include Sefa by Shen&Zhou 2020(https://arxiv.org/abs/2007.06600) and 
-# clip where we use the clip model to identify latents that have the attributes we want.
+# clip where we use the clip model to identify latents that have the attributes we want by
+# comparing the text embeddings of the attributes and their image embeddings, and grabing the
+# image embeddings that have the highest similarity of the text embeddings of the attribute
+# we are after (e.e. "person with eyeglasses").
 # neigther of these methods worked well for me most probably because our model itself
 # is not only not powerful by any means, the learned features are not that high quality(disentangled properly)
+# and also the image size is really small compared to what clip vision backend for example requires
+# and resizing it to 224 would introduce a lot of artifacts which would decrease the effectiveness 
+# even more!
 # so I'll redo this test using our next experiment which is conditional GAN. 
-# for the record, the sefa was trained on stylegan2 architecture which is one of the best gans
-# architectures and features are very well disenangled compared to our simplistic model here
-# the paper shows it can work pretty well on stylegan see https://genforce.github.io/sefa/
-# there are other papers as well but I didnt bother implementing them as it would be invein
-# we might come back to this when we covered stylegan papers, but for now we wont go any deeper!
+# for the record, the sefa was trained on stylegan2 architecture if I recall correctly, which
+# is one of the best GAN architectures even today and features are very well disenangled compared
+# to our simplistic model here. the paper shows it can work pretty well on stylegan see https://genforce.github.io/sefa/
+# there are other papers as well but I didnt bother implementing them as it would be in vein
+# we might come back to this when we cover stylegan papers, but for now we wont go any deeper!
 #
 # sidenote:
 # concerning how sefa method works, basically this method sugggests we use 
-# eigen decomposition of our generator's weights(linear layer weight) to get meaningful directions without 
-# data or labels and then use those to create the attributes we want. (why the linear layer? 
-# because its the layer that does the mapping!)
+# eigen decomposition of our generator's weights(linear layer weight) to get meaningful 
+# directions without any data or labels and then use those to create the attributes we want.
+# (why the linear layer? because its the layer that does the mapping!)
 # its basically doing torch.linalg.eigh(W.T @ W) ,W being our linear layer's weights
 # and then picking top k eigenvectors as attribute directions.
-# to refresh your memories, eigenvectors show directions towards maximum variation (like pca).
+# to refresh your memories, eigenvectors show directions towards maximum variation (like pca),
+# (informally speaking, variation means information(different values/ differences which itself conveys information to us),
+# when we say an area has maximum variation it means datapoints there are very spread out 
+# (imagine a chart and a line, if datapoints are not spreadout along the line, it means they
+# are cramped into one thing, many datapoints are essentially duplicates or very close to eachother
+# so when we say variations are spread out along a direcion we really mean datapoints being spread
+# on that direction, so if we capture that area we basically have captured a lot of variation/information/datapoints
+# there. this is how pca does its thing as well! hope this has made it obvious now!))
 # so the top eigenvectors in our generator are the directions in the latent space
-# that affect the output by a lot/heavily/strongly. (how much exactly? its specified by the eigenvalues!)
+# that affect the output by a lot/strongly. (how much exactly? its specified by the eigenvalues!)
 # these directions most of the time, corrolate with/corrospond to different attributes (liek pose, color, eyeglasses, hair,etc)
 # so much so if we move along said directions, we can see different attributes change in the input.
-# as we just said, while the eigenvectors are (semantic) directions, the eigenvalues are 
-# their values/magnitude, they show how strong they are, i.e. larger values mean more impact on the output
-# and viceversa.
+# as we just said, the eigenvectors are (semantic) directions, and the eigenvalues are 
+# their values/magnitude, they show us how strong they are, i.e. larger values mean more 
+# impact on the output and viceversa.
 # sidenote2:
-# you may also see some people refer to (W.t() @ W) as a gram matrix so be aware of that!
+# W.t() @ W is known as a gram matrix so if you faced this term it refers to this operation
 # also as to why we are doing this in first place? so we can see the effect of each input 
 # feature on all other input features. its basically done to capture correlations/co-variances
-# of input features after being passed through the linear layer of our generator.
+# of input features after they are passed through the linear layer of our generator.
 # (each column in W corresponds to how one input dimension (i.e. latent feature) contributes 
-# to all outputs. so gram matrix measures how similar input features i and j are, in terms 
-# of their effect on the output).
+# to all outputs. so gram matrix is essentially measuring how similar input features i and j are,
+# in terms of their effect on the output).
 # (we can think of this operation (gram matrix) as a way to summarize how the generator's 
 # weights couple latent dimensions together so by factorizing it, we can uncover latent 
 # axes/drections of variation that our GAN has learned!)
@@ -1118,8 +1131,31 @@ num_samples=16
 generatorcnn.to('cpu')
 # women!
 z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+z_attr1 = z*std+mean
+#%%
+# men!
+z2,std2,mean2 = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+z_attr2 = z2*std2+mean2
+#%%
+@torch.no_grad()
+def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values):
+    # getting the actual attribute (direction)
+    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
+    print(f'{direction.shape=}')
+    results = []
+    # calculate new z based on new direction + add a bit of variety using alpha
+    # to see other variations
+    for alpha in alpha_values:
+        z_new = z_base + alpha * direction
+        img = generator(z_new.unsqueeze(0)).cpu()
+        results.append(img)
+    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
 
-
+z = torch.randn_like(z)[0]
+print(f'{z.shape=}')
+alphas = torch.linspace(0,1,steps=8)
+imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z, alphas)
+show_images(imgs, alphas,figsize=(12,6))
 #%%
 @torch.no_grad()
 def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
@@ -1127,9 +1163,9 @@ def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
     W = generator.net[0].weight.data
     gram_matrix = W.t() @ W
     eigen_vals, eigen_vecs = torch.linalg.eigh(gram_matrix)
-    # by default the eigenvalues/vectors are orderer ascendingly
-    # from smallest to the larges, however we flip order to descending
-    # so the strongest eigenvectors/directions come first and then easily
+    # by default the eigenvalues/vectors are orderer in an ascending manner
+    # from smallest to the largest, however we flip the order to descending
+    # so the strongest eigenvectors/directions come first and we then easily
     # do topk
     # print(f'{eigen_vals[0:3]}=')
     # print(f'{eigen_vals[-3:]}=')
@@ -1173,7 +1209,7 @@ import clip  # pip install ftfy regex tqdm && pip install git+https://github.com
 
 @torch.no_grad()
 def clip_normalize_image(imgs, size = 224) :
-    imgs = (imgs+1.0)*0.5# or imgs+1/2
+    imgs = (imgs+1.0)*0.5# or (imgs+1)/2
     device = imgs.device
     # since torchvision transforms doesnt support batches (e.g. Normalize() doesnt,
     # we have to do the preprocessing manually. we can use interpolate for
@@ -1196,11 +1232,22 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
     clip_model, _ = clip.load("ViT-B/32", device=device)
     clip_model.eval()
     
-    # tokenize our input and feed it to the clip so we get the features
+    # tokenize our input and feed it to the clip to get the embeddings
     text_tokens = clip.tokenize([text_positive, text_negative]).to(device)
-    text_feats = clip_model.encode_text(text_tokens)
-    # normalize the features
-    text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)  # [2,D]
+    text_embeddings = clip_model.encode_text(text_tokens)
+    # normalize the embeddings so later we can use them for cosine similarity check
+    # sidenote:
+    # we explained this in vae as well but I repeat it again here as a quick reminder
+    # you may see this normalization refered to as making our embeddings "unit sphere"
+    # its a fancy term that saying we are making our embedings length to be 1 (or all
+    # the points sint on the surface of a sphere with the radius of 1)
+    # the idea is that, we imagine our embeddings to be in the center of a sphere in latent spce
+    # and each embedding vector points to a direction in this sphere from the center. 
+    # now by normalizing all of the embeddings to have the length 1, each vector's length
+    # would be the same, and for comparing each vector, we can only check its angle
+    # and this way we can quickly compare embeddings against each other using cosine similarity!
+    # 
+    text_embeddings = text_embeddings / text_embeddings.norm(dim=-1, keepdim=True)  # [2,D]
 
     Z = torch.randn(num_samples, generator.z_size, generator=random_gen, device=device)
     margins = []
@@ -1208,19 +1255,30 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
         z = Z[i:i+batch_size]
         imgs = generator(z)
         imgs = clip_normalize_image(imgs)
+        # grab image embeddings/features
         img_feats = clip_model.encode_image(imgs)
+        # normalize them 
         img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-        sim = img_feats @ text_feats.t()  # [B,2]
+        # now we calculate the cosine similarity 
+        # (since they are normalized the dotproduct gives us the cosine similarity )
+        sim = img_feats @ text_embeddings.t()  # [B,2]
+        # subtract the positive similarity from negative similarity
+        # if the reuslt is >0 then it means our image is closer to 
+        # positive text than negative
         margin = sim[:,0] - sim[:,1]
         margins.append(margin)
     margins = torch.cat(margins, dim=0)
 
+    # grab the top most positive margines
     k = max(1, int(math.ceil(top_ratio * num_samples)))
+    # grab the top picks
     top_idx = torch.topk(margins, k, largest=True).indices
+    # grab the least similar (the closes to negative samples)
     bot_idx = torch.topk(margins, k, largest=False).indices
 
     z_pos = Z[top_idx]
     z_neg = Z[bot_idx]
+    # calculate the direction from the two directions we calculated 
     direction = (z_pos.mean(dim=0) - z_neg.mean(dim=0))
     direction = direction / (direction.norm() + 1e-8)
 
@@ -1252,30 +1310,8 @@ direction, info = calculate_direction_using_clip(generatorcnn,
 print("CLIP direction stats:", info)
 
 z = torch.randn(8, generatorcnn.z_size, generator=random_gen)
-imgs = apply_direction(generatorcnn, z, direction, alphas=(2,3,4,5))
+imgs = apply_direction(generatorcnn, z, direction, alphas=(3,4,5))
 show_images(imgs,'CLIP direction',figsize=(12,6))
-
-#%%
-@torch.no_grad()
-def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_target, alpha_values):
-    # getting the actual attribute (direction)
-    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
-    print(f'{direction.shape=}')
-    results = []
-    # calculate new z based on new direction + add a bit of variety using alpha
-    # to see other variations
-    for alpha in alpha_values:
-        z_new = z_target + alpha * direction
-        img = generator(z_new.unsqueeze(0)).cpu()
-        results.append(img)
-    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
-
-z_target = torch.randn_like(z)[0]
-print(f'{z_target.shape=}')
-alphas = torch.linspace(0,1,steps=8)
-imgs = latent_arithmetic_unconditional(generatorcnn, new_z2, new_z, z_target, alphas)
-plot_images(imgs, alphas,figsize=(12,6))
-
 
 #%%
 # Before we continue if you remember we said getting a GAN to work is 
