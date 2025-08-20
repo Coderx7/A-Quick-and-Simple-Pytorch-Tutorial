@@ -1238,15 +1238,21 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
     # normalize the embeddings so later we can use them for cosine similarity check
     # sidenote:
     # we explained this in vae as well but I repeat it again here as a quick reminder
-    # you may see this normalization refered to as making our embeddings "unit sphere"
-    # its a fancy term that saying we are making our embedings length to be 1 (or all
-    # the points sint on the surface of a sphere with the radius of 1)
-    # the idea is that, we imagine our embeddings to be in the center of a sphere in latent spce
-    # and each embedding vector points to a direction in this sphere from the center. 
+    # you may see this normalization refered to as putting our embeddings on the "unit sphere"
+    # its a fancy term that says we are making our embedings length to be 1 (we scale each
+    # embedding so its length=1)(or all the points sit on the surface of a sphere with the radius of 1)
+    # the idea is that, we imagine the origin of the embedding space as the center of a 
+    # sphere and each embeddings as an arrow pointing outward toward the sphere surface
+    # (each embedding vector points to a direction in this sphere from the center)
+    # (this is why we say all embeddings lie on the surface of a sphere with radius 1 hence unit sphere!)
     # now by normalizing all of the embeddings to have the length 1, each vector's length
     # would be the same, and for comparing each vector, we can only check its angle
-    # and this way we can quickly compare embeddings against each other using cosine similarity!
-    # 
+    # the closer the angle, the more similar two embedding vectors are.
+    # this way we can quickly compare embeddings against each other using cosine similarity!
+    # (quicknote2:
+    # as to why we imagine this as sphere?, its simply because its the only shape that makes
+    # it possible that everything inside is equally scaled and therefore comparisons will be
+    # purely about direction (concept) and not magnitude (strength)) 
     text_embeddings = text_embeddings / text_embeddings.norm(dim=-1, keepdim=True)  # [2,D]
 
     Z = torch.randn(num_samples, generator.z_size, generator=random_gen, device=device)
