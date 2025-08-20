@@ -1238,21 +1238,33 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
     # normalize the embeddings so later we can use them for cosine similarity check
     # sidenote:
     # we explained this in vae as well but I repeat it again here as a quick reminder
-    # you may see this normalization refered to as putting our embeddings on the "unit sphere"
-    # its a fancy term that says we are making our embedings length to be 1 (we scale each
-    # embedding so its length=1)(or all the points sit on the surface of a sphere with the radius of 1)
+    # you may see this normalization refered to as putting embeddings on the "unit sphere"
+    # or having them have unit length, its a fancy term that says we are making our embedings
+    # length to be 1 (i.e. scale each embedding so its length=1) or in some other words, 
+    # all the points sit on the surface of a sphere with the radius of 1 or similar takes.
     # the idea is that, we imagine the origin of the embedding space as the center of a 
     # sphere and each embeddings as an arrow pointing outward toward the sphere surface
-    # (each embedding vector points to a direction in this sphere from the center)
     # (this is why we say all embeddings lie on the surface of a sphere with radius 1 hence unit sphere!)
-    # now by normalizing all of the embeddings to have the length 1, each vector's length
-    # would be the same, and for comparing each vector, we can only check its angle
-    # the closer the angle, the more similar two embedding vectors are.
+    # now by normalizing all of the embeddings to have length 1, the vectors length becomes
+    # irrelavent because each and every one's length is the same(ie. 1), therefore for 
+    # comparing them, we can only check their angles! the closer the angles, the more similar
+    # the embedding vectors are.
     # this way we can quickly compare embeddings against each other using cosine similarity!
     # (quicknote2:
-    # as to why we imagine this as sphere?, its simply because its the only shape that makes
-    # it possible that everything inside is equally scaled and therefore comparisons will be
-    # purely about direction (concept) and not magnitude (strength)) 
+    # as to why we imagine this as a sphere and not anyother shapes? its simply because its
+    # the only shape that makes it possible for everything to be equally scaled and therefore
+    # comparisons will be purely about direction (concept) and not magnitude (strength)) 
+    # quicknote3:
+    # we could have also rephrased this operation as all embeddings being normalized so they
+    # all become directions and not magnitudes! 
+    # or we could have also said, since their length is now 1, they are very close to orgin 
+    # that their distance from the origin no longer matters to us only their origentation/direction
+    # can be used for comparison!
+    # quicknote4:
+    # its obvious but I'll mention it anyway, origin is d dimensional, the same as embeddings!
+    # so if our embedding dim is 4 e.g. the origin will be (0,0,0,0) and the center of our sphere!
+    # so origin that we talk about here is not 2d/3d! just wanted to put this out there in case
+    # someone had any confusion concerning this!
     text_embeddings = text_embeddings / text_embeddings.norm(dim=-1, keepdim=True)  # [2,D]
 
     Z = torch.randn(num_samples, generator.z_size, generator=random_gen, device=device)
