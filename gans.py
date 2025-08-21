@@ -1933,7 +1933,7 @@ for epoch in range(epochs):
        
     print(f'Epoch: {epoch}/{epochs} | Train Acc: {train_accuracy:.2f} | Train Loss: {train_loss:.4f} | Val Acc: {val_accuracy:.2f} | VAL Loss: {val_loss:.4f}')
     # attribute accuracies
-    print(f'Val Accuracy per attributes:')
+    print(f'-- Val Accuracy per attributes:')
     num_cols = 5
     num_attr = len(celeba_attribute_names)
     num_rows = (num_attr + num_cols - 1) // num_cols
@@ -1944,8 +1944,24 @@ for epoch in range(epochs):
             if idx < num_attr:
                 name = celeba_atrr_idx2word[idx]
                 acc = per_attr_accuracy[idx]
-                text += f"{name:<18}: {acc:.2f}   "
+                text += f"   {name:<18}: {acc:.2f}   "
         print(text)
+    
+    # display best and worse accuracies among attributes
+    # create list of attributes with their accuracies
+    attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(per_attr_accuracy)]
+    # sor the accuracies from lowest to highest
+    # this way we can easily take topk and bottomk
+    # which shows us the best and worse attributes
+    attr_acc_pairs.sort(key=lambda x: x[1], reverse=True)
+
+    print(f"\n-- Top Attributes: {' '*10} -- Bottom Attributes:")
+    for ((best_name, best_acc), (worse_name,worse_acc)) in zip(attr_acc_pairs[:topk], attr_acc_pairs[-topk:]):
+        print(f"   {best_name:<18}: {best_acc:.2f} {' '*4} {worse_name:<18}: {worse_acc:.2f}")
+
+    # print("\n-- Bottom Attributes:")
+    # for name, acc in :
+    #     print(f"  {name:<18}: {acc:.2f}")
     
     torch.save({"state_dict":celeba_classifier.state_dict(),
                 "epoch":epoch,
@@ -1954,7 +1970,7 @@ for epoch in range(epochs):
                 "train_accuracy":train_accuracy,
                 "val_accuracy":val_accuracy,
                 "val_per_attr_accuracy":val_per_attr_accuracy,
-                },"./weights/cebela_classifier.pt")
+                },"./weights/cebela_classifier2.pt")
 
 #%%
 # back to improvements new architecture 
