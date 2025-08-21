@@ -1891,9 +1891,9 @@ for epoch in range(epochs):
         
         # apply sigmoid and threshold to get preds
         preds = preds.sigmoid() > 0.5
-        accuracy = ((preds == labels).sum().item()/imgs.size(0))*100
+        accuracy = ((preds == labels).sum().item()/labels.numel())*100
         train_accuracies.append(accuracy)
-                
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -1920,7 +1920,7 @@ for epoch in range(epochs):
 
             # apply sigmoid and threshold to get preds
             preds = preds.sigmoid() > 0.5
-            accuracy = ((preds == labels).sum().item()/imgs.size(0))*100
+            accuracy = ((preds == labels).sum().item()/labels.numel())*100
             val_accuracies.append(accuracy)
 
             # per-attribute accuracy
@@ -1934,8 +1934,18 @@ for epoch in range(epochs):
     print(f'Epoch: {epoch}/{epochs} | Train Acc: {train_accuracy:.2f} | Train Loss: {train_loss:.4f} | Val Acc: {val_accuracy:.2f} | VAL Loss: {val_loss:.4f}')
     # attribute accuracies
     print(f'Val Accuracy per attributes:')
-    for i,acc in enumerate(val_per_attr_accuracy):
-        print(f'  {celeba_atrr_idx2word[i]}: {acc:2.f}')
+    num_cols = 5
+    num_attr = len(celeba_attribute_names)
+    num_rows = (num_attr + num_cols - 1) // num_cols
+    for row in range(num_rows):
+        text = ""
+        for col in range(num_cols):
+            idx = row + (col * num_rows)
+            if idx < num_attr:
+                name = celeba_atrr_idx2word[idx]
+                acc = per_attr_accuracy[idx]
+                text += f"{name:<18}: {acc:.2f}   "
+        print(text)
     
     torch.save({"state_dict":celeba_classifier.state_dict(),
                 "epoch":epoch,
