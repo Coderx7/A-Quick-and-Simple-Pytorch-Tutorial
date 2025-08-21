@@ -579,20 +579,22 @@ def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
 # or the lmdb versions other people put up later on because the princeton university
 # that hosted the dataset no longer offers any download links.
 # 
-def get_dataloader(dataset_name="SVHN", resize_dims=(32,32),batch_size=128, num_workers=8, store_path="./data/"):
+def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
     dataset_name = dataset_name.lower()
 
     if dataset_name == 'svhn':
+        split = 'extra' if not split else split
         transform = transforms.Compose([
         # transforms.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor()])
-        train_dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split='extra', transform=transform, download=True)
+        train_dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split=split, transform=transform, download=True)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     
     elif dataset_name == 'celeba':
+        split = 'train' if not split else split
         transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
-        train_dataset = datasets.CelebA(os.path.join(store_path), split='train', transform=transform, download=True)
+        train_dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     
     else:
@@ -1748,21 +1750,209 @@ for epoch in range(epochs):
 
 #%%
 losses = np.array(losses)
-
 plt.plot(losses[:,0],label="Discriminator's loss")
 plt.plot(losses[:,1],label="Generator's loss")
 plt.title('Loss')
 plt.legend()
 plt.show()
+#%%
+# load a checkpoint and lets run some experiments on latent space
+states = torch.load('./weights/dcgan_generatorcnnconditional_20250813125606.pt',
+                    map_location='cpu',
+                    weights_only=False)
+
+epoch = states["epoch"]
+z_size = states["z_size"]
+hidden_size = states["hidden_size"]
+dataset_name = states["dataset_name"]
+num_classes = 40 if dataset_name =='celeba' else 10
+
+losses = states.get("losses",[0])
+losses = np.array(states["losses"])
 
 
+generatorcnn_conditional = GeneratorCNNConditional(z_size, hidden_size, num_classes=num_classes)
+generatorcnn_conditional.load_state_dict(states["state_dict"])
+generatorcnn_conditional.eval()
+
+print(f"Generator's weights for {dataset_name.upper()} loaded!")
+print(f'z_size: {z_size}')
+print(f'hidden_size: {hidden_size}')
+print(f'epoch: {epoch}')
+print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
+#%%
+# to do some latent space arithmetic on a conditional version, we need to
+# have the latent vectors that have specific attributes, simply having labels 
+# wouldnt do us any favor, as we are after the vector z, for calculating the 
+# directions not labels which are simple onehot encoded vectors! 
+# so it seems we have no other choice but to use classifier! I googled for a
+# celeba classifier, there are a few repos, but they are either just training scripts
+# without actual wieghts or their accuracy is not that good, so I decided to 
+# quickly train a simple one myself. 
+
+from torchvision import models
+class CelebAClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = models.resnet18(models.ResNet18_Weights.DEFAULT)
+        # since our generator uses 32x32, but resent is trained on 224x224
+        # images on imagenet, we either have to resize our input to match
+        # resent input dims, or modify its architecture so it doesnt
+        # downsaple too much!
+        # use normal conv instead of stride2 which downsamples the input
+        self.net.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        # also remove the first pooling this should avoid too much downsampling
+        # of the input early on which was intended for images with 224x224
+        # with these changes, each block will be working with larger input volume
+        # quicknote:
+        # note that by doing these changes we messup the architectures weights
+        # and it needs to tune the weights during training so its expected to
+        # see degraded performance at first compared to intact architecture! 
+        self.net.maxpool = nn.Identity()
+        self.net.fc = nn.Linear(self.net.fc.in_features, 40)
+    
+    def forward(self, x):
+        # well use bcewithlogits so no need for sigmoid here
+        return self.net(x)
+
+# quick check to see how small the input gets with our changes applied
+def check_inputs(model):
+    hooks = []
+    def print_shape_hook(module, input, output):
+        classname = module.__class__.__name__
+        print(f"{classname}:")
+        # input is a tuple and depending on how many inputs the
+        # model recieves in forward() will have as many items!
+        # since we only send in imgs, then it will only have a
+        # single item! the output by default is sent as is
+        print(f"  input shape: {input[0].shape}")
+        print(f"  output shape: {output.shape}")
+        print(f'-------')
+        
+    # register the hook on each block and the first convlayer
+    for name, layer in model.net.named_children():
+        if isinstance(layer, (nn.Sequential, nn.Conv2d)):
+            hook = layer.register_forward_hook(print_shape_hook)
+            hooks.append(hook)        
+    return hooks
+
+classifier = CelebAClassifier()
+hooks = check_inputs(classifier)
+out = classifier(torch.randn(size=(5,3,32,32)))
+print(f'{out.shape=}')
+# remove hooks its good practice 
+# when we are done to remove them
+for hook in hooks:
+    hook.remove()
+#%%
+# now training
+batch_size = 128
+train_loader = get_dataloader(dataset_name='celeba',batch_size=batch_size)
+val_loader = get_dataloader(dataset_name='celeba', split='valid', batch_size=batch_size)
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+celeba_classifier = CelebAClassifier()
+celeba_classifier.to(device)
+
+optimizer = torch.optim.AdamW(celeba_classifier.parameters(), lr=0.0001)
+criterion = nn.BCEWithLogitsLoss()
+
+epochs = 5
+num_batches = len(train_loader)
+intervals = num_batches//2
+
+# these will come in handy in training! we'll use them for label/attribute 
+celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
+                  'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
+                  'Blurry','Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 
+                  'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', 
+                  'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard', 
+                  'Oval_Face','Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks', 
+                  'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
+                  'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
+# to make it easier lets create a dictionary and pick the attributes that way!
+celeba_atrr_word2idx = {name:i for i,name in enumerate(celeba_attribute_names)}
+celeba_atrr_idx2word = {i:name for name,i in celeba_atrr_word2idx.items()}
+
+print(f'Training {CelebAClassifier.__name__}...')
+
+for epoch in range(epochs):
+    celeba_classifier.train()
+    losses=[]
+    train_accuracies = []
+    for i, (imgs, labels) in enumerate(train_loader):
+        
+        imgs,labels = imgs.to(device), labels.to(device).float()
+        
+        preds = celeba_classifier(imgs)
+        loss = criterion(preds, labels)
+        losses.append(loss.item())
+        
+        # apply sigmoid and threshold to get preds
+        preds = preds.sigmoid() > 0.5
+        accuracy = ((preds == labels).sum().item()/imgs.size(0))*100
+        train_accuracies.append(accuracy)
+                
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        if (i+1)%intervals==0:
+            print(f'Epoch: {epoch}/{epochs} | Iter: {i}/{num_batches} | Accuracy: {accuracy:.2f}% | Loss: {loss:.4f}')
+    
+    # at the end of epoch calculate train accuracy and val accuracy
+    train_loss = np.mean(losses)
+    train_accuracy = np.mean(train_accuracies)
+
+    with torch.no_grad():
+        celeba_classifier.eval()
+        val_losses=[]
+        val_accuracies = []
+        per_attr_accuracies = []
+        for imgs, labels in val_loader:
+            imgs,labels = imgs.to(device), labels.to(device).float()
+
+            preds = celeba_classifier(imgs)
+            loss = criterion(preds, labels)
+            
+            val_losses.append(loss.item())
+
+            # apply sigmoid and threshold to get preds
+            preds = preds.sigmoid() > 0.5
+            accuracy = ((preds == labels).sum().item()/imgs.size(0))*100
+            val_accuracies.append(accuracy)
+
+            # per-attribute accuracy
+            per_attr_accuracy = ((preds == labels.bool()).sum(dim=0)/imgs.size(0))*100
+            per_attr_accuracies.append(per_attr_accuracy.cpu().numpy())
+            
+        val_loss = np.mean(val_losses)
+        val_accuracy = np.mean(val_accuracies)
+        val_per_attr_accuracy = np.mean(per_attr_accuracies)
+       
+    print(f'Epoch: {epoch}/{epochs} | Train Acc: {train_accuracy:.2f} | Train Loss: {train_loss:.4f} | Val Acc: {val_accuracy:.2f} | VAL Loss: {val_loss:.4f}')
+    # attribute accuracies
+    print(f'Val Accuracy per attributes:')
+    for i,acc in enumerate(val_per_attr_accuracy):
+        print(f'  {celeba_atrr_idx2word[i]}: {acc:2.f}')
+    
+    torch.save({"state_dict":celeba_classifier.state_dict(),
+                "epoch":epoch,
+                "loss":train_loss,
+                "val_loss":val_loss,
+                "train_accuracy":train_accuracy,
+                "val_accuracy":val_accuracy,
+                "val_per_attr_accuracy":val_per_attr_accuracy,
+                },"./weights/cebela_classifier.pt")
 
 #%%
 # back to improvements new architecture 
 # WGANGP 
-#
+# 
 #%%
 # progan?
 # Stylegan2/3?
 #%%
 # a detour to something fun CycleGAN
+# 
