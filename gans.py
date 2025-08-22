@@ -1041,11 +1041,12 @@ def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
     return torch.cat((*grids,), dim=2)
 
 def show_images(imgs, title, cols=8, figsize=(4,3)):
-    imgs = ((imgs+1)/2).clamp(0,1)
+    if imgs.max()+1e-7>1 or imgs.min()<0:
+        imgs = ((imgs+1)/2).clamp(0,1)
     # imgs = (imgs*255).round().to(torch.uint8)
     if imgs.ndim>3:
         imgs = utils.make_grid(imgs,nrow=cols)
-    imgs = imgs.permute(1, 2, 0).numpy()
+    imgs = imgs.permute(1, 2, 0).cpu().numpy()
     plt.figure(figsize=figsize)
     plt.imshow(imgs)
     plt.axis("off")
@@ -1880,7 +1881,7 @@ num_batches = len(train_loader)
 intervals = num_batches//2 + 1
 
 # show top and bottom 5 attribute accuracies
-topk=5
+topk=10
 # these will come in handy in training! we'll use them for label/attribute 
 celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
                   'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
@@ -1948,7 +1949,8 @@ for epoch in range(epochs):
             
         val_loss = np.mean(val_losses)
         val_accuracy = np.mean(val_accuracies)
-        val_per_attr_accuracy = np.mean(per_attr_accuracies)
+        # add batch dim to attr_accuracies by stacking them up and then averaging them
+        val_per_attr_accuracy = np.mean(np.stack(per_attr_accuracies), axis=0)
        
     print(f'Epoch: {epoch}/{epochs} | Train Acc: {train_accuracy:.2f} | Train Loss: {train_loss:.4f} | Val Acc: {val_accuracy:.2f} | VAL Loss: {val_loss:.4f}')
     # attribute accuracies
@@ -1962,13 +1964,13 @@ for epoch in range(epochs):
             idx = row + (col * num_rows)
             if idx < num_attr:
                 name = celeba_atrr_idx2word[idx]
-                acc = per_attr_accuracy[idx]
+                acc = val_per_attr_accuracy[idx]
                 text += f"   {name:<18}: {acc:.2f}   "
         print(text)
     
     # display best and worse accuracies among attributes
     # create list of attributes with their accuracies
-    attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(per_attr_accuracy)]
+    attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
     # sor the accuracies from lowest to highest
     # this way we can easily take topk and bottomk
     # which shows us the best and worse attributes
@@ -1978,10 +1980,6 @@ for epoch in range(epochs):
     for ((best_name, best_acc), (worse_name,worse_acc)) in zip(attr_acc_pairs[:topk], attr_acc_pairs[-topk:]):
         print(f"   {best_name:<18}: {best_acc:.2f} {' '*4} {worse_name:<18}: {worse_acc:.2f}")
 
-    # print("\n-- Bottom Attributes:")
-    # for name, acc in :
-    #     print(f"  {name:<18}: {acc:.2f}")
-    
     torch.save({"state_dict":celeba_classifier.state_dict(),
                 "epoch":epoch,
                 "loss":train_loss,
@@ -1989,7 +1987,65 @@ for epoch in range(epochs):
                 "train_accuracy":train_accuracy,
                 "val_accuracy":val_accuracy,
                 "val_per_attr_accuracy":val_per_attr_accuracy,
-                },"./weights/cebela_classifier2.pt")
+                },"./weights/cebela_classifier.pt")
+#%%
+# good now lets test this
+checkpoint = torch.load("./weights/cebela_classifier.pt", map_location="cpu",weights_only=False)
+celeba_classifier = CelebAClassifier()
+celeba_classifier.load_state_dict(checkpoint.pop("state_dict"))
+celeba_classifier.eval()
+
+epoch = checkpoint["epoch"]
+train_loss = checkpoint["loss"]
+val_loss = checkpoint["val_loss"]
+train_accuracy = checkpoint["train_accuracy"]
+val_accuracy = checkpoint["val_accuracy"]
+val_per_attr_accuracy = checkpoint["val_per_attr_accuracy"]
+topk=10
+attr_acc_pairs=None
+for k,v in checkpoint.items():
+    if 'attr' not in k:
+        print(f'{k}: {v}')
+    else:
+        attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
+        attr_acc_pairs.sort(key=lambda x: x[1], reverse=True)
+        print(f"\n  -- Top Attributes: {' '*10} -- Bottom Attributes:")
+        for ((best_name, best_acc), (worse_name,worse_acc)) in zip(attr_acc_pairs[:topk], attr_acc_pairs[-topk:]):
+            print(f"   {best_name:<18}: {best_acc:.2f} {' '*4} {worse_name:<18}: {worse_acc:.2f}")
+#%%
+# create an image using generator
+device = 'cpu'
+num_samples = 8
+with torch.device(device):
+    z = torch.randn(size=(num_samples,generatorcnn_conditional.z_size))
+    labels = torch.zeros(size=(num_samples, len(celeba_attribute_names)))
+    ids = torch.tensor([celeba_atrr_word2idx["Eyeglasses"]]).repeat_interleave(num_samples)
+    labels[torch.arange(num_samples), ids] = 1
+
+    generatorcnn_conditional.to(device)
+    imgs = generatorcnn_conditional(z, labels)
+    show_images(imgs, 'generated imgs with galsses', figsize=(12,6))
+    
+# imgs,lbls = next(iter(val_loader))
+# lst=[]
+# lst = [imgs[i] for i in range(len(lbls)) if lbls[i][celeba_atrr_word2idx["Eyeglasses"]]==1]
+# imgs = torch.stack(lst)
+# show_images(imgs[:8],'val dl sample with glasses',figsize=(12,6))
+#%%
+g_idx = celeba_atrr_word2idx["Eyeglasses"]
+# g_idx = celeba_atrr_word2idx["Attractive"]
+# g_idx = celeba_atrr_word2idx["Male"]
+# classify them using our classifier!
+imgs_normalized = ((imgs+1)/2).clamp(0,1)
+# show_images(imgs_normalized,'val dl imgs normalized',figsize=(12,6))
+preds = celeba_classifier(imgs_normalized).sigmoid()
+print(preds[:,g_idx].detach().cpu().numpy())
+preds_thresh = preds>0.9
+
+for i, (pred,acc) in enumerate(zip(preds_thresh,preds)):
+    predicted_attrs = pred.nonzero(as_tuple=True)[0]
+    accs = preds[i,predicted_attrs]
+    print(f'image {i}: {" ".join([f"{celeba_atrr_idx2word[a.item()]}({acc*100:.2f}%) | " for a,acc in zip(predicted_attrs,accs)])}')
 
 #%%
 # back to improvements new architecture 
