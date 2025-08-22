@@ -1143,13 +1143,12 @@ z_attr2 = z2*std2+mean2
 def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values):
     # getting the actual attribute (direction)
     direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
-    # normalize the vector so we only have directions only and all attributes
-    # can be compared against each other (everyone has unit length now)
-    # this allows us to do intersting stuff, like we can edit the outcome by
-    # by introducing magnitudes in form of alphas/strength individually 
-    # that is add x much in that direction or this direction. basically we 
-    # control the strength of a long any direction we want and it will be uniform
-    # among all attributes cuz they are all have the same length
+    # we normalize the vector so it only encodes the direction and not magnitudes,
+    # this way all attribute directions will have unit length and will be comparable.
+    # we can then use this fact and control the effect's strength(our desired direction/concept)
+    # using a single number like alpha, like for example "move +2 in the smiling direction"
+    # or "move -1.5 in the glasses direction" and because all directions are normalized
+    # alpha will have a uniform meaning across attributes!
     direction = direction/direction.norm()
     print(f'{direction.shape=}')
     results = []
