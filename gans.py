@@ -1143,6 +1143,14 @@ z_attr2 = z2*std2+mean2
 def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values):
     # getting the actual attribute (direction)
     direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
+    # normalize the vector so we only have directions only and all attributes
+    # can be compared against each other (everyone has unit length now)
+    # this allows us to do intersting stuff, like we can edit the outcome by
+    # by introducing magnitudes in form of alphas/strength individually 
+    # that is add x much in that direction or this direction. basically we 
+    # control the strength of a long any direction we want and it will be uniform
+    # among all attributes cuz they are all have the same length
+    direction = direction/direction.norm()
     print(f'{direction.shape=}')
     results = []
     # calculate new z based on new direction + add a bit of variety using alpha
@@ -1807,7 +1815,8 @@ class CelebAClassifier(nn.Module):
         # quicknote:
         # note that by doing these changes we messup the architectures weights
         # and it needs to tune the weights during training so its expected to
-        # see degraded performance at first compared to intact architecture! 
+        # see degraded performance at first compared to intact architecture! bu overall
+        # we should see an improved performance at the end (i.e. higher acc) 
         self.net.maxpool = nn.Identity()
         self.net.fc = nn.Linear(self.net.fc.in_features, 40)
     
@@ -1859,9 +1868,12 @@ optimizer = torch.optim.AdamW(celeba_classifier.parameters(), lr=0.0001)
 criterion = nn.BCEWithLogitsLoss()
 
 epochs = 5
+# with batch=128, its 1272
 num_batches = len(train_loader)
-intervals = num_batches//2
+intervals = num_batches//2 + 1
 
+# show top and bottom 5 attribute accuracies
+topk=5
 # these will come in handy in training! we'll use them for label/attribute 
 celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
                   'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
@@ -1933,7 +1945,7 @@ for epoch in range(epochs):
        
     print(f'Epoch: {epoch}/{epochs} | Train Acc: {train_accuracy:.2f} | Train Loss: {train_loss:.4f} | Val Acc: {val_accuracy:.2f} | VAL Loss: {val_loss:.4f}')
     # attribute accuracies
-    print(f'-- Val Accuracy per attributes:')
+    print(f'  -- Val Accuracy per attributes:')
     num_cols = 5
     num_attr = len(celeba_attribute_names)
     num_rows = (num_attr + num_cols - 1) // num_cols
@@ -1955,7 +1967,7 @@ for epoch in range(epochs):
     # which shows us the best and worse attributes
     attr_acc_pairs.sort(key=lambda x: x[1], reverse=True)
 
-    print(f"\n-- Top Attributes: {' '*10} -- Bottom Attributes:")
+    print(f"\n  -- Top Attributes: {' '*10} -- Bottom Attributes:")
     for ((best_name, best_acc), (worse_name,worse_acc)) in zip(attr_acc_pairs[:topk], attr_acc_pairs[-topk:]):
         print(f"   {best_name:<18}: {best_acc:.2f} {' '*4} {worse_name:<18}: {worse_acc:.2f}")
 
