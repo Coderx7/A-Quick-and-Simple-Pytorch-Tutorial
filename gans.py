@@ -1155,7 +1155,18 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
     # calculate new z based on new direction + add a bit of variety using alpha
     # to see other variations
     for alpha in alpha_values:
-        z_new = z_base + alpha * direction
+        # todo: rephrase - make it shorter
+        # note we are not adding alpha to direction!
+        # we need to multiply alpha by direction to 
+        # convey, take alpha "steps" toward that direction!
+        # (like our example move +2 in smiling direction)
+        # adding wont convey that, and infact is wrong
+        # if we were to add it, it would be like saying 
+        # take alpha steps in all directions at once!
+        # which most definitely doesnt mean "smile more" in our case,
+        # it just messes everything up!(it simply shifts the 
+        # whole latent vector uniformly i.e. be a random offset!)
+        z_new = z_base + (alpha * direction)
         img = generator(z_new.unsqueeze(0)).cpu()
         results.append(img)
     return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
