@@ -2032,15 +2032,20 @@ with torch.device(device):
 # imgs = torch.stack(lst)
 # show_images(imgs[:8],'val dl sample with glasses',figsize=(12,6))
 #%%
-g_idx = celeba_atrr_word2idx["Eyeglasses"]
-# g_idx = celeba_atrr_word2idx["Attractive"]
-# g_idx = celeba_atrr_word2idx["Male"]
+keyword = 'Eyeglasses'
+# keyword = 'Attractive'
+# keyword = 'Male'
+idx = celeba_atrr_word2idx[keyword]
 # classify them using our classifier!
 imgs_normalized = ((imgs+1)/2).clamp(0,1)
-# show_images(imgs_normalized,'val dl imgs normalized',figsize=(12,6))
+show_images(imgs_normalized,'val dl imgs normalized',figsize=(12,6))
 preds = celeba_classifier(imgs_normalized).sigmoid()
-print(preds[:,g_idx].detach().cpu().numpy())
-preds_thresh = preds>0.9
+# pytorch 2.4 has a bug where it may randomly go for a 
+# broken __format__ when it shouldnt and thus results in ValueError!
+# its fixed in 2.5 though! the reason im casting to numpy is this!
+print(f"raw preds for {keyword}:\n",preds[:,idx].detach().cpu().numpy())
+# grab only the high confidence ones
+preds_thresh = preds>0.8
 
 for i, (pred,acc) in enumerate(zip(preds_thresh,preds)):
     predicted_attrs = pred.nonzero(as_tuple=True)[0]
