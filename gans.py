@@ -938,12 +938,11 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # for examples, if we subtracted the latent vectors for man with glasses
 # from man without glasses and then add woman without glasses we would get
 # woman with glasses! 
-# this is usually done with conditional versions where we can specify each 
-# attribute, in unconditional version where no labels are used, like ours here
+# in unconditional version where no labels are used, like ours here
 # we need to comeup with a way to get images with the same attribute first 
 # and then use those latent vectors to do the arthimetics.
 # note we said images and not just a single image, because we need to average
-# those vectors to get rid of their specific nuacenses and only capture the 
+# those latent vectors to get rid of their specific nuacenses and only capture the 
 # essense of said attribute(i.e. the direction of change if you will), 
 # otherwise it wouldnt work properly as not all features are disentangled prefectly.
 # so we need a way to identify the existence of an attribute in an image,
@@ -959,16 +958,18 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # to make it more managble we use opencv's picker so it becomes easy to change
 # and see the outcomes.
 #update:
-# I gave it a try but not only finding proper attributes this way is hard but ineffcient
+# I gave it a try but not only finding proper attributes this way is hard but also ineffcient
 # what we are doing here doesnt work properly simply because we are just biasing the 
-# distribution we sample from which only changes style/noise intensity but not semantic 
-# attributes, unlike our vae case, the mean/stds are not that well defined so that by 
-# managing them we access different attributes. we may be able to narrow it down to some
-# attributes but the process is cumbersome to say the least, at least I give up in part 
-# because we have other more streamlined ways to do this, using conditional version aside,
-# I have also seen (and tested as well) with some newer approaches which I didnt get tge 
+# distribution we are sampling from which only changes style/noise intensity but not the semantic 
+# attributes themselves, in order to get varied attributes ,we need large batchsizes, 
+# and then play with the mean/std to get what we like and then pick the id of the said
+# attribute manually and form a batch of that attribute from corrosponding latent vector
+# and so on, its really not efficient! unlike our vae case, the mean/stds are not that 
+# well defined so that by managing them we access different attributes. 
+# so I gave up on the idea in part because we have other more streamlined ways to do this, 
+# I have also seen (and experimented) with some newer approaches which I didnt get tge 
 # desired result either because of our simplistic architecture and features not being properly
-# developed I guess. 
+# developed I believe.
 # the methods I tested include Sefa by Shen&Zhou 2020(https://arxiv.org/abs/2007.06600) and 
 # clip where we use the clip model to identify latents that have the attributes we want by
 # comparing the text embeddings of the attributes and their image embeddings, and grabing the
@@ -979,7 +980,6 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # and also the image size is really small compared to what clip vision backend for example requires
 # and resizing it to 224 would introduce a lot of artifacts which would decrease the effectiveness 
 # even more!
-# so I'll redo this test using our next experiment which is conditional GAN. 
 # for the record, the sefa was trained on stylegan2 architecture if I recall correctly, which
 # is one of the best GAN architectures even today and features are very well disenangled compared
 # to our simplistic model here. the paper shows it can work pretty well on stylegan see https://genforce.github.io/sefa/
@@ -1020,6 +1020,9 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # weights couple latent dimensions together so by factorizing it, we can uncover latent 
 # axes/drections of variation that our GAN has learned!)
 # see my implementation below (after opencv example)
+# update2:
+# I ended up writing a quick classifier for celeba to do this. see the section after 
+# conditional version
 #%%
 #%%
 # playing with attributes by changing std/mean 
@@ -1073,7 +1076,7 @@ def onchange(x):
     pass
 
 @torch.no_grad()
-def choose_meanstd(generator, num_samples,ncols=8):
+def choose_meanstd(generator, num_samples,random_gen, ncols=8,):
     generator.eval()
     
     cv2.namedWindow('std_mu_finder')
@@ -1130,16 +1133,33 @@ def choose_meanstd(generator, num_samples,ncols=8):
     cv2.destroyAllWindows()
     return z, frac_std, frac_mean
 
+seed=1
+np.random.seed(seed)
+random_gen = torch.manual_seed(seed)
 steps = 8
-num_samples=16
+num_samples=5
 generatorcnn.to('cpu')
-# women!
-z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
+# simply grabing an attribute like women may not be easy
+# for finetuned example, we need to use large batch and inidivually
+# get the index to images that contain a specific attribute we like (like glasses)
+# and then use those indexes to form a batch of latent vectors and feed it to
+# our latent arithmetic function, or use a small batch that the majority have
+# an attribute (like women)
+#std/mu:220/200 -> women
+z,std,mean = choose_meanstd(generatorcnn, num_samples=num_samples,random_gen=random_gen, ncols=8)
 z_attr1 = z*std+mean
+z_attr1 = z_attr1[:4]
 #%%
-# men!
-z2,std2,mean2 = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
-z_attr2 = z2*std2+mean2
+# male!
+seed=66
+np.random.seed(seed)
+random_gen = torch.manual_seed(seed)
+num_samples=10
+z2,std2,mean2 = choose_meanstd(generatorcnn, num_samples=num_samples,random_gen=random_gen, ncols=8)
+z_attr2_all = z2*std2+mean2
+ids = [1,2,3,5]
+z_attr2 = z_attr2_all[ids]
+
 #%%
 @torch.no_grad()
 def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values,ncols=8):
@@ -1172,11 +1192,16 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
         results.append(imgs_grid)
     return torch.stack(results)
 #
-# z = torch.randn_like(z)[0]
-# print(f'{z.shape=}')
-# alphas = torch.linspace(0,1,steps=8)
-# imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z, alphas)
-# show_images(imgs, alphas,figsize=(12,6))
+seed = 10
+np.random.seed(seed)
+random_gen = torch.manual_seed(seed)
+z_base = torch.randn(size=(z_attr1.size(0),generatorcnn.z_size),generator=random_gen)
+print(f'{z_base.shape=}')
+alphas = torch.linspace(-3,5,steps=24)
+imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z_base[1].unsqueeze(0), alpha_values=alphas)
+show_images(imgs, f'latent arithmatic using manually selected attributes',figsize=(12,6))
+# in order to get more accurate results we need more samples from each attribute
+# but I guess this suffices for now. we'll see a much better example below (see after conditional version)
 #%%
 @torch.no_grad()
 def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
@@ -1836,7 +1861,7 @@ class CelebAClassifier(nn.Module):
         return self.net(x)
 
 # quick check to see how small the input gets with our changes applied
-def check_inputs(model):
+def check_network_inputs(model):
     hooks = []
     def print_shape_hook(module, input, output):
         classname = module.__class__.__name__
@@ -1857,7 +1882,7 @@ def check_inputs(model):
     return hooks
 
 classifier = CelebAClassifier()
-hooks = check_inputs(classifier)
+hooks = check_network_inputs(classifier)
 out = classifier(torch.randn(size=(5,3,32,32)))
 print(f'{out.shape=}')
 # remove hooks its good practice 
