@@ -1041,11 +1041,12 @@ def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
     return torch.cat((*grids,), dim=2)
 
 def show_images(imgs, title, cols=8, figsize=(4,3)):
-    if imgs.max()+1e-7>1 or imgs.min()<0:
+    if imgs.max()>1 or imgs.min()<0:
         imgs = ((imgs+1)/2).clamp(0,1)
-    # imgs = (imgs*255).round().to(torch.uint8)
-    if imgs.ndim>3:
+        
+    if imgs.ndim==4:
         imgs = utils.make_grid(imgs,nrow=cols)
+        
     imgs = imgs.permute(1, 2, 0).cpu().numpy()
     plt.figure(figsize=figsize)
     plt.imshow(imgs)
@@ -1141,7 +1142,7 @@ z2,std2,mean2 = choose_meanstd(generatorcnn, num_samples=num_samples,ncols=8)
 z_attr2 = z2*std2+mean2
 #%%
 @torch.no_grad()
-def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values):
+def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values,ncols=8):
     # getting the actual attribute (direction)
     direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
     # we normalize the vector so it only encodes the direction and not magnitudes,
@@ -1165,15 +1166,17 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
         # so to make it exclusive for a specific attribute/direction
         # we only scale that direction by multiplying it exclusively
         z_new = z_base + (alpha * direction)
-        img = generator(z_new.unsqueeze(0)).cpu()
-        results.append(img)
-    return torch.cat(results, dim=0)  # (len(alpha_values), C, H, W)
-
-z = torch.randn_like(z)[0]
-print(f'{z.shape=}')
-alphas = torch.linspace(0,1,steps=8)
-imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z, alphas)
-show_images(imgs, alphas,figsize=(12,6))
+        # print(f'{z_new.shape=}')
+        imgs = generator(z_new).cpu()
+        imgs_grid = utils.make_grid(imgs,nrow=ncols)
+        results.append(imgs_grid)
+    return torch.stack(results)
+#
+# z = torch.randn_like(z)[0]
+# print(f'{z.shape=}')
+# alphas = torch.linspace(0,1,steps=8)
+# imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z, alphas)
+# show_images(imgs, alphas,figsize=(12,6))
 #%%
 @torch.no_grad()
 def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
@@ -1892,9 +1895,10 @@ celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', '
                   'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
                   'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
 # to make it easier lets create a dictionary and pick the attributes that way!
-celeba_atrr_word2idx = {name:i for i,name in enumerate(celeba_attribute_names)}
-celeba_atrr_idx2word = {i:name for name,i in celeba_atrr_word2idx.items()}
+celeba_attr_word2idx = {name:i for i,name in enumerate(celeba_attribute_names)}
+celeba_attr_idx2word = {i:name for name,i in celeba_attr_word2idx.items()}
 
+#%%
 print(f'Training {CelebAClassifier.__name__}...')
 
 for epoch in range(epochs):
@@ -1963,14 +1967,14 @@ for epoch in range(epochs):
         for col in range(num_cols):
             idx = row + (col * num_rows)
             if idx < num_attr:
-                name = celeba_atrr_idx2word[idx]
+                name = celeba_attr_idx2word[idx]
                 acc = val_per_attr_accuracy[idx]
                 text += f"   {name:<18}: {acc:.2f}   "
         print(text)
     
     # display best and worse accuracies among attributes
     # create list of attributes with their accuracies
-    attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
+    attr_acc_pairs = [(celeba_attr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
     # sor the accuracies from lowest to highest
     # this way we can easily take topk and bottomk
     # which shows us the best and worse attributes
@@ -2007,7 +2011,7 @@ for k,v in checkpoint.items():
     if 'attr' not in k:
         print(f'{k}: {v}')
     else:
-        attr_acc_pairs = [(celeba_atrr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
+        attr_acc_pairs = [(celeba_attr_idx2word[i], acc) for i, acc in enumerate(val_per_attr_accuracy)]
         attr_acc_pairs.sort(key=lambda x: x[1], reverse=True)
         print(f"\n  -- Top Attributes: {' '*10} -- Bottom Attributes:")
         for ((best_name, best_acc), (worse_name,worse_acc)) in zip(attr_acc_pairs[:topk], attr_acc_pairs[-topk:]):
@@ -2019,7 +2023,7 @@ num_samples = 8
 with torch.device(device):
     z = torch.randn(size=(num_samples,generatorcnn_conditional.z_size))
     labels = torch.zeros(size=(num_samples, len(celeba_attribute_names)))
-    ids = torch.tensor([celeba_atrr_word2idx["Eyeglasses"]]).repeat_interleave(num_samples)
+    ids = torch.tensor([celeba_attr_word2idx["Eyeglasses"]]).repeat_interleave(num_samples)
     labels[torch.arange(num_samples), ids] = 1
 
     generatorcnn_conditional.to(device)
@@ -2035,7 +2039,7 @@ with torch.device(device):
 keyword = 'Eyeglasses'
 # keyword = 'Attractive'
 # keyword = 'Male'
-idx = celeba_atrr_word2idx[keyword]
+idx = celeba_attr_word2idx[keyword]
 # classify them using our classifier!
 imgs_normalized = ((imgs+1)/2).clamp(0,1)
 show_images(imgs_normalized,'val dl imgs normalized',figsize=(12,6))
@@ -2050,7 +2054,104 @@ preds_thresh = preds>0.8
 for i, (pred,acc) in enumerate(zip(preds_thresh,preds)):
     predicted_attrs = pred.nonzero(as_tuple=True)[0]
     accs = preds[i,predicted_attrs]
-    print(f'image {i}: {" ".join([f"{celeba_atrr_idx2word[a.item()]}({acc*100:.2f}%) | " for a,acc in zip(predicted_attrs,accs)])}')
+    print(f'image {i}: {" ".join([f"{celeba_attr_idx2word[a.item()]}({acc*100:.2f}%) | " for a,acc in zip(predicted_attrs,accs)])}')
+#%%
+# now lets use it to do some arithemetic in latent space
+# for the conditional version, the attributes are controled using labels
+# so they reside in label space! we can specify any attribute or combinations of
+# them simply by flipping their respective label index and thats all
+# we can still play with the latent vector z for some tuning as well but
+# its not used for attribute change, just pose/style changes
+# for the unconditional version, the attributes live in the latent space
+# itself, so by changing latent z we can change everything from one attribute
+# to another with other varying pose/style/etc changes. the issue is finding the
+# latent codes that does what we want. in our previous attempts, we used sefa/clip
+# to find those attributes, but since our model wasnt powerful enough, the features
+# werent as developd/disentangled so sefa didnt work properly. the clip also didnt 
+# work as expected (but still better than sefa) because for 1 the image resolution
+# didnt match, and resizing it to 224 caused lots of artifacts, affecting the clip
+# performance adversly. that leaves us here, I had to build a quick classifier so 
+# we can use that to identify and get afew samples for a specific attribute and then 
+# use that for our latent arithmetic test. 
+# so lets create a few samples and see how many attributes we can fish form it
+# we start by unconditional version and go to conditional version after it
+# uncondition 
+
+@torch.no_grad()
+def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
+    attr_name, celeba_attr_word2idx, num_samples, random_generator, threshold=0.5, device='cuda'):
+    
+    generator.to(device)
+    classifier.to(device)
+    
+    generator.eval()
+    classifier.eval()
+    
+    z = torch.randn(size=(num_samples,generator.z_size), device=device, generator=random_generator)
+    imgs = generator(z)
+    # classify the images 
+    preds = classifier(imgs).sigmoid()
+    preds = preds>threshold
+    # grab the images with attribute 
+    # attribs_indexes = [i for i in range(len(preds)) if preds[i][celeba_attr_word2idx[attr_name]]==1]
+    # other_indexes = [i for i in range(len(preds)) if preds[i][celeba_attr_word2idx[attr_name]]!=1]
+    # or we can do this more efficiently by calculating a mask and grab the indexes
+    # for both
+    attr_mask = preds[:,celeba_attr_word2idx[attr_name]] == 1
+    attribs_indexes = attr_mask.nonzero(as_tuple=True)[0].tolist()
+    other_indexes = (~attr_mask).nonzero(as_tuple=True)[0].tolist()
+    
+    # grab images and corrosponding latents
+    imgs_with_attr = imgs[attribs_indexes]
+    latents_with_attr = z[attribs_indexes] 
+    # now lets also grab afew images that dont have this attribue
+    # so we can use it in our arithmetic test
+    imgs_no_attr = imgs[other_indexes]
+    latents_no_attr = z[other_indexes]
+    
+    return (imgs_with_attr,latents_with_attr), (imgs_no_attr,latents_no_attr)
+
+seed = 0
+device = 'cuda'
+
+np.random.seed(seed)
+random_gen = torch.cuda.manual_seed(seed) if device =='cuda' else torch.manual_seed(seed)
+# note that not all atributes exist in dataset equally
+# in fact the attributes are very imbalanced, for example
+# trying to get Bald results in fewer success than using Male
+# or eyeglasses!
+attr_name = "Male"
+
+(imgs,zs),(imgs_other,zs_other) = get_samples_for(generatorcnn,
+                                                  celeba_classifier,
+                                                  attr_name, 
+                                                  celeba_attr_word2idx,
+                                                  num_samples=256, 
+                                                  random_generator=random_gen, 
+                                                  threshold=0.5, 
+                                                  device=device)
+
+show_images(imgs,f'generated with attr {attr_name}',figsize=(12,6))
+show_images(imgs_other[:imgs.size(0)],f'generated with other attr',figsize=(12,6))
+imgs_gen = generatorcnn(zs)
+show_images(imgs,f'generated with latents',figsize=(12,6))
+# now that we know everything works, lets do some arrithmetics 
+#%%
+attr_name = "Male"
+z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
+(_,zs1),(_,zs2) = get_samples_for(generatorcnn, celeba_classifier, attr_name,
+                celeba_attr_word2idx=celeba_attr_word2idx,
+                num_samples=128,
+                random_generator=random_gen,
+                threshold=0.5,
+                device=device)
+
+imgs = latent_arithmetic_unconditional(generatorcnn, zs1, zs2, zs1[0].unsqueeze(0),alpha_values=[-3,-2,-1,1,2,3])
+show_images(imgs, 'latent arithmetic',figsize=(12,6))
+
+#%% now e can grab different attributes, like men with hairs
+# and males, and subtract them to get bald people!
+
 
 #%%
 # back to improvements new architecture 
