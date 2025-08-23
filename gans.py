@@ -2156,22 +2156,28 @@ attr_name = "Male"
                                                   threshold=0.5, 
                                                   device=device)
 
-show_images(imgs,f'generated with attr {attr_name}',figsize=(12,6))
-show_images(imgs_other[:imgs.size(0)],f'generated with other attr',figsize=(12,6))
+show_images(imgs,f'Generated with attr {attr_name}',figsize=(12,6))
+show_images(imgs_other[:imgs.size(0)],f'Generated without attr({attr_name})',figsize=(12,6))
 imgs_gen = generatorcnn(zs)
-show_images(imgs,f'generated with latents',figsize=(12,6))
+show_images(imgs_gen,f'Regenerated with latents({attr_name})',figsize=(12,6))
 # now that we know everything works, lets do some arrithmetics 
 #%%
+# for "Eyeglasses" increase the batchsize 
+# or else you'll get an error! because it
+# may not find any samples with galsses!
 attr_name = "Male"
 z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
-(_,zs1),(_,zs2) = get_samples_for(generatorcnn, celeba_classifier, attr_name,
+(ims1,zs1),(ims2,zs2) = get_samples_for(generatorcnn, celeba_classifier, attr_name,
                 celeba_attr_word2idx=celeba_attr_word2idx,
                 num_samples=128,
                 random_generator=random_gen,
                 threshold=0.5,
                 device=device)
 
-imgs = latent_arithmetic_unconditional(generatorcnn, zs1, zs2, zs1[0].unsqueeze(0),alpha_values=[-3,-2,-1,1,2,3])
+show_images(ims1,f'Regenerated with latents({attr_name})',figsize=(12,6))
+show_images(ims2,f'Regenerated without latents({attr_name})',figsize=(12,6))
+# from women to male!
+imgs = latent_arithmetic_unconditional(generatorcnn, zs1, zs2, z_base[0].unsqueeze(0),alpha_values=torch.linspace(-3,7,steps=24))
 show_images(imgs, 'latent arithmetic',figsize=(12,6))
 
 #%% now e can grab different attributes, like men with hairs
