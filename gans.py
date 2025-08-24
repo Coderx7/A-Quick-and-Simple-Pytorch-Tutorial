@@ -1163,6 +1163,9 @@ z_attr2 = z_attr2_all[ids]
 #%%
 @torch.no_grad()
 def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values,ncols=8):
+    # if its a single example, add batch dim
+    if z_base.ndim==1:
+        z_base.unsqueeze_(0)
     # getting the actual attribute (direction)
     direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
     # we normalize the vector so it only encodes the direction and not magnitudes,
@@ -1191,7 +1194,7 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
         imgs_grid = utils.make_grid(imgs,nrow=ncols)
         results.append(imgs_grid)
     return torch.stack(results)
-#
+
 seed = 10
 np.random.seed(seed)
 random_gen = torch.manual_seed(seed)
@@ -2136,7 +2139,7 @@ def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
     
     return (imgs_with_attr,latents_with_attr), (imgs_no_attr,latents_no_attr)
 
-seed = 0
+seed = 66
 device = 'cuda'
 
 np.random.seed(seed)
@@ -2165,24 +2168,102 @@ show_images(imgs_gen,f'Regenerated with latents({attr_name})',figsize=(12,6))
 # for "Eyeglasses" increase the batchsize 
 # or else you'll get an error! because it
 # may not find any samples with galsses!
-attr_name = "Male"
-z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
+# now before we blindly do some arithmetic in order to get
+# good results we need to pay attention to a few things
+# 1.our z_base may contain the attribute we want to remove already
+# and subtracting the direction doesnt do much, or it may have the
+# attribute and the arithmatic manipulation further comound its effect
+# so the best way to know it actually works and we are doing everything
+# correctly is to make sure our z_base is neutral
+# 2.the number of samples for with attribute and without attribute
+# must match, if our latent samples are a few it will result in a noisy mean
+# and wouldnt work properly, using a higher threshold like 0.9 may give us 
+# a few very highly confident samples, but leave many lower confidence ones out
+# which we could use to get a more accurate mean! so we need to get as many samples
+# as we can get our hands on. 
+@torch.no_grad()
+def get_neutral_latents(generator:GeneratorCNN, classifier:CelebAClassifier,
+                        celeba_attr_word2idx, attr_name, num_samples, random_gen, device,threshold=0.1):
+    generator.eval()
+    generator.to(device)
+    classifier.eval()
+    classifier.to(device)
+    
+    z_base = torch.randn(size=(num_samples, generator.z_size), device=device, generator=random_gen)
+    imgs = generator(z_base)
+    preds = classifier(imgs).sigmoid()
+    # now we want to grab all the samples that have 
+    # the lowest confidence for selected attribute
+    preds_with_attr = preds[:,celeba_attr_word2idx[attr_name]]
+    # grab the lowest confidences ids
+    ids = (preds_with_attr<threshold).nonzero(as_tuple=True)[0]
+    # print(f'{ids=}')
+    # and finally grab the latens that dont have that attribute
+    z_base = z_base[ids]
+    return z_base
+
+attr_name = 'Smiling'
+z = get_neutral_latents(generatorcnn,celeba_classifier, 
+                    celeba_attr_word2idx,
+                    attr_name,num_samples=32,random_gen=random_gen,device='cpu')
+imgs = generatorcnn(z)
+show_images(imgs,f'neutral images (no {attr_name})',figsize=(12,6))
+#%%
+attr_name = 'Male'
+# z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
+z_base = get_neutral_latents(generatorcnn,celeba_classifier, celeba_attr_word2idx,attr_name, 
+                            num_samples=32,random_gen=random_gen,device=device,
+                            threshold=0.1)
+
 (ims1,zs1),(ims2,zs2) = get_samples_for(generatorcnn, celeba_classifier, attr_name,
                 celeba_attr_word2idx=celeba_attr_word2idx,
-                num_samples=128,
+                num_samples=256,
                 random_generator=random_gen,
-                threshold=0.5,
+                # increase the confidence level to 
+                # get more accurate results
+                threshold=0.7,
                 device=device)
 
 show_images(ims1,f'Regenerated with latents({attr_name})',figsize=(12,6))
 show_images(ims2,f'Regenerated without latents({attr_name})',figsize=(12,6))
-# from women to male!
-imgs = latent_arithmetic_unconditional(generatorcnn, zs1, zs2, z_base[0].unsqueeze(0),alpha_values=torch.linspace(-3,7,steps=24))
-show_images(imgs, 'latent arithmetic',figsize=(12,6))
+# from women to male!(woman gradually loses feminity and turns into male)
+imgs = latent_arithmetic_unconditional(generatorcnn, zs1, zs2[:zs.size(0)], z_base[0],alpha_values=torch.linspace(-3,7,steps=24))
+show_images(imgs, 'latent arithmetic(female to male)',figsize=(12,6))
+# from male to female!(maleness decreases at each step)
+imgs = latent_arithmetic_unconditional(generatorcnn, zs2[:zs.size(0)], zs1, z_base[0],alpha_values=torch.linspace(-3,7,steps=24))
+show_images(imgs, 'latent arithmetic(male to female)',figsize=(12,6))
 
 #%% now e can grab different attributes, like men with hairs
-# and males, and subtract them to get bald people!
+# and males, and subtract them to get bald people! but since our generator
+# doesnt generate prefect images, our classifier may have difficulty accurately classify them
+# so lets stick to the attributes that the model handles better than others for now!
+attr_name = "Smiling"
+z_base = get_neutral_latents(generatorcnn,celeba_classifier, celeba_attr_word2idx,attr_name, 
+         num_samples=32,random_gen=random_gen,device=device, threshold=0.1)
 
+(ims_s,zs_s),(ims_ns,zs_ns) = get_samples_for(generatorcnn, celeba_classifier, attr_name,
+                celeba_attr_word2idx=celeba_attr_word2idx,
+                num_samples=256,
+                random_generator=random_gen,
+                threshold=0.9,
+                device=device)
+
+show_images(ims_s, f'batch for {attr_name}',figsize=(12,6),cols=10)
+show_images(ims_ns, f'batch for no {attr_name}',figsize=(12,6),cols=10)
+#%%
+# not smiling to smiling (gradually smiling is increased)
+alphas = alpha_values=torch.linspace(-3,7,steps=24)
+img_results = latent_arithmetic_unconditional(generatorcnn, zs_s, zs_ns, z_base[0],alpha_values=alphas)
+show_images(img_results, 'latent arithmetic(not smiling to smiling)',figsize=(12,6))
+# from smilig to no smiling(the smile gradually fades into anger/crying)
+img_results = latent_arithmetic_unconditional(generatorcnn, zs_ns, zs_s, z_base[0],alpha_values=alphas)
+show_images(img_results, 'latent arithmetic(smiling to nosmiling/angry/crying)',figsize=(12,6))
+#%%
+# male notsmiling to women smiling!
+# gradually maleness decreases, while 
+# femaleness and smile increases!
+img_results = latent_arithmetic_unconditional(generatorcnn, zs_s, zs1, z_base[0],alpha_values=alphas)
+show_images(img_results, 'latent arithmetic',figsize=(12,6))
 
 #%%
 # back to improvements new architecture 
