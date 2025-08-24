@@ -938,6 +938,8 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # for examples, if we subtracted the latent vectors for man with glasses
 # from man without glasses and then add woman without glasses we would get
 # woman with glasses! 
+# in conditional version, labels are used to control the attributes, but we 
+# should be able to play with attributes aswell though it maynot be much,
 # in unconditional version where no labels are used, like ours here
 # we need to comeup with a way to get images with the same attribute first 
 # and then use those latent vectors to do the arthimetics.
@@ -2205,7 +2207,7 @@ def get_neutral_latents(generator:GeneratorCNN, classifier:CelebAClassifier,
 attr_name = 'Smiling'
 z = get_neutral_latents(generatorcnn,celeba_classifier, 
                     celeba_attr_word2idx,
-                    attr_name,num_samples=32,random_gen=random_gen,device='cpu')
+                    attr_name,num_samples=32,random_gen=random_gen,device='cpu',threshold=0.05)
 imgs = generatorcnn(z)
 show_images(imgs,f'neutral images (no {attr_name})',figsize=(12,6))
 #%%
@@ -2248,11 +2250,11 @@ z_base = get_neutral_latents(generatorcnn,celeba_classifier, celeba_attr_word2id
                 threshold=0.9,
                 device=device)
 
-show_images(ims_s, f'batch for {attr_name}',figsize=(12,6),cols=10)
-show_images(ims_ns, f'batch for no {attr_name}',figsize=(12,6),cols=10)
+show_images(ims_s, f'batch for {attr_name}',figsize=(12,6),cols=16)
+show_images(ims_ns, f'batch for no {attr_name}',figsize=(12,6),cols=16)
 #%%
 # not smiling to smiling (gradually smiling is increased)
-alphas = alpha_values=torch.linspace(-3,7,steps=24)
+alphas = torch.linspace(-3,7,steps=24)
 img_results = latent_arithmetic_unconditional(generatorcnn, zs_s, zs_ns, z_base[0],alpha_values=alphas)
 show_images(img_results, 'latent arithmetic(not smiling to smiling)',figsize=(12,6))
 # from smilig to no smiling(the smile gradually fades into anger/crying)
@@ -2264,8 +2266,154 @@ show_images(img_results, 'latent arithmetic(smiling to nosmiling/angry/crying)',
 # femaleness and smile increases!
 img_results = latent_arithmetic_unconditional(generatorcnn, zs_s, zs1, z_base[0],alpha_values=alphas)
 show_images(img_results, 'latent arithmetic',figsize=(12,6))
-
 #%%
+# now for the conditional version, since the labels do the majority of work,
+# we may think we cant do much but we should still be able to affect attributes, 
+# because not all attributes are like in the labels, only 40 are labeled, but 
+# many other explicit attributes also exist in the image so we should be able
+# to affect it to some extend.(note that our conditional version is obviously worse
+# than the unconditional version because in order to get accurate result we need to
+# have good fusion of label information into the architecture which we do not
+# and the model itself needs to be better configured, all said, we just want to
+# get a sense of stuff works and not get the best possible result because we have
+# more better changes ahead. anyway we should still get some meaningful changes thisway
+# )
+def get_labels(attr_names, celeba_attr_word2idx, num_samples,device):
+    labels = torch.zeros(size=(num_samples,40),device=device)
+    attr_names = [attr_names] if isinstance(attr_names,str) else attr_names
+    ids = [celeba_attr_word2idx[n] for n in attr_names]
+    labels[:,ids] = 1
+    return labels
+
+# l = get_labels("Bald", celeba_attr_word2idx, 4,'cpu')
+# print(l)
+
+@torch.no_grad()
+def get_samples_for_confitional(generator:GeneratorCNNConditional, labels, num_samples, random_generator, device='cuda'):
+    generator.eval()
+    generator.to(device)
+    labels.to(device)
+    
+    z = torch.randn(size=(num_samples,generator.z_size), device=device, generator=random_generator)    
+    imgs = generator(z,labels)
+    return imgs, z
+
+@torch.no_grad()
+def latent_arithmetic_conditional(generator, z_with_attr, z_without_attr, z_base, alpha_values, labels=None,ncols=8):
+    # grab device from model parameters
+    device = next(generator.parameters()).device
+    
+    # if its a single example, add batch dim
+    if z_base.ndim==1:
+        z_base.unsqueeze_(0)
+    
+    # create a neutral label
+    if labels is None:
+        labels = torch.zeros(size=(z_base.size(0),40),device=device)
+        
+    # get the direction
+    direction = z_with_attr.mean(dim=0) - z_without_attr.mean(dim=0)
+    # we normalize the vector so it only encodes the direction and not magnitudes,
+    # this way all attribute directions will have unit length and will be comparable.
+    # we can then use this fact and control the effect's strength(our desired direction/concept)
+    # using a single number like alpha, like for example "move +2 in the smiling direction"
+    # or "move -1.5 in the glasses direction" and because all directions are normalized
+    # alpha will have a uniform meaning across attributes!
+    direction = direction/direction.norm()
+    print(f'{direction.shape=}')
+    results = []
+    # calculate new z based on new direction + add a bit of variety using alpha
+    # to see other variations
+    for alpha in alpha_values:
+        # note: we must multiply alpha by direction not add them!
+        # alpha * direction means "take alpha steps along this attribute axis"!
+        # like our previous example "move +2 in the smiling direction" now
+        # if we just add alpha, it means moving alpha steps in 
+        # all directions at once, equally, which has no semantic
+        # meaning its just a uniform shift of the latent vector.
+        # so to make it exclusive for a specific attribute/direction
+        # we only scale that direction by multiplying it exclusively
+        z_new = z_base + (alpha * direction)
+        # print(f'{z_new.shape=}')
+        imgs = generator(z_new, labels).cpu()
+        imgs_grid = utils.make_grid(imgs,nrow=ncols)
+        results.append(imgs_grid)
+    return torch.stack(results)
+
+@torch.no_grad()
+def get_neutral_latents_conditional(generator:GeneratorCNNConditional, classifier:CelebAClassifier,
+                                    celeba_attr_word2idx, attr_name, num_samples, random_gen,
+                                    device,threshold=0.1):
+    generator.eval()
+    generator.to(device)
+    classifier.eval()
+    classifier.to(device)
+    
+    z_base = torch.randn(size=(num_samples, generator.z_size), device=device, generator=random_gen)
+    # neutral labels
+    labels = torch.zeros(size=(num_samples,40),device=device)
+        
+    imgs = generator(z_base,labels)
+    preds = classifier(imgs).sigmoid()
+    # now we want to grab all the samples that have 
+    # the lowest confidence for selected attribute
+    preds_with_attr = preds[:,celeba_attr_word2idx[attr_name]]
+    # grab the lowest confidences ids
+    ids = (preds_with_attr<threshold).nonzero(as_tuple=True)[0]
+    # print(f'{ids=}')
+    # and finally grab the latens that dont have that attribute
+    z_base = z_base[ids]
+    return z_base
+
+attr_name ='Eyeglasses'
+z_base = get_neutral_latents_conditional(generatorcnn_conditional, celeba_classifier,celeba_attr_word2idx,
+                                attr_name=attr_name,
+                                num_samples=32,
+                                random_gen=random_gen,
+                                device=device,threshold=0.1)
+
+labels = torch.zeros(size=(z_base.size(0),40),device=device)
+imgs = generatorcnn_conditional(z_base,labels)
+show_images(imgs, f'generated neutral not having {attr_name}', figsize=(12,6))
+#%%
+
+'5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
+'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
+'Blurry','Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 
+'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', 
+'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard', 
+'Oval_Face','Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks', 
+'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
+'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young'
+
+num_samples=8
+attr_name1 = "Male"
+attr_name2 = "Black_Hair"
+
+z_base = get_neutral_latents_conditional(generatorcnn_conditional, celeba_classifier,
+                                         celeba_attr_word2idx,
+                                         attr_name=attr_name1,
+                                         num_samples=32,
+                                         random_gen=random_gen,
+                                         device=device,threshold=0.1)
+
+labels1 = get_labels(attr_name1, celeba_attr_word2idx, num_samples=8,device=device)
+labels2 = get_labels(attr_name2, celeba_attr_word2idx, num_samples=8,device=device)
+
+imgs1,z1 = get_samples_for_confitional(generatorcnn_conditional, labels1, num_samples,random_gen,device) 
+imgs2,z2 = get_samples_for_confitional(generatorcnn_conditional, labels2, num_samples,random_gen,device) 
+
+show_images(imgs1, f'generated images for {attr_name1}',figsize=(12,6), cols=8)
+show_images(imgs2, f'generated images for {attr_name2}',figsize=(12,6), cols=8)
+
+alphas = torch.linspace(-3,10,steps=24)
+# we use a neutral label so we can see
+# the outcome of our manipulation
+labels = None
+imgs_out = latent_arithmetic_conditional(generatorcnn_conditional, z1,z2,z_base[2], alpha_values=alphas)
+show_images(imgs_out, f'generated images for +{attr_name1}',figsize=(12,6), cols=8)
+#%%
+# now 
 # back to improvements new architecture 
 # WGANGP 
 # 
