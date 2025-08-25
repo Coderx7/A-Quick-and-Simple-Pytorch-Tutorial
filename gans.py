@@ -250,6 +250,9 @@ discriminator = discriminator.to(device)
 generator = generator.to(device)
 
 # optimizers, note we are using different lr's here!
+# note adam optimizer is not random choice, its one of the optimizers
+# that can get us a quick convergence without much hassle, especially in GANs
+# it can also lower the possibility of mode collapse to some extend
 disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=0.02)
 gen_optimizer = torch.optim.Adam(generator.parameters(), lr=0.002)
 
@@ -629,6 +632,7 @@ print(f'{len(train_loader)=}')
 # svhn or celeba
 dataset_name='svhn'
 # a larger batchsize provides more stablity
+# decrease it and see the impact
 batch_size = 128
 train_loader = get_dataloader(dataset_name=dataset_name, batch_size=batch_size)
 
@@ -2412,13 +2416,159 @@ alphas = torch.linspace(-3,10,steps=24)
 labels = None
 imgs_out = latent_arithmetic_conditional(generatorcnn_conditional, z1,z2,z_base[2], alpha_values=alphas)
 show_images(imgs_out, f'generated images for +{attr_name1}',figsize=(12,6), cols=8)
+# the results arent good compared to our unconditional version, its because our model isnt
+# doing a great job at generating images, we will revisit this in future again with more powerful
+# architecture and hopefully by then we will get much better results!
 #%%
-# now 
-# back to improvements new architecture 
-# WGANGP 
+# excellent articles on GANs:
+# https://jonathan-hui.medium.com/gan-gan-series-2d279f906e7b
+# tips and tricks for GANs:
+# https://www.reddit.com/r/MachineLearning/comments/i085a8/d_best_gan_tricks/
+#
 # 
+# as we pointedout at the start of this chapter, there are far better architectures
+# for GANs than the vanilla version or the DCGAN. lets move ahead and talk about
+# these architectures/improvements. 
+# initially I was going to cover cyclegan and then wgangp which are the ones I 
+# covered back in 2019. but since Im doing tihs all over again, I may as well 
+# include a few more architectures and explain what each brought to the table.
+# I first try to use papers or methods that can be incorporated
+# into our existing architectures so far, like changes related to training regime
+# like losses(lsgan,wgangp) and then go to papers that propose a new improved 
+# architecture altogether (sgan,progan,stylegan,etc) and finally I'll hope to
+# talk about intersting papers in terms of applications (like cylegan,pix2pix, etc)
+# that can give us new intuitions about their wide usecases. 
+# also I guess I wont explain everything in detail at first, I'd like to have a breif
+# inftroduction, enough to get a picture of what we are dealing with and then during 
+# implementation, add more details if the needs be. with this out of the way, lets read on!
+#  
+# LSGAN and WGAN(GP) 
+# the papers we are going to talk about now are LSGAN (https://arxiv.org/abs/1611.04076)
+# and WGAN/WGAN-GP(https://arxiv.org/abs/1701.07875 / https://arxiv.org/abs/1704.00028). 
+# they came after DCGAN. LSGAN came sooner in 2016 and WGAN papers followed the next year.
+# these two papers focused on the training aspect and proposed new loss functions to
+# improve the performance of GAN architectures.
+# LSGAN is short for Least-squares GANs which uses least square loss to avoid vanishing gradients,
+# its essentially the DCGAN architecture plus a new loss function (least-square).
+# The WGAN paper also proposed to use a different loss function, they used something called a
+# Wasserstein distance (EM) for loss and claimed it prevents mode collapse and stablizes the training
+# (it indeed makes trainig much more tsable than vanila GAN and doesnt display mode collapse at least
+# in datasets tried by the authors, I didnt test it myself, as the wgan paper that followed shortly
+# provided way better results).
+# 
+#
+# sidenote: 
+# from the wgan-gp paper:
+# EM is short for the Earth-Mover (also called Wasserstein-1) distance. EM distance (i.e. W(q, p))
+# is informally defined as the minimum cost of transporting mass in order to transform the 
+# distribution q into the distribution p (where the cost is mass times transport distance).
+# Under mild assumptions, W(q, p) is continuous everywhere and differentiable almost everywhere
+# you can think of it as a weaker equivalent to JS and KL losses with the difference its differentiabale
+# nearly everywhere, this is explained in the original wgan paper."
+# 
+# so its a way of measuring how different two probability distributions
+# are just like KL and JS, but with the advantage that it is still meaningful and 
+# gives useful gradients even when q and p dont overlap at all (where KL and JS completely fail)
+# this is why W is said to be differentiable almost everywhere, as explained in the original wgan paper.
+# the wgangp paper then added a gradient penalty trick to make sure the critic network(discriminator)
+# satisfies the required smoothness (i.e. the 1-Lipschitz constraint) which makes training much more stable.
+#  
+# also from page 9 of wgangp paper:
+# ...The KL divergences between two such distributions are infinite,
+# and so the JS divergence is saturated. Although GANs do not literally minimize these divergences
+# [16], in practice this means a discriminator might quickly learn to reject all samples that don’t lie
+# on Vᵀₙ(sequences of one-hot vectors) and give meaningless gradients to the generator. However,
+# it is easily seen that the conditions of Theorem 1 and Corollary 1 of [2] are satisfied even on this
+# non-standard learning scenario with X = ∆ᵀₙ. This means that W(Pr, Pg) is still well defined,
+# continuous everywhere and differentiable almost everywhere, and we can optimize it just like in any
+# other continuous variable setting. The way this manifests is that in WGANs, the Lipschitz constraint
+# forces the critic to provide a linear gradient from all ∆ᵀₙ towards towards the real points in Vᵀₙ.
+#
+# quick note:
+# concerning Wasserstein-1 being weaker equivalent as stated in the paper, its not weaker as in less powerufl
+# its as in less stricter than KL and JS. in the KL divergence for example if the two distributions 
+# dont overlap at all the KL will go to infinity and it punishes the mismatches very harshly.
+# likewise, in JS divergence if the two distributions dont overlap the JS will be stuck at log(2)(saturates),
+# so gradients vanish! it just refuses to give useful feedback. now compare it to Wasserstein-1
+# even if the two distributions dont overlap at all, it still gives a finite and meaningful distance
+# (how far youd need to "move mass" to match them!) so both KL and JS give either infinite or zero 
+# gradients when distributions are far way and dont overlap at all making them useless when the 
+# generator is performig badly but wasserstein-1 would still give us good gradients!
+#
+# sidenote 2:
+# The 1-Lipcshitz constraint basically means the critic function(our discriminator) must not 
+# change too fast. if we move the input a little, the output can only move by at most the same amount. 
+# in other words, the critic's slope/gradient everywhere must be <=1.
+# this smoothness condition is required by the math behind the wasserstein distance 
+# (via Kantorovich–Rubinstein duality). without it, the critic could "cheat" and give meaningless
+# distance estimates!
+#
+# quicknote:
+# implementing a k-Lipcshitz constraint via "weight clipping" biases the critic towards much simpler
+# functions. that is if we implement k-Lipshitz by weight clipping, we will be forcing all the 
+# critic's weights to stay within a fixed range (e.g. [-0.01, 0.01]). This was the original 
+# trick in the wgan paper to *approximately* enforce the 1-Lipschitz condition. (see note below)
+# but clipping makes the critic too simple (low capacity), so it cant learn rich functions well 
+# and often leads to poor training. the wgangp fixed this by replacing weight clipping with a 
+# gradient penalty, which enforces the Lipschitz condition in a smoother more flexible way.
+# 
+# sidenote:
+# k in k-Lipschitz means its slope (rate of change) is bounded by k, but because we are dealing
+# with Wasserstein-1 distance, the math requires it to be k=1, if we go higher than 1, the critc
+# will just scale the distance several times up to k times! not only this breaks the definition
+# and means we are no longer computing the real Earth-Mover distance, but a scaledand incorrect 
+# version of it but also since its scaledup, it will also affect the learning rates, making them
+# several times larger which in turn will cause instability in training. unless of course we 
+# carefully tune the hyperparameters to account for this cahnge!
+# similarly but conversly if k becomes smaller than 1,it will shirnk the learning rtae adn slowdown
+# the training!
+# 
+# this was further improved by WGAN-GP paper which was a very good addition since it results in 
+# higher quality images than wgan. (also another good charactestic both WGAN and WGANGP have is 
+# their loss roughly correlates with sample quality so if loss decreases it shows the sample quality is
+# better this is not the case for previous cases)
+#
+# so to recap, 
+# basically in WGAN, and WGAN-GP, the loss functions are changed. for WGAN, in our discriminator we 
+# no longer use an activation function (sigmoid e.g), and simply clip the discriminators weights.
+# (as we later see in wgangp paper, this clipping is the reason that makes training unstable in wgan!
+# it was fixed in wgan-gp paper by using gradient penalty instead (i.e. penalized the norm of 
+# gradient of the discriminator with respect to its input, we'll see this in a moment).
+# 
+# the reason these losses were proposed was because with both DCGAN and vanilla GAN, when the 
+# discriminator works best while the generator is far behind struggling, the gradients will 
+# dimnishe and generator will never learn. they were created to address this issue and stablize
+# the training.
+# moreover we also know that this is a prevalent case, that is discriminator nearly always
+# gets optimized easier than the generator in a GAN framework, and minimizing the gan objective
+# function with an optimimal discriminator is equivalent to the js-divergence. the problem is
+# since this happens and generator is far behind, the generated image distribution (p) will be far 
+# away from the actual sample/groundtruth distribution (p) and therefore the gradient will 
+# be next to nothing and thus the generator hardly learns anything!
+# unless both perform relatively well, generator can not get good gradients from discriminator
+# even though it has good gradients due to JS issue with non-overlaping distributions as we
+# pointed out!
+# 
+# for the actual loss calculation for wasserstein-1, a 1-lipschitz function is needed.
+# but instead of writting one, we can make the network learn it itself. to do that we
+# only need to change the discriminator, so that at the end it doesnt use a nonlinearity
+# function like sigmoid, it would therefore learn a scalar value /score instead of a probablity
+# which can then be used to interpret as how real the input images are. 
+# 
+# sidenote:
+# theres a similar function in reinforcement learning which is called value-function where 
+# it measures how good a state (i.e. input) is. this is where the term critic comes from. 
+# because of this, people discriminators in wgan(gp) are refered to as a critic to reflect
+# this underlying change and it would be more accurate termonoly as we dont deal with 
+# probablity like before and the loss and what takes palce is different.
+# 
+# OK I guess its enough for now, lets get to the implementation and then at the end we do another 
+# recap if necessary
+# 
+#
+
 #%%
-# progan?
+# progan?stackgan?
 # Stylegan2/3?
 #%%
 # a detour to something fun CycleGAN
