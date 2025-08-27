@@ -2636,12 +2636,12 @@ def lsgan_generator_loss(preds_fake):
     # treat generator output as real
     return _lsgan_real_loss(preds_fake, smooth=False)
 
-# for wgan we use our discriminator(critic) raw logits like before
+# for wgan we use our discriminator/critic raw logits like before
 # and the loss is simply the everage of fake-real values
-# and then we need to clip the model weights after each discriminator 
-# optimizer step
+# we then need to clip the model weights after each discriminator 
+# optimizer step.
 def wgan_critic_loss(preds_real, preds_fake):
-    return -(preds_real.mean() - preds_fake.mean())
+    return preds_fake.mean() - preds_real.mean()
 
 def wgan_generator_loss(preds_fake):
     return -preds_fake.mean()
@@ -2650,41 +2650,77 @@ def gradient_penalty(discriminator, imgs_real, imgs_fake):
     batch_size = imgs_real.size(0)
     device = imgs_real.device
     
-    # we need to interpolate between real and fake images 
-    # because the discriminator/critic must be 1-Lipschitz
+    # we need to make critic smooth. that is we need to make sure
+    # its outputs do not change sharply for small changes in the input images.
+    # this is the very definition of 1-lipschitz functions (our model/critic
+    # is a function of inputs to outputs).(technically speaking 1-lipschitz 
+    # means the critics slope (i.e. gradient wrt input images) is never bigger
+    # than 1 which means the output cant change faster than the input moves which
+    # in turn means 1-lipschitz critic = the critic's output changes at most 1
+    # unit for each unit change in its input image or it doesnt change faster than input
+    # or as we said at the begining dont change sharply for small changes in input!)
+    # so how do we do that?
+    # we can see/imagine real image and fake image distributions as two separate islands
+    # and then bridge the gap between them with smooth values.
+    # we can simply do this by interpolating between real and
+    # fake images so our discriminator/critic is 1-lipschitz
     # in the space between the two distributions.
-    # in another words, the critic must be smooth between 
-    # these two distributions.
-    # again that is its outputs must not change sharply
-    # for small changes in the input images. this is the very definition
-    # of 1-lischitz functions! (our discriminator/critic is a function
-    # from input to output, so all it means here is that, 
-    # this function's(i.e. our model's) outputs dont change 
-    # sharply for small changes in the input (or as we said before, doesnt
-    # move faster than input)).
-    # enforcing the smoothness only at real or fake points isnt enough,
-    # since the critic could be very steep in between.(i.e. values in between
-    # change sharply!) 
-    # imagine this 
-    # we use random eps E [0,1] instead of torch.linspace
-    # because random sampling gives stochastic coverage 
-    # across training. torch.linspace would be fixed, 
-    # either too sparse (bad coverage) or too dense (too slow).
+    # note that enforcing this only at real or fake points
+    # wont be enough simply because the critic could be very 
+    # steep in between(i.e. values in between change sharply! or in our example case 
+    # if we only checked the islands (real or fake samples only),
+    # the bridge could look nice at the ends but have a huge bump or cliff in the middle)
+    # so having real images or fake ones be smooth is not enough everything
+    # between them needs to also be smooth.
+    # we can do this two ways, either randomly pick some numbers each time
+    # or use torch.linspace to have fixed points in between. 
+    # we use the random way, and pick a random epsillon between [0,1] 
+    # simply because random sampling gives stochastic coverage 
+    # across training but torch.linspace is fixed which would either be 
+    # too sparse which is bad coverage (we might miss bumps in other places)
+    # or too dense(i.e. alot of points) which would be too slow to process.
+    # so randomly picking numbers is a much better choice as it allows us to
+    # cover more ground so to speak(we work with random spots each time we train
+    # which over the course of training, after many iterations, we end up 
+    # checking all over our so called bridge but without wasting time and much faster as well!)
+    # 
+    # so to recap:
+    # the critic needs to be smooth/1lipschitz and being smooth means its output values dont 
+    # change too sharply for small changes in the input image.
+    # 1-lipschitz means the critic's slope/rate of change (gradient with respect to input images)
+    # is never bigger than 1.
+    # and finallt we interpolate between real and fake so we can test and enforce
+    # this slope constraint in the space/points between the two distributions, not just at real/fake points.
+    #
+    # create a random eps with shape (batch, 1,1,1) so it has h,w,c dims
+    # so when we multiply it by inputs, its broadcast to have the right dimensions
     eps = torch.rand(batch_size, 1, 1, 1, device=device)
-    interpolated_imgs = eps * imgs_real + (1 - eps) * imgs_fake
-    interpolated_imgs.requires_grad_(True)
+    interpolated_input = eps * imgs_real + (1 - eps) * imgs_fake
+    interpolated_input.requires_grad_(True)
     
-    preds = discriminator(interpolated_imgs)
-    grad = torch.autograd.grad(outputs=preds,
-                               inputs=interpolated_imgs,
-                               grad_outputs=torch.ones_like(preds),
+    inter_preds = discriminator(interpolated_input)
+    grad = torch.autograd.grad(outputs=inter_preds,
+                               inputs=interpolated_input,
+                               grad_outputs=torch.ones_like(inter_preds),
                                create_graph=True,
                                retain_graph=True,
                                only_inputs=True,)[0]
     # caculate l2-norm of gradients
     grad_norm = grad.view(batch_size, -1).norm(2, dim=1)
+    # make sure the gradient norm with respect to inputs is almost equal to 1
+    # any deviation from norm = 1 is therefore penalized
     penalty = ((grad_norm - 1) ** 2).mean()
     return penalty
+
+def wgangp_critic_loss(critic:DiscriminatorCNN, imgs_real, imgs_fake, lambda_factor=10):
+    # the actual loss for wgangp is the wgan loss + the gp
+    # the gp replaces the weight clipping part only so the 
+    # actual loss stays the same
+    # disc_loss= E[disc(fake)] - E[disc(real)] + lambda⋅GP
+    # lambda is usally 10.
+    wgan_loss = wgan_critic_loss(critic(imgs_real), critic(imgs_fake))
+    gp = gradient_penalty(critic, imgs_real, imgs_fake)
+    return wgan_loss + lambda_factor*gp
 
 x = torch.randn((5,3,32,32))
 z = torch.randn((5,100))
@@ -2749,7 +2785,13 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     return data_loader
 #%%
 # now lets train 
-loss_type = 'lsgan'
+#'lsgan'
+#'wgan'
+#'wgangp'
+loss_type = 'wgangp'
+# for wgangp /gradient polcity scaler lambda
+lambda_factor=10
+
 dataset_name = 'cifar10'
 batch_size=128
 train_loader = get_dataloader(dataset_name=dataset_name, split='train',batch_size=batch_size)
@@ -2772,6 +2814,7 @@ discriminatorcnn = discriminatorcnn.to(device)
 generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
 
+# todo use betas=[0,9] for wgan/wgangp it seems it works better 
 disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, [0.5, 0.999])
 gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
 
@@ -2816,7 +2859,7 @@ for epoch in range(epochs):
         elif loss_type =='wgan':
             disc_loss = wgan_critic_loss(preds_real, preds_fake)
         elif loss_type =='wgangp':
-            raise NotImplemented()
+            disc_loss = wgangp_critic_loss(discriminatorcnn, imgs_real, imgs_fake,lambda_factor=lambda_factor)
         else:
             raise ValueError(f"Invalid loss type:{loss_type} entered!")
         
@@ -2844,15 +2887,20 @@ for epoch in range(epochs):
         fake_imgs = generatorcnn(z_vector)
         preds_fake = discriminatorcnn(fake_imgs)
         
+        # generator loss
         # swap loss! treat fake images as real images
         if loss_type=='lsgan':
             gen_real_loss = lsgan_generator_loss(preds_fake)
+            
         elif 'wgan' in loss_type: #wgan-wgangp
             gen_real_loss = wgan_generator_loss(preds_fake)
+        
         else:
             raise ValueError(f"losstype {loss_type} not detected!")
             
         # optimize generator
+        # TODO update every 5 discriminator updates 
+        # TODO (5 critic updates for each generator update for faster convergence)
         gen_optimizer.zero_grad()
         gen_real_loss.backward()
         gen_optimizer.step()
@@ -2891,9 +2939,6 @@ for epoch in range(epochs):
                     title=f'Generated Images at Epoch {epoch}',
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
-    
-
-
 
 #%%
 # progan?stackgan?
