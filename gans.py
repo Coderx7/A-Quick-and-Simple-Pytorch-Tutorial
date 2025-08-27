@@ -126,10 +126,10 @@ class Generator(nn.Module):
 imgs = torch.randn(size=(5,1,28,28))
 latent_vectors = torch.randn(size=(5,100))
 
-discriminator = Discriminator(28*28, 32)
+discriminatorcnn = Discriminator(28*28, 32)
 generator = Generator(100, 32, 28*28)
 
-dis_output = discriminator(imgs)
+dis_output = discriminatorcnn(imgs)
 gen_output = generator(latent_vectors)
 
 print(f'{dis_output.shape=}')
@@ -243,17 +243,17 @@ gen_hidden_size = 32
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
 
 # now lets create our models 
-discriminator = Discriminator(disc_input_size, disc_hidden_size, act=nn.LeakyReLU(0.2))
+discriminatorcnn = Discriminator(disc_input_size, disc_hidden_size, act=nn.LeakyReLU(0.2))
 generator = Generator(gen_input_size, gen_hidden_size, gen_output_size, act=nn.LeakyReLU(0.2) )
 # 
-discriminator = discriminator.to(device)
+discriminatorcnn = discriminatorcnn.to(device)
 generator = generator.to(device)
 
 # optimizers, note we are using different lr's here!
 # note adam optimizer is not random choice, its one of the optimizers
 # that can get us a quick convergence without much hassle, especially in GANs
 # it can also lower the possibility of mode collapse to some extend
-disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=0.02)
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), lr=0.02)
 gen_optimizer = torch.optim.Adam(generator.parameters(), lr=0.002)
 
 epochs = 100
@@ -273,7 +273,7 @@ losses=[]
 
 for epoch in range(epochs):
     # set models in train mode
-    discriminator.train()
+    discriminatorcnn.train()
     generator.train()
     # we dont need image's real labels because we are not trying to classify 
     # mnist didgits! we want to create images and we will create our own labels
@@ -284,14 +284,14 @@ for epoch in range(epochs):
         real_images = (real_images*2 - 1).to(device)
         # discriminator needs to classify the real image as real
         # and fake images as fake. so we need to have both of them
-        real_outputs = discriminator(real_images)
+        real_outputs = discriminatorcnn(real_images)
         real_images_loss = real_loss(real_outputs.cpu(), is_smoothed=True)
         
         # now we generate an image using generator and classify it as fake
         latent_vectors = torch.distributions.Uniform(-1,1).sample((real_images.size(0), gen_input_size)).to(device)
         fake_images = generator(latent_vectors)
         # the discreminator must classify all generated images as fake
-        fake_outputs = discriminator(fake_images)
+        fake_outputs = discriminatorcnn(fake_images)
         fake_images_loss = fake_loss(fake_outputs.cpu())
         discriminator_loss = real_images_loss + fake_images_loss
         
@@ -309,7 +309,7 @@ for epoch in range(epochs):
         # we wont be updating the discriminator cuz it will mess up its detection ability
         # however we will optimize the generator so that it can update its weights
         # to more accurately reconstruct the images to fool the discriminator(lower the loss)
-        generated_outputs = discriminator(fake_images)
+        generated_outputs = discriminatorcnn(fake_images)
         generated_real_loss = real_loss(generated_outputs.cpu())
 
         gen_optimizer.zero_grad()
@@ -582,28 +582,28 @@ def fake_loss(preds_fake, smooth=False, strict_DCGAN=False, device='cuda'):
 # or the lmdb versions other people put up later on because the princeton university
 # that hosted the dataset no longer offers any download links.
 # 
+#
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
     dataset_name = dataset_name.lower()
-
     if dataset_name == 'svhn':
         split = 'extra' if not split else split
         transform = transforms.Compose([
         # transforms.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor()])
-        train_dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split=split, transform=transform, download=True)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     
     elif dataset_name == 'celeba':
         split = 'train' if not split else split
         transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
-        train_dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     
     else:
         raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
 
-    return train_loader
+    return data_loader
 
 
 dataset_name = 'svhn'
@@ -1407,7 +1407,9 @@ show_images(imgs,'CLIP direction',figsize=(12,6))
 # in batch use different batches for real and fake separately (especially if you use batchnorm!)
 # use tanh for generator's last layer
 # use label smoothing
-# use adam for generator, and you can use sgd with discriminator!
+# use adam for generator, and you can use sgd with discriminator but we used adam for both!
+# (Adam also helps in lowering mode collapse)
+# use larger batcsizes (it stabalizes the training)
 # 
 # and heres the whole list 
 # Main post at github:  
@@ -2415,7 +2417,7 @@ alphas = torch.linspace(-3,10,steps=24)
 # the outcome of our manipulation
 labels = None
 imgs_out = latent_arithmetic_conditional(generatorcnn_conditional, z1,z2,z_base[2], alpha_values=alphas)
-show_images(imgs_out, f'generated images for +{attr_name1}',figsize=(12,6), cols=8)
+show_images(imgs_out, f'generated images for {attr_name1} & {attr_name2}',figsize=(12,6), cols=8)
 # the results arent good compared to our unconditional version, its because our model isnt
 # doing a great job at generating images, we will revisit this in future again with more powerful
 # architecture and hopefully by then we will get much better results!
@@ -2566,6 +2568,332 @@ show_images(imgs_out, f'generated images for +{attr_name1}',figsize=(12,6), cols
 # recap if necessary
 # 
 #
+#%%
+class DiscriminatorCNN(nn.Module):
+    def __init__(self, hidden_size, act=nn.LeakyReLU(0.2)):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        self.act = act
+        self.net = nn.Sequential(ConvBlock(3, hidden_size, 4, 2, 1, batch_norm=False, act_func=act),
+                                 ConvBlock(hidden_size, hidden_size*2, 4, 2, 1, batch_norm=True, act_func=act),
+                                 ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=True, act_func=act),
+                                 nn.Flatten(),
+                                 nn.Linear(hidden_size*4 * 4*4, 1),)
+        
+        self.apply(weights_init_dcgan)
+                
+    def forward(self, x):
+        return self.net(x)
+
+class GeneratorCNN(nn.Module):
+    def __init__(self, z_size, hidden_size,  act=nn.ReLU()):
+        super().__init__()
+
+        self.z_size = z_size
+        self.hidden_size = hidden_size
+        self.act = act
+    
+        self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
+                                 nn.BatchNorm1d(hidden_size*4* 4*4),
+                                 nn.ReLU(inplace=True),
+                                 nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
+                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
+                                 ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act),   #16x16
+                                 ConvTransBlock(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),              #32x32
+                                 )
+        
+        # initialize weights
+        self.apply(weights_init_dcgan)
+        
+    def forward(self, x): 
+        return self.net(x)
+
+# lsgan is nothing except we replace bce with mse
+# some people use sigmoid at final layer of discriminator to get [0-1]
+# range but since it affects the gradients (i.e. it weakens them
+# since we dont use batchnorm at final layer), we dont do that  
+# mse loss can work with raw unbounded logits/scores just fine
+def _lsgan_real_loss(preds_real, smooth=False):
+    labels = torch.ones_like(preds_real, device=preds_real.device)
+    # LSGAN is more stable than DCGAN so we dont need smoothing as much as we used to
+    # but it can still be benificial like before (in managing models overconfidence)
+    labels = labels * 0.9 if smooth else labels
+    return F.mse_loss(preds_real, labels)
+
+def _lsgan_fake_loss(preds_fake, smooth=False):
+    device = preds_fake.device
+    labels = torch.zeros_like(preds_fake, device=device)
+    labels = torch.ones_like(preds_fake, device=device) * torch.distributions.Uniform(0,0.3).sample()\
+             if smooth else labels
+    return F.mse_loss(preds_fake, labels)
+
+def lsgan_discriminator_loss(preds_real, preds_fake, smooth=False):
+    # treat real as real and fake as fake for discriminator
+    return _lsgan_real_loss(preds_real, smooth) + _lsgan_fake_loss(preds_fake, smooth)
+
+def lsgan_generator_loss(preds_fake):
+    # treat generator output as real
+    return _lsgan_real_loss(preds_fake, smooth=False)
+
+# for wgan we use our discriminator(critic) raw logits like before
+# and the loss is simply the everage of fake-real values
+# and then we need to clip the model weights after each discriminator 
+# optimizer step
+def wgan_critic_loss(preds_real, preds_fake):
+    return -(preds_real.mean() - preds_fake.mean())
+
+def wgan_generator_loss(preds_fake):
+    return -preds_fake.mean()
+
+def gradient_penalty(discriminator, imgs_real, imgs_fake):
+    batch_size = imgs_real.size(0)
+    device = imgs_real.device
+    
+    # we need to interpolate between real and fake images 
+    # because the discriminator/critic must be 1-Lipschitz
+    # in the space between the two distributions.
+    # in another words, the critic must be smooth between 
+    # these two distributions.
+    # again that is its outputs must not change sharply
+    # for small changes in the input images. this is the very definition
+    # of 1-lischitz functions! (our discriminator/critic is a function
+    # from input to output, so all it means here is that, 
+    # this function's(i.e. our model's) outputs dont change 
+    # sharply for small changes in the input (or as we said before, doesnt
+    # move faster than input)).
+    # enforcing the smoothness only at real or fake points isnt enough,
+    # since the critic could be very steep in between.(i.e. values in between
+    # change sharply!) 
+    # imagine this 
+    # we use random eps E [0,1] instead of torch.linspace
+    # because random sampling gives stochastic coverage 
+    # across training. torch.linspace would be fixed, 
+    # either too sparse (bad coverage) or too dense (too slow).
+    eps = torch.rand(batch_size, 1, 1, 1, device=device)
+    interpolated_imgs = eps * imgs_real + (1 - eps) * imgs_fake
+    interpolated_imgs.requires_grad_(True)
+    
+    preds = discriminator(interpolated_imgs)
+    grad = torch.autograd.grad(outputs=preds,
+                               inputs=interpolated_imgs,
+                               grad_outputs=torch.ones_like(preds),
+                               create_graph=True,
+                               retain_graph=True,
+                               only_inputs=True,)[0]
+    # caculate l2-norm of gradients
+    grad_norm = grad.view(batch_size, -1).norm(2, dim=1)
+    penalty = ((grad_norm - 1) ** 2).mean()
+    return penalty
+
+x = torch.randn((5,3,32,32))
+z = torch.randn((5,100))
+discriminatorcnn = DiscriminatorCNN(16)
+generatorcnn = GeneratorCNN(100, 16)
+# print(f'{generatorcnn}')
+doutput = discriminatorcnn(x)
+goutput = generatorcnn(z)
+print(f'{doutput.shape=}')
+print(f'{goutput.shape=}') 
+#
+# 
+#%%
+# lets add a few more datasets 
+
+def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
+    dataset_name = dataset_name.lower()
+
+    if dataset_name.lower() == 'mnist':
+        if isinstance(split, str):
+            split = 'train' in split.lower()
+        else:
+            split = True if (not split or 'train') else False
+                
+        transform = transforms.Compose([
+        # transforms.RandomHorizontalFlip(),
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor()])
+        dataset = datasets.MNIST(os.path.join(store_path, dataset_name.upper()), train=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    elif 'cifar' in dataset_name.lower():
+        if isinstance(split, str):
+            split = 'train' in split.lower()
+        else:
+            split = True if (not split or 'train') else False
+        transform = transforms.Compose([
+        # transforms.RandomHorizontalFlip(),
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor()])
+        dataset = datasets.CIFAR10(os.path.join(store_path, dataset_name.upper()), train=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    elif dataset_name == 'svhn':
+        split = 'extra' if not split else split
+        transform = transforms.Compose([
+        # transforms.RandomHorizontalFlip(),
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor()])
+        dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    elif dataset_name == 'celeba':
+        split = 'train' if not split else split
+        transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
+        dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    
+    else:
+        raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
+
+    return data_loader
+#%%
+# now lets train 
+loss_type = 'lsgan'
+dataset_name = 'cifar10'
+batch_size=128
+train_loader = get_dataloader(dataset_name=dataset_name, split='train',batch_size=batch_size)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+disc_hidden_size = 32#16
+gen_hidden_size = 64
+
+z_size = 100
+
+epochs = 50
+num_batches = len(train_loader)
+interval = num_batches//2+1
+
+#discriminator
+discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
+discriminatorcnn = discriminatorcnn.to(device)
+#generator
+generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
+generatorcnn = generatorcnn.to(device)
+
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, [0.5, 0.999])
+gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
+
+gen_num_samples = 64
+fixed_z = torch.distributions.Uniform(-1,1).sample((gen_num_samples,z_size)).to(device)
+
+experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+losses = []
+
+print(f'Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+
+for epoch in range(epochs):
+
+    discriminatorcnn.train()
+    generatorcnn.train()
+
+    for i, (imgs_real, _) in enumerate(train_loader):
+
+        #scale input to [-1,1]
+        imgs_real = (2*imgs_real-1).to(device)
+        
+        # imgs_real += 0.05 * torch.randn_like(imgs_real)
+               
+        # train discriminator/critic! 
+        # real image predictions
+        preds_real = discriminatorcnn(imgs_real)
+        # disc_real_loss = real_loss(preds_real, smooth=True, device=device)
+        # generate an image using generator 
+        z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+        # we detach the imgs_fake so the discriminator cant use the gradients
+        # from the generator and quickly learn!
+        imgs_fake = generatorcnn(z_vector).detach()
+        
+        # add noise to fake images as well(not needed for dcgan)
+        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        
+        preds_fake = discriminatorcnn(imgs_fake)
+        # disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
+        # calculate discrimiator loss out of real and fake losses
+        if loss_type =='lsgan':
+            disc_loss = lsgan_discriminator_loss(preds_real, preds_fake)
+        elif loss_type =='wgan':
+            disc_loss = wgan_critic_loss(preds_real, preds_fake)
+        elif loss_type =='wgangp':
+            raise NotImplemented()
+        else:
+            raise ValueError(f"Invalid loss type:{loss_type} entered!")
+        
+        # for debugging purposes
+        # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
+        # then it means our discriminator is strong but if both are near the same
+        # value and the loss is low then it means our discriminator is confused
+        # or is over-regularized.
+        disc_real_mean = preds_real.mean().item()
+        disc_fake_mean = preds_fake.mean().item()
+        
+        # and optimize discrimnator 
+        disc_optimizer.zero_grad()
+        disc_loss.backward()
+        disc_optimizer.step()
+        
+        # dont forget to clip discriminator's weights in wgan
+        if loss_type=='wgan':
+            for p in discriminatorcnn.parameters():
+                # roughly 1-lipschitz 
+                p.data.clip_(-0.01, 0.01)
+
+        # now train genertor to create images that look real
+        z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+        fake_imgs = generatorcnn(z_vector)
+        preds_fake = discriminatorcnn(fake_imgs)
+        
+        # swap loss! treat fake images as real images
+        if loss_type=='lsgan':
+            gen_real_loss = lsgan_generator_loss(preds_fake)
+        elif 'wgan' in loss_type: #wgan-wgangp
+            gen_real_loss = wgan_generator_loss(preds_fake)
+        else:
+            raise ValueError(f"losstype {loss_type} not detected!")
+            
+        # optimize generator
+        gen_optimizer.zero_grad()
+        gen_real_loss.backward()
+        gen_optimizer.step()
+        
+        if i+1%interval==0:
+            # append discriminator loss and generator loss
+            losses.append((disc_loss.item(), gen_real_loss.item()))
+            # print discriminator and generator loss
+            print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:6.4f} | Gen Loss: {gen_real_loss:6.4f}')
+
+    losses.append((disc_loss.item(), gen_real_loss.item()))
+    
+    d_loss_mean = np.mean(np.array(losses)[:,0])
+    g_loss_mean = np.mean(np.array(losses)[:,1])
+    
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} ')
+    print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
+    
+    #save model weights at each epoch
+    torch.save({"state_dict":generatorcnn.state_dict(),
+                "hidden_size":gen_hidden_size,
+                "z_size":z_size,
+                "epoch":epoch,
+                "loss_type":loss_type,
+                "losses":losses,
+                "dataset_name":dataset_name,
+                }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
+    
+    # generate some images mid training to evaluate our model's performance 
+    with torch.no_grad():
+        generatorcnn.eval()
+        # reshape images back to 32x32x3
+        generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
+        display_images(generated_images, 
+                    cols=gen_num_samples//8,
+                    title=f'Generated Images at Epoch {epoch}',
+                    unnormalize=True,
+                    save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
+    
+
+
 
 #%%
 # progan?stackgan?
