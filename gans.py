@@ -2720,7 +2720,7 @@ def wgangp_critic_loss(critic:DiscriminatorCNN, imgs_real, imgs_fake, lambda_fac
     # lambda is usally 10.
     wgan_loss = wgan_critic_loss(critic(imgs_real), critic(imgs_fake))
     gp = gradient_penalty(critic, imgs_real, imgs_fake)
-    return wgan_loss + lambda_factor*gp
+    return wgan_loss + (lambda_factor*gp)
 
 x = torch.randn((5,3,32,32))
 z = torch.randn((5,100))
@@ -2807,7 +2807,7 @@ epochs = 50
 num_batches = len(train_loader)
 interval = num_batches//2+1
 # every 5 discriminator/critic updates, update the generator
-gen_update_interval = 5
+gen_update_interval = 5 if "wgan" in loss_type else 1
 
 #discriminator
 discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
@@ -2817,11 +2817,13 @@ generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
 
 # todo use betas=[0,9] for wgan/wgangp it seems it works better 
-disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, [0.5, 0.999])
-gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, [0.5, 0.999])
+# the paper says [0.5,0.999] diverges in wgan/wgangp
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, betas=betas)
 
 gen_num_samples = 64
-fixed_z = torch.distributions.Uniform(-1,1).sample((gen_num_samples,z_size)).to(device)
+fixed_z = torch.randn((gen_num_samples,z_size)).to(device)
 
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 losses = []
@@ -2861,7 +2863,7 @@ for epoch in range(epochs):
         elif loss_type =='wgan':
             disc_loss = wgan_critic_loss(preds_real, preds_fake)
         elif loss_type =='wgangp':
-            disc_loss = wgangp_critic_loss(discriminatorcnn, imgs_real, imgs_fake,lambda_factor=lambda_factor)
+            disc_loss = wgangp_critic_loss(discriminatorcnn, imgs_real, imgs_fake, lambda_factor=lambda_factor)
         else:
             raise ValueError(f"Invalid loss type:{loss_type} entered!")
         
@@ -2881,7 +2883,7 @@ for epoch in range(epochs):
         # dont forget to clip discriminator's weights in wgan
         if loss_type=='wgan':
             for p in discriminatorcnn.parameters():
-                # roughly 1-lipschitz 
+                # keep it roughly 1-lipschitz 
                 p.data.clip_(-0.01, 0.01)
 
         # now train genertor to create images that look real
@@ -2903,7 +2905,7 @@ for epoch in range(epochs):
         # optimize generator
         # update generator with a delay, usually update per 5 critic update
         # seems to make convergence faster
-        if i+1%gen_update_interval == 0:
+        if (i+1)%gen_update_interval == 0:
             gen_optimizer.zero_grad()
             gen_real_loss.backward()
             gen_optimizer.step()
@@ -2927,6 +2929,7 @@ for epoch in range(epochs):
                 "hidden_size":gen_hidden_size,
                 "z_size":z_size,
                 "epoch":epoch,
+                "gen_update_interval":gen_update_interval,
                 "loss_type":loss_type,
                 "losses":losses,
                 "dataset_name":dataset_name,
