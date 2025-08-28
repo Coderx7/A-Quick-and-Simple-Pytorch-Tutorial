@@ -2806,6 +2806,8 @@ z_size = 100
 epochs = 50
 num_batches = len(train_loader)
 interval = num_batches//2+1
+# every 5 discriminator/critic updates, update the generator
+gen_update_interval = 5
 
 #discriminator
 discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
@@ -2899,11 +2901,12 @@ for epoch in range(epochs):
             raise ValueError(f"losstype {loss_type} not detected!")
             
         # optimize generator
-        # TODO update every 5 discriminator updates 
-        # TODO (5 critic updates for each generator update for faster convergence)
-        gen_optimizer.zero_grad()
-        gen_real_loss.backward()
-        gen_optimizer.step()
+        # update generator with a delay, usually update per 5 critic update
+        # seems to make convergence faster
+        if i+1%gen_update_interval == 0:
+            gen_optimizer.zero_grad()
+            gen_real_loss.backward()
+            gen_optimizer.step()
         
         if i+1%interval==0:
             # append discriminator loss and generator loss
