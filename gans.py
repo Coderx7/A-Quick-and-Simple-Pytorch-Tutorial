@@ -2790,7 +2790,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'lsgan'
+loss_type = 'wgan'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
 
@@ -2811,6 +2811,7 @@ z_size = 100
 # without bn, the convergence rate slows down drastically!(also wgangp gives better results
 # than wgan when no bn is usded. when bn is used their results seem the same)
 # use_batchnorm = loss_type=='lsgan'
+# I enable it by default but you can disable it for any experiments
 use_batchnorm = True
 
 epochs = 50
@@ -2956,6 +2957,78 @@ for epoch in range(epochs):
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 
+#%%
+# now lets retest again 
+#%%
+def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebAClassifier,
+                          word2idx, 
+                          random_gen, 
+                          showcase_one_sample=True,
+                          num_samples=32, 
+                          attribute_pool_size=256,
+                          maximum_prob_for_neutral_confidence=0.1,
+                          attribute_confidence_rate=0.7,
+                          alpha_values=torch.linspace(-3, 7, steps=24),
+                          device='cpu'):
+
+    # z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
+    z_base = get_neutral_latents(generator, classifier, word2idx, attr_name, num_samples,
+                                random_gen, device,
+                                # use lower probs to get more accurate results, 
+                                maximum_prob_for_neutral_confidence)
+
+    (ims1,zs1),(ims2,zs2) = get_samples_for(generator, classifier, attr_name,
+                                            word2idx,
+                                            num_samples=attribute_pool_size,
+                                            random_generator=random_gen,
+                                            # increase the confidence level to 
+                                            # get more accurate results
+                                            threshold=attribute_confidence_rate,
+                                            device=device)
+
+    col_count1 = math.ceil(math.sqrt(ims1.size(0)))
+    col_count2 = math.ceil(math.sqrt(ims2.size(0)))
+        
+    show_images(ims1, f'latents with ({attr_name})', cols=col_count1, figsize=(12,6))
+    show_images(ims2, f'latents without({attr_name})', cols=col_count2, figsize=(12,6))
+    
+    latents = z_base[0] if showcase_one_sample else z_base
+    
+    # from women to male!(woman gradually loses feminity and turns into male)
+    imgs = latent_arithmetic_unconditional(generator, zs1, zs2[:zs.size(0)], latents, alpha_values)
+    show_images(imgs, f'latent arithmetic(opposite toward {attr_name})', figsize=(12,6))
+    
+    # from male to female!(maleness decreases at each step)
+    imgs = latent_arithmetic_unconditional(generator, zs2[:zs.size(0)], zs1, latents, alpha_values)
+    show_images(imgs, f'latent arithmetic({attr_name} toward the opposit)',figsize=(12,6))
+    print(f'done!')
+
+run_latent_arithmatic(attr_name='Male', 
+                      generator=generatorcnn, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=64,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.05,
+                      attribute_confidence_rate=0.7,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+
+#%%
+run_latent_arithmatic(attr_name='Smiling', 
+                      generator=generatorcnn, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=64,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.01,
+                      attribute_confidence_rate=0.9,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
 #%%
 # progan?stackgan?
 # Stylegan2/3?
