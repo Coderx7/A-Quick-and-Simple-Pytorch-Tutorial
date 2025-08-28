@@ -2571,14 +2571,15 @@ show_images(imgs_out, f'generated images for {attr_name1} & {attr_name2}',figsiz
 #
 #%%
 class DiscriminatorCNN(nn.Module):
-    def __init__(self, hidden_size, act=nn.LeakyReLU(0.2)):
+    def __init__(self, hidden_size, use_batchnorm=True, act=nn.LeakyReLU(0.2)):
         super().__init__()
 
         self.hidden_size = hidden_size
         self.act = act
+        self.use_batchnorm = use_batchnorm
         self.net = nn.Sequential(ConvBlock(3, hidden_size, 4, 2, 1, batch_norm=False, act_func=act),
-                                 ConvBlock(hidden_size, hidden_size*2, 4, 2, 1, batch_norm=True, act_func=act),
-                                 ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=True, act_func=act),
+                                 ConvBlock(hidden_size, hidden_size*2, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),
+                                 ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),
                                  nn.Flatten(),
                                  nn.Linear(hidden_size*4 * 4*4, 1),)
         
@@ -2801,8 +2802,16 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 disc_hidden_size = 32#16
 gen_hidden_size = 64
-
 z_size = 100
+# wgan and wgangp dont use batchnorm because it messes with the 1-lipschitz constraint
+# as it introduces sample coupling(sample to sample coupling) while 1-lipschitz constraint
+# requires each and every sample to conform to this. I however trained with batchnorm and 
+# it seemed completely fine! though it may not work on complex datasets, or we might see 
+# mode collapse later on, I havent tested this thoroughly though, but cifar10/celeba seem fine
+# without bn, the convergence rate slows down drastically!
+# use_batchnorm = True
+use_batchnorm = loss_type=='lsgan'
+
 
 epochs = 50
 num_batches = len(train_loader)
@@ -2811,7 +2820,7 @@ interval = num_batches//2+1
 gen_update_interval = 5 if "wgan" in loss_type else 1
 
 #discriminator
-discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size)
+discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size, use_batchnorm=use_batchnorm)
 discriminatorcnn = discriminatorcnn.to(device)
 #generator
 generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
@@ -2931,6 +2940,7 @@ for epoch in range(epochs):
                 "epoch":epoch,
                 "gen_update_interval":gen_update_interval,
                 "loss_type":loss_type,
+                "use_batchnorm":use_batchnorm,
                 "losses":losses,
                 "dataset_name":dataset_name,
                 }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
