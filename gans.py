@@ -2790,7 +2790,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'wgan'
+loss_type = 'lsgan'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
 
@@ -2808,10 +2808,10 @@ z_size = 100
 # requires each and every sample to conform to this. I however trained with batchnorm and 
 # it seemed completely fine! though it may not work on complex datasets, or we might see 
 # mode collapse later on, I havent tested this thoroughly though, but cifar10/celeba seem fine
-# without bn, the convergence rate slows down drastically!
-# use_batchnorm = True
-use_batchnorm = loss_type=='lsgan'
-
+# without bn, the convergence rate slows down drastically!(also wgangp gives better results
+# than wgan when no bn is usded. when bn is used their results seem the same)
+# use_batchnorm = loss_type=='lsgan'
+use_batchnorm = True
 
 epochs = 50
 num_batches = len(train_loader)
