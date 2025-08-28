@@ -2941,7 +2941,7 @@ for epoch in range(epochs):
                 "epoch":epoch,
                 "gen_update_interval":gen_update_interval,
                 "loss_type":loss_type,
-                "use_batchnorm":use_batchnorm,
+                "use_batchnorm":use_batchnorm,#discriminator's batchnorm
                 "losses":losses,
                 "dataset_name":dataset_name,
                 }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
@@ -2958,8 +2958,29 @@ for epoch in range(epochs):
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 
 #%%
-# now lets retest again 
+# 
+# load models 
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250828185253.pt",
+                        map_location="cpu",
+                        weights_only=False)
+
+epoch = checkpoint["epoch"]
+z_size = checkpoint["z_size"]
+hidden_size = checkpoint["hidden_size"]
+dataset_name = checkpoint["dataset_name"]
+loss_type = checkpoint["loss_type"]
+losses = np.array(checkpoint.pop("losses"))
+
+generatorcnn = GeneratorCNN(z_size,hidden_size)
+generatorcnn.load_state_dict(checkpoint.pop("state_dict"))
+generatorcnn.eval()
+
+for k,v in checkpoint.items():
+    print(f'{k}: {v}')
+    
+print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
+# now lets retest again 
 def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebAClassifier,
                           word2idx, 
                           random_gen, 
@@ -2971,7 +2992,6 @@ def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebACl
                           alpha_values=torch.linspace(-3, 7, steps=24),
                           device='cpu'):
 
-    # z_base = torch.randn(size=(num_samples,generatorcnn.z_size),device=device,generator=random_gen)
     z_base = get_neutral_latents(generator, classifier, word2idx, attr_name, num_samples,
                                 random_gen, device,
                                 # use lower probs to get more accurate results, 
