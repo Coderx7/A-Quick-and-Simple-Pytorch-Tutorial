@@ -2788,7 +2788,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'wgangp'
+loss_type = 'wgan'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
 
@@ -2816,7 +2816,6 @@ discriminatorcnn = discriminatorcnn.to(device)
 generatorcnn = GeneratorCNN(z_size, hidden_size=gen_hidden_size)
 generatorcnn = generatorcnn.to(device)
 
-# todo use betas=[0,9] for wgan/wgangp it seems it works better 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, betas=betas)
@@ -2910,7 +2909,7 @@ for epoch in range(epochs):
             gen_real_loss.backward()
             gen_optimizer.step()
         
-        if i+1%interval==0:
+        if (i+1)%interval==0:
             # append discriminator loss and generator loss
             losses.append((disc_loss.item(), gen_real_loss.item()))
             # print discriminator and generator loss
@@ -2942,7 +2941,7 @@ for epoch in range(epochs):
         generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
         display_images(generated_images, 
                     cols=gen_num_samples//8,
-                    title=f'Generated Images at Epoch {epoch}',
+                    title=f'Generated with {loss_type.upper()} at Epoch {epoch} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 
