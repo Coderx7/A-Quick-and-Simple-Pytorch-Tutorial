@@ -2736,8 +2736,60 @@ print(f'{goutput.shape=}')
 #
 # 
 #%%
-# lets add a few more datasets 
+# add FID/IFD/Incepcionscore metric inception score
+# before we go for the actual trainig, lets also implement
+# metrics thats used in GAN papers to convey how the model
+# is doing. simply reporting the loss doesnt convey much as
+# with GANs, losses arent a good representation of how the final
+# image looks like, the quality, its variety/diversity of samples
+# so in 2016 Inception score was introduced in Improved Techniques for Training GAN
+# (paper: ) to do exactly that and it became the standard in gan papers
+# the idea behind inception score was that, a good gan needs to produce high quality
+# images, that would mean each image should look like a clear object from some class.
+# and also it needs to have good diversity, which would mean the the set of generated 
+# images should span many classes not just one.
+# in order to capture these two creteria, the authors came up with the following thinking:
+# first feed generated images into InceptionV3 model(cuz they came from google brain!)
+# and get a conditional label distribution for each image p(y∣x) (probability of class y given this image x)
+# then average all those class probability vectors in that batch of generated images, this is
+# known as marginal distribution p(y), its basically for telling us if we randomly
+# pick one generated image whats the overall chance it looks like a cat, dog, car, etc?
+# if the generator only generates cats, the marginal distribution might for example 
+# look like [0.99 cat, 0.01 everything else] which means low diversity! but if on the other hand
+# it generates many classes, the marginal would be more balanced and all classes would 
+# roughly be the same (i.e. cat = dog = car = around the same value) which means high diversity!
+# and then calculate the kl divergence between the two (i.e. for each image, compare 
+# p(y∣x) (sharp prediction for that image) to p(y) (diverse predictions across dataset)
+# and this gives us the score. 
+# the idea is that to check if an image sharp/has a high quality, we see if its clear
+# e.g. "its definitely a dog", therefore p(y∣x) will have low entropy (peak at one class)
+# similarliy for analyzing diversity, we check if all generated images are varied 
+# (dogs, cats, cars…), if so p(y) has high entropy (spread across classes).
+# and the KL divergence rewards this combo. however since its in log form, the numbers
+# can be negative and positive, so the authors used exp() on it to make it all positive
+# and easier to work with (starts from 1 and goes up so bigger number == better)
+#
+# the problem with inception score is that it can be fooled, that is, if the generator
+# collapses to a few classes but still produces very sharp images, the score can still 
+# be high which is not robust. moreover it also depends on imagenet labels, so it can  
+# not reflect "quality" in domains that are very different from imagenet (e.g. medical images).
+# so a new metric was proposed in 2017 called Frechet Inception Distance (FID) in "GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium"
+# paper (paper: ) and became the golden standard ever since (since 2018)!
+# the paper says the issue with inception score is that it only evaluates relative entropy
+# between individual predictions and the marginal distribution, not distributional similarity.
+# that is, it only cares about how its predictions fair against each otehr, rather than comparing
+# the generated images distribution against the real image distributions which is a much better
+# thing to do! FID therefore instead compares the real vs. generated distributions in Inception feature space,
+# using means and covariances (like Fréchet distance and hence the name!)
+# this captures both quality and diversity more robustly so FID replaced IS since 2018 
+# and is used in BigGAN, StyleGAN, other generative models like diffusion models (which 
+# we'll see in diffusion chapter).
+# so we will be using FID but will also have IS and compare them 
 
+
+
+#%%
+# lets add a few more datasets 
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
     dataset_name = dataset_name.lower()
 
@@ -2785,6 +2837,9 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
 
     return data_loader
+
+
+
 #%%
 # now lets train 
 #'lsgan'
