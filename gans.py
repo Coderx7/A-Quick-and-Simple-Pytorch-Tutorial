@@ -2254,7 +2254,11 @@ z_base = get_neutral_latents(generatorcnn,celeba_classifier, celeba_attr_word2id
                 celeba_attr_word2idx=celeba_attr_word2idx,
                 num_samples=256,
                 random_generator=random_gen,
-                threshold=0.9,
+                # too much confidence can ignore many correct 
+                # but lower confidence samples and therefore
+                # result in less accurate direction and 
+                # ultimately worse result! 
+                threshold=0.8,
                 device=device)
 
 show_images(ims_s, f'batch for {attr_name}',figsize=(12,6),cols=16)
@@ -2265,6 +2269,10 @@ alphas = torch.linspace(-3,7,steps=24)
 img_results = latent_arithmetic_unconditional(generatorcnn, zs_s, zs_ns, z_base[0],alpha_values=alphas)
 show_images(img_results, 'latent arithmetic(not smiling to smiling)',figsize=(12,6))
 # from smilig to no smiling(the smile gradually fades into anger/crying)
+# sidenote: 
+# if samples with smiles are less than 13/14, this might not be the case!
+# larger samples result in more accurate/stable direction calculation and better 
+# end result(play with threshold for get_samples_for and see the result)
 img_results = latent_arithmetic_unconditional(generatorcnn, zs_ns, zs_s, z_base[0],alpha_values=alphas)
 show_images(img_results, 'latent arithmetic(smiling to nosmiling/angry/crying)',figsize=(12,6))
 #%%
@@ -2737,11 +2745,15 @@ print(f'{goutput.shape=}')
 # 
 #%%
 # add FID/IFD/Incepcionscore metric inception score
-# before we go for the actual trainig, lets also implement
-# metrics thats used in GAN papers to convey how the model
-# is doing. simply reporting the loss doesnt convey much as
-# with GANs, losses arent a good representation of how the final
-# image looks like, the quality, its variety/diversity of samples
+# up until now, we have checked the training results visually by 
+# looking at the generated images during training and telling if everything
+# is going as expected. we couldnt decide the image quality simply based on 
+# the loss values so now before we go for the actual trainig, lets also implement
+# the metrics that will allow us in solving this issue, something thats used in 
+# GAN papers to convey how the model is doing! 
+# other researchers like us came to the very same decision, that simply reporting
+# the loss doesnt convey much as with GANs, losses arent a good representation of
+# how the final image looks like, the quality, its variety/diversity of samples
 # so in 2016 Inception score was introduced in Improved Techniques for Training GAN
 # (paper: ) to do exactly that and it became the standard in gan papers
 # the idea behind inception score was that, a good gan needs to produce high quality
@@ -2785,9 +2797,177 @@ print(f'{goutput.shape=}')
 # and is used in BigGAN, StyleGAN, other generative models like diffusion models (which 
 # we'll see in diffusion chapter).
 # so we will be using FID but will also have IS and compare them 
+from scipy import linalg
+class IS_FID_Calculator():
+    def __init__(self, device='cpu'):
+        
+        self.device = device
+        
+        weights=models.Inception_V3_Weights.IMAGENET1K_V1
+        self.model = models.inception_v3(weights=weights).to(device)
+        # we need imagenet mean/std for input preprocessing
+        # print(f'{weights.transforms()=}')
+        self.mean = torch.tensor(weights.transforms().mean, device=device).view(1,3,1,1)
+        self.std  = torch.tensor(weights.transforms().std,  device=device).view(1,3,1,1)
+        self.model.eval()
+        
+        # save for switching between is and fid metrics
+        # for FID we remove the classifier but for IS we
+        # actually use the classifier!
+        self.fc = self.model.fc
+        
+    def _preprocess(self, imgs):
+        # inception expects input size of 299x299 and normalized
+        # the original transformation was resizing to 342 on the
+        # smallest dim and then center-cropping 299x299m but since
+        # our data is 32x32, resizing to 342 would introduce massive
+        # pixelation/blurriness, and the scores wouldnt be reliable
+        # so instead i decided to go for 299 as before, the better
+        # way is to use larger resolutions or use an inceptionv3 
+        # model trained on 32x32 imagenet!
+        #
+        # h, w = imgs.shape[2:]
+        # # resize the small side to 342, so we keep aspect ratio
+        # small_side = min(h,w)
+        # scale = 342 / small_side
+        # new_h = int(round(h * scale))
+        # new_w = int(round(w * scale))
+        # imgs = F.interpolate(imgs, size=(new_h, new_w), mode='bilinear')
+        # # center crop to 299x299
+        # top = (new_h - 299) // 2
+        # left = (new_w - 299) // 2
+        # imgs = imgs[:, :, top:top+299, left:left+299]
+        imgs = F.interpolate(imgs, size=(299, 299), mode='bilinear')
+        imgs = (imgs - self.mean) / self.std
+        
+        # sidenote: 
+        # we could use weights.transform() but it would only
+        # run on cpu and we have to manually process each image
+        # first converting the image tenstors back to pil and then
+        # run it through the transforms() and then stack the results
+        # and send to gpu! thats why we used interpolate and manual mean/std
+        # normalziation, it runs all on the gpu and is vectorized!
+        return imgs
+    
+    # def _forward(self, imgs):
+    #     self.model(imgs)
+        
+    @torch.no_grad()
+    def compute_IS(self, images, splits=10):
+        # calculate IS = exp(Ex​[KL(p(y∣x) ∥ p(y))]), p(y)=Ex​[p(y∣x)]
+        # Ex is expectation of x
+        # assign back the classifier in case FID was called
+        self.model.fc = self.fc
+        images = self._preprocess(images)
+        preds = self.model(images).softmax(dim=-1)
+                
+        # to calculate the IS score, we can do it in one go
+        # or do it in splits as the authors did. if we do
+        # this in one go, we would only get a single score
+        # which already shows how diverse/confident the model's 
+        # predictions are which is fine, but it does not tell
+        # us how stable that score is with respect to different
+        # subsets of data. IS can give varying scores for small
+        # datasets so its that robust! on the other hand if
+        # we go the other way and do split, by splitting the 
+        # dataset and computing IS per split and then reporting
+        # mean ± std, we can capture how much the score fluctuates!
+        # this will provid us with a measure of reliability 
+        # (error bars) that makes model comparisons much easier
+        # and more meaningful!
+        
+        # batchsize must be >= split
+        batch_size = preds.size(0)
+        assert batch_size>=splits, f'batch_size({batch_size}) must be >= splits{splits}'
+        split_size = batch_size // splits
+        scores = []
+
+        for i in range(splits):
+            # p(y∣x)
+            preds_split = preds[i*split_size:(i+1)*split_size, : ]
+            # take the average of classes (marginal distribution)
+            py = preds_split.mean(dim=0)
+            # print(f'{py.shape=}')
+            # calculate kl divergence between p(y∣x) (sharp prediction for that image)
+            # with p(y) (diverse predictions across dataset) (kl term per class)
+            # KL(p(y∣x) ∥ p(y)) = ∑ p(y∣x) log(p(y∣x)/p(y)) 
+            # note: log(a/b) = log(a)-log(b)
+            kl = preds_split * (preds_split.log() - py.log())
+            # sum over classes so we get per-sample KL. we do 
+            # this so we get a single value of divergence for
+            # each sample, then do a mean() to get the kl mean
+            # of the whole split
+            kl_mean = kl.sum(dim=1).mean()
+            score = kl_mean.exp()
+            scores.append(score)
+        # now instead of having a single vlaue, we calculate the mean/std of
+        # the split socres 
+        return float(np.mean(scores)), float(np.std(scores))
 
 
+    @torch.no_grad()
+    def _get_FID_mean_covariance(self, imgs):
+        imgs = self._preprocess(imgs)
+        features = self.model(imgs)
+        mean = features.mean(dim=0)
+        covariance = torch.cov(features.T)
+        return mean, covariance
+    
+    @torch.no_grad()
+    def compute_FID(self, real_imgs, fake_imgs):
+        #
+        # compute FID=∥ μ_r - μ_f ​∥² + Tr(Σr​ + Σf​ - 2 * (Σr​Σf​)1/2)
+        # mu is mean and sigma is covariance matrix
+        # Tr(M) means sum of diagonal elements of the input matrix(M)
+        # its torch.Trace() 
+        
+        # remove the classifier, we want 2048 features
+        self.model.fc = nn.Identity()
+        real_mean,real_cov = self._get_FID_mean_covariance(real_imgs)
+        fake_mean,fake_cov = self._get_FID_mean_covariance(fake_imgs)
+        
+        mean_diff = real_mean - fake_mean
+        # squared L2 norm
+        mean_diff_squared = mean_diff.dot(mean_diff)#.to(self.device)
+        # take matrix square root of covariance matrixes
+        # to see how similar the two are 
+        #
+        # sidenote: we cant use dot product for example to get similarity
+        # betwene the covariance matrixes, simply because that would give
+        # us the angular similarity and ignore the geometry of probability
+        # distributions. we want the geometric similarity as well.
+        # the FID distance is in fact also known as wasserstein-2 distance
+        # and the sqrtm(squre root trace) comes from that! so the dot product would
+        # measure raw similarity of numbers but the sqrtm would measure how
+        # close the distributions are in terms of optimal transport!
+        # geometrically covariance matrices represent ellipses in the feature
+        # space. the matrix square root aligns these ellipses in a way that 
+        # accounts for scale and orientation. the trace with the square root
+        # gives the true minimal cost of transporting one Gaussian distribution
+        # into the other. to get a better mental image, imagine these two 
+        # covariance matrixes as two ellipses, one is horizontal, and the 
+        # other is vertical, now if we dot product the two, we might get a 
+        # large value, since the varaince is high, however they are not 
+        # the same distributions, they do not look the same, one is horizontal
+        # the other is vertical. the trace squre root captures exactly this 
+        # differences and correctly tells us they are not similar at all!
+        # pytorch doesnt offer sqrtm function (tf does by the way!) so we
+        # have to use scipy for sqrtm.
+        cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
+        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).to(self.device)
+        # if the result contains imaginary components, get rid of it!
+        if torch.is_complex(cov_prod_sqrt):
+            cov_prod_sqrt = cov_prod_sqrt.real
 
+        score = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
+        return score
+
+imgs = torch.randn(size=(10,3,32,32))
+metric = IS_FID_Calculator()
+iss = metric.compute_IS(imgs)
+fids = metric.compute_FID(imgs,imgs+torch.randn_like(imgs))
+print(f'{iss=}')
+print(f'{fids=}')
 #%%
 # lets add a few more datasets 
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
@@ -2887,6 +3067,8 @@ betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, betas=betas)
 
+metric = IS_FID_Calculator(device)
+
 gen_num_samples = 64
 fixed_z = torch.randn((gen_num_samples,z_size)).to(device)
 
@@ -2985,8 +3167,12 @@ for epoch in range(epochs):
     
     d_loss_mean = np.mean(np.array(losses)[:,0])
     g_loss_mean = np.mean(np.array(losses)[:,1])
+
+    # calculate is/fid scores
+    IS_score = metric.compute_IS(imgs_fake)
+    FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} ')
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: {IS_score} | FID: {FID_score}')
     print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
     
     #save model weights at each epoch
