@@ -2837,7 +2837,8 @@ class IS_FID_Calculator():
         # top = (new_h - 299) // 2
         # left = (new_w - 299) // 2
         # imgs = imgs[:, :, top:top+299, left:left+299]
-        imgs = F.interpolate(imgs, size=(299, 299), mode='bilinear')
+        # for cifar10 use bicubic to get smoother images?
+        imgs = F.interpolate(imgs, size=(299, 299), mode='bicubic')
         imgs = (imgs - self.mean) / self.std
         
         # sidenote: 
@@ -2958,7 +2959,27 @@ class IS_FID_Calculator():
         # if the result contains imaginary components, get rid of it!
         if torch.is_complex(cov_prod_sqrt):
             cov_prod_sqrt = cov_prod_sqrt.real
-
+        
+        # finally calculating the score!
+        # sidenote: the higher the fid score the worse the results are. for example 
+        # if its beyond 100, it means the output is garbage and the generated images
+        # are far from the real distribution!
+        # scores around 50-100 are considered low quality!as you can clearly see artifcats in them
+        # lower scores, around 20-50 are considered fine-ish! the generated images are similar to the 
+        # real ones but they still have noticeable issues/flaws. dcgan,wgan architectures are 
+        # in this category of scores!(DCGAN baseline is ~40-50, WGAN-GP around ~25-30)
+        # even lower scores like the ones around 10-20 are considered good! they look pretty 
+        # realistic overall! but you could still notice some issues in the images and tell they are generated
+        # below 10 is considered really good! images are nearly indistinguishable from real ones!
+        # lower than that like 5 and below is just amazingly good! this is the score the 
+        # state of the art architectures ahcieved like e.g. BigGAN, StyleGAN2! and you can barely
+        # tell them from the real ones if at all!
+        # sidenote2:
+        # we need more than 10K images for a reliable/stable FID score! so during training with
+        # small batchesizes like ours (128) we can get a rough idea about where the training is
+        # going, but it wont be a robust metric as the number of samples is just too low!
+        # FID and IS are distribution-level metrics not per-batch metrics!
+        # so to get real score we need to use large number of images!
         fid = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
         return fid.item()
 
@@ -3025,7 +3046,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'wgan'
+loss_type = 'wgangp'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
 
@@ -3197,6 +3218,8 @@ for epoch in range(epochs):
                     title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
+#%%
+# calculate IS/FID on large number of images (>10k) and see how it does
 
 #%%
 # 
