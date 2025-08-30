@@ -3172,7 +3172,7 @@ for epoch in range(epochs):
     IS_score = metric.compute_IS(imgs_fake)
     FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]}, σ²:{IS_score[1]} | FID: {FID_score:.4f}')
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
     print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
     
     #save model weights at each epoch
@@ -3194,7 +3194,7 @@ for epoch in range(epochs):
         generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
         display_images(generated_images, 
                     cols=gen_num_samples//8,
-                    title=f'Generated with {loss_type.upper()} at Epoch {epoch} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
+                    title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 
