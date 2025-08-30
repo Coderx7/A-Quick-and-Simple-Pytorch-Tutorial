@@ -2817,6 +2817,10 @@ class IS_FID_Calculator():
         self.fc = self.model.fc
         
     def _preprocess(self, imgs):
+        # images to inception must be in [0-1] range since ours
+        # is in -1,1 we normalize it back to 0-1!
+        imgs = ((imgs+1)/2).clamp(0,1)
+    
         # inception expects input size of 299x299 and normalized
         # the original transformation was resizing to 342 on the
         # smallest dim and then center-cropping 299x299m but since
@@ -2838,6 +2842,7 @@ class IS_FID_Calculator():
         # left = (new_w - 299) // 2
         # imgs = imgs[:, :, top:top+299, left:left+299]
         # for cifar10 use bicubic to get smoother images?
+        # 'bilinear' is the default for inception though!
         imgs = F.interpolate(imgs, size=(299, 299), mode='bicubic')
         imgs = (imgs - self.mean) / self.std
         
@@ -2904,7 +2909,6 @@ class IS_FID_Calculator():
         # now instead of having a single vlaue, we calculate the mean/std of
         # the split socres 
         return float(np.mean(scores)), float(np.std(scores))
-
 
     @torch.no_grad()
     def _get_FID_mean_covariance(self, imgs):
@@ -3107,7 +3111,7 @@ for epoch in range(epochs):
 
         #scale input to [-1,1]
         imgs_real = (2*imgs_real-1).to(device)
-        
+                
         # imgs_real += 0.05 * torch.randn_like(imgs_real)
                
         # train discriminator/critic! 
@@ -3220,7 +3224,11 @@ for epoch in range(epochs):
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 #%%
 # calculate IS/FID on large number of images (>10k) and see how it does
-
+# note that the scores we get here is expected to be low as we have a very 
+# simple architecture and images are 32x32 that when resized will still be
+# blurry and pixelated which will lead to lower fid score, beefing the network
+# up will increase our score but we are not going to stick here for long! 
+# we have more architectures to cover!
 #%%
 # 
 # load models 
