@@ -2899,7 +2899,7 @@ class IS_FID_Calculator():
             # of the whole split
             kl_mean = kl.sum(dim=1).mean()
             score = kl_mean.exp()
-            scores.append(score)
+            scores.append(score.item())
         # now instead of having a single vlaue, we calculate the mean/std of
         # the split socres 
         return float(np.mean(scores)), float(np.std(scores))
@@ -2954,13 +2954,13 @@ class IS_FID_Calculator():
         # pytorch doesnt offer sqrtm function (tf does by the way!) so we
         # have to use scipy for sqrtm.
         cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
-        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).to(self.device)
+        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).to(real_imgs.device)
         # if the result contains imaginary components, get rid of it!
         if torch.is_complex(cov_prod_sqrt):
             cov_prod_sqrt = cov_prod_sqrt.real
 
-        score = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
-        return score
+        fid = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
+        return fid.item()
 
 imgs = torch.randn(size=(10,3,32,32))
 metric = IS_FID_Calculator()
@@ -3172,7 +3172,7 @@ for epoch in range(epochs):
     IS_score = metric.compute_IS(imgs_fake)
     FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: {IS_score} | FID: {FID_score}')
+    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]}, σ²:{IS_score[1]} | FID: {FID_score:.4f}')
     print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
     
     #save model weights at each epoch
