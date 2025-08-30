@@ -3224,7 +3224,7 @@ for epoch in range(epochs):
 #%%
 # 
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250828185253.pt",
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250830150142.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -3266,7 +3266,11 @@ def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebACl
                                             num_samples=attribute_pool_size,
                                             random_generator=random_gen,
                                             # increase the confidence level to 
-                                            # get more accurate results
+                                            # get more accurate results too much
+                                            # confidence can ignore many correct 
+                                            # but still lower confidence samples and
+                                            # therefore result in less accurate direction
+                                            # and ultimately worse result! 
                                             threshold=attribute_confidence_rate,
                                             device=device)
 
@@ -3295,8 +3299,8 @@ run_latent_arithmatic(attr_name='Male',
                       showcase_one_sample=True,
                       num_samples=64,
                       attribute_pool_size=256,
-                      maximum_prob_for_neutral_confidence=0.05,
-                      attribute_confidence_rate=0.7,
+                      maximum_prob_for_neutral_confidence=0.1,
+                      attribute_confidence_rate=0.8,
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
 
@@ -3307,10 +3311,10 @@ run_latent_arithmatic(attr_name='Smiling',
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
                       showcase_one_sample=True,
-                      num_samples=64,
+                      num_samples=32,
                       attribute_pool_size=256,
                       maximum_prob_for_neutral_confidence=0.01,
-                      attribute_confidence_rate=0.9,
+                      attribute_confidence_rate=0.8,
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
 #%%
