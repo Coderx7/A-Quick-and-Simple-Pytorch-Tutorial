@@ -2966,7 +2966,7 @@ class IS_FID_Calculator():
         
         # finally calculating the score!
         # sidenote: the higher the fid score the worse the results are. for example 
-        # if its beyond 100, it means the output is garbage and the generated images
+        # if its beyond 100, it means the output is garbage and the generated images 
         # are far from the real distribution!
         # scores around 50-100 are considered low quality!as you can clearly see artifcats in them
         # lower scores, around 20-50 are considered fine-ish! the generated images are similar to the 
@@ -3046,6 +3046,140 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 
 
 #%%
+
+def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_optimizer,
+                  epochs, interval, gen_update_interval, dataset_name, loss_type, 
+                  lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, device='cuda'):
+    
+    metric = IS_FID_Calculator(device)
+
+    fixed_z = torch.randn((gen_num_samples,generator.z_size)).to(device)
+
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+    losses = []
+
+    print(f'Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+
+    for epoch in range(epochs):
+        discriminator.train()
+        generator.train()
+
+        for i, (imgs_real, _) in enumerate(train_loader):
+        #scale input to [-1,1]
+            imgs_real = (2*imgs_real-1).to(device)
+                
+        # imgs_real += 0.05 * torch.randn_like(imgs_real)
+               
+        # train discriminator/critic! 
+        # real image predictions
+            preds_real = discriminator(imgs_real)
+        # disc_real_loss = real_loss(preds_real, smooth=True, device=device)
+        # generate an image using generator 
+            z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+        # we detach the imgs_fake so the discriminator cant use the gradients
+        # from the generator and quickly learn!
+            imgs_fake = generator(z_vector).detach()
+        
+        # add noise to fake images as well(not needed for dcgan)
+        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+        
+            preds_fake = discriminator(imgs_fake)
+        # disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
+        # calculate discrimiator loss out of real and fake losses
+            if loss_type =='lsgan':
+                disc_loss = lsgan_discriminator_loss(preds_real, preds_fake)
+            elif loss_type =='wgan':
+                disc_loss = wgan_critic_loss(preds_real, preds_fake)
+            elif loss_type =='wgangp':
+                disc_loss = wgangp_critic_loss(discriminator, imgs_real, imgs_fake, lambda_factor=lambda_factor)
+            else:
+                raise ValueError(f"Invalid loss type:{loss_type} entered!")
+        
+        # for debugging purposes
+        # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
+        # then it means our discriminator is strong but if both are near the same
+        # value and the loss is low then it means our discriminator is confused
+        # or is over-regularized.
+            disc_real_mean = preds_real.mean().item()
+            disc_fake_mean = preds_fake.mean().item()
+        
+        # and optimize discrimnator 
+            disc_optimizer.zero_grad()
+            disc_loss.backward()
+            disc_optimizer.step()
+        
+        # dont forget to clip discriminator's weights in wgan
+            if loss_type=='wgan':
+                for p in discriminator.parameters():
+                # keep it roughly 1-lipschitz 
+                    p.data.clip_(-0.01, 0.01)
+
+        # now train genertor to create images that look real
+            z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+            fake_imgs = generator(z_vector)
+            preds_fake = discriminator(fake_imgs)
+        
+        # generator loss
+        # swap loss! treat fake images as real images
+            if loss_type=='lsgan':
+                gen_real_loss = lsgan_generator_loss(preds_fake)
+            
+            elif 'wgan' in loss_type: #wgan-wgangp
+                gen_real_loss = wgan_generator_loss(preds_fake)
+        
+            else:
+                raise ValueError(f"losstype {loss_type} not detected!")
+            
+        # optimize generator
+        # update generator with a delay, usually update per 5 critic update
+        # seems to make convergence faster
+            if (i+1)%gen_update_interval == 0:
+                gen_optimizer.zero_grad()
+                gen_real_loss.backward()
+                gen_optimizer.step()
+        
+            if (i+1)%interval==0:
+            # append discriminator loss and generator loss
+                losses.append((disc_loss.item(), gen_real_loss.item()))
+            # print discriminator and generator loss
+                print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:6.4f} | Gen Loss: {gen_real_loss:6.4f}')
+
+        losses.append((disc_loss.item(), gen_real_loss.item()))
+    
+        d_loss_mean = np.mean(np.array(losses)[:,0])
+        g_loss_mean = np.mean(np.array(losses)[:,1])
+
+    # calculate is/fid scores
+        IS_score = metric.compute_IS(imgs_fake)
+        FID_score = metric.compute_FID(imgs_real, imgs_fake)
+    
+        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+        print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
+    
+    #save model weights at each epoch
+        torch.save({"state_dict":generator.state_dict(),
+                "hidden_size":generator.hidden_size,
+                "z_size":generator.z_size,
+                "epoch":epoch,
+                "gen_update_interval":gen_update_interval,
+                "loss_type":loss_type,
+                "use_batchnorm":use_batchnorm,#discriminator's batchnorm
+                "losses":losses,
+                "dataset_name":dataset_name,
+                }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
+    
+    # generate some images mid training to evaluate our model's performance 
+        with torch.no_grad():
+            generator.eval()
+        # reshape images back to 32x32x3
+            generated_images = generator(fixed_z).view(-1,*imgs_real.shape[1:])
+            display_images(generated_images, 
+                    cols=gen_num_samples//8,
+                    title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
+                    unnormalize=True,
+                    save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
+    print("training is complete!")
+    
 # now lets train 
 #'lsgan'
 #'wgan'
@@ -3092,138 +3226,22 @@ betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, betas=betas)
 
-metric = IS_FID_Calculator(device)
 
-gen_num_samples = 64
-fixed_z = torch.randn((gen_num_samples,z_size)).to(device)
+training_loop(discriminatorcnn, 
+              generatorcnn, 
+              train_loader=train_loader,
+              disc_optimizer=disc_optimizer,
+              gen_optimizer=gen_optimizer, 
+              epochs=epochs, 
+              interval=interval,
+              gen_update_interval=gen_update_interval, 
+              dataset_name=dataset_name,
+              loss_type=loss_type, 
+              lambda_factor=lambda_factor,
+              use_batchnorm=use_batchnorm,
+              device=device)
 
-experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-losses = []
-
-print(f'Training on {dataset_name} with loss={loss_type} in {experiment_date}')
-
-for epoch in range(epochs):
-
-    discriminatorcnn.train()
-    generatorcnn.train()
-
-    for i, (imgs_real, _) in enumerate(train_loader):
-
-        #scale input to [-1,1]
-        imgs_real = (2*imgs_real-1).to(device)
-                
-        # imgs_real += 0.05 * torch.randn_like(imgs_real)
-               
-        # train discriminator/critic! 
-        # real image predictions
-        preds_real = discriminatorcnn(imgs_real)
-        # disc_real_loss = real_loss(preds_real, smooth=True, device=device)
-        # generate an image using generator 
-        z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
-        # we detach the imgs_fake so the discriminator cant use the gradients
-        # from the generator and quickly learn!
-        imgs_fake = generatorcnn(z_vector).detach()
-        
-        # add noise to fake images as well(not needed for dcgan)
-        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
-        
-        preds_fake = discriminatorcnn(imgs_fake)
-        # disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
-        # calculate discrimiator loss out of real and fake losses
-        if loss_type =='lsgan':
-            disc_loss = lsgan_discriminator_loss(preds_real, preds_fake)
-        elif loss_type =='wgan':
-            disc_loss = wgan_critic_loss(preds_real, preds_fake)
-        elif loss_type =='wgangp':
-            disc_loss = wgangp_critic_loss(discriminatorcnn, imgs_real, imgs_fake, lambda_factor=lambda_factor)
-        else:
-            raise ValueError(f"Invalid loss type:{loss_type} entered!")
-        
-        # for debugging purposes
-        # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
-        # then it means our discriminator is strong but if both are near the same
-        # value and the loss is low then it means our discriminator is confused
-        # or is over-regularized.
-        disc_real_mean = preds_real.mean().item()
-        disc_fake_mean = preds_fake.mean().item()
-        
-        # and optimize discrimnator 
-        disc_optimizer.zero_grad()
-        disc_loss.backward()
-        disc_optimizer.step()
-        
-        # dont forget to clip discriminator's weights in wgan
-        if loss_type=='wgan':
-            for p in discriminatorcnn.parameters():
-                # keep it roughly 1-lipschitz 
-                p.data.clip_(-0.01, 0.01)
-
-        # now train genertor to create images that look real
-        z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
-        fake_imgs = generatorcnn(z_vector)
-        preds_fake = discriminatorcnn(fake_imgs)
-        
-        # generator loss
-        # swap loss! treat fake images as real images
-        if loss_type=='lsgan':
-            gen_real_loss = lsgan_generator_loss(preds_fake)
-            
-        elif 'wgan' in loss_type: #wgan-wgangp
-            gen_real_loss = wgan_generator_loss(preds_fake)
-        
-        else:
-            raise ValueError(f"losstype {loss_type} not detected!")
-            
-        # optimize generator
-        # update generator with a delay, usually update per 5 critic update
-        # seems to make convergence faster
-        if (i+1)%gen_update_interval == 0:
-            gen_optimizer.zero_grad()
-            gen_real_loss.backward()
-            gen_optimizer.step()
-        
-        if (i+1)%interval==0:
-            # append discriminator loss and generator loss
-            losses.append((disc_loss.item(), gen_real_loss.item()))
-            # print discriminator and generator loss
-            print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:6.4f} | Gen Loss: {gen_real_loss:6.4f}')
-
-    losses.append((disc_loss.item(), gen_real_loss.item()))
-    
-    d_loss_mean = np.mean(np.array(losses)[:,0])
-    g_loss_mean = np.mean(np.array(losses)[:,1])
-
-    # calculate is/fid scores
-    IS_score = metric.compute_IS(imgs_fake)
-    FID_score = metric.compute_FID(imgs_real, imgs_fake)
-    
-    print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
-    print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
-    
-    #save model weights at each epoch
-    torch.save({"state_dict":generatorcnn.state_dict(),
-                "hidden_size":gen_hidden_size,
-                "z_size":z_size,
-                "epoch":epoch,
-                "gen_update_interval":gen_update_interval,
-                "loss_type":loss_type,
-                "use_batchnorm":use_batchnorm,#discriminator's batchnorm
-                "losses":losses,
-                "dataset_name":dataset_name,
-                }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
-    
-    # generate some images mid training to evaluate our model's performance 
-    with torch.no_grad():
-        generatorcnn.eval()
-        # reshape images back to 32x32x3
-        generated_images = generatorcnn(fixed_z).view(-1,*imgs_real.shape[1:])
-        display_images(generated_images, 
-                    cols=gen_num_samples//8,
-                    title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
-                    unnormalize=True,
-                    save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
 #%%
-# calculate IS/FID on large number of images (>10k) and see how it does
 # note that the scores we get here is expected to be low as we have a very 
 # simple architecture and images are 32x32 that when resized will still be
 # blurry and pixelated which will lead to lower fid score, beefing the network
@@ -3325,7 +3343,8 @@ run_latent_arithmatic(attr_name='Smiling',
                       attribute_confidence_rate=0.8,
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
-#%%
+
+#%% 
 # progan?stackgan?
 # Stylegan2/3?
 #%%
