@@ -31,7 +31,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from torchvision import datasets, transforms
-from torchvision import utils
+from torchvision import utils, models
 
 import matplotlib.pyplot as plt
 %matplotlib inline
@@ -3050,7 +3050,8 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 
 def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
-                  lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, device='cuda'):
+                  lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, device='cuda',
+                  weights_save_dir='./weights', images_save_dir='./results/gan'):
     
     metric = IS_FID_Calculator(device)
 
@@ -3167,7 +3168,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                 "use_batchnorm":use_batchnorm,#discriminator's batchnorm
                 "losses":losses,
                 "dataset_name":dataset_name,
-                }, f"./weights/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
+                }, f"{weights_save_dir}/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
     
     # generate some images mid training to evaluate our model's performance 
         with torch.no_grad():
@@ -3178,7 +3179,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                     cols=gen_num_samples//8,
                     title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
                     unnormalize=True,
-                    save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
+                    save_path=f'{images_save_dir}/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
     print("training is complete!")
 #%%    
 # now lets train 
@@ -3292,36 +3293,42 @@ def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebACl
                                 # use lower probs to get more accurate results, 
                                 maximum_prob_for_neutral_confidence)
 
-    (ims1,zs1),(ims2,zs2) = get_samples_for(generator, classifier, attr_name,
-                                            word2idx,
-                                            num_samples=attribute_pool_size,
-                                            random_generator=random_gen,
-                                            # increase the confidence level to 
-                                            # get more accurate results too much
-                                            # confidence can ignore many correct 
-                                            # but still lower confidence samples and
-                                            # therefore result in less accurate direction
-                                            # and ultimately worse result! 
-                                            threshold=attribute_confidence_rate,
-                                            device=device)
+    with_attrs, without_attrs = get_samples_for(generator, classifier, attr_name,
+                                                word2idx,
+                                                num_samples=attribute_pool_size,
+                                                random_generator=random_gen,
+                                                # increase the confidence level to 
+                                                # get more accurate results too much
+                                                # confidence can ignore many correct 
+                                                # but still lower confidence samples and
+                                                # therefore result in less accurate direction
+                                                # and ultimately worse result! 
+                                                threshold=attribute_confidence_rate,
+                                                device=device)
 
-    col_count1 = math.ceil(math.sqrt(ims1.size(0)))
-    col_count2 = math.ceil(math.sqrt(ims2.size(0)))
-        
-    show_images(ims1, f'latents with ({attr_name})', cols=col_count1, figsize=(12,6))
-    show_images(ims2, f'latents without({attr_name})', cols=col_count2, figsize=(12,6))
+    (ims_attr, latents_attrs) = with_attrs
+    (ims_no_attrs, latents_no_attrs) = without_attrs
+    
+    print(f'{ims_attr.shape=}')
+    print(f'{ims_no_attrs.shape=}')
+    
+    col_count1 = math.ceil(math.sqrt(ims_attr.size(0)))
+    col_count2 = math.ceil(math.sqrt(ims_no_attrs.size(0)))
+    
+    show_images(ims_attr, f'latents with ({attr_name})', cols=col_count1, figsize=(12,6))
+    show_images(ims_no_attrs, f'latents without({attr_name})', cols=col_count2, figsize=(12,6))
     
     latents = z_base[0] if showcase_one_sample else z_base
     
     # from women to male!(woman gradually loses feminity and turns into male)
-    imgs = latent_arithmetic_unconditional(generator, zs1, zs2[:zs.size(0)], latents, alpha_values)
+    imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs[:zs.size(0)], latents, alpha_values)
     show_images(imgs, f'latent arithmetic(opposite toward {attr_name})', figsize=(12,6))
     
     # from male to female!(maleness decreases at each step)
-    imgs = latent_arithmetic_unconditional(generator, zs2[:zs.size(0)], zs1, latents, alpha_values)
+    imgs = latent_arithmetic_unconditional(generator, latents_no_attrs[:zs.size(0)], latents_attrs, latents, alpha_values)
     show_images(imgs, f'latent arithmetic({attr_name} toward the opposit)',figsize=(12,6))
     print(f'done!')
-
+#%%
 run_latent_arithmatic(attr_name='Male', 
                       generator=generatorcnn, 
                       classifier=celeba_classifier, 
@@ -3354,7 +3361,10 @@ run_latent_arithmatic(attr_name='Smiling',
 # lets just do that and before we go to other architectures, lets create a more
 # powerful version of our network!
 # beef up the blocks!
-class ConvBlock(nn.Module):
+# This block needs work, it causes massive instability in discriminator
+# and thus we can only train porperly with large lr and even then we dont get
+# good results!
+class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
         super().__init__()
@@ -3370,7 +3380,6 @@ class ConvBlock(nn.Module):
                                    nn.BatchNorm2d(out_channels//2) if batch_norm else
                                    nn.Identity(),
                                    act_func,
-                                   #3x3    
                                    nn.Conv2d(out_channels//2, out_channels, kernel_size=1,
                                              stride=1, padding=0, bias=not batch_norm),
                                    nn.BatchNorm2d(out_channels) if batch_norm else
@@ -3511,8 +3520,10 @@ generatorcnn64 = generatorcnn64.to(device)
 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
-disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.001, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.002, betas=betas)
+# with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
+# otherwise it will take a lot to get there!
+disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.0001, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.0002, betas=betas)
 
 training_loop(discriminatorcnn64, 
               generatorcnn64, 
@@ -3527,6 +3538,55 @@ training_loop(discriminatorcnn64,
               lambda_factor=lambda_factor,
               use_batchnorm=use_batchnorm,
               device=device)
+#%%
+# load models 
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250830150142.pt",
+                        map_location="cpu",
+                        weights_only=False)
+
+epoch = checkpoint["epoch"]
+z_size = checkpoint["z_size"]
+hidden_size = checkpoint["hidden_size"]
+dataset_name = checkpoint["dataset_name"]
+loss_type = checkpoint["loss_type"]
+losses = np.array(checkpoint.pop("losses"))
+
+generatorcnn = GeneratorCNN64(z_size,hidden_size)
+generatorcnn.load_state_dict(checkpoint.pop("state_dict"))
+generatorcnn.eval()
+
+for k,v in checkpoint.items():
+    print(f'{k}: {v}')
+    
+print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
+#%%
+run_latent_arithmatic(attr_name='Male', 
+                      generator=generatorcnn64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=64,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.1,
+                      attribute_confidence_rate=0.7,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+
+#%%
+run_latent_arithmatic(attr_name='Smiling', 
+                      generator=generatorcnn64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.1,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+
 
 #%%
 # progan?stackgan?
