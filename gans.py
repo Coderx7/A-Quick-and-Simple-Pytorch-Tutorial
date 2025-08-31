@@ -2464,7 +2464,8 @@ show_images(imgs_out, f'generated images for {attr_name1} & {attr_name2}',figsiz
 # The WGAN paper also proposed to use a different loss function, they used something called a
 # Wasserstein distance (EM) for loss and claimed it prevents mode collapse and stablizes the training
 # (it indeed makes trainig much more tsable than vanila GAN and doesnt display mode collapse at least
-# in datasets tried by the authors, I didnt test it myself, as the wgan paper that followed shortly
+# in datasets tried by the authors, I didnt test it extensively but in the few experiments I have
+# done on datasets like cifar10/celeba it performs really well! the wgan papers that followed shortly
 # provided way better results).
 # 
 #
@@ -3179,7 +3180,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                     unnormalize=True,
                     save_path=f'./results/gan/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
     print("training is complete!")
-    
+#%%    
 # now lets train 
 #'lsgan'
 #'wgan'
@@ -3204,9 +3205,13 @@ z_size = 100
 # mode collapse later on, I havent tested this thoroughly though, but cifar10/celeba seem fine
 # without bn, the convergence rate slows down drastically!(also wgangp gives better results
 # than wgan when no bn is usded. when bn is used their results seem the same)
-# use_batchnorm = loss_type=='lsgan'
-# I enable it by default but you can disable it for any experiments
-use_batchnorm = True
+# update:
+# in small resolution (32x32) and short trainig it seems having
+# batchnorm works, but without batchnorm, which should be the default
+# it provides much better images much faster (see next experiment with 64x64 input
+# and larger network!)
+use_batchnorm = loss_type=='lsgan'
+
 
 epochs = 50
 num_batches = len(train_loader)
@@ -3345,6 +3350,185 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 
 #%% 
+#%%
+# lets just do that and before we go to other architectures, lets create a more
+# powerful version of our network!
+# beef up the blocks!
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
+        super().__init__()
+         # we do subsamling by using stride=2
+        self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size,
+                                             stride, padding, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels) if batch_norm else
+                                   nn.Identity(),
+                                   act_func,
+                                   # 1x1
+                                   nn.Conv2d(out_channels, out_channels//2, kernel_size=1,
+                                             stride=1, padding=0, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels//2) if batch_norm else
+                                   nn.Identity(),
+                                   act_func,
+                                   #3x3    
+                                   nn.Conv2d(out_channels//2, out_channels, kernel_size=1,
+                                             stride=1, padding=0, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels) if batch_norm else
+                                   nn.Identity(),
+                                   act_func,)
+    def forward(self, x):
+        return self.block(x)
+
+class ConvTransBlock(nn.Module):
+    def __init__(self,  in_channels, out_channels, kernel_size,
+                 stride=2, padding=1, batch_norm=False, act_func=nn.ReLU(inplace=True)):
+        super().__init__()
+        self.block = nn.Sequential(nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
+                                             stride, padding, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels) if batch_norm else
+                                   nn.Identity(),
+                                   act_func if act_func else nn.Identity(),
+                                   
+                                   nn.Conv2d(out_channels, out_channels//2, kernel_size=1,
+                                             stride=1, padding=0, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels//2) if batch_norm else
+                                   nn.Identity(),
+                                   act_func if act_func else nn.Identity(),
+                                   
+                                   nn.Conv2d(out_channels//2, out_channels, kernel_size=1,
+                                             stride=1, padding=0, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels) if batch_norm else
+                                   nn.Identity(),
+                                   act_func if act_func else nn.Identity())
+        
+        
+        self.residual = nn.Sequential(nn.Upsample(scale_factor=stride, mode='nearest'),
+                                      nn.Conv2d(in_channels=in_channels, out_channels=out_channels,kernel_size=1,
+                                                stride=1, bias=not batch_norm),
+                                      nn.BatchNorm2d(out_channels) if batch_norm else
+                                      nn.Identity(),
+                                      )
+ 
+    def forward(self, x):
+        out = self.block(x)
+        x_res = self.residual(x)
+        # using activation functions like relu on (out+x_res) will
+        # completely destroy generation! so dont apply any activations
+        out = out+x_res
+        return out
+
+# this time lets train on 64x64 images!
+class DiscriminatorCNN64(nn.Module):
+    def __init__(self, hidden_size=32, use_batchnorm=True, act=nn.LeakyReLU(0.2)):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        self.act = act
+        self.use_batchnorm = use_batchnorm
+        
+        self.net = nn.Sequential(ConvBlock(3, hidden_size, 4, 2, 1, batch_norm=False, act_func=act),#32x32
+                                 ConvBlock(hidden_size, hidden_size*2, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#16x16
+                                 ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#8x8
+                                 ConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#4x4
+                                 nn.Flatten(),
+                                 nn.Linear(hidden_size*4 * 4*4, 1),)
+        
+        self.apply(weights_init_dcgan)
+                
+    def forward(self, x):
+        return self.net(x)
+
+class GeneratorCNN64(nn.Module):
+    def __init__(self, z_size, hidden_size,  act=nn.ReLU()):
+        super().__init__()
+
+        self.z_size = z_size
+        self.hidden_size = hidden_size
+        self.act = act
+        self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
+                                 nn.BatchNorm1d(hidden_size*4 * 4*4),
+                                 nn.ReLU(inplace=True),
+                                 nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
+                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
+                                 ConvTransBlock(hidden_size*2, hidden_size*2, 4, batch_norm=True, act_func=act), #16x16
+                                 ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act), #32x32
+                                 ConvTransBlock(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),      #64x64
+                                 )
+        
+        # initialize weights
+        self.apply(weights_init_dcgan)
+        
+    def forward(self, x): 
+        return self.net(x)
+
+
+x = torch.randn((5,3,64,64))
+z = torch.randn((5,100))
+discriminatorcnn = DiscriminatorCNN64(16)
+generatorcnn = GeneratorCNN64(100, 16)
+# print(f'{generatorcnn}')
+doutput = discriminatorcnn(x)
+goutput = generatorcnn(z)
+print(f'{doutput.shape=}')
+print(f'{goutput.shape=}')
+#%%
+loss_type = 'wgangp'
+# for wgangp /gradient polcity scaler lambda
+lambda_factor=10
+
+dataset_name = 'celeba'
+batch_size=128
+train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_dims=(64,64),batch_size=batch_size)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+disc_hidden_size = 32#16
+gen_hidden_size = 64
+z_size = 100
+# wgan and wgangp dont use batchnorm because it messes with the 1-lipschitz constraint
+# as it introduces sample coupling(sample to sample coupling) while 1-lipschitz constraint
+# requires each and every sample to conform to this. I however trained with batchnorm and 
+# it seemed completely fine!
+# sidenote:
+# in small resolution (32x32) and short trainig it seems having
+# batchnorm works, but without batchnorm, which should be the default
+# it provides much better images much faster
+use_batchnorm = loss_type=='lsgan'
+
+epochs = 50
+num_batches = len(train_loader)
+interval = num_batches//2+1
+# every 5 discriminator/critic updates, update the generator
+gen_update_interval = 5 if "wgan" in loss_type else 1
+
+#discriminator
+discriminatorcnn64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
+                                        use_batchnorm=use_batchnorm)
+discriminatorcnn64 = discriminatorcnn64.to(device)
+#generator
+generatorcnn64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
+generatorcnn64 = generatorcnn64.to(device)
+
+# the paper says [0.5,0.999] diverges in wgan/wgangp
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.001, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.002, betas=betas)
+
+training_loop(discriminatorcnn64, 
+              generatorcnn64, 
+              train_loader=train_loader,
+              disc_optimizer=disc_optimizer,
+              gen_optimizer=gen_optimizer, 
+              epochs=epochs, 
+              interval=interval,
+              gen_update_interval=gen_update_interval, 
+              dataset_name=dataset_name,
+              loss_type=loss_type, 
+              lambda_factor=lambda_factor,
+              use_batchnorm=use_batchnorm,
+              device=device)
+
+#%%
 # progan?stackgan?
 # Stylegan2/3?
 #%%
