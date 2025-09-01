@@ -2973,19 +2973,28 @@ class IS_FID_Calculator():
         
         # finally calculating the score!
         # sidenote: the higher the fid score the worse the results are. for example 
-        # if its beyond 100, it means the output is garbage and the generated images 
-        # are far from the real distribution!
-        # scores around 50-100 are considered low quality!as you can clearly see artifcats in them
-        # lower scores, around 20-50 are considered fine-ish! the generated images are similar to the 
-        # real ones but they still have noticeable issues/flaws. dcgan,wgan architectures are 
-        # in this category of scores!(DCGAN baseline is ~40-50, WGAN-GP around ~25-30)
-        # even lower scores like the ones around 10-20 are considered good! they look pretty 
-        # realistic overall! but you could still notice some issues in the images and tell they are generated
-        # below 10 is considered really good! images are nearly indistinguishable from real ones!
+        # if its beyond 200, it means the output is garbage and the generated images 
+        # are very blurry, not formed properly, basically far from the real distribution!
+        # scores around 100-150 are much better, images should be clear as in sharp! but
+        # they are malformed, some seem good but the majority have a lot of artifact and issues
+        # as we get close to 100 (117 and lower) thing start to get much better though!(still with visible artifacts!)
+        # scores around 50-100 are much better than previous cases but are considered 
+        # low quality! simply because you can still clearly see artifcats in them
+        # lower scores, around 20-50 are considered fine-ish! the generated images are 
+        # more similar to the real ones but they still have noticeable issues/flaws. 
+        # dcgan,wgan architectures are in this category of scores!(DCGAN baseline is 
+        # ~40-50, WGAN-GP around ~25-30) even lower scores like the ones around 10-20 
+        # are considered good! they look pretty realistic overall! but you could still 
+        # notice some issues in the images and tell they are generated below 10 is 
+        # considered really good! images are nearly indistinguishable from real ones!
         # lower than that like 5 and below is just amazingly good! this is the score the 
         # state of the art architectures ahcieved like e.g. BigGAN, StyleGAN2! and you can barely
         # tell them from the real ones if at all!
         # sidenote2:
+        # these scores might change based on the dataset we work with, for example you may see
+        # celeba have pretty good looking images with FID 110, but cifar10 looks aweful! but
+        # the overal trend stays the same, the lower the better!
+        # sidenote3:
         # we need more than 10K images for a reliable/stable FID score! so during training with
         # small batchesizes like ours (128) we can get a rough idea about where the training is
         # going, but it wont be a robust metric as the number of samples is just too low!
@@ -3050,10 +3059,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 
     return data_loader
 
-
-
 #%%
-
 def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
                   lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, device='cuda',
@@ -3119,7 +3125,9 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         # dont forget to clip discriminator's weights in wgan
             if loss_type=='wgan':
                 for p in discriminator.parameters():
-                # keep it roughly 1-lipschitz 
+                # keep it roughly 1-lipschitz smaller than this
+                # restricts the discriminator/critic too much!
+                # larger values might be ok only if things go south!
                     p.data.clip_(-0.01, 0.01)
 
         # now train genertor to create images that look real
@@ -3150,7 +3158,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
             # append discriminator loss and generator loss
                 losses.append((disc_loss.item(), gen_real_loss.item()))
             # print discriminator and generator loss
-                print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:6.4f} | Gen Loss: {gen_real_loss:6.4f}')
+                print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
 
         losses.append((disc_loss.item(), gen_real_loss.item()))
     
@@ -3161,17 +3169,21 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         IS_score = metric.compute_IS(imgs_fake)
         FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
-        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.4f} | Gen loss: {g_loss_mean:.4f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss : {d_loss_mean:.6f} | Gen loss: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
         print(f" -- Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
     
     #save model weights at each epoch
         torch.save({"state_dict":generator.state_dict(),
                 "hidden_size":generator.hidden_size,
                 "z_size":generator.z_size,
+                "lr_d":[p['lr'] for p in disc_optimizer.param_groups],
+                "lr_g":[p['lr'] for p in gen_optimizer.param_groups],
+                "use_batchnorm":discriminator.use_batchnorm,
                 "epoch":epoch,
                 "gen_update_interval":gen_update_interval,
                 "loss_type":loss_type,
-                "use_batchnorm":use_batchnorm,#discriminator's batchnorm
+                "FID":FID_score,
+                "IS":IS_score,
                 "losses":losses,
                 "dataset_name":dataset_name,
                 }, f"{weights_save_dir}/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
@@ -3183,17 +3195,18 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
             generated_images = generator(fixed_z).view(-1,*imgs_real.shape[1:])
             display_images(generated_images, 
                     cols=gen_num_samples//8,
-                    title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.4f} | gLoss:{g_loss_mean:.4f})',
+                    title=f'Using {loss_type.upper()} at Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
                     unnormalize=True,
                     save_path=f'{images_save_dir}/dcgan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg')
     print("training is complete!")
+
 #%%    
 # now lets train 
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'wgangp'
-# for wgangp /gradient polcity scaler lambda
+loss_type = 'lsgan'
+# for wgangp /gradient penalty scaler lambda
 lambda_factor=10
 
 dataset_name = 'celeba'
@@ -3209,14 +3222,16 @@ z_size = 100
 # as it introduces sample coupling(sample to sample coupling) while 1-lipschitz constraint
 # requires each and every sample to conform to this. I however trained with batchnorm and 
 # it seemed completely fine! though it may not work on complex datasets, or we might see 
-# mode collapse later on, I havent tested this thoroughly though, but cifar10/celeba seem fine
+# mode collapse later on, I havent digged too much though cifar10/celeba seem fine!
 # without bn, the convergence rate slows down drastically!(also wgangp gives better results
-# than wgan when no bn is usded. when bn is used their results seem the same)
+# than wgan when no bn is used. when bn is used their (wgan and wgangp )results seem the same)
 # update:
 # in small resolution (32x32) and short trainig it seems having
 # batchnorm works, but without batchnorm, which should be the default
-# it provides much better images much faster (see next experiment with 64x64 input
-# and larger network!)
+# wgangp provides much better images much faster (see next experiment with 64x64 input
+# and larger network!) the wgan is just not that stable! without batchnorm it just doesnt
+# perform well! see my explanation ahead!
+# use_batchnorm = True
 use_batchnorm = loss_type=='lsgan'
 
 
@@ -3224,7 +3239,33 @@ epochs = 50
 num_batches = len(train_loader)
 interval = num_batches//2+1
 # every 5 discriminator/critic updates, update the generator
-gen_update_interval = 5 if "wgan" in loss_type else 1
+# sidenote:
+# during training wgan I faced the discriminators loss
+# became 0! as early as the first few epochs! that meant the discriminator
+# had collapsed completely! after a bit of digging and trying lsgan and wgangp
+# and noticing they work well, it was clear the discriminator wasnt the issue
+# the trainig wasnt either, so it had to be wgan loss. it turns out this was thecase
+# the weight clipping keeps value in a very narrow range, restriciting its capcity
+# on the other hand, I set generator update to take palce evry 5 discriminator update
+# so the discrimnator quickly found a way to identify all generator's as fake
+# and saturated! generator stopped recieiing good gradients and got stuck at generating
+# nonsense! our learning rates were too low as well and it contributed as welll I guess
+# cuz it couldnt distinguish between real/fake images quickly so generator wouldnt get any gradients!
+# so either way we had an issue! its an inherent issue of wgan and our training regime issue
+# for fixing it, we can make generator get updated as quickly as the discrimnator or use larger lrs
+# I first reverted the lrs back to 0.0001/0.0002 instead of (0.001/0.002) this helped
+# I no longer got absolute mess! the images however very extremely blurry the loss stayed
+# around 0.0001 ish up until the very end. didnt improve much. next I increased the 
+# generators update frequency, made it as fast as the discriminator(gen_update_interval=1)
+# this fixed the other issue, now I have images that look way better and trainig seems to be
+# gooing smoothly (although the loss is still low, and training goes slowly but its working now!)
+# by enabling batchnorm for wgan, it gets much better though as we know it shouldnt be used
+# but it seems this t ime around it actually contributes in more stable/powerful gradient signal
+# and it shows in discriminators loss (its around 100x larger with batcnorm!)
+# wgangp on the other hand is way more stable! it works fine wih and without batchnorm
+# with gen_update_interval 1 and 5! lsgan too lsgan works fine with1
+# the convergence rate with 1 is much faster for wgan and wet lower IFD score
+gen_update_interval = 1 #5 if "wgan" in loss_type else 1 
 
 #discriminator
 discriminatorcnn = DiscriminatorCNN(hidden_size=disc_hidden_size, use_batchnorm=use_batchnorm)
@@ -3235,8 +3276,19 @@ generatorcnn = generatorcnn.to(device)
 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
-disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), 0.0001, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), 0.0002, betas=betas)
+
+# for wgangp/lsgan I used 0.001/0.002(1e-4/2e-4 also work but are slower)
+# for wgan I used 0.0001/0.0002 nothing larger works properly (even with batchnorm)
+if loss_type=='wgan':
+    lr_d, lr_g  = 0.0001, 0.0002
+else:
+    # lsgan and wgangp(with and without batchnorm) work with 
+    # both 1e-3/2e-3 and 1e-4/2e-4.
+    lr_d, lr_g = 0.001, 0.002
+
+# disc_optimizer = torch.optim.RMSprop(discriminatorcnn.parameters(), lr=5e-5) # for wgan
+disc_optimizer = torch.optim.Adam(discriminatorcnn.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn.parameters(), lr_g, betas=betas)
 
 
 training_loop(discriminatorcnn, 
@@ -3262,7 +3314,9 @@ training_loop(discriminatorcnn,
 #%%
 # 
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250830150142.pt",
+# dcgan_generatorcnn_wgangp_20250830150142
+# dcgan_generatorcnn_wgangp_20250901143328.pt
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901143328.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -3368,9 +3422,10 @@ run_latent_arithmatic(attr_name='Smiling',
 # powerful version of our network!
 # beef up the blocks!
 # 
-# This block needs work, it causes massive instability in discriminator
-# and thus we can only train porperly with large lr and even then we dont get
-# good results! in GANs we need to have simple discriminator anything complex
+# This block causes massive instability in trainig!
+# we can only train porperly with large lr and even then we dont get
+# good results! the lsgan completely fails with severe mode collapse!
+# in GANs we need to have simple discriminator anything complex
 # powerful complicates things!
 class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
@@ -3396,7 +3451,7 @@ class ConvBlock2(nn.Module):
     def forward(self, x):
         return self.block(x)
 
-class ConvTransBlock(nn.Module):
+class ConvTransBlock2(nn.Module):
     def __init__(self,  in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.ReLU(inplace=True)):
         super().__init__()
@@ -3449,9 +3504,10 @@ class DiscriminatorCNN64(nn.Module):
                                  ConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#4x4
                                  nn.Flatten(),
                                  nn.Linear(hidden_size*4 * 4*4, 1),)
-        
+        # the weight initt is no more mandetory
+        # we can train properly without specific initialization!
         self.apply(weights_init_dcgan)
-                
+
     def forward(self, x):
         return self.net(x)
 
@@ -3466,13 +3522,13 @@ class GeneratorCNN64(nn.Module):
                                  nn.BatchNorm1d(hidden_size*4 * 4*4),
                                  nn.ReLU(inplace=True),
                                  nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
-                                 ConvTransBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
-                                 ConvTransBlock(hidden_size*2, hidden_size*2, 4, batch_norm=True, act_func=act), #16x16
-                                 ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act), #32x32
-                                 ConvTransBlock(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),      #64x64
+                                 ConvTransBlock2(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
+                                 ConvTransBlock2(hidden_size*2, hidden_size*2, 4, batch_norm=True, act_func=act), #16x16
+                                 ConvTransBlock2(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act), #32x32
+                                 ConvTransBlock2(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),      #64x64
                                  )
         
-        # initialize weights
+        # the weight initt is no more mandetory!
         self.apply(weights_init_dcgan)
         
     def forward(self, x): 
@@ -3489,6 +3545,16 @@ goutput = generatorcnn(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
+# lsgan constantly faces severe mode collapse since the gen
+# is more powerful than the discriminator! wgangp however
+# always does a better job! havent seen mode collapse in nearly
+# 100 tests! this shows how stable wgangp is! to get the lsgan to
+# not fail, we have to beefup the discriminator 
+# wgan also fails for some reason! it was working need to see what
+# I had changed!
+# update:
+# it seems only wgangp trains well. both wgan/lsgan face a lot of instablity
+# and flatout fail!
 loss_type = 'wgangp'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
@@ -3498,8 +3564,10 @@ batch_size=128
 train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_dims=(64,64),batch_size=batch_size)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-disc_hidden_size = 32#16
+# since the generator is more powerful, and discriminator is
+# less powerful we quickly face severe mode collpase, so 
+# for lsgan to work we need to beefup the discriminator!
+disc_hidden_size = 32
 gen_hidden_size = 64
 z_size = 100
 # wgan and wgangp dont use batchnorm because it messes with the 1-lipschitz constraint
@@ -3516,7 +3584,8 @@ epochs = 50
 num_batches = len(train_loader)
 interval = num_batches//2+1
 # every 5 discriminator/critic updates, update the generator
-gen_update_interval = 5 if "wgan" in loss_type else 1
+# wgangp works fine with 1! wgan seems not!
+gen_update_interval = 1 if loss_type == "wgan" else 1
 
 #discriminator
 discriminatorcnn64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
@@ -3527,11 +3596,18 @@ generatorcnn64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
 generatorcnn64 = generatorcnn64.to(device)
 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
-betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 # with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
 # otherwise it will take a lot to get there!
-disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.001, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.002, betas=betas)
+# lsgan fails with large lrs(1e-3/2e-3)
+if loss_type=='lsgan':
+    betas = [0.5, 0.999]
+    lr_d, lr_g = 0.0001, 0.0002
+else:
+    betas = [0, 0.9]
+    lr_d, lr_g = 0.001, 0.002
+    
+disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), lr_g, betas=betas)
 
 training_loop(discriminatorcnn64, 
               generatorcnn64, 
@@ -3548,7 +3624,7 @@ training_loop(discriminatorcnn64,
               device=device)
 #%%
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250830150142.pt",
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901064034.pt",
                         map_location="cpu",
                         weights_only=False)
 
