@@ -1872,6 +1872,11 @@ class CelebAClassifier(nn.Module):
         # well use bcewithlogits so no need for sigmoid here
         return self.net(x)
 
+    def classify(self,x):
+        if x.size(-1)>32:
+            x = F.interpolate(x, size=(32,32))
+        return self(x).sigmoid()
+
 # quick check to see how small the input gets with our changes applied
 def check_network_inputs(model):
     hooks = []
@@ -1895,7 +1900,8 @@ def check_network_inputs(model):
 
 classifier = CelebAClassifier()
 hooks = check_network_inputs(classifier)
-out = classifier(torch.randn(size=(5,3,32,32)))
+x = torch.randn(size=(5,3,32,32))
+out = classifier(x)
 print(f'{out.shape=}')
 # remove hooks its good practice 
 # when we are done to remove them
@@ -2127,7 +2133,7 @@ def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
     z = torch.randn(size=(num_samples,generator.z_size), device=device, generator=random_generator)
     imgs = generator(z)
     # classify the images 
-    preds = classifier(imgs).sigmoid()
+    preds = classifier.classify(imgs)
     preds = preds>threshold
     # grab the images with attribute 
     # attribs_indexes = [i for i in range(len(preds)) if preds[i][celeba_attr_word2idx[attr_name]]==1]
@@ -2200,7 +2206,7 @@ def get_neutral_latents(generator:GeneratorCNN, classifier:CelebAClassifier,
     
     z_base = torch.randn(size=(num_samples, generator.z_size), device=device, generator=random_gen)
     imgs = generator(z_base)
-    preds = classifier(imgs).sigmoid()
+    preds = classifier.classify(imgs)
     # now we want to grab all the samples that have 
     # the lowest confidence for selected attribute
     preds_with_attr = preds[:,celeba_attr_word2idx[attr_name]]
@@ -3361,9 +3367,11 @@ run_latent_arithmatic(attr_name='Smiling',
 # lets just do that and before we go to other architectures, lets create a more
 # powerful version of our network!
 # beef up the blocks!
+# 
 # This block needs work, it causes massive instability in discriminator
 # and thus we can only train porperly with large lr and even then we dont get
-# good results!
+# good results! in GANs we need to have simple discriminator anything complex
+# powerful complicates things!
 class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
@@ -3522,8 +3530,8 @@ generatorcnn64 = generatorcnn64.to(device)
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 # with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
 # otherwise it will take a lot to get there!
-disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.0001, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.0002, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), 0.001, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), 0.002, betas=betas)
 
 training_loop(discriminatorcnn64, 
               generatorcnn64, 
