@@ -3205,7 +3205,8 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
 #'lsgan'
 #'wgan'
 #'wgangp'
-loss_type = 'lsgan'
+#sidenote: lsgan and wgangp give the best results
+loss_type = 'wgangp'
 # for wgangp /gradient penalty scaler lambda
 lambda_factor=10
 
@@ -3307,15 +3308,18 @@ training_loop(discriminatorcnn,
 
 #%%
 # note that the scores we get here is expected to be low as we have a very 
-# simple architecture and images are 32x32 that when resized will still be
-# blurry and pixelated which will lead to lower fid score, beefing the network
-# up will increase our score but we are not going to stick here for long! 
-# we have more architectures to cover!
+# simple architecture and training regime aside from the fact that our images
+# are 32x32 which when resized will still be blurry and pixelated which will
+# lead to lower fid score, beefing the network up, and having a better traiing
+# regime and better hyper parameters will increase our score but we are not 
+# going to stick here for long! we have more architectures to cover!
+# we will test with larger imagesze and abit larger network though! see ahead!
 #%%
 # 
 # load models 
 # dcgan_generatorcnn_wgangp_20250830150142
 # dcgan_generatorcnn_wgangp_20250901143328.pt
+# try models for sep 1 (20250901) after 17 which I applied the latest changes!
 checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901143328.pt",
                         map_location="cpu",
                         weights_only=False)
@@ -3418,15 +3422,23 @@ run_latent_arithmatic(attr_name='Smiling',
 
 #%% 
 #%%
-# lets just do that and before we go to other architectures, lets create a more
-# powerful version of our network!
-# beef up the blocks!
+# ok so we saw lsgan did pretty good and trainig was a breeze as we could 
+# use batcnorm unlike wgan which was a head in the neck! and we had a lot 
+# of issues trainig it and getting a somewhat decent output. 
+# wgangp on the otherhand proved to be way more stable than wgan, and without
+# batchnorm could create very good looking iamges. it gave way better/larger/stabler
+# gradient signal (unlike wgan which was extremely low) and it also worked well 
+# with batchnorm enabled!
+# before we go to other architectures, lets create a more powerful version of our network!
+# and see how much of a difference it creates!
 # 
 # This block causes massive instability in trainig!
 # we can only train porperly with large lr and even then we dont get
-# good results! the lsgan completely fails with severe mode collapse!
+# good results! 
+# the lsgan completely fails with severe mode collapse!
 # in GANs we need to have simple discriminator anything complex
 # powerful complicates things!
+# see explanations ahead!
 class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
@@ -3554,7 +3566,9 @@ print(f'{goutput.shape=}')
 # I had changed!
 # update:
 # it seems only wgangp trains well. both wgan/lsgan face a lot of instablity
-# and flatout fail!
+# and flatout fail! I guess to getthem to work one easier? way (not sure!)
+# would be to use spectral norm to help keep 1lipcshitz condition during training!
+# todo: check spectralnorm and see if it helps!
 loss_type = 'wgangp'
 # for wgangp /gradient polcity scaler lambda
 lambda_factor=10
@@ -3599,11 +3613,11 @@ generatorcnn64 = generatorcnn64.to(device)
 # with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
 # otherwise it will take a lot to get there!
 # lsgan fails with large lrs(1e-3/2e-3)
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+
 if loss_type=='lsgan':
-    betas = [0.5, 0.999]
     lr_d, lr_g = 0.0001, 0.0002
 else:
-    betas = [0, 0.9]
     lr_d, lr_g = 0.001, 0.002
     
 disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), lr_d, betas=betas)
@@ -3671,7 +3685,9 @@ run_latent_arithmatic(attr_name='Smiling',
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
 
-
+#%% as we can see we got much better images using wgangp and traiing 
+# is much more stable than the other two methods!
+# 
 #%%
 # progan?stackgan?
 # Stylegan2/3?
