@@ -3895,7 +3895,22 @@ class DiscriminatorImproved64(nn.Module):
         # test with no spectral norm and see how it goes
         # update:
         # it seems applying spectral norm to every layer doesnt necessarily
-        # result in better output!
+        # result in better output! at least for wgangp!
+        # okay, we can omit the spectal normalization from the first and last (linear) 
+        # layers, without much worry. I did the opposite! kept the first and the last
+        # two layers with spectral norm and ommit the others. training went well and I
+        # got much better result (well formed clear images) and lower FID using wgangp
+        # basically if the training is stable, we can try ommiting spectral normalization
+        # from layers. conv with spectral norm, seem to be doing enough regularization that
+        # doesnt need all layers to be exactly 1lipschitz! 
+        # I need to test more and I'll update my notes
+        # update2:
+        # the last layer is highly recommened to have spectral norm so the network output is
+        # 1lipschitz. but if the training is stable it can be omited (the leading convlayer
+        # with spectral norm usually take care of it well enough)
+        # the idea is first to apply spectral norm to all layers since this provides the most 
+        # stability, and when you get a baseline, try removing some to get more speed etc
+        #
         self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act),#32x32
                                  DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=False),#16x16
                                  DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=False),#8x8
