@@ -3631,12 +3631,12 @@ interval = num_batches//2+1
 gen_update_interval = 1 if loss_type == "wgan" else 1
 
 #discriminator
-discriminatorcnn64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
+discriminatorI64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
                                         use_batchnorm=use_batchnorm)
-discriminatorcnn64 = discriminatorcnn64.to(device)
+discriminatorI64 = discriminatorI64.to(device)
 #generator
-generatorcnn64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
-generatorcnn64 = generatorcnn64.to(device)
+generatorI64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
+generatorI64 = generatorI64.to(device)
 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
 # with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
@@ -3649,11 +3649,11 @@ if loss_type=='lsgan':
 else:
     lr_d, lr_g = 0.001, 0.002
     
-disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
 
-training_loop(discriminatorcnn64, 
-              generatorcnn64, 
+training_loop(discriminatorI64, 
+              generatorI64, 
               train_loader=train_loader,
               disc_optimizer=disc_optimizer,
               gen_optimizer=gen_optimizer, 
@@ -3678,9 +3678,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 losses = np.array(checkpoint.pop("losses"))
 
-generatorcnn64 = GeneratorCNN64(z_size,hidden_size)
-generatorcnn64.load_state_dict(checkpoint.pop("state_dict"))
-generatorcnn64.eval()
+generatorI64 = GeneratorCNN64(z_size,hidden_size)
+generatorI64.load_state_dict(checkpoint.pop("state_dict"))
+generatorI64.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -3688,7 +3688,7 @@ for k,v in checkpoint.items():
 print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
-                      generator=generatorcnn64, 
+                      generator=generatorI64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -3702,7 +3702,7 @@ run_latent_arithmatic(attr_name='Male',
 
 #%%
 run_latent_arithmatic(attr_name='Smiling', 
-                      generator=generatorcnn64, 
+                      generator=generatorI64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -3715,7 +3715,7 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 #%%
 run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generatorcnn64, 
+                      generator=generatorI64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -3879,6 +3879,9 @@ class DiscriminatorImproved64(nn.Module):
 
         self.hidden_size = hidden_size
         self.act = act
+        # we must also normalize the linear layer as well. 
+        # basicaly all layers that perform major affine transformations
+        # like Conv and Linear should be normalized.
         self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
         
         self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act),#32x32
@@ -3886,7 +3889,7 @@ class DiscriminatorImproved64(nn.Module):
                                  DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act),#8x8
                                  DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act),#4x4
                                  nn.Flatten(),
-                                 nn.Linear(hidden_size*4 * 4*4, 1),)
+                                 self._spectral_norm(nn.Linear(hidden_size*4 * 4*4, 1)),)
         # the weight initt is still very important,
         # the dcgan weight init makes things more stable!
         self.apply(weights_init_dcgan)
@@ -3911,7 +3914,7 @@ class UpsampleBlock(nn.Module):
                 
         self.residual = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'),
                                       nn.Conv2d(in_channels, out_channels, kernel_size=1,
-                                                stride=1, bias=not batch_norm),
+                                                stride=1, padding=0, bias=not batch_norm),
                                       nn.BatchNorm2d(out_channels) if batch_norm else
                                       nn.Identity(),
                                       )
@@ -3937,13 +3940,13 @@ class GeneratorImproved64(nn.Module):
                                  # put this notice here before I forgetit!
                                  nn.ReLU(inplace=True),
                                  nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
-                                 UpsampleBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
-                                 UpsampleBlock(hidden_size*2, hidden_size*2, 4, batch_norm=True, act_func=act), #16x16
-                                 UpsampleBlock(hidden_size*2, hidden_size*1, 4, batch_norm=True, act_func=act), #32x32
+                                 UpsampleBlock(hidden_size*4, hidden_size*2, 3, batch_norm=True, act_func=act), #8x8
+                                 UpsampleBlock(hidden_size*2, hidden_size*2, 3, batch_norm=True, act_func=act), #16x16
+                                 UpsampleBlock(hidden_size*2, hidden_size*1, 3, batch_norm=True, act_func=act), #32x32
                                  )
         # our final layer/block doesnt have any residual to mess with the final output!
-        self.final_layer = nn.Sequential(nn.Upsample(scale_factor=2, mod='bilinear'), #64x64
-                                         nn.Conv2d(hidden_size, 3, 4, stride=1, padding=1),
+        self.final_layer = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'), #64x64
+                                         nn.Conv2d(hidden_size, 3, 3, stride=1, padding=1),
                                          nn.Tanh())
         
         self.apply(weights_init_dcgan)
@@ -3954,14 +3957,125 @@ class GeneratorImproved64(nn.Module):
 
 x = torch.randn((5,3,64,64))
 z = torch.randn((5,100))
-discriminatorcnn = DiscriminatorImproved64(16)
-generatorcnn = GeneratorImproved64(100, 16)
+disci64 = DiscriminatorImproved64(16)
+geni64 = GeneratorImproved64(100, 16)
 # print(f'{generatorcnn}')
-doutput = discriminatorcnn(x)
-goutput = generatorcnn(z)
+doutput = disci64(x)
+goutput = geni64(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
+loss_type = 'wgangp'
+lambda_factor=10
+dataset_name = 'celeba'
+batch_size=128
+train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_dims=(64,64),batch_size=batch_size)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+disc_hidden_size = 32
+gen_hidden_size = 64
+z_size = 100
+
+epochs = 50
+num_batches = len(train_loader)
+interval = num_batches//2+1
+# every 5 discriminator/critic updates, update the generator
+# wgangp works fine with 1! wgan seems not!
+gen_update_interval = 1 if loss_type == "wgan" else 1
+
+#discriminator
+discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size)
+discriminatorI64 = discriminatorI64.to(device)
+#generator
+generatorcnnI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
+generatorcnnI64 = generatorI64.to(device)
+
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+
+if loss_type=='lsgan':
+    lr_d, lr_g = 0.0001, 0.0002
+else:
+    lr_d, lr_g = 0.001, 0.002
+    
+disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
+
+training_loop(discriminatorI64, 
+              generatorI64, 
+              train_loader=train_loader,
+              disc_optimizer=disc_optimizer,
+              gen_optimizer=gen_optimizer, 
+              epochs=epochs, 
+              interval=interval,
+              gen_update_interval=gen_update_interval, 
+              dataset_name=dataset_name,
+              loss_type=loss_type, 
+              lambda_factor=lambda_factor,
+              use_batchnorm=False,
+              device=device)
+#%%
+# load models 
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp",
+                        map_location="cpu",
+                        weights_only=False)
+
+epoch = checkpoint["epoch"]
+z_size = checkpoint["z_size"]
+hidden_size = checkpoint["hidden_size"]
+dataset_name = checkpoint["dataset_name"]
+loss_type = checkpoint["loss_type"]
+losses = np.array(checkpoint.pop("losses"))
+
+generatorI64 = GeneratorImproved64(z_size,hidden_size)
+generatorI64.load_state_dict(checkpoint.pop("state_dict"))
+generatorI64.eval()
+
+for k,v in checkpoint.items():
+    print(f'{k}: {v}')
+    
+print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
+#%%
+run_latent_arithmatic(attr_name='Male', 
+                      generator=generatorI64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=64,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.1,
+                      attribute_confidence_rate=0.7,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+
+#%%
+run_latent_arithmatic(attr_name='Smiling', 
+                      generator=generatorI64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.1,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+#%%
+run_latent_arithmatic(attr_name='Eyeglasses', 
+                      generator=generatorI64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.01,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
+
+
 #%%
 # progan?stackgan?
 # Stylegan2/3?
