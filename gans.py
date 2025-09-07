@@ -3021,6 +3021,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
             split = True if (not split or 'train') else False
                 
         transform = transforms.Compose([
+        transforms.Resize(resize_dims),
         # transforms.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor()])
@@ -3033,6 +3034,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         else:
             split = True if (not split or 'train') else False
         transform = transforms.Compose([
+        transforms.Resize(resize_dims),
         # transforms.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor()])
@@ -3042,6 +3044,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     elif dataset_name == 'svhn':
         split = 'extra' if not split else split
         transform = transforms.Compose([
+        transforms.Resize(resize_dims),
         # transforms.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
         transforms.ToTensor()])
@@ -3419,6 +3422,19 @@ run_latent_arithmatic(attr_name='Smiling',
                       attribute_confidence_rate=0.8,
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
+#%%
+run_latent_arithmatic(attr_name='Eyeglasses', 
+                      generator=generatorcnn, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.01,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
 
 #%% 
 #%%
@@ -3430,15 +3446,22 @@ run_latent_arithmatic(attr_name='Smiling',
 # gradient signal (unlike wgan which was extremely low) and it also worked well 
 # with batchnorm enabled!
 # before we go to other architectures, lets create a more powerful version of our network!
-# and see how much of a difference it creates!
+# and see how much of a difference it makes!
 # 
-# This block causes massive instability in trainig!
+# There are several issues with our previous implementation, if we want 
+# to get any imporvements we need to address every single one of them. 
+# first we cant go ahead and simply do anything with our blocks
+# GANs are extremely finiky/fragile to work with, even a slight 
+# seemingly okish change can result in complete failure!
+# to make this more practical, lets create a version first and then
+# analyze it and improve it. 
+# sidenote: 
+# The following version causes massive instability in trainig!
 # we can only train porperly with large lr and even then we dont get
-# good results! 
-# the lsgan completely fails with severe mode collapse!
-# in GANs we need to have simple discriminator anything complex
-# powerful complicates things!
-# see explanations ahead!
+# good results! the lsgan completely fails with severe mode collapse!
+# the wgan also fails, and only wgangp manages to produce something intersting!
+# (In GANs we need to have simple discriminator anything complex
+# powerful complicates things!see explanations ahead!)
 class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
@@ -3463,6 +3486,8 @@ class ConvBlock2(nn.Module):
     def forward(self, x):
         return self.block(x)
 
+# convtranspose lets add more layers to our block and use bottleneck design
+# so we can learn better representations by forcing the network that way!
 class ConvTransBlock2(nn.Module):
     def __init__(self,  in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.ReLU(inplace=True)):
@@ -3509,15 +3534,16 @@ class DiscriminatorCNN64(nn.Module):
         self.hidden_size = hidden_size
         self.act = act
         self.use_batchnorm = use_batchnorm
-        
+        # the ConvBlock2 does not even work, so to get this out of the way lets use convblock
+        # and carry on with the original version
         self.net = nn.Sequential(ConvBlock(3, hidden_size, 4, 2, 1, batch_norm=False, act_func=act),#32x32
                                  ConvBlock(hidden_size, hidden_size*2, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#16x16
                                  ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#8x8
                                  ConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),#4x4
                                  nn.Flatten(),
                                  nn.Linear(hidden_size*4 * 4*4, 1),)
-        # the weight initt is no more mandetory
-        # we can train properly without specific initialization!
+        # the weight initt is still very important,
+        # the dcgan weight init makes things more stable!
         self.apply(weights_init_dcgan)
 
     def forward(self, x):
@@ -3540,12 +3566,10 @@ class GeneratorCNN64(nn.Module):
                                  ConvTransBlock2(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),      #64x64
                                  )
         
-        # the weight initt is no more mandetory!
         self.apply(weights_init_dcgan)
         
     def forward(self, x): 
         return self.net(x)
-
 
 x = torch.randn((5,3,64,64))
 z = torch.randn((5,100))
@@ -3570,10 +3594,15 @@ print(f'{goutput.shape=}')
 # would be to use spectral norm to help keep 1lipcshitz condition during training!
 # todo: check spectralnorm and see if it helps!
 loss_type = 'wgangp'
-# for wgangp /gradient polcity scaler lambda
-lambda_factor=10
-
-dataset_name = 'celeba'
+# for wgangp /gradient penalty scaler lambda
+lambda_factor=10#10 #5
+# (with wgangp) for cifar10 up until epoch 17 we had many severe distortions
+# blobs of colors, but eventually as more epochs elapsed we got better(using 
+# smaller lambda(5) seems better but im not sure i need more experiments)
+# celeba is much easier to train compared to ihghlt diverse cifar10!
+# wgan faces the same issues, but do not recover from it up to the very end
+# lsgan completely fails!
+dataset_name = 'cifar10'
 batch_size=128
 train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_dims=(64,64),batch_size=batch_size)
 
@@ -3649,9 +3678,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 losses = np.array(checkpoint.pop("losses"))
 
-generatorcnn = GeneratorCNN64(z_size,hidden_size)
-generatorcnn.load_state_dict(checkpoint.pop("state_dict"))
-generatorcnn.eval()
+generatorcnn64 = GeneratorCNN64(z_size,hidden_size)
+generatorcnn64.load_state_dict(checkpoint.pop("state_dict"))
+generatorcnn64.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -3684,10 +3713,255 @@ run_latent_arithmatic(attr_name='Smiling',
                       attribute_confidence_rate=0.8,
                       alpha_values=torch.linspace(-3,7,steps=24),
                       device='cpu')
-
+#%%
+run_latent_arithmatic(attr_name='Eyeglasses', 
+                      generator=generatorcnn64, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.01,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=torch.linspace(-3,7,steps=24),
+                      device='cpu')
 #%% as we can see we got much better images using wgangp and traiing 
-# is much more stable than the other two methods!
+# is much more stable than the other two methods! we also see better 
+# feature entaglement, that is the individual stays the same and only
+# a specific feature changes! not several ones. (like male2female or
+# glasses vs no glasses, etc) compairng to previous attempt this one
+# seems much better and more accurate the direction corrosponds to one
+# concept overal it seems (more accurate/less noisy that is)
 # 
+#%%as we see, not only things havent improved, we have faced severe issues
+# to the point nearly all methods either fail completeley or require a lot 
+# of adjustment to make it work! 
+# now lets correct our mistakes in previous sections and hopefully get a much
+# better result. 
+# the first issue is the bottleneck design in our ConvBlock2, we intended on
+# getting a richer representation, but made it worse! our bottleneck causes
+# massive information loss in the discriminator. the discriminator needs all
+# the information it can get to be able to find subtle artifacts in the generated
+# images so the feedback works properly! however, by squeezing the featuremaps
+# using a bottleneck(i.e. out_channels//2) we are forcing the network to discard
+# alot of information(very high frequency/subtle details) that can help distinguish betwene
+# the real and fake images. this is why the normal/wider convolution(ConvBlock) works
+# much much better as it does not throw away any bits of information!
+# the discriminator's job is to detect artifacts and alot of common ganartifacts (e.g. repeating patterns,
+# unnatural textures, blurry areas where there should be sharp details, sparkly noise, etc)
+# are inherently high frequency! so rule number 1 Do not use any bottlenecks in our design!
+# 
+# sidenote:
+# a good way to internalize this is to imagine each channel/featuremap as a pattern detector
+# suppose its a word describing a concept (its not a prefect analogy but keep going it makes snese i promise),
+# and a complex image, would therefore require a large bag/vocabulary of these pattern detectors
+# to be fully and properly described. the more words/detectors/experts we have at our disposal,
+# the better we can describe our input. for example 
+# channel 1 might learn to activate for simple things like horizontal lines
+# channel 2 might learn to activate for a more specific thing like green, leafy textures
+# channel 3 might learn to activate for fluffy textures (like dog fare, hairs, etc)
+# ....
+# channel 256 might learn to activate on subtle, noise-like artifacts that is common in fake images!
+# and so on. as you can see, each channel can be regarded as an expert of sort in detecting very specific
+# thins in the input. its as if we have reports coming from a commitee of experts! and each have written 
+# a one-page report (i.e. a feature map) on the subject (i.e. input image).
+# some reports are about low-frequency information like "overall, the subject is a human face" (these are experts/specialists in macro-shapes for example).
+# many other reports are about high-frequency information like "there is a sharp reflection of light/glint on the left pupil!"
+# or "the hair texture shows unnatural repetition in this specific area" or "the edge between the chin and the background
+# is slightly blurry" (these are experts/specialits in fine details, textures (high frequency information) forexample).
+# so when we discard some of these channels in a bottlenck we are effectively discaring finetuned pattern detectors/experts/words
+# in our vocabulary which would directly hurt our ability to describe the input image properly. 
+# noe that we are doing this in a very crude and inefficent way as well which compounds/exacerates/intensifies/ the issue further!
+# 
+# sidenote2:
+# the whole job of a discriminator/critic is to be an expert in finding issues in the input image (an expert forensic!).
+# so it must find the absolute smallest almost impreciptible falws/issues in the generator's output!
+# these flaws are almost always highfrquency artifacts which include:
+# slightly incorrect textures, unnatural sharpness or blurriness on an edge, checkerboard patterns, repetitive noise!
+# and many more!
+# 
+# sidenote3:refresher
+# low frequency represents the slow changes in pixel values across the image.
+# things like large structures, overall shapes, general lighting conditions, 
+# broad color gradients, smooth transitions, things of this nature where change is gradual and smooth
+# basically there are no sudden/abrupt changes(like the overall shading of a face or the smooth blue of the sky)
+# conversly high frequency represents the rapid/sudden changes in pixel values over "short" distances!
+# thingslike edges, textures, fine details, noise, sharp transitions, things like that which change
+# suddenly in few pixels apart (e.g. an edge is basically few bright pixels next to few darker pixels, 
+# we see a sudden change in a short distance). a lot of high frequency stuff/components are abrupt 
+# (like for example the sharp edge between an object and its background) but not all of them!
+# not all high frequency details are necessarily abrupt in the sense that a hard edge is!
+# things like fine textures like hair strands, fabric weaves, or skin pores! are all examples of this. they are 
+# not necessarily abrupt like an edge, but they involve rapid, small changes in pixel values over a small area
+# these are the critical "subtle details"! we want! anothe example is the film grain/noise, the the subtle noise 
+# or the film grain are also high frequency! likewise small imprefictions, like a tiny spec, a small wrinkle,
+# a subtle glint, stuff like these are all rapid changes in intensity of pixel values in a small area.
+#
+# note we can have subtle high frequency or subtle low frequency details, itsnot like high frequency refers to subtle details
+# or vice versa! 
+# for example subtle high frequency details can be like the slight variations in the texture of a brick wall,
+# or the shimmer on a piece of silk, or the fine lines on an aged face! these are subtle, and they are high 
+# frequency as well because they involve rapid changes over small regions!
+# likewise subtle low frequency details are like a very slight, almost imperceptible shift in the ambient lighting 
+# across the entire scene, or a very gentle broad color gradient that adds depth! as you can see these are also subtle
+# but they are low frequency because they change gradually over large regions!
+#
+# when we try to compress the input using a bottleneck, the network needs to priorize what to keep and what to discard 
+# and it usually prioritizes the most important/noticeable features for distinguishing real images from the fakes. 
+# while this includes hard edges its the finest high frequency textures and subtle variations that are often the first
+# to be lost or poorly represented! as they require more specific detectors/channels to capture.
+# conversely for the generator to produce realistic images it needs to synthesize these same high-frequency details
+# beautifully and naturally. If the discriminator isnt sensitive enough to them, the generator wont be sufficiently 
+# penalized for missing them, leading to smoother, less detailed, or artifact-ridden outputs.
+
+# GAN training by nature is very unstable, and we adding multiple layers of convolution with batchnorm in specific 
+# way (like bottleneck,residual etc) into a single block doesnt help either. not only that but by adding many more
+# moving parts (i.e. need to be adjudsted) we create complex and very prolematic/abnormal gradient dynamics that will
+# be very hard for the optimizer to deal with. by problematic gradient dynamics I mean, exploding/vanishing gradients
+# stuff of that nature. this is why simplicity is much favored!
+# 
+# The other glaring issue that we see in our ConvBlock botth the original and the second version, is the use of normalization
+# more specifically BachNorm! although we designed it so we can omiit the Batchnorm, simply because it messes with the
+# 1lipschitz constraint thats required for successful training of gan especially for WGAN/WGANGP. (batchnorm normalizes across
+# the whole batch and creates dependencies between samples but we want per sample 1lipschitz constraint to be enforced so it
+# the 1lipschitz constraint), but its not going to help much as we have already seen. 
+# some simply use other forms of per sample normalization like InstanceNorm or LayerNorm isntead
+# of batchnorm, but that itself is not going to work much better! the best way thats 
+# been found to help with this is to use Spectral Normalization to keep 1lipschitz conditions all the time at all layers!
+# with this simple change we shouldbe able to have a way better training and end result.
+# so rule number two is to use Spectral Norm instead of Batchnorm in the discriminator.
+# these two changes should rectify our discriminators issues. nowlets look at our generators ConvTransBlock blocks.
+# The first obvious issue is the bottleneck design, it needs to go. we already covered it. the second obvious reason
+# the way the residual is added to the main path. we already saw if we apply activation functions like relu to the mix
+# it just destroys the generation! the reason is we have done it incorrectly! we have applied the activation
+# function on the main path (see the self.block) and then add the residual information to the output. 
+# suppose the main path contains negative values, when we incorporate relu for example, it destroys the negative values,
+# zeros them out, then we add the residual nformation, it would be like 0 + residual, the gradient cant flow back
+# throuh the main path in this case, so we effectively created a broken pathway! when we add a relu on top it, it 
+# exacerbates the issue even further and generation fails completely. so the idea is to not apply activation function
+# before we incorporate the residual information. that is the self.block in our ConvTransBlock shouldnt have activation
+# functions, only conv+bn, and then the raw logits needs to be added to the residuals and then carry on with another
+# activation on top. (at least the very last layer in the block shouldnt have if we have several layers before it)
+# note that if even doing that we dont get proper issue, its probably because the two inputs are somehow so differently
+# processed that when we add them we get large negative values, or if not, its because the distribution
+# is far from zero in which case, relu is not a good fit and would destroy this information. 
+# also the addition to residual connection for the final layer will destroy the generation so we dont dothat for 
+# the final layer
+
+# the other issue, a bit minor compared to previous ones, is the use of ConvTranspose2d with strides of 2 and kernel size thats 
+# divisble by the stride (i.e. stride=2 and kernel_size=4). this creates a checkerboard artifact in the generated images. we can 
+# get around this by simply replacing ConvTranspose2d with Upsample layer and a normal conv layer!
+# Having all of this said, now lets apply the changes
+# 
+class DiscConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=2, padding=1, act_func=nn.LeakyReLU(0.2)):
+        super().__init__()
+        
+        # add spectral norm to keep 1-lipschitz constrain everywhere, 
+        # its crucial for wgan/wgangp but all other agns also benifit as well!
+        # its a must have!
+        self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
+        self.conv = self._spectral_norm(nn.Conv2d(in_channels=in_channels,
+                                                  out_channels=out_channels,
+                                                  kernel_size=kernel_size,
+                                                  stride=stride,
+                                                  padding=padding))
+        self.act = act_func
+    
+    def forward(self, x):
+        return self.act(self.conv(x))
+        
+class DiscriminatorImproved64(nn.Module):
+    def __init__(self, hidden_size=32, act=nn.LeakyReLU(0.2)):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        self.act = act
+        self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
+        
+        self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act),#32x32
+                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act),#16x16
+                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act),#8x8
+                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act),#4x4
+                                 nn.Flatten(),
+                                 nn.Linear(hidden_size*4 * 4*4, 1),)
+        # the weight initt is still very important,
+        # the dcgan weight init makes things more stable!
+        self.apply(weights_init_dcgan)
+
+    def forward(self, x):
+        return self.net(x)
+    
+# and for generator
+class UpsampleBlock(nn.Module):
+    def __init__(self,  in_channels, out_channels, kernel_size,
+                 stride=1, padding=1, batch_norm=False, act_func=nn.ReLU(inplace=True)):
+        super().__init__()
+        
+        self.act_func = act_func
+        self.block = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'),
+                                   nn.Conv2d(in_channels, out_channels, kernel_size,
+                                             stride=stride, padding=padding, bias=not batch_norm),
+                                   nn.BatchNorm2d(out_channels) if batch_norm else
+                                   nn.Identity(),
+                                   # no activation for the block! when we wantto incorporate residuals!
+                                   )
+                
+        self.residual = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'),
+                                      nn.Conv2d(in_channels, out_channels, kernel_size=1,
+                                                stride=1, bias=not batch_norm),
+                                      nn.BatchNorm2d(out_channels) if batch_norm else
+                                      nn.Identity(),
+                                      )
+ 
+    def forward(self, x):
+        out = self.block(x)
+        x_res = self.residual(x)
+        # now we have raw logits for both, so we add and then apply activation
+        out = self.act_func(out + x_res)
+        return out
+
+class GeneratorImproved64(nn.Module):
+    def __init__(self, z_size, hidden_size,  act=nn.ReLU()):
+        super().__init__()
+
+        self.z_size = z_size
+        self.hidden_size = hidden_size
+        self.act = act
+        self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
+                                 nn.BatchNorm1d(hidden_size*4 * 4*4),
+                                 # note since our generator isnt traversed more than once, having inplace operation is ok
+                                 # later on we will see cases where this is not the case e.g. in cyclegan! just wanted to
+                                 # put this notice here before I forgetit!
+                                 nn.ReLU(inplace=True),
+                                 nn.Unflatten(dim=1, unflattened_size=(hidden_size*4, 4, 4)),
+                                 UpsampleBlock(hidden_size*4, hidden_size*2, 4, batch_norm=True, act_func=act), #8x8
+                                 UpsampleBlock(hidden_size*2, hidden_size*2, 4, batch_norm=True, act_func=act), #16x16
+                                 UpsampleBlock(hidden_size*2, hidden_size*1, 4, batch_norm=True, act_func=act), #32x32
+                                 )
+        # our final layer/block doesnt have any residual to mess with the final output!
+        self.final_layer = nn.Sequential(nn.Upsample(scale_factor=2, mod='bilinear'), #64x64
+                                         nn.Conv2d(hidden_size, 3, 4, stride=1, padding=1),
+                                         nn.Tanh())
+        
+        self.apply(weights_init_dcgan)
+        
+    def forward(self, x): 
+        output = self.net(x)
+        return self.final_layer(output)
+
+x = torch.randn((5,3,64,64))
+z = torch.randn((5,100))
+discriminatorcnn = DiscriminatorImproved64(16)
+generatorcnn = GeneratorImproved64(100, 16)
+# print(f'{generatorcnn}')
+doutput = discriminatorcnn(x)
+goutput = generatorcnn(z)
+print(f'{doutput.shape=}')
+print(f'{goutput.shape=}')
+#%%
 #%%
 # progan?stackgan?
 # Stylegan2/3?
