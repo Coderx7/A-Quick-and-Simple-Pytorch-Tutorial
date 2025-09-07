@@ -3181,7 +3181,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                 "z_size":generator.z_size,
                 "lr_d":[p['lr'] for p in disc_optimizer.param_groups],
                 "lr_g":[p['lr'] for p in gen_optimizer.param_groups],
-                "use_batchnorm":discriminator.use_batchnorm,
+                "use_batchnorm":discriminator.use_batchnorm if hasattr(discriminator,'use_batchnorm') else False,
                 "epoch":epoch,
                 "gen_update_interval":gen_update_interval,
                 "loss_type":loss_type,
@@ -3831,6 +3831,14 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # been found to help with this is to use Spectral Normalization to keep 1lipschitz conditions all the time at all layers!
 # with this simple change we shouldbe able to have a way better training and end result.
 # so rule number two is to use Spectral Norm instead of Batchnorm in the discriminator.
+# 
+# quicknote:
+# when we apply spectral norm, the training will get a massive hit in performance as this imposes a heavy(but constant)
+# overhead. because pytorch needs to run an iterative algorithm called Power Iteration at least once(default is n_power_iterations=1)
+# for every layer wrapped in spectral_norm in every forward pass, to estimate the largest singular value of that layer's weight matrix.
+# This involves extra matrix-vector multiplications that are not part of the standard forward pass but are
+# required for the normalization process!
+# 
 # these two changes should rectify our discriminators issues. nowlets look at our generators ConvTransBlock blocks.
 # The first obvious issue is the bottleneck design, it needs to go. we already covered it. the second obvious reason
 # the way the residual is added to the main path. we already saw if we apply activation functions like relu to the mix
@@ -3842,7 +3850,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # exacerbates the issue even further and generation fails completely. so the idea is to not apply activation function
 # before we incorporate the residual information. that is the self.block in our ConvTransBlock shouldnt have activation
 # functions, only conv+bn, and then the raw logits needs to be added to the residuals and then carry on with another
-# activation on top. (at least the very last layer in the block shouldnt have if we have several layers before it)
+# activation on top. 
 # note that if even doing that we dont get proper issue, its probably because the two inputs are somehow so differently
 # processed that when we add them we get large negative values, or if not, its because the distribution
 # is far from zero in which case, relu is not a good fit and would destroy this information. 
@@ -3856,18 +3864,19 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # 
 class DiscConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=2, padding=1, act_func=nn.LeakyReLU(0.2)):
+                 stride=2, padding=1, use_spectral_norm=True, act_func=nn.LeakyReLU(0.2)):
         super().__init__()
         
         # add spectral norm to keep 1-lipschitz constrain everywhere, 
         # its crucial for wgan/wgangp but all other agns also benifit as well!
         # its a must have!
         self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
-        self.conv = self._spectral_norm(nn.Conv2d(in_channels=in_channels,
-                                                  out_channels=out_channels,
-                                                  kernel_size=kernel_size,
-                                                  stride=stride,
-                                                  padding=padding))
+        conv = nn.Conv2d(in_channels=in_channels,
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        self.conv = self._spectral_norm(conv) if use_spectral_norm else conv
         self.act = act_func
     
     def forward(self, x):
@@ -3883,11 +3892,14 @@ class DiscriminatorImproved64(nn.Module):
         # basicaly all layers that perform major affine transformations
         # like Conv and Linear should be normalized.
         self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
-        
+        # test with no spectral norm and see how it goes
+        # update:
+        # it seems applying spectral norm to every layer doesnt necessarily
+        # result in better output!
         self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act),#32x32
-                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act),#16x16
-                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act),#8x8
-                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act),#4x4
+                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=False),#16x16
+                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=False),#8x8
+                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=True),#4x4
                                  nn.Flatten(),
                                  self._spectral_norm(nn.Linear(hidden_size*4 * 4*4, 1)),)
         # the weight initt is still very important,
@@ -3911,7 +3923,7 @@ class UpsampleBlock(nn.Module):
                                    nn.Identity(),
                                    # no activation for the block! when we wantto incorporate residuals!
                                    )
-                
+
         self.residual = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'),
                                       nn.Conv2d(in_channels, out_channels, kernel_size=1,
                                                 stride=1, padding=0, bias=not batch_norm),
@@ -3923,7 +3935,8 @@ class UpsampleBlock(nn.Module):
         out = self.block(x)
         x_res = self.residual(x)
         # now we have raw logits for both, so we add and then apply activation
-        out = self.act_func(out + x_res)
+        # update: adding stylegan factor (sqrt(2))
+        out = self.act_func(out + x_res) * (1 / 1.414)
         return out
 
 class GeneratorImproved64(nn.Module):
@@ -3965,6 +3978,7 @@ goutput = geni64(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
+print(f'Training Improved versions of Discriminator and Generator')
 loss_type = 'wgangp'
 lambda_factor=10
 dataset_name = 'celeba'
@@ -3987,8 +4001,8 @@ gen_update_interval = 1 if loss_type == "wgan" else 1
 discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size)
 discriminatorI64 = discriminatorI64.to(device)
 #generator
-generatorcnnI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
-generatorcnnI64 = generatorI64.to(device)
+generatorI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
+generatorI64 = generatorI64.to(device)
 
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
