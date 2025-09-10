@@ -4090,9 +4090,10 @@ print(f'{goutput.shape=}')
 # Ive heard we shouldnt use spectral norm with wgan! they are both different regularizer so for wgan tests 
 # we need to disable spectral normalization! but in my experiments it seems having it around helps!
 # and it shows in the average score we get, but I need more experiments to say it forsure)
-#
-#
-
+# (sidenote: switching to rmsprop with gen_interval=5 did a good job while adam kept failing see my explanation ahead)
+# 
+# todo: check no drpout aswell see if that impacts the same after using larger range for clipping
+# 
 print(f'Training Improved versions of Discriminator and Generator')
 loss_type = 'wgan'
 lambda_factor=10
@@ -4111,6 +4112,14 @@ interval = num_batches//2+1
 # every 5 discriminator/critic updates, update the generator
 # wgangp works fine with 1! wgan seems not! wgan needs more
 # updates so it learns what what real and fake images are 
+# in practice though,when i set this to 5, wgan goes nuts!
+# and it fails spectacularly! this could be due to large lr(0.001)
+# so I need to try lower lr as well, it could also be due to adam momentum
+# ruining it, as the main authors uses rmsprop! but on the other hand
+# in my previous experiments,we had much better luck!(using bn of course!)
+# switching to rmsprop actually did improve things with interval=5
+# and it got better as training went (got fid 167 in epoch 50)
+# but I still need to check other things! (like lower interval etc)
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 # by using
@@ -4132,9 +4141,10 @@ betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0001, 0.0002
 else:
-    lr_d, lr_g = 0.001, 0.002
-    
-disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
+    lr_d, lr_g = 0.0001, 0.0002
+
+disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan    
+# disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
 
 training_loop(discriminatorI64, 
