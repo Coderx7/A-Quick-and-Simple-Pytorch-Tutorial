@@ -3065,8 +3065,19 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 #%%
 def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
-                  lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, device='cuda',
-                  weights_save_dir='./weights', images_save_dir='./results/gan'):
+                  lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, wgan_range=(-0.01, 0.01),
+                  device='cuda', weights_save_dir='./weights', images_save_dir='./results/gan'):
+    
+    print(f'Datset:                    {dataset_name}')
+    print(f'Loss type:                 {loss_type}')
+    print(f'Epochs:                    {epochs} ')
+    print(f'Interval:                    {interval} ')
+    print(f'Generator update interval: {gen_update_interval}')
+    print(f'WGAN weight cliping range: {wgan_range}')
+    print(f'WGAN-GP Lambda factor:     {lambda_factor}')
+    print(f'gen_num_samples:           {gen_num_samples}')
+    print(f'Checkpoint Directory:      {weights_save_dir}')
+    print(f'Images Directory:          {images_save_dir}')
     
     metric = IS_FID_Calculator(device)
 
@@ -3085,7 +3096,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         #scale input to [-1,1]
             imgs_real = (2*imgs_real-1).to(device)
                 
-        # imgs_real += 0.05 * torch.randn_like(imgs_real)
+            imgs_real += 0.05 * torch.randn_like(imgs_real)
                
         # train discriminator/critic! 
         # real image predictions
@@ -3097,8 +3108,8 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         # from the generator and quickly learn!
             imgs_fake = generator(z_vector).detach()
         
-        # add noise to fake images as well(not needed for dcgan)
-        # imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+            # add noise to fake images as well(not needed for dcgan)
+            imgs_fake += 0.05 * torch.randn_like(imgs_fake)
         
             preds_fake = discriminator(imgs_fake)
         # disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
@@ -3131,7 +3142,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                 # keep it roughly 1-lipschitz smaller than this
                 # restricts the discriminator/critic too much!
                 # larger values might be ok only if things go south!
-                    p.data.clip_(-0.01, 0.01)
+                    p.data.clip_(*wgan_range)
 
         # now train genertor to create images that look real
             z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
@@ -3864,7 +3875,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # 
 class DiscConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=2, padding=1, use_spectral_norm=True, act_func=nn.LeakyReLU(0.2)):
+                 stride=2, padding=1, use_spectral_norm=True, act_func=nn.LeakyReLU(0.2), dropout_rate=0.2):
         super().__init__()
         
         # add spectral norm to keep 1-lipschitz constrain everywhere, 
@@ -3878,24 +3889,36 @@ class DiscConvBlock(nn.Module):
                          padding=padding)
         self.conv = self._spectral_norm(conv) if use_spectral_norm else conv
         self.act = act_func
+        self.dropout_rate = dropout_rate
+        self.dropout = nn.Dropout2d(dropout_rate)
     
     def forward(self, x):
-        return self.act(self.conv(x))
+        # this is to constrain t he discriminator so it doesnt overpower the generator!
+        return self.dropout(self.act(self.conv(x)))
         
 class DiscriminatorImproved64(nn.Module):
-    def __init__(self, hidden_size=32, act=nn.LeakyReLU(0.2)):
+    def __init__(self, hidden_size=32, act=nn.LeakyReLU(0.2), no_spec_norm_list=None):
         super().__init__()
 
         self.hidden_size = hidden_size
         self.act = act
-        # we must also normalize the linear layer as well. 
-        # basicaly all layers that perform major affine transformations
-        # like Conv and Linear should be normalized.
-        self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
+        # list of layer indexes specifying which
+        # layer gets its spectral normalization disabled!
+        # by default all affine layers (here 5) are normalized 
+        # for maximum stability. but sometimes its not needed 
+        # so this is to exempt some layers so we get better performance
+        # see notes ahead!
+        if no_spec_norm_list is not None:
+            self.spec_norm_list = [not (i in no_spec_norm_list) for i in range(5)]
+        else:
+            self.spec_norm_list = [True]*5
+        assert len(self.spec_norm_list) == 5, f'spectral_norm_list doesnt match network layer count({len(spec_norm_list)}!=5)'
+        print(f'{self.spec_norm_list=}')
+        
         # test with no spectral norm and see how it goes
         # update:
         # it seems applying spectral norm to every layer doesnt necessarily
-        # result in better output! at least for wgangp!
+        # result in better output! at least for wgangp! (no_spec_norm_list=[1,2])
         # okay, we can omit the spectal normalization from the first and last (linear) 
         # layers, without much worry. I did the opposite! kept the first and the last
         # two layers with spectral norm and ommit the others. training went well and I
@@ -3910,19 +3933,32 @@ class DiscriminatorImproved64(nn.Module):
         # with spectral norm usually take care of it well enough)
         # the idea is first to apply spectral norm to all layers since this provides the most 
         # stability, and when you get a baseline, try removing some to get more speed etc
-        #
-        self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act),#32x32
-                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=False),#16x16
-                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=False),#8x8
-                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=True),#4x4
-                                 nn.Flatten(),
-                                 self._spectral_norm(nn.Linear(hidden_size*4 * 4*4, 1)),)
+        #update3:
+        # for lsgan the config that worked for wgangp doesnt work!imediately we see mode collapse!
+        # in epoch1, it continues in epoch 4 and images are hellish!
+        # its a disaster for wgan as well! up until epoch 3 we have very bad (blurry/malformed
+        # some have dark blobs in them not good basically!
+        self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[0]),#32x32
+                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[1]),#16x16
+                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[2]),#8x8
+                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[3]),#4x4
+                                 nn.Flatten(),)
+        
+        self.fc = nn.Linear(hidden_size*4 * 4*4, 1)
+        # we must also normalize the linear layer as well.(its highly recommended)
+        # basicaly all layers that perform major affine transformations
+        # like Conv and Linear should be normalized. see notes below
+        # self._spectral_norm = lambda m: nn.utils.spectral_norm(m)
+        if self.spec_norm_list[4]:
+            self.fc = nn.utils.spectral_norm(self.fc)
+        
         # the weight initt is still very important,
         # the dcgan weight init makes things more stable!
         self.apply(weights_init_dcgan)
 
     def forward(self, x):
-        return self.net(x)
+        output = self.net(x)
+        return self.fc(output)
     
 # and for generator
 class UpsampleBlock(nn.Module):
@@ -3931,6 +3967,11 @@ class UpsampleBlock(nn.Module):
         super().__init__()
         
         self.act_func = act_func
+        # by using upsample we will see very sharp/glossy images!
+        # note the changes result in higher quality images regardless
+        # of using upsample vs convtranspose. that is our improvement 
+        # is not only due to using upsample. if you try to use convtranspose
+        # you'll see we get roughly the same performance
         self.block = nn.Sequential(nn.Upsample(scale_factor=2, mode='bilinear'),
                                    nn.Conv2d(in_channels, out_channels, kernel_size,
                                              stride=stride, padding=padding, bias=not batch_norm),
@@ -3951,7 +3992,9 @@ class UpsampleBlock(nn.Module):
         x_res = self.residual(x)
         # now we have raw logits for both, so we add and then apply activation
         # update: adding stylegan factor (sqrt(2))
-        out = self.act_func(out + x_res) * (1 / 1.414)
+        # todo remove the residual connection here and add it in the generator
+        # between different blocks (create feature pyramid in fact!)
+        out = self.act_func(out + x_res) #* (1 / 1.414)
         return out
 
 class GeneratorImproved64(nn.Module):
@@ -3985,16 +4028,73 @@ class GeneratorImproved64(nn.Module):
 
 x = torch.randn((5,3,64,64))
 z = torch.randn((5,100))
-disci64 = DiscriminatorImproved64(16)
+disci64 = DiscriminatorImproved64(16, no_spec_norm_list=[0])
+# print(f'{disci64.spec_norm_list=}')
 geni64 = GeneratorImproved64(100, 16)
-# print(f'{generatorcnn}')
+# print(f'{disci64=}')
 doutput = disci64(x)
 goutput = geni64(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
+# with the new changes in our architecture, we see much sharper/glossier images
+# which are due to using upsample layer. the trainig is a bit more stable
+# overall even without spectralnorm. with spectral norm it gets more stable but
+# it wont provide realistic images right off the bat!
+#
+# update:
+# compared to our previous attempt, it seems the wgan/lsgan did massively better
+# when we use Batchnorm! which we know is wrong! but then again when we used spectral norm
+# things didnt get better! the wgan images are not formed, have black blobs, blurry images
+# and it plagues all images!
+# this means our discriminator is way more powerful than our generator! the bn works because
+# it indirectly acts as a powerful regularizer and it blurs the signal by accumulating
+# the statistics of all samples in a batch!
+#!(it forces the statistics of the features to be dependent on the entire batch,
+# which "blurs" the signal and artificially slows the discriminator down, 
+# preventing it from winning so easily) hence we get better results there than here!
+# so I added a dropout layer after each conv layer to make discriminator more constrained!
+# update2:
+# after the change this is what I got at epoch 1:
+# Epoch/Epochs: 1/50 | Iter: 636/1272 | Disc Loss: 0.101219 | Gen Loss: -1.977101
+# Epoch/Epochs: 1/50 | Disc Loss : -1.102075 | Gen loss: 0.781875 | IS: (μ:2.3388, σ²:0.2658) | FID: 222.38
+#  -- Discriminator's real mean: 0.0014 | Discriminator's fake mean = -0.0431
+# the discriminators mean for real images and fake images look very bad 
+# the wgan is supposed to learn to assign big positive numbers(big scores) to real images and
+# negative to fake ones(the difference between these two numbers must be huge!) but here we 
+# see real mean(average score for real images) = 0.0014 and fake mean = -0.0431 which means 
+# the difference between the two (real_mean - fakemean = 0.0014 + 0.0431= 0.0445 whic is) practically zero! 
+# in other words the discriminator is telling us it has absolutely o idea which image is real 
+# and which one is fake! now because the output of the discriminator is nearly identical for both
+# real and fake images, the gradients it passes back to the generator are extremely small! therefore
+# the generator has practically no strength to change or improve! also the black blobs and warped faces
+# we kept seeing in images is a visual sign/manifistation of generator reciving zero gradient signals! 
+# the reason is simply because how wgan works. this is one of the reason wgan weight cliping is
+# deprecated and wgangp is used. weight clipping can either cause vainishing radient or exploding gradient
+# depending on the value we choose for clipping! in our case it seems we are clipping a small number
+# and maybe using a larger one might help! 
+# update:
+# I increates the clipping range from -0.01,0.01 to -0.05,0.05 and immediately got better results!
+# the discriminators average score became much larger (-- Discriminator's real mean: 5.0224 | Discriminator's fake mean = 4.4442)
+# there were still some black blobs, but the image qualy became 10x better! when I 
+# disabled the spectral norm the quality decreased but the training seems stable.
+# (Epoch/Epochs: 2/50 | Iter: 636/1272 | Disc Loss: -15.749696 | Gen Loss: -12.988724
+# Epoch/Epochs: 2/50 | Disc Loss : -20.169931 | Gen loss: -12.215222 | IS: (μ:2.0913, σ²:0.4107) | FID: 290.18
+#  -- Discriminator's real mean: -10.7830 | Discriminator's fake mean = -30.3853) as you can see
+# the average score is much lower but the difference is good imho! 
+# toward the end of the training the scores improved, suggesting with more training we will get better
+# results:
+# poch/Epochs: 49/50 | Iter: 636/1272 | Disc Loss: 0.044365 | Gen Loss: 23.883381
+# Epoch/Epochs: 49/50 | Disc Loss : -4.688194 | Gen loss: 35.643920 | IS: (μ:1.9881, σ²:0.3252) | FID: 153.03
+#  -- Discriminator's real mean: 3.3240 | Discriminator's fake mean = 0.7945
+# Ive heard we shouldnt use spectral norm with wgan! they are both different regularizer so for wgan tests 
+# we need to disable spectral normalization! but in my experiments it seems having it around helps!
+# and it shows in the average score we get, but I need more experiments to say it forsure)
+#
+#
+
 print(f'Training Improved versions of Discriminator and Generator')
-loss_type = 'wgangp'
+loss_type = 'wgan'
 lambda_factor=10
 dataset_name = 'celeba'
 batch_size=128
@@ -4003,17 +4103,25 @@ train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_di
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 disc_hidden_size = 32
 gen_hidden_size = 64
-z_size = 100
+z_size = 128
 
 epochs = 50
 num_batches = len(train_loader)
 interval = num_batches//2+1
 # every 5 discriminator/critic updates, update the generator
-# wgangp works fine with 1! wgan seems not!
-gen_update_interval = 1 if loss_type == "wgan" else 1
+# wgangp works fine with 1! wgan seems not! wgan needs more
+# updates so it learns what what real and fake images are 
+gen_update_interval = 5 if loss_type == "wgan" else 1
 
+# by using
+# [1,2] works only for wgangp, others fail miserably!
+# wgan fails with all layers specto normalized when gen_update_interval=5
+# with gen_update_interval=1 its still trash!
+# lsgan keeps failing with mode collapse (repeative images)! 
+no_spec_list = list(range(5)) #[] #[1,2]
 #discriminator
-discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size)
+discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
+                                           no_spec_norm_list=no_spec_list)
 discriminatorI64 = discriminatorI64.to(device)
 #generator
 generatorI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
@@ -4041,6 +4149,7 @@ training_loop(discriminatorI64,
               loss_type=loss_type, 
               lambda_factor=lambda_factor,
               use_batchnorm=False,
+              wgan_range=(-0.05, 0.05),
               device=device)
 #%%
 # load models 
