@@ -3184,7 +3184,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                 # losses.append((disc_loss.item(), gen_real_loss.item()))
                 # print discriminator and generator loss
                 print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
-                print(f" -- Current Batch: Discriminator's real mean: {disc_real_mean:.4f} | Discriminator's fake mean = {disc_fake_mean:.4f}")
+                print(f" -- Batch-{i}: Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean = {disc_fake_mean:.4f}")
                 
             losses.append((disc_loss.item(), gen_real_loss.item()))
     
@@ -3198,10 +3198,10 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         IS_score = metric.compute_IS(imgs_fake)
         FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
-        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
         print(f" -- Last Batch : Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean: {disc_fake_mean:.4f}")
         print(f" -- Epoch's Avg: Disc's real mean: {average_score_real_mean:.4f} | Disc's fake mean: {average_score_fake_mean:.4f}")
-    
+        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+        
         #save model weights at each epoch
         torch.save({"state_dict":generator.state_dict(),
                 "hidden_size":generator.hidden_size,
@@ -4147,7 +4147,11 @@ interval = num_batches//2+1
 # 
 # I disabled noise addition to see how much impact it had on our result ignoring
 # all other factors(larger clipping range and more constrained discriminator)
-# the training fails! we now get average scores in hunderds and thousands! which is crazy! 
+# the first attempt failed completely and the model couldnt recover!(experiment 20250911142646)
+# the second time it did a tiny bit better, but still the outcome is terrible! (experiment 20250911175046)
+# third experiment 20250911200109:
+# 
+# we now get average scores in hunderds and thousands! which is crazy! 
 # we basically want 1 digit or two digit average scores (real image mean/fake image mean)
 # but we get huge numbers! 
 # this means we are facing exploding gradients and catastrophic divergence in wgan! 
