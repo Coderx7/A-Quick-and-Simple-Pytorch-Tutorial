@@ -3183,7 +3183,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
                 # append discriminator loss and generator loss
                 # losses.append((disc_loss.item(), gen_real_loss.item()))
                 # print discriminator and generator loss
-                print(f'Epoch/Epochs: {epoch}/{epochs} | Iter: {i}/{len(train_loader)} | Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
+                print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
                 print(f" -- Batch-{i}: Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean = {disc_fake_mean:.4f}")
                 
             losses.append((disc_loss.item(), gen_real_loss.item()))
@@ -3200,7 +3200,7 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
     
         print(f" -- Last Batch : Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean: {disc_fake_mean:.4f}")
         print(f" -- Epoch's Avg: Disc's real mean: {average_score_real_mean:.4f} | Disc's fake mean: {average_score_fake_mean:.4f}")
-        print(f'Epoch/Epochs: {epoch}/{epochs} | Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+        print(f'[Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
         
         #save model weights at each epoch
         torch.save({"state_dict":generator.state_dict(),
