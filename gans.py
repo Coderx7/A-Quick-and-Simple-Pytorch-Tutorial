@@ -4245,6 +4245,7 @@ interval = num_batches//2+1
 # know whats going wrong! we now fully know what has gone wrong!so how do we fix this? the simplest thing
 # would be to use a much lower learning rate and use smaller range of values for clipping and ultimately 
 # use noise addition!
+# 
 # update: 
 # by switching to wgan_range=(-0.02, 0.02) and keeping everytihng else the same as before. we have much
 # stable training. no sign of gradient explosion! and average scores are 1 digit and small two digits!
@@ -4254,9 +4255,18 @@ interval = num_batches//2+1
 # introduced, we had a lot of issues like!)
 # next we are going to lower the lr to 1e-5 with wgan_range=(-0.02,0.02): the avergae scores are one 1 digit
 # as the should be, and everything seems stable. but since the lr is very low, the convergence rate is
-# understandably very slow as well(experiment 20250912092645)
+# understandably very slow as well and the default 50 epochs wont be enough to get good results(experiment 20250912092645)
 # next we are goingto increase the lr back to 0.001, keep the range small (-0.02,0.02) but enable noise
-# addition: 
+# addition( experiment 20250912112621) the values are larger than the previous experiment, and we see large
+# average scores (in 100/200, not larger but still is very bad. we can see the swinging here as well, 
+# the initial batch has e.g. an average score of 286, and in last batch it goes down to 3! the jump is too 
+# large which suggest the update step is very large so large it doesnt allow the discriminator to settle on
+# a proper weight. it jumps around hit the limit(clipping) gets thrown to ther otherway harshly and this
+# continues. basically the original issue but a bit milder because the clipping range is much lower than 
+# before. therefore the result is not good at all! reverting back the lr back to 1e-5 made
+# stuff better but at the same time convergence speed is slow!(experiment 20250912124800).
+# next switching to rmspropm with lr=5e-5 
+#  
 #  
 # this means after we removed the noise addition, the clipping range is just too large, so large 
 # that it doesnt enforce 1lipschitz and causes gradient explosion!
@@ -4293,7 +4303,9 @@ betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0001, 0.0002
 elif loss_type == 'wgan':
-    # wgan requires way smaller lr!
+    # wgan requires way smaller lr like 1e-5, 2e-5
+    # and a small clipping range like -0.02,0.02 
+    # also rmsprop seems do to much better than adam!
     lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
 else:
     lr_d, lr_g = 0.001, 0.002
@@ -4315,7 +4327,7 @@ training_loop(discriminatorI64,
               lambda_factor=lambda_factor,
               use_batchnorm=False,
               wgan_range=(-0.02, 0.02), #(-0.05, 0.05)
-              noise_addition=False,
+              noise_addition=True,
               device=device)
 #%%
 # load models 
