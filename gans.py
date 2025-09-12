@@ -4264,8 +4264,10 @@ interval = num_batches//2+1
 # a proper weight. it jumps around hit the limit(clipping) gets thrown to ther otherway harshly and this
 # continues. basically the original issue but a bit milder because the clipping range is much lower than 
 # before. therefore the result is not good at all! reverting back the lr back to 1e-5 made
-# stuff better but at the same time convergence speed is slow!(experiment 20250912124800).
-# next switching to rmspropm with lr=5e-5 
+# stuff better but at the same time convergence speed is slow!(experiment 20250912124800). 
+# remove noise addition will make the resuls worse so having it around is good(20250912144741): 
+# next switching to rmspropm with lr=5e-5 (wih no noise addition): performs kindof the same but I guess
+# maybe a bit better?! 
 #  
 #  
 # this means after we removed the noise addition, the clipping range is just too large, so large 
@@ -4310,8 +4312,8 @@ elif loss_type == 'wgan':
 else:
     lr_d, lr_g = 0.001, 0.002
 
-# disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
+disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=1e-5) # for wgan
+# disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
 
 training_loop(discriminatorI64, 
