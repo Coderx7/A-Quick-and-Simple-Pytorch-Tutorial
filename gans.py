@@ -3914,11 +3914,12 @@ class DiscConvBlock(nn.Module):
         return self.dropout(self.act(self.conv(x)))
         
 class DiscriminatorImproved64(nn.Module):
-    def __init__(self, hidden_size=32, act=nn.LeakyReLU(0.2), no_spec_norm_list=None):
+    def __init__(self, hidden_size=32, act=nn.LeakyReLU(0.2), no_spec_norm_list=None, dropout_rate=0.2):
         super().__init__()
 
         self.hidden_size = hidden_size
         self.act = act
+        self.dropout_rate = dropout_rate
         # list of layer indexes specifying which
         # layer gets its spectral normalization disabled!
         # by default all affine layers (here 5) are normalized 
@@ -3955,10 +3956,10 @@ class DiscriminatorImproved64(nn.Module):
         # in epoch1, it continues in epoch 4 and images are hellish!
         # its a disaster for wgan as well! up until epoch 3 we have very bad (blurry/malformed
         # some have dark blobs in them not good basically!
-        self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[0]),#32x32
-                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[1]),#16x16
-                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[2]),#8x8
-                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[3]),#4x4
+        self.net = nn.Sequential(DiscConvBlock(3, hidden_size, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[0], dropout_rate=dropout_rate),#32x32
+                                 DiscConvBlock(hidden_size*1, hidden_size*2, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[1], dropout_rate=dropout_rate),#16x16
+                                 DiscConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[2], dropout_rate=dropout_rate),#8x8
+                                 DiscConvBlock(hidden_size*4, hidden_size*4, 4, 2, 1, act_func=act, use_spectral_norm=self.spec_norm_list[3], dropout_rate=dropout_rate),#4x4
                                  nn.Flatten(),)
         
         self.fc = nn.Linear(hidden_size*4 * 4*4, 1)
@@ -4267,8 +4268,11 @@ interval = num_batches//2+1
 # stuff better but at the same time convergence speed is slow!(experiment 20250912124800). 
 # remove noise addition will make the resuls worse so having it around is good(20250912144741): 
 # next switching to rmspropm with lr=5e-5 (wih no noise addition): performs kindof the same but I guess
-# maybe a bit better?! 
-#  
+# maybe a bit better?!
+# now trying with spectral norm on all layers (we shouldnt do this but lets do it anyway):(20250912173350)
+# itimproved the results but the result overall is very bad (fid 200+!)
+# next enable noise addition, spectnorm and use larger clipping weights (-0.05,0.05) with rmsprop:(20250912191703)
+# 
 #  
 # this means after we removed the noise addition, the clipping range is just too large, so large 
 # that it doesnt enforce 1lipschitz and causes gradient explosion!
@@ -4291,7 +4295,7 @@ gen_update_interval = 5 if loss_type == "wgan" else 1
 # wgan fails with all layers specto normalized when gen_update_interval=5
 # with gen_update_interval=1 its still trash!
 # lsgan keeps failing with mode collapse (repeative images)! 
-no_spec_list = list(range(5)) #[] #[1,2]
+no_spec_list = []# list(range(5)) #[] #[1,2]
 #discriminator
 discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            no_spec_norm_list=no_spec_list)
@@ -4312,7 +4316,7 @@ elif loss_type == 'wgan':
 else:
     lr_d, lr_g = 0.001, 0.002
 
-disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=1e-5) # for wgan
+disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 # disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
 
@@ -4328,7 +4332,7 @@ training_loop(discriminatorI64,
               loss_type=loss_type, 
               lambda_factor=lambda_factor,
               use_batchnorm=False,
-              wgan_range=(-0.02, 0.02), #(-0.05, 0.05)
+              wgan_range=(-0.05, 0.05), #(-0.02, 0.02) (-0.05, 0.05)
               noise_addition=True,
               device=device)
 #%%
