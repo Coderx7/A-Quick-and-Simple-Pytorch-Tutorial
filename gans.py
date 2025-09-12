@@ -4077,17 +4077,18 @@ print(f'{goutput.shape=}')
 # Epoch/Epochs: 1/50 | Disc Loss : -1.102075 | Gen loss: 0.781875 | IS: (μ:2.3388, σ²:0.2658) | FID: 222.38
 #  -- Discriminator's real mean: 0.0014 | Discriminator's fake mean = -0.0431
 # the discriminators mean for real images and fake images look very bad 
-# the wgan is supposed to learn to assign big positive numbers(big scores) to real images and
-# negative to fake ones(the difference between these two numbers must be huge!) but here we 
-# see real mean(average score for real images) = 0.0014 and fake mean = -0.0431 which means 
-# the difference between the two (real_mean - fakemean = 0.0014 + 0.0431= 0.0445 whic is) practically zero! 
-# in other words the discriminator is telling us it has absolutely o idea which image is real 
+# the wgan is supposed to learn to assign big positive numbers(big scores not huge 
+# (1 or 2 digit are ok but larger or 3 digits and more are bad)) to real images and
+# much smaller numbers to fake ones(the difference between these two numbers must be large enough to have good distinction distance between real/fake)
+# but here we see real mean(average score for real images) = 0.0014 and fake mean = -0.0431 which means 
+# the difference between the two (real_mean - fakemean = 0.0014 + 0.0431= 0.0445 which is practically zero! 
+# in other words the discriminator is telling us it has absolutely no idea which image is real 
 # and which one is fake! now because the output of the discriminator is nearly identical for both
 # real and fake images, the gradients it passes back to the generator are extremely small! therefore
-# the generator has practically no strength to change or improve! also the black blobs and warped faces
+# the generator has practically no strength or will to change or improve! also the black blobs and warped faces
 # we kept seeing in images is a visual sign/manifistation of generator reciving zero gradient signals! 
 # the reason is simply because how wgan works. this is one of the reason wgan weight cliping is
-# deprecated and wgangp is used. weight clipping can either cause vainishing radient or exploding gradient
+# deprecated and wgangp is used. weight clipping can either cause vainishing gradient or exploding gradient
 # depending on the value we choose for clipping! in our case it seems we are clipping a small number
 # and maybe using a larger one might help! 
 # update:
@@ -4100,20 +4101,25 @@ print(f'{goutput.shape=}')
 # Epoch/Epochs: 2/50 | Disc Loss : -20.169931 | Gen loss: -12.215222 | IS: (μ:2.0913, σ²:0.4107) | FID: 290.18
 #  -- Discriminator's real mean: -10.7830 | Discriminator's fake mean = -30.3853
 # 
-# as you can see the average score is much lower but the difference is good imho! 
-# toward the end of the training the scores improved, suggesting with more training we will get better
+# as you can see the average score and the difference is good! toward the end of the training the scores
+# improved, suggesting with more training we will get better
 # results:
 # poch/Epochs: 49/50 | Iter: 636/1272 | Disc Loss: 0.044365 | Gen Loss: 23.883381
 # Epoch/Epochs: 49/50 | Disc Loss : -4.688194 | Gen loss: 35.643920 | IS: (μ:1.9881, σ²:0.3252) | FID: 153.03
 #  -- Discriminator's real mean: 3.3240 | Discriminator's fake mean = 0.7945
+# 
 # Ive heard we shouldnt use spectral norm with wgan! they are both different regularizer so for wgan tests 
 # we need to disable spectral normalization! but in my experiments it seems having it around helps!
 # and it shows in the average score we get, but I need more experiments to say it forsure)
 # (sidenote: switching to rmsprop with gen_interval=5 did a good job while adam kept failing see
 # my explanation ahead)
 # 
-# todo use lower rangers (i.e. (-0.02,0.02),(-0.03,0.03)) and see how it impacts the training, if both work, we
-# usually go for the smaller range!
+# sidenote: 
+# we need to use lower rangers (i.e. (-0.02,0.02),(-0.03,0.03)) if both work, we usually go for 
+# the smaller range! because larger values can result in unstable rtaining (cause exploding gradients)
+# see wgan debugging section ahead where I disected the training to findout the issue which was directly
+# related to large wgan clipping range (i.e. -0.05,0.05) and large lr!
+#
 # todo: check no drpout aswell see if that impacts the same after using larger range for clipping
 # wgan is not recommened at all! just go with wgangp! 
 #
@@ -4149,49 +4155,109 @@ interval = num_batches//2+1
 # all other factors(larger clipping range and more constrained discriminator)
 # the first attempt failed completely and the model couldnt recover!(experiment 20250911142646)
 # the second time it did a tiny bit better, but still the outcome is terrible! (experiment 20250911175046)
-# third experiment 20250911200109:
+# third experiment 20250911200109: the same things. (we might see a bit better runs but overall they are garbage!(20250912070341))
+# here is the logs: 
 # 
-# we now get average scores in hunderds and thousands! which is crazy! 
-# we basically want 1 digit or two digit average scores (real image mean/fake image mean)
-# but we get huge numbers! 
-# this means we are facing exploding gradients and catastrophic divergence in wgan! 
-# its a known issue that happens becasue of weight clipping). 
-# for example in epoch 42 (I let it train to see if it can recover but it never did) we can see this:
+# Epoch/Epochs: 2/50 | Iter: 636/1272 | Disc Loss: -73.066040 | Gen Loss: -239.430008
+# -- Current Batch: Discriminator's real mean: 216.3880 | Discriminator's fake mean = 143.3220
+# Epoch/Epochs: 2/50 | Disc Loss-Avg: -15.158274 | Gen loss-Avg: -40.854735 | IS: (μ:1.8912, σ²:0.1763) | FID: 337.50
+# -- Last Batch : Disc's real mean: 100.5570 | Disc's fake mean: 52.4385
+# -- Epoch's Avg: Disc's real mean: 72.6963 | Disc's fake mean: 57.5380
 # 
-# Epoch/Epochs: 42/50 | Iter: 636/1272 | Disc Loss: -366.914062 | Gen Loss: 1945.904297
-# Epoch/Epochs: 42/50 | Disc Loss : 31.629950 | Gen loss: 330.520818 | IS: (μ:2.3011, σ²:0.3118) | FID: 263.47
-# -- Discriminator's real mean: 1873.1897 | Discriminator's fake mean = 2411.3606
-# ...
-# Epoch/Epochs: 49/50 | Iter: 636/1272 | Disc Loss: -207.189011 | Gen Loss: -502.304260
-# Epoch/Epochs: 49/50 | Disc Loss : 6.409725 | Gen loss: 504.394153 | IS: (μ:2.3835, σ²:0.3317) | FID: 279.06
-#  -- Discriminator's real mean: -5301.4331 | Discriminator's fake mean = -4643.7080
+# Epoch/Epochs: 5/50 | Iter: 636/1272 | Disc Loss: -69.714111 | Gen Loss: -331.979858
+# -- Current Batch: Discriminator's real mean: 431.1464 | Discriminator's fake mean = 361.4323
+# Epoch/Epochs: 5/50 | Disc Loss-Avg: -25.437134 | Gen loss-Avg: -144.851538 | IS: (μ:1.9750, σ²:0.2361) | FID: 349.54
+# -- Last Batch : Disc's real mean: 261.0208 | Disc's fake mean: 303.9453
+# -- Epoch's Avg: Disc's real mean: 185.7275 | Disc's fake mean: 160.2903
 # 
-# the loss is a 3 digit negative number which is very bad. we expect a 1 digit or two digit loss 
-# on top of that the average score is in the thousands which only means something has exploded
-# that we got this value! anything in the hunderds or thousands means something has gone very wrong!
-# by looking at the scores we can see why! the discriminator has given score of 1873 to real images
-# and a score of 2411 to the fake images! in epoch 42 (and it got worse in last epoch!).
-# its basically doing the exact opposite of what it should be doing! i.e. giving bigger/higher score
-# to real images and lower score to fake images! 
-# this means only one thing and that is the discriminator has completely failed to learn 
-# a meaningful approximation of the earth mover distance and has learned pure nonsense!
-# it didnt learn to accurately identify real image from the fake one! and the notion of
-# 1lipschitz enforcement is long out of the window!
+# Epoch/Epochs: 8/50 | Iter: 636/1272 | Disc Loss: -142.536316 | Gen Loss: 32.370567
+# -- Current Batch: Discriminator's real mean: 12.7788 | Discriminator's fake mean = -129.7575
+# Epoch/Epochs: 8/50 | Disc Loss-Avg: -20.678199 | Gen loss-Avg: -78.778972 | IS: (μ:2.0957, σ²:0.2550) | FID: 307.89
+# -- Last Batch : Disc's real mean: 455.5588 | Disc's fake mean: 103.0827
+# -- Epoch's Avg: Disc's real mean: 112.3258 | Disc's fake mean: 91.6476
 # 
-# sidenote:
-# note that the loss doesnt match the average score difference here (loss = preds_fake.mean() - preds_real.mean())
-# and preds_real.mean and preds_fake.mean() are real and fake scores for each batch respectively)
-# simply becasue the average score is calculated for each batch, while the loss we see is the mean
-# of the whole epoch! (I updated the training its now clear and more straight forward!)
+# Epoch/Epochs: 15/50 | Iter: 636/1272 | Disc Loss: 61.262222 | Gen Loss: 351.622009
+# -- Current Batch: Discriminator's real mean: -144.0047 | Discriminator's fake mean = -82.7425
+# Epoch/Epochs: 15/50 | Disc Loss-Avg: -43.587865 | Gen loss-Avg: 115.796932 | IS: (μ:2.2103, σ²:0.3161) | FID: 314.68
+# -- Last Batch : Disc's real mean: -848.5926 | Disc's fake mean: -647.2932
+# -- Epoch's Avg: Disc's real mean: -49.0232 | Disc's fake mean: -92.6111
 # 
-# looking back at our log, we see the discriminator is trying to minize the loss by making fake 
-# scores smaller and real ones bigger but the numbers are so large and unstable that the updates become
-# chaotic/unstable/osciliatory!
-# the generator loss is is -2411 it is trying to maximize the fake scores. The fact that gLoss 
-# is positive (1945 or its mean(330)) suggests that the generator's objective is to maximize 
-# the critic's output for fake images, and the critic's output is indeed a large positive number. 
-# The generator is "succeeding" at its goal, but the goal itself is meaningless because the critic
-# is broken.
+# Epoch/Epochs: 29/50 | Iter: 636/1272 | Disc Loss: -646.508789 | Gen Loss: 7939.584473
+# -- Current Batch: Discriminator's real mean: -7306.2427 | Discriminator's fake mean = -7952.7515
+# Epoch/Epochs: 29/50 | Disc Loss-Avg: -127.489522 | Gen loss-Avg: 1746.615550 | IS: (μ:2.0884, σ²:0.1529) | FID: 281.29
+# -- Last Batch : Disc's real mean: -2222.5659 | Disc's fake mean: -1898.1831
+# -- Epoch's Avg: Disc's real mean: -1534.8222 | Disc's fake mean: -1662.3117
+# 
+# Epoch/Epochs: 30/50 | Iter: 636/1272 | Disc Loss: 237.401855 | Gen Loss: -2123.584473
+# -- Current Batch: Discriminator's real mean: 3024.0740 | Discriminator's fake mean = 3261.4758
+# Epoch/Epochs: 30/50 | Disc Loss-Avg: -187.184406 | Gen loss-Avg: 1911.559015 | IS: (μ:2.1577, σ²:0.2889) | FID: 299.63
+# -- Last Batch : Disc's real mean: 45.1980 | Disc's fake mean: -3266.8750
+# -- Epoch's Avg: Disc's real mean: -1674.6901 | Disc's fake mean: -1861.8746
+# 
+# Epoch/Epochs: 31/50 | Iter: 636/1272 | Disc Loss: -967.682251 | Gen Loss: 156.541016
+# -- Current Batch: Discriminator's real mean: 758.2507 | Discriminator's fake mean = -209.4315
+# Epoch/Epochs: 31/50 | Disc Loss-Avg: -205.252820 | Gen loss-Avg: 1846.286319 | IS: (μ:2.0962, σ²:0.2626) | FID: 286.81
+# -- Last Batch : Disc's real mean: -2306.6543 | Disc's fake mean: -1883.2412
+# -- Epoch's Avg: Disc's real mean: -1587.8289 | Disc's fake mean: -1793.0817
+# 
+# what stands out in our log, consistently, is that the average scores are in in hunderds and thousands!
+# which is crazy! we basically want 1 digit or two digit average scores (real image mean/fake image mean)
+# but we get huge numbers! in wgan, the numbers should be close to the clipping values, but we are way off!
+# this means we are facing a violant exploding gradients and as a result complete divergence!
+# this is the other side of wgan with weight clipping, we now saw both vanishing gradient and exploding ones!
+# 
+# as early as epoch 2 we see the loss is high, and the average score we get is 72 vs 57! this is very high as
+# we just mentioned we expect the values to be close to the clipping range, at most 1 digit and small 2 digits
+# at epoch 5, we see the last batch has average score 261 vs 303! which should be the opposite!
+# the network has flipped and assigned higher score to the fake images than the real one!
+# this is a sign of a bad update that has pushed it into a nonsensical state for that batch. 
+# the overall epoch still looks normal(epochs average score 185 vs 160). we continue to epoch 8 
+# where we see seemingly the model has done a good job it scored 12 for real and -129 for fake images! 
+# but for the last batch we see 455 vs 103! these are huge positive numbers!!
+# this means the discriminator's internal state is changing wildly that goes from small correct scores
+# (i.e. healthy) to an unhealthy huge explosive scores all with in the same epoch!
+# this means the the optimizer is taking very large (and uncontrolled) steps (but its not the only cause behind this)
+# a few epochs in, at 15, we can see the discriminator has another major failure, and we have
+# -144 vs -82 which went on to become -848 vs -647 in the last batch! its so massive the average 
+# is now negative as well! the optimizer's update/reaction has thrown all the scores deep into negative
+# territory. the whole system is swaying from one extreme to another! 
+# in epoch 29, things get worse, the scores are -7306 vs -7952.7515 the order is correct but
+# they are now in the thousands! thousands! which is insane! the gradients are so large at this point
+# that the training process loses its meaning! the generator is getting a gradient signal proportional 
+# to +7952 which is an insanely massive update that will throw the weights into a completely random
+# new state. the gradients should be small enough so they can cause healthy changes in weights not massive 
+# updates that scramble everything! things get even worse, in epoch 30 we see the discriminator flips again
+# and gives 3024 vs 3261 which then at the last epoch flips back to 45 vs -3266 which is wild! it seems 
+# as though the discriminator is changng its opinion on real vs fake on a whim! the ossiliation is also wild! 
+# the next epoch shows we go from 3000 in epoch30 to around -3000 in epoch 31! 
+# all of this shows we have very bad and violent gradient explosions. the gradient values are so massively 
+# large they can no more be used to have meaningful updates, they look like massive floods that ruine/flip
+# everything upside down! the optimizer also takes massive uncontrolled steps because of these massive gradients
+# (the lr is large, but the massivegrdients compounds this) this is what causes the scores to swing 
+# from +3000 to -3000 for example.
+# all of this points to discriminator not being satble at all, in fact far from it so much so it never
+# has a chance to learn a consistent and meaningful distance function because its weights are constanly
+# changed/scrambled completely by these massive updates!
+# the generator therefore also rceives useless information because the gradients it receives are not going 
+# to guide it toward improvement i.e. making better faces! they are just chaotic noise at this point that 
+# only tell it to react to the discriminators latest random state! whatever it happens to be at the moment!
+# the FID and IS scores also show us tha no learning is happening! but we needed debugging details to
+# know whats going wrong! we now fully know what has gone wrong!so how do we fix this? the simplest thing
+# would be to use a much lower learning rate and use smaller range of values for clipping and ultimately 
+# use noise addition!
+# update: 
+# by switching to wgan_range=(-0.02, 0.02) and keeping everytihng else the same as before. we have much
+# stable training. no sign of gradient explosion! and average scores are 1 digit and small two digits!
+# but the results are still garbage! the network still confuses real vs fake but no explsion as of yet
+# simply lowering the lr alone without lowering the clipping range wouldnt work. clipping range must
+# be set lower to not face exploding gradients!(this reminds of of the early days of dl where bn wasnt
+# introduced, we had a lot of issues like!)
+# next we are going to lower the lr to 1e-5 with wgan_range=(-0.02,0.02): the avergae scores are one 1 digit
+# as the should be, and everything seems stable. but since the lr is very low, the convergence rate is
+# understandably very slow as well(experiment 20250912092645)
+# next we are goingto increase the lr back to 0.001, keep the range small (-0.02,0.02) but enable noise
+# addition: 
+#  
 # this means after we removed the noise addition, the clipping range is just too large, so large 
 # that it doesnt enforce 1lipschitz and causes gradient explosion!
 #
@@ -4226,8 +4292,11 @@ betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0001, 0.0002
+elif loss_type == 'wgan':
+    # wgan requires way smaller lr!
+    lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
 else:
-    lr_d, lr_g = 0.0001, 0.0002
+    lr_d, lr_g = 0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
@@ -4245,7 +4314,7 @@ training_loop(discriminatorI64,
               loss_type=loss_type, 
               lambda_factor=lambda_factor,
               use_batchnorm=False,
-              wgan_range=(-0.05, 0.05), #(-0.05, 0.05)
+              wgan_range=(-0.02, 0.02), #(-0.05, 0.05)
               noise_addition=False,
               device=device)
 #%%
