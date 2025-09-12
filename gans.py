@@ -4121,12 +4121,15 @@ print(f'{goutput.shape=}')
 # see wgan debugging section ahead where I disected the training to findout the issue which was directly
 # related to large wgan clipping range (i.e. -0.05,0.05) and large lr!
 #
+# test with lsgan(wt spect norm):(20250912212420) lsgan results in mode collapse in early epochs (lets see if it can recover!)
+# 
+#
 # todo: check no drpout aswell see if that impacts the same after using larger range for clipping
 # wgan is not recommened at all! just go with wgangp! 
 #
 
 print(f'Training Improved versions of Discriminator and Generator')
-loss_type = 'wgan'
+loss_type = 'lsgan'
 lambda_factor=10
 dataset_name = 'celeba'
 batch_size=128
@@ -4272,7 +4275,10 @@ interval = num_batches//2+1
 # now trying with spectral norm on all layers (we shouldnt do this but lets do it anyway):(20250912173350)
 # itimproved the results but the result overall is very bad (fid 200+!)
 # next enable noise addition, spectnorm and use larger clipping weights (-0.05,0.05) with rmsprop:(20250912191703)
-# 
+# now with no spectral norm: it fails. so spectral norm keeps the training stable but the result
+# is no way near as good as wgangp! also with larger range the quality is a tad better than before
+# all in all, wgan really isnt worth spending our time. its extremeley inefficient and tricky to get
+# to work and even then it doesnt produce a decent output! especially when we can use wgangp!
 #  
 # this means after we removed the noise addition, the clipping range is just too large, so large 
 # that it doesnt enforce 1lipschitz and causes gradient explosion!
@@ -4316,8 +4322,8 @@ elif loss_type == 'wgan':
 else:
     lr_d, lr_g = 0.001, 0.002
 
-disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-# disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
+# disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
+disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
 
 training_loop(discriminatorI64, 
@@ -4332,7 +4338,7 @@ training_loop(discriminatorI64,
               loss_type=loss_type, 
               lambda_factor=lambda_factor,
               use_batchnorm=False,
-              wgan_range=(-0.05, 0.05), #(-0.02, 0.02) (-0.05, 0.05)
+              wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
               noise_addition=True,
               device=device)
 #%%
