@@ -4465,7 +4465,7 @@ training_loop(discriminatorI64,
 #%%
 # 20250913174046
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250913144738.pt",
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250913174046.pt",
                         map_location="cpu",
                         weights_only=False)
 
