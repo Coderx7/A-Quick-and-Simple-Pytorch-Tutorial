@@ -3617,12 +3617,12 @@ goutput = generatorcnn(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
-# lsgan constantly faces severe mode collapse (more powerful discriminator and
-# larger gan lr does this, we have both here! a powerful generator can slso cause this
-# but its the case only if we made our discriminator really weak yet we keep getting
-# mode collapse.
-# update: we talk about this in full detail in the next part for now this suffices
-# to know lsgan here doesnt work properly and faces mode collapse)
+# lsgan constantly faces severe mode collapse(powerful discriminator)
+# update: 
+# we talk about this in full detail in the next part for now this suffices
+# to know lsgan here doesnt work properly and faces mode collapse, for now
+# and I tried to overcome it by playing with lr and discriminator capacity
+# see experiment 20250913135137 we ultimately achieve fid 156 and no apparent mode collapse)
 # wgangp however always does a better job! havent seen mode collapse in nearly
 # 100 tests! this shows how stable wgangp is! to get the lsgan to
 # not fail, we have to constrain the discriminator 
@@ -3650,7 +3650,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # since the generator is more powerful, and discriminator is
 # less powerful we quickly face severe mode collpase, so 
 # for lsgan to work we need to beefup the discriminator!
-disc_hidden_size = 32
+disc_hidden_size = 16 if loss_type=='lsgan' else 32
 gen_hidden_size = 64
 z_size = 100
 # wgan and wgangp dont use batchnorm because it messes with the 1-lipschitz constraint
@@ -3671,12 +3671,12 @@ interval = num_batches//2+1
 gen_update_interval = 1 if loss_type == "wgan" else 1
 
 #discriminator
-discriminatorI64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
+discriminatorcnn64 = DiscriminatorCNN64(hidden_size=disc_hidden_size, 
                                         use_batchnorm=use_batchnorm)
-discriminatorI64 = discriminatorI64.to(device)
+discriminatorcnn64 = discriminatorcnn64.to(device)
 #generator
-generatorI64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
-generatorI64 = generatorI64.to(device)
+generatorcnn64 = GeneratorCNN64(z_size, hidden_size=gen_hidden_size)
+generatorcnn64 = generatorcnn64.to(device)
 
 # the paper says [0.5,0.999] diverges in wgan/wgangp
 # with bn=True especially for wgan/wgangp, lr must be larger (0.001/0.002)
@@ -3685,15 +3685,15 @@ generatorI64 = generatorI64.to(device)
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
 if loss_type=='lsgan':
-    lr_d, lr_g = 0.0004, 0.0001
+    lr_d, lr_g = 0.0001, 0.0004
 else:
     lr_d, lr_g = 0.001, 0.002
     
-disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminatorcnn64.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generatorcnn64.parameters(), lr_g, betas=betas)
 
-training_loop(discriminatorI64, 
-              generatorI64, 
+training_loop(discriminatorcnn64, 
+              generatorcnn64, 
               train_loader=train_loader,
               disc_optimizer=disc_optimizer,
               gen_optimizer=gen_optimizer, 
@@ -3719,9 +3719,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 losses = np.array(checkpoint.pop("losses"))
 
-generatorI64 = GeneratorCNN64(z_size,hidden_size)
-generatorI64.load_state_dict(checkpoint.pop("state_dict"))
-generatorI64.eval()
+generatorcnn64 = GeneratorCNN64(z_size,hidden_size)
+generatorcnn64.load_state_dict(checkpoint.pop("state_dict"))
+generatorcnn64.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -3729,7 +3729,7 @@ for k,v in checkpoint.items():
 print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
-                      generator=generatorI64, 
+                      generator=generatorcnn64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -3743,7 +3743,7 @@ run_latent_arithmatic(attr_name='Male',
 
 #%%
 run_latent_arithmatic(attr_name='Smiling', 
-                      generator=generatorI64, 
+                      generator=generatorcnn64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -3756,7 +3756,7 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 #%%
 run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generatorI64, 
+                      generator=generatorcnn64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
