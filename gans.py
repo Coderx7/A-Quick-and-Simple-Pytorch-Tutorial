@@ -3618,7 +3618,11 @@ print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
 # lsgan constantly faces severe mode collapse (more powerful discriminator and
-# larger gan lr does this, we have both here!)
+# larger gan lr does this, we have both here! a powerful generator can slso cause this
+# but its the case only if we made our discriminator really weak yet we keep getting
+# mode collapse.
+# update: we talk about this in full detail in the next part for now this suffices
+# to know lsgan here doesnt work properly and faces mode collapse)
 # wgangp however always does a better job! havent seen mode collapse in nearly
 # 100 tests! this shows how stable wgangp is! to get the lsgan to
 # not fail, we have to constrain the discriminator 
@@ -3629,7 +3633,7 @@ print(f'{goutput.shape=}')
 # and flatout fail by default! I guess to getthem to work one easier? way (not sure!)
 # would be to use spectral norm to help keep 1lipcshitz condition during training!
 # todo: check spectralnorm and see if it helps!
-loss_type = 'wgangp'
+loss_type = 'lsgan'
 # for wgangp /gradient penalty scaler lambda
 lambda_factor=10#10 #5
 # (with wgangp) for cifar10 up until epoch 17 we had many severe distortions
@@ -3638,7 +3642,7 @@ lambda_factor=10#10 #5
 # celeba is much easier to train compared to ihghlt diverse cifar10!
 # wgan faces the same issues, but do not recover from it up to the very end
 # lsgan completely fails!
-dataset_name = 'cifar10'
+dataset_name = 'celeba'
 batch_size=128
 train_loader = get_dataloader(dataset_name=dataset_name, split='train',resize_dims=(64,64),batch_size=batch_size)
 
@@ -3681,7 +3685,7 @@ generatorI64 = generatorI64.to(device)
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
 if loss_type=='lsgan':
-    lr_d, lr_g = 0.0001, 0.0002
+    lr_d, lr_g = 0.0004, 0.0001
 else:
     lr_d, lr_g = 0.001, 0.002
     
@@ -3700,6 +3704,7 @@ training_loop(discriminatorI64,
               loss_type=loss_type, 
               lambda_factor=lambda_factor,
               use_batchnorm=use_batchnorm,
+              noise_addition=True,
               device=device)
 #%%
 # load models 
@@ -4135,6 +4140,52 @@ print(f'{goutput.shape=}')
 #  
 # lsgan faces mode collapse here which means the discriminator is still more powerful. see the debugging
 # explanation ahead to see how we fix this issue.
+# 
+# sidenote:
+# concerning mode collapse, we can have an analogy like this, a strict art teacher (i.e. the discriminator) 
+# is checking the student's assignment. the teacher says everything you've done is terrible, except
+# for this one simple sketch of a cat! that one is almost okay! the student who is desperate for passing
+# the grade! stops trying to draw and paint anything else (like landscape or portrays etc) and instead
+# just keeps drawing many copies of the same cat sketch that the teacher found ok! this is what sums the mode
+# collapse we witness. 
+# basically this happens when the generator is weak and hasnt learned the full data distribution yet. 
+# the generator therefore collapses on a half formed image because its the only thing the pwoerful/strict
+# discriminator doesnt immediately reject! most of the times this happens early in the training as the 
+# discriminator quickly learns whats real and whats not basically establishing its dominance overpowering the generator completely!
+# the generator therefore will be punished into a corner where it only produces a limited number of things
+# that the discriminator doest reject! (so this issue comes from failure of exploration by generator which
+# is driven by (fear of) discriminator rejection!). note that it maynot be that the discriminator prefectly
+# knows whats real/fake, rather it might be it has become overconfident and hyper-specific about certain things
+# and it has learned to reject everything except the one/few mediocre modes. 
+#
+# powerful generator causes deceptive collapse(i.e. high quality repeative image later in training):
+# now as I previously pointed out, a powerful discriminator can cause mode collapse, but sometimes, if
+# the generator is too powerful, the dynamic changes! its like a con artists/expert forgerer(i.e. powerful generator)
+# goes to a pawn shop owner(discriminator) and shows him a fake rolex! the shop owner is completely fooled
+# and buys it! the con artists/forgerer sees how easy it is to fool the owner, and doesnt bother creating any
+# other brands, directly goes and keeps creating the same fake rolex and sells it to the shop owner every day!
+# and the shop owner falls for it every single day! 
+# in other words the generator is powerful and has learned to create very good images. it collapses because
+# it found a perfect forgery and has no incentive to create other different perfect forgeries.
+# this is the second case where we can face mode collapse.
+# so when the generator is too powerful, the samples are high quality yet repeatative, and it can happen
+# later in the training after the generator has had time to explore and then finds its winning,
+# repeatable strategy whereas when the disciminator is too powerful we have low quality repeative samples
+# happening early in the training! this happens because the generator exploits a weakness! 
+# its also a failure of exploration but this time its driven by finding a lazy/easy win!(i.e. the generator
+# gets stuck because it has found a winning strategy against a weak opponent and has no incentive to diversify!)
+# (the discriminator is underpowered here and is consistently fooled and can not learn to detect the 
+# repeated high quality forgery!)
+# 
+# so to recap: if we see blurry/malformed or simplistic faces/images being repeated over and over our
+# first guess should be an overpowered/powerful discriminator and our first step should be to to weaken it
+# by adding dropout, lower its learning rate, introduce noise or make the  generator more powerful!(lower disciminator optimization round compared to generator!)
+# on the other hand if we see sharp beautiful faces/images being repeated it means we have a weak/underpowered
+# discriminator or maybe its powerful but learning very slowly for some reason (small lr e.g. requires more otimization updates against generators).
+# therefore the first step would be to try make the discriminator more powerful by increasing its 
+# capacity(layer/hidden_size,etc) or make it faster by increasing its learning rate or optimization iterations
+# so it can detect the generators fake images and force it to to learn new capabilities and explore
+# more and hopefully comeup with more diverse outputs/generations!
 # 
 # wgan is not recommened at all! just go with wgangp! 
 #
