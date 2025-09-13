@@ -2657,7 +2657,32 @@ def lsgan_generator_loss(preds_fake):
 # and the loss is simply the everage of fake-real values
 # we then need to clip the model weights after each discriminator 
 # optimizer step.
+# 
+# sidenote:
+# looking at this loss function, it looks weird! simply because 
+# usually the loss is a positive number where we try to minize it
+# but here, it goes toward negative range (we want real average score/preds_real.mean()
+# to be positive and larger than preds_fake), and we can see the 
+# same in generator loss as well! the thing is in wgan its reallly
+# much better to think of the critic/discriminator's function
+# not as a loss but as an objective function that needs to be maximized!
+# the way we define the loss here is simple way to allow us use a 
+# normal pytorch optimizer(which can only minimize) to do that maximization!
+# 
+# as we said the discriminator/critics's job is to make the score of 
+# real images go up toward +infity, and the score of fake images the other way, 
+# i.e. down towards -infinity! basically we(the discriminator) want 
+# to maximize this value objective = preds_real.mean() - preds_fake.mean()
+# now imagine for example preds_real is around 50 and preds_fake is around -50!
+# the objective would then be 50-(-50)=100. we (the discriminator) want
+# to make this number as large as possible. the optimizers we use implement 
+# gradient descent, and optimizer.step() in pytorch optimizers likewise is 
+# designed to minimize a function by using the negative gradients, so to 
+# make it maximize, we simply minize its negative, i.e. -objective! so
+# the more/larger negative loss for discriminator (and by extension for generator aswell)
+# is a good thing for us! 
 def wgan_critic_loss(preds_real, preds_fake):
+    # or we could also do -(preds_real.mean() - preds_fake.mean())
     return preds_fake.mean() - preds_real.mean()
 
 def wgan_generator_loss(preds_fake):
@@ -4438,6 +4463,7 @@ training_loop(discriminatorI64,
               noise_addition=True,
               device=device)
 #%%
+# 20250913174046
 # load models 
 checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250913144738.pt",
                         map_location="cpu",
