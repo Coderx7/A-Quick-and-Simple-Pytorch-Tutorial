@@ -3063,13 +3063,18 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     return data_loader
 
 #%%
-def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_optimizer,
+def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.optim.Adam, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
                   lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, wgan_range=(-0.01, 0.01),
                   noise_addition=False,device='cuda', weights_save_dir='./weights', images_save_dir='./results/gan'):
     
-    print(f'Datset:                    {dataset_name}')
+    lr_d = [p['lr'] for p in disc_optimizer.param_groups]
+    lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+    
+    print(f'Dataset:                   {dataset_name}')
     print(f'Loss type:                 {loss_type}')
+    print(f'Discriminator LR:          {lr_d}')
+    print(f'Generator LR:              {lr_g}')
     print(f'Epochs:                    {epochs} ')
     print(f'Interval:                  {interval} ')
     print(f'Generator update interval: {gen_update_interval}')
@@ -3101,7 +3106,10 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
             # if adding noise makes trainig more stable and we get
             # better looking images it means our discriminator is
             # too powerful that messing the signal up and making it
-            # harder for it, improves our result! it acts as a regularizer   
+            # harder for it, improves our result! it acts as a regularizer
+            # (in terms of distribution impact, adding noise increases the variance
+            # for both real/fake images so the discriminator cant prefectly memorize
+            # the training data or latch onto a single fake mode!)
             if noise_addition:
                 imgs_real += 0.05 * torch.randn_like(imgs_real)
                
@@ -3206,8 +3214,8 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer, gen_op
         torch.save({"state_dict":generator.state_dict(),
                 "hidden_size":generator.hidden_size,
                 "z_size":generator.z_size,
-                "lr_d":[p['lr'] for p in disc_optimizer.param_groups],
-                "lr_g":[p['lr'] for p in gen_optimizer.param_groups],
+                "lr_d":lr_d,
+                "lr_g":lr_g,
                 "use_batchnorm":discriminator.use_batchnorm if hasattr(discriminator,'use_batchnorm') else False,
                 "noise_addition":noise_addition,
                 "wgan_range":wgan_range,
@@ -3254,7 +3262,7 @@ z_size = 100
 # as it introduces sample coupling(sample to sample coupling) while 1-lipschitz constraint
 # requires each and every sample to conform to this. I however trained with batchnorm and 
 # it seemed completely fine! though it may not work on complex datasets, or we might see 
-# mode collapse later on, I havent digged too much though cifar10/celeba seem fine!
+# mode collapse or other weirdness later on, I havent digged too much though cifar10/celeba seem fine!
 # without bn, the convergence rate slows down drastically!(also wgangp gives better results
 # than wgan when no bn is used. when bn is used their (wgan and wgangp )results seem the same)
 # update:
@@ -3609,16 +3617,16 @@ goutput = generatorcnn(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
 #%%
-# lsgan constantly faces severe mode collapse since the gen
-# is more powerful than the discriminator! wgangp however
-# always does a better job! havent seen mode collapse in nearly
+# lsgan constantly faces severe mode collapse (more powerful discriminator and
+# larger gan lr does this, we have both here!)
+# wgangp however always does a better job! havent seen mode collapse in nearly
 # 100 tests! this shows how stable wgangp is! to get the lsgan to
-# not fail, we have to beefup the discriminator 
+# not fail, we have to constrain the discriminator 
 # wgan also fails for some reason! it was working need to see what
 # I had changed!
 # update:
 # it seems only wgangp trains well. both wgan/lsgan face a lot of instablity
-# and flatout fail! I guess to getthem to work one easier? way (not sure!)
+# and flatout fail by default! I guess to getthem to work one easier? way (not sure!)
 # would be to use spectral norm to help keep 1lipcshitz condition during training!
 # todo: check spectralnorm and see if it helps!
 loss_type = 'wgangp'
@@ -4058,7 +4066,8 @@ print(f'{goutput.shape=}')
 # with the new changes in our architecture, we see much sharper/glossier images
 # which are due to using upsample layer. the trainig is a bit more stable
 # overall even without spectralnorm. with spectral norm it gets more stable but
-# it wont provide realistic images right off the bat!
+# it wont provide realistic images right off the bat! its the job of the architecture
+# and training regime!
 #
 # update:
 # compared to our previous attempt, it seems the wgan/lsgan did massively better
@@ -4067,10 +4076,12 @@ print(f'{goutput.shape=}')
 # and it plagues all images!
 # this means our discriminator is way more powerful than our generator! the bn works because
 # it indirectly acts as a powerful regularizer and it blurs the signal by accumulating
-# the statistics of all samples in a batch!
-#!(it forces the statistics of the features to be dependent on the entire batch,
-# which "blurs" the signal and artificially slows the discriminator down, 
-# preventing it from winning so easily) hence we get better results there than here!
+# the statistics of all samples in a batch!( it makes the the statistics of the features
+# to be dependent on the whole batch which blurs the signal and artificially slows the 
+# discriminator down and prevents it from winning too quickly, bn also allows for considerablt
+# larger lr and convergence gets faster if things go smoothly! thats why without it even picking a lr
+# and even the range of values for the weights become issues and things to tune! which complicates things
+# further) hence we get better results there than here!
 # so I added a dropout layer after each conv layer to make discriminator more constrained!
 # update2:
 # after the change this is what I got at epoch 1:
@@ -4121,10 +4132,10 @@ print(f'{goutput.shape=}')
 # see wgan debugging section ahead where I disected the training to findout the issue which was directly
 # related to large wgan clipping range (i.e. -0.05,0.05) and large lr!
 #
-# test with lsgan(wt spect norm):(20250912212420) lsgan results in mode collapse in early epochs (lets see if it can recover!)
+#  
+# lsgan faces mode collapse here which means the discriminator is still more powerful. see the debugging
+# explanation ahead to see how we fix this issue.
 # 
-#
-# todo: check no drpout aswell see if that impacts the same after using larger range for clipping
 # wgan is not recommened at all! just go with wgangp! 
 #
 
@@ -4294,6 +4305,20 @@ interval = num_batches//2+1
 #  -- Discriminator's real mean: 0.4809 | Discriminator's fake mean = 0.2593
 # discriminator cant provide good gradients for generator because it cant distinuish
 # properly between real and fake, going gen_int=3 didnt do much, gent_int=5 looks much better
+# 
+# Lsgan: 
+# test with lsgan(wt spect norm):(20250912212420) lsgan results in mode collapse, this means
+# like before, the discriminator is more powerful than the generator, it quickly learns whats
+# fake and whats real, the ones that are closer to the real image, will therefore have stronger gradients
+# and the generator will be focused on them, resulting in mode collapse (images that look the same)
+# we already are using dropout and noise addition to make the discriminator more constrained! so something
+# else needs to be done. the other thing that can contribute to this is that the generator has a larger lr
+# compared to the discriminator, therefore the generator can quickly rush towards the first minimum 
+# it finds thus this manifests itself as the mode collapse (repeated images!) so we need to use a smaller
+# learning rate for the generator and a larger/faster one for the discriminator. lets go with lr_d = 0.0004
+# and lr_g = 0.0001 for now. the idea here is to allow the discriminator to be able to quickly change and 
+# adapt to whatever new things the generator comes up with and keep forcing it to explore and improve itself
+#  this fixed the mode collapse in lsgan and we have a stable training so far!
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 # by using
@@ -4313,13 +4338,13 @@ generatorI64 = generatorI64.to(device)
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
 if loss_type=='lsgan':
-    lr_d, lr_g = 0.0001, 0.0002
+    lr_d, lr_g = 0.0004, 0.0001
 elif loss_type == 'wgan':
     # wgan requires way smaller lr like 1e-5, 2e-5
     # and a small clipping range like -0.02,0.02 
     # also rmsprop seems do to much better than adam!
     lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
-else:
+else:#wgangp
     lr_d, lr_g = 0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
