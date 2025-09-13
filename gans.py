@@ -3633,7 +3633,7 @@ print(f'{goutput.shape=}')
 # and flatout fail by default! I guess to getthem to work one easier? way (not sure!)
 # would be to use spectral norm to help keep 1lipcshitz condition during training!
 # todo: check spectralnorm and see if it helps!
-loss_type = 'lsgan'
+loss_type = 'wgangp'
 # for wgangp /gradient penalty scaler lambda
 lambda_factor=10#10 #5
 # (with wgangp) for cifar10 up until epoch 17 we had many severe distortions
@@ -3685,6 +3685,8 @@ generatorcnn64 = generatorcnn64.to(device)
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
 if loss_type=='lsgan':
+    # by lowering the discriminator capacity I found these two work well forlsgan
+    # so we dont face mode collapse
     lr_d, lr_g = 0.0001, 0.0004
 else:
     lr_d, lr_g = 0.001, 0.002
@@ -3707,6 +3709,7 @@ training_loop(discriminatorcnn64,
               noise_addition=True,
               device=device)
 #%%
+# for lsgan 20250913135137
 # load models 
 checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901064034.pt",
                         map_location="cpu",
