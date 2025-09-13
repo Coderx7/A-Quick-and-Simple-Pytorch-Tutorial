@@ -3224,6 +3224,8 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.o
                 "loss_type":loss_type,
                 "FID":FID_score,
                 "IS":IS_score,
+                "d_loss_mean":d_loss_mean,
+                "g_loss_mean":g_loss_mean,
                 "dataset_name":dataset_name,
                 }, f"{weights_save_dir}/dcgan_generatorcnn_{loss_type}_{experiment_date}.pt")
     
@@ -4389,10 +4391,16 @@ gen_update_interval = 5 if loss_type == "wgan" else 1
 # wgan fails with all layers specto normalized when gen_update_interval=5
 # with gen_update_interval=1 its still trash!
 # lsgan keeps failing with mode collapse (repeative images)! 
-no_spec_list = []# list(range(5)) #[] #[1,2]
+no_spec_list = [0,5]#[]# list(range(5)) #[] #[1,2]
 #discriminator
 discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
-                                           no_spec_norm_list=no_spec_list)
+                                           no_spec_norm_list=no_spec_list,
+                                           # we face mode collapse toward the end when using wgangp
+                                           # so I had to set a higher dropout and compensate with 
+                                           # larger lr for disciminator to keep it balanced and not face 
+                                           # mode collapse early on or later on(both form of mode collapses
+                                           # occur if either overpower the other)
+                                           dropout_rate=0.25 if loss_type=='wgangp' else 0.2)
 discriminatorI64 = discriminatorI64.to(device)
 #generator
 generatorI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
@@ -4408,7 +4416,7 @@ elif loss_type == 'wgan':
     # also rmsprop seems do to much better than adam!
     lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
 else:#wgangp
-    lr_d, lr_g = 0.001, 0.002
+    lr_d, lr_g = 0.002, 0.001#0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
@@ -4431,7 +4439,7 @@ training_loop(discriminatorI64,
               device=device)
 #%%
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp",
+checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250913144738.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -4440,7 +4448,7 @@ z_size = checkpoint["z_size"]
 hidden_size = checkpoint["hidden_size"]
 dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
-losses = np.array(checkpoint.pop("losses"))
+# losses = np.array(checkpoint.pop("losses"))
 
 generatorI64 = GeneratorImproved64(z_size,hidden_size)
 generatorI64.load_state_dict(checkpoint.pop("state_dict"))
@@ -4449,7 +4457,7 @@ generatorI64.eval()
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
     
-print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
+# print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
                       generator=generatorI64, 
