@@ -3863,7 +3863,8 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # way (like bottleneck,residual etc) into a single block doesnt help either. not only that but by adding many more
 # moving parts (i.e. need to be adjudsted) we create complex and very prolematic/abnormal gradient dynamics that will
 # be very hard for the optimizer to deal with. by problematic gradient dynamics I mean, exploding/vanishing gradients
-# stuff of that nature. this is why simplicity is much favored!
+# stuff of that nature(because we disable batchnorm this will complicate things see debug log ahead).
+# this is why simplicity is much favored!
 # 
 # The other glaring issue that we see in our ConvBlock botth the original and the second version, is the use of normalization
 # more specifically BachNorm! although we designed it so we can omiit the Batchnorm, simply because it messes with the
@@ -3876,6 +3877,13 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # with this simple change we shouldbe able to have a way better training and end result.
 # so rule number two is to use Spectral Norm instead of Batchnorm in the discriminator.
 # 
+# sidenote:
+# we said earlier that discriminator needs to be simple or otherwise it will dominate and we will face mode collapse
+# but alsonote that when we also may face depective mode collapse which is for when generator is more powerful and it
+# creates high quality images yet without diversity of low diversity, in this case we need to have a potent/powerful 
+# disciminator to be able to distinuish tiny differces and force the generator to explore more and have more diversity!
+# we will talk about these in more detail in the next part. 
+#
 # quicknote:
 # when we apply spectral norm, the training will get a massive hit in performance as this imposes a heavy(but constant)
 # overhead. because pytorch needs to run an iterative algorithm called Power Iteration at least once(default is n_power_iterations=1)
@@ -3895,6 +3903,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # before we incorporate the residual information. that is the self.block in our ConvTransBlock shouldnt have activation
 # functions, only conv+bn, and then the raw logits needs to be added to the residuals and then carry on with another
 # activation on top. 
+# todo recheck 
 # note that if even doing that we dont get proper issue, its probably because the two inputs are somehow so differently
 # processed that when we add them we get large negative values, or if not, its because the distribution
 # is far from zero in which case, relu is not a good fit and would destroy this information. 
@@ -4194,7 +4203,7 @@ print(f'{goutput.shape=}')
 #
 
 print(f'Training Improved versions of Discriminator and Generator')
-loss_type = 'lsgan'
+loss_type = 'wgangp'
 lambda_factor=10
 dataset_name = 'celeba'
 batch_size=128
