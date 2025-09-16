@@ -4554,10 +4554,104 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # doesnt! this way they could train up t 1024x1024 resolution whcih was insane back then (2017) when 
 # the paper came out! they used wgangp for loss, and aside from that and the fact that we have 
 # multistage upsampling/processing, they had two new changes in the architcture, they used pixelnorm
-# and minibatchstd:
-# lets implement progan! 
+# in the generator only and for the discriminator they used something called equalized learning rate
+# (i.e. scaling weights at runtime) and minibatch standard deviation layer which they added near the
+# end of the discrmintaor to to encourange variations in generated images.
 #
+# lets implement progan! 
+# we need two blocks one for our discriminator and the other for our generator
+# we wont be using any residuals this time around, its not needed. it will be
+# a simple 2 conv layer block with leakyrelu and this tiem around we will be using aveagepooling
+# to downsize the input instead of a larger stride
+
+class DiscBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
+                                   nn.LeakyReLU(0.2),
+                                   nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
+                                   nn.LeakyReLU(0.2),
+                                   nn.AvgPool2d(2))
+        
+    def forward(self, x):
+        return self.bock(x)
+ 
+# for generator block, we need PixelNorm which simply is calculating l2 norm(in fact root mean square)
+# for each pixel across channels!and normalize the input by that! that is do x/sqrt(mean(x²)+eps) 
+# x being the input and epsilon(eps) for numerical stability.
+# the idea here is to decouple the feature vector magnitude from its direction in the generation process,
+# we are familiar with this as we have been doing it ourselves in latent space artithmatic experiments 
+# to capture the essense(direction) of certain concepts we liked to play with.
+# the easiest way is to implement it as a simple layer!
+
+# sidenote:
+# we used mean instead of sum here so the values dont become huge when the number of channels is large, which might make
+# us vulnarable to overflow(especially when we want to go half precision or lower and have large number of channeels e.g.)
+# also if we didnt use mean(rms), it would make the gradient scale dependant on the number of channels!
+# by simply using mean instead of sum, we make it much more numerically stable, and gradients scale
+# wont be depadant on number of channels. the only inconvience is that the vector length will be sqrt(c)
+# instead of the 1 (true unit vector) but this isnt an issue in our training anyway)
 # 
+# quicknote:
+# (l2norm is sqrt(sum(x^2)) and having mean instead of sum doesnt pose an issue here simply because they
+# are proportional (l2norm = sqrt(mean(x²) * sqrt(c) c being the number of channels in x. after all 
+# mean(x²)=sum(x²)/C and c is the number of channels! its obvious!)
+#
+# todo: too excessive? cuz its obvious!!
+# uncomment this section and see for yourself if you are not convinced!
+# c=64
+# x = torch.randn(4, c, 32, 32)
+# #pixelnorm using rms
+# output_tensor = x / torch.sqrt(torch.mean(x**2, dim=1, keepdim=True)+1e-8)
+# #pixel norm using l2norm
+# output_tensor2 = x / torch.sqrt(torch.sum(x**2, dim=1, keepdim=True)+1e-8)
+# # if we grab a single pixel vector from the output_tensor that used rms
+# # and calculate its l2norm, we will see its length equals the sqrt of channels
+# pixel_vector = output_tensor[0, :, 0, 0]
+# pixel_vector2 = output_tensor2[0, :, 0, 0]
+# # calculate l2norm on both of these vectors, we'l see the pixel_vector2 is
+# # an scaled version of pixel_vector2! by exactly sqrt(channels)
+# pixel_l2_norm = torch.linalg.norm(pixel_vector)
+# pixel2_l2_norm = torch.linalg.norm(pixel_vector2)
+# print(f"{pixel_vector.shape=}")
+# print(f'pixel_vector length(l2norm) by rms: {pixel_l2_norm.item():.1f}')
+# print(f'pixel_vector2 length(l2norm) by sum : {pixel2_l2_norm.item():.1f}')
+# print(f"math.sqrt(c) -> c={c}: {math.sqrt(c)}")
+# print(f'pixel_vector length(l2norm) by rms / sqrt(c): {pixel_l2_norm/math.sqrt(c):.1f}')
+# # and we see the l2norm is indeed proportional to rms*sqrt(c)!
+# out = torch.allclose(output_tensor2, output_tensor/math.sqrt(64))
+# print(f'both yield the same result: {out}')
+# 
+class PixelNorm(nn.Module):
+    
+    def forward(self, x, eps=1e-8):
+        # keepdim is to retain input shape so we get (b,1,h,w) and pytorch
+        # broadcast it properly to the whole input volume
+        # we could also use l2norm and still get the same effect but rms is more stable
+        # return x / torch.sqrt(torch.sum(x**2, dim=1, keepdim=True)+eps)
+        return x / torch.sqrt(torch.mean(x**2, dim=1, keepdim=True)+eps)
+
+# just like the discriminator generator block will be simple 2 layer conv blocks
+# with leakyrelu(0.2) and pixel norm! the authors said using leakyrelu in generator
+# as well as disciminator made training much more stable, because it allows much better
+# gradient flow. so we do the same here. since we have stages, we do the upsampling later in code
+class GenBlock(nn.Module):
+     def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+         super().__init__()
+         
+         self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size,
+                                              stride, padding, bias=bias),
+                                    nn.LeakyReLU(0.2),
+                                    PixelNorm(),
+                                    nn.Conv2d(out_channels, out_channels, kernel_size,
+                                              stride, padding, bias=bias),
+                                    nn.LeakyReLU(0.2),
+                                    PixelNorm())
+     def forward(self, x):
+        return self.block(x)
+
+
+
 #%%
 # Stylegan2/3?
 #%%
