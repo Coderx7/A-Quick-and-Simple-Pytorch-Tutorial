@@ -4527,7 +4527,38 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 
 
 #%%
-# progan?stackgan?
+# we improved our results but we had a lot of issues dealing with wgan and to a lesser degress lsgan
+# wgangp proved to be a really great addition to our gan architecture. 
+# we saw that using carefully tuned hyperparameters we can achieve really good looking images.
+# however the issue is that smaller sizes result in better training stability and final output
+# we could successfully train 64x64 images, and with a bit more effort get 128x128, but beyond
+# that it seems its impossible to get a decent result, training becomes vert unstable and we face
+# mode collapse left and right!
+# the reason is when we start training with high resolution images (>128) the discriminator faces
+# a huge number of fine-grained details like wrinkles hair stands, textures, etc right away!
+# and compared to the generator thats just starting to make sense of things, and comming up with
+# some samples, it quickly learns and rejects all generated samples, this in turn means the gradient
+# will zero or extremely small for generator to be able to have any improvements and thus will be 
+# stuck with ugly low res generations and therefore collapse! we may be able to fight this to some
+# extend and the generator starts generating some high quality images, but it will be limited and
+# with low diversity(one or a few images/concepts get repeated) which is the other form of mode collapse
+# so the generator can not using random weights produce highly detailed images that the discriminator
+# sees. this is where progan comes into play. the authors thought we as humans learn to draw from corase to fine
+# details, so why not try that with GANs? and like that they decided to train GANs from low res to high
+# res in several steps. the idea is, start training on low res input like 4x4, then when the training is
+# stable, go up one level and try 8x8, and so on. this way both the generator and the discriminator get
+# to first learn global structures like faces, body outlines, color distributions, and then gradually 
+# learn about finer details like eyes, hairs, skin textures,etc. since this happens at each stage, 
+# and both discriminator and generator get to see and learn at the same scale, the training stays balanced
+# and we dont face wild ossiliations that we'd face normally when one has more information while the other
+# doesnt! this way they could train up t 1024x1024 resolution whcih was insane back then (2017) when 
+# the paper came out! they used wgangp for loss, and aside from that and the fact that we have 
+# multistage upsampling/processing, they had two new changes in the architcture, they used pixelnorm
+# and minibatchstd:
+# lets implement progan! 
+#
+# 
+#%%
 # Stylegan2/3?
 #%%
 # a detour to something fun CycleGAN
