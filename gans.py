@@ -4571,7 +4571,7 @@ class DiscBlockProGan(nn.Module):
                                    nn.LeakyReLU(0.2),
                                    nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
                                    nn.LeakyReLU(0.2),
-                                   nn.AvgPool2d(2))
+                                  )
         
     def forward(self, x):
         return self.block(x)
@@ -4691,43 +4691,65 @@ class DiscriminatorProGAN(nn.Module):
         self.max_steps = max_steps
         # create some channels for our layers
         # its 2^max_steps all the way down to 2^3=16
-        # i.e. [512,256,128,64,32,16]
+        # i.e. [512,256,128,64,32,16] 
+        # we go from lowest res to highest res, 
+        # that is 512 is for lowest res image we 
+        # work with like 4x4 and 16 is for the highest res
+        # e.g 1024x1024!
         channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
-        print(f'{channels}')
+        print(f'{channels=}')
         # we have to build two blocks, one is used for input images
         # and the other for the rest of the processing
         # note we have to use nn.modulelist or otherwise these wont be registered
         # as modules and wont be found/discovered by other pytorch calls (.to(), .parameters() etc)
-        self.img_inputs = nn.ModuleList([DiscBlockProGan(3, channels[0], kernel_size=1, padding=0) for _ in range(max_steps)])
-        # print(f'{self.input_layers=}')
+        self.fromImgs = nn.ModuleList([DiscBlockProGan(3, channels[i]) for i in range(max_steps)])
+        # print(f'{self.fromImgs=}')
         
-        self.blocks = nn.ModuleList([DiscBlockProGan(channels[i],channels[i-1],kernel_size=1,padding=0) for i in range(max_steps-1,0,-1)])
+        self.blocks = nn.ModuleList([DiscBlockProGan(channels[i],channels[i-1]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
         
         self.final = nn.Sequential(# calculate and add average stddev to input samples
                                    AddBatchStdDev(),
-                                   nn.Conv2d(channels[0]+1, channels[0], kernel_size=1),
+                                   # our final layer works on the lowest res, so the channels[0]
+                                   # is what we want here!
+                                   nn.Conv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
                                    nn.LeakyReLU(0.2),
-                                   nn.Conv2d(channels[0], 1, kernel_size=4)) # 4x4 becomes 1x1 at the end
+                                   # make the final 4x4 volume 1x1 at the end
+                                   nn.Conv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
     
-    def forward(self, x, alpha, step):
-        # if we are down to step 0
-        if step == 0:
-            out = self.img_inputs[0](x)
-            return self.final(out).view (-1,1)
-        # else process the input and merge it with the 
-        # previous step output
-        new_input_out = self.img_inputs[step](x)
-        # downsample the input to get the previous step output
+    def forward(self, x, alpha, depth):
+        # if we at the lowest res/depth/step simply
+        # return the result
+        if depth == 0:
+            out = self.fromImgs[0](x)
+            # print(f'{out.shape=}')
+            out = self.final(out)
+            return out.view(-1,1)
+        
+        # otherwise, if we have high res image process the input
+        # and merge it with the previous step output
+        new_input_out = self.fromImgs[depth](x)
+        new_input_out = self.blocks[depth-1](new_input_out)
+        # downsample so we can merge it with the previous lower res output
+        new_input_out = F.avg_pool2d(new_input_out,2)
+        
+        # to get the previous result, we need to downsample the input to get the proper size
         x_downsampled = F.avg_pool2d(x, 2)
-        previous_input_out = self.img_inputs[step-1](x_downsampled)
-        #now merge the two so we have smooth transition between blocks (fade-in path)
+        previous_input_out = self.fromImgs[depth-1](x_downsampled)
+        
+        # now merge the two so we have smooth transition between blocks (fade-in path)
         out = alpha * new_input_out + (1-alpha)*previous_input_out
+        
         # and finally process the rest of the blocks from high res
-        # to the current lower res
-        for block in self.blocks[self.max_steps - step:]:
-            out = block(out)
-        return self.final(out).view(-1,1)
+        # to the last layer. after merging we are at depth-1, so we
+        # need to continue from depth-2 to the end
+        for i in range(depth-2,-1,-1):
+            out = self.blocks[i](out)
+            out = F.avg_pool2d(out, 2)
+        
+        out = self.final(out)
+        print(f'{out.shape=}')
+        return out.view(-1,1)
  
 
 class GeneratorProGAN(nn.Module):
@@ -4737,16 +4759,20 @@ class GeneratorProGAN(nn.Module):
         self.z_size = z_size   
         self.max_steps = max_steps
         # generators like the discriminator but the oppiste!
+        # [512,256,128,64,32,16] we go from low res with high 
+        # channel count(i.e 512) to high res with low channel count(i.e. 16)
         channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
-        # print(f'{channels=}')
-        # convert to module list so they can be registered/identified properly in pytorch
-        self.img_output = nn.ModuleList([GenBlockProGAN(channels[0], 3, kernel_size=1, padding=0) for _ in range(max_steps)])
-        # print(f'{self.input_layers=}')
-        
-        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i],kernel_size=1,padding=0) for i in range(1,max_steps)])
+        print(f'{channels=}')
+        # convert to module list so they can be identified properly in pytorch
+        # we use this block to get image output
+        self.toImgs = nn.ModuleList([GenBlockProGAN(channels[i], 3) for i in range(max_steps)])
+        # print(f'{self.img_output=}')
+        # we use this to do the rest of processing 
+        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
         
-        self.initial = nn.Sequential(nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
+        self.initial = nn.Sequential(PixelNorm(),
+                                    nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
                                     # we could also do 
                                     # nn.Linear(z_size, channels[0]* 4*4),
                                     # nn.Unflatten(dim=1,unflattened_size=(z_size,4,4)),
@@ -4764,46 +4790,48 @@ class GeneratorProGAN(nn.Module):
                                      PixelNorm(),)
     
     def forward(self, z, alpha, step):
-            
         if z.dim()==2:
             # reshape z to be 4d so convtranspose works properly
             z = z.view(z.size(0),-1,1,1)
-          
-        out = self.initial(z)
+
+        out = self.initial(z) #4x4
         
-        # if last step, then grab the final image
+        # the base case, if we are at step 0, stop and return the image
+        # since there are no previous lyaer before 0! and we dont need
+        # to do fadein! (cuz theres nothing other than this!)
         if step==0:
-            return self.img_output[step](out)
-        # else upsample the output and merge it with the next step
-        # to get a higher resolution
-        for i in range(1, step+1):
+            return self.toImgs[step](out)
+        
+        # otherwise, upsample the low res output we got so far and
+        # process it through the first block up to current step
+        # to make it high res.
+        previous_output = None
+        for i in range(step):
+            # keep the previous output so later on we can use it
+            previous_output = out
             # upsample the current res to next step res
             out = F.interpolate(out, scale_factor=2, mode='bilinear')
-            # since we start from step=1(cuz we already called self.initial()),
-            # we do i-1 to start from the mmediatly next layer up to stepth layer!
-            out = self.blocks[i-1](out)
+            out = self.blocks[i](out)
         
-        # then get the image out
-        out_img_new = self.img_output[step](out)
-        # now we need to merge the current image with the previous layer
-        # image. note that we need to work with current output(out) here
-        # so it shouldnt be overwritten (thats why I used out_img_new)
-        # we need to downsample the last output(out), so it resembles the previous
-        # layer's input that has lower res.
-        out_img_old = self.img_output[step-1](F.avg_pool2d(out,2))
+        # now get the image out
+        out_img_new = self.toImgs[step](out)
+        # now we need to merge the current image with the previous lower res layer image
+        out_img_old = self.toImgs[step-1](previous_output)
         # now we need to upsample it so we can incorporate alpha for the final merge
         out_img_old = F.interpolate(out_img_old, scale_factor=2,mode='bilinear')
         final_img = alpha * out_img_new + (1-alpha)* out_img_old
         return final_img
-        
-x = torch.randn(size=(5,3,1024,1024))
-z = torch.randn(size=(5,10))
-disc = DiscriminatorProGAN(max_steps=6)
-out = disc(x, alpha=0.7, step=5)
+
+       
+x = torch.randn(size=(5,3,256,256))
+z = torch.randn(size=(5,100))
+disc = DiscriminatorProGAN(max_steps=7)
+out = disc(x, alpha=0.7, depth=6)
 print(f'{out.shape=}')
-gen = GeneratorProGAN(10,max_steps=6)
-out_img = gen(z,alpha=0.7,step=5)
+gen = GeneratorProGAN(100,max_steps=7)
+out_img = gen(z,alpha=0.7,step=6)
 print(f'{out_img.shape=}')
+
 #%%
 # Stylegan2/3?
 #%%
