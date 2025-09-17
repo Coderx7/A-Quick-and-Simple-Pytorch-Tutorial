@@ -4556,7 +4556,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # multistage upsampling/processing, they had two new changes in the architcture, they used pixelnorm
 # in the generator only and for the discriminator they used something called equalized learning rate
 # (i.e. scaling weights at runtime) and minibatch standard deviation layer which they added near the
-# end of the discrmintaor to to encourange variations in generated images.
+# end of the discrmintaor to to make the generator generate more diverse images and avoid/fight mode collapse.
 #
 # lets implement progan! 
 # we need two blocks one for our discriminator and the other for our generator
@@ -4564,7 +4564,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # a simple 2 conv layer block with leakyrelu and this tiem around we will be using aveagepooling
 # to downsize the input instead of a larger stride
 
-class DiscBlock(nn.Module):
+class DiscBlockProGan(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super().__init__()
         self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
@@ -4576,6 +4576,39 @@ class DiscBlock(nn.Module):
     def forward(self, x):
         return self.bock(x)
  
+# we also need to implemenet that mini batch standard deviation, the idea is to
+# check the standard deviation of the inputs so we can see how far values are from the mean
+# (basically measure how much variation existis within the batch of inputs)
+# and the standard deviation does exactly that. this in turn will help us understand
+# whether we are facing mode collapse or not because if the generator is producing identical
+# or nearly identical outputs then the std for those outputs (batch) will be very small and 
+# this way the discriminator can catch that! and no more fail to notice that generated images
+# in the batch all look too simialr! and hence detect mode collapse and force generator to diversify!
+# how does it do? we averge all the stds that we got for every feature/pixel in the whole batch
+# and concatenate it to the input batch as a standalone channel, this way, the generator needs 
+# to comeup with the same values or close enough that matches the real input avberage std.
+class MiniBatchStdDev(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x:torch.Tensor):
+        # calculate the input std (σ/var)
+        # we could also do std = torch.sqrt(x.var(dim=0,unbiased=False)+1e-8)
+        # but its numerically less stable than the dedicated std() pytorhc offers
+        # simply because here we are first calculating the variance and then take
+        # its squre root to get std, but if the variance happens to be very large 
+        # or the oppositive, very small, this two stage calculation may accumulate
+        # more rounding errors
+        std = torch.std(x, dim=0, unbiased=False)
+        print(f'{std.shape=}')
+        # we dont need individual stds for each pixel vector, so we average that to
+        # get a single number across the whole batch and concatenate it to input as
+        # new channel that shows us the situation
+        std_mean = torch.mean(std,dim=0).view(1,1,1,1)
+        b,c,h,w = x.shape
+        out = torch.cat(x, std_mean.repeat(b,1,h,w),dim=1) #(b,c+1,h,w)
+        return out   
+    
 # for generator block, we need PixelNorm which simply is calculating l2 norm(in fact root mean square)
 # for each pixel across channels!and normalize the input by that! that is do x/sqrt(mean(x²)+eps) 
 # x being the input and epsilon(eps) for numerical stability.
@@ -4635,7 +4668,7 @@ class PixelNorm(nn.Module):
 # with leakyrelu(0.2) and pixel norm! the authors said using leakyrelu in generator
 # as well as disciminator made training much more stable, because it allows much better
 # gradient flow. so we do the same here. since we have stages, we do the upsampling later in code
-class GenBlock(nn.Module):
+class GenBlockProGAN(nn.Module):
      def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
          super().__init__()
          
@@ -4652,6 +4685,39 @@ class GenBlock(nn.Module):
 
 
 
+class DiscriminatorProGAN(nn.Module):
+    def __init__(self, max_steps=6):
+        super().__init__()
+        
+        self.max_steps = max_steps
+        # create some channels for our layers
+        # its 2^max_steps all the way down to 2^3=16
+        # i.e. [512,256,128,64,32,16]
+        channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
+        print(f'{channels}')
+        # we have to build two blocks, one is used for input images
+        # and the other for the rest of the processing
+        self.input_layers = [DiscBlockProGan(3, channels[0], kernel_size=1, padding=0) for _ in range(max_steps)]
+        # print(f'{self.input_layers=}')
+        
+        self.block= [DiscBlockProGan(channels[i],channels[i-1],kernel_size=1,padding=0) for i in range(max_steps-1,0,-1)]
+        print(f'{self.block=}')
+        
+        self.final = nn.Sequential(MiniBatchStdDev(),
+                                   nn.Conv2d(channels[0]+1, channels[0], kernel_size=1),
+                                   nn.LeakyReLU(0.2),
+                                   nn.Conv2d(channels[0], 1, kernel_size=4)) # 4x4 becomes 1x1 at the end
+    
+        
+
+class GeneratorProGAN(nn.Module):
+    def __init__(self, max_steps=6):
+        super().__init__()        
+        self.max_steps = max_steps
+        
+disc = DiscriminatorProGAN()
+gen = GeneratorProGAN()
+        
 #%%
 # Stylegan2/3?
 #%%
