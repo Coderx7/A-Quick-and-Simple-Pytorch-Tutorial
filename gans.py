@@ -4574,10 +4574,10 @@ class DiscBlockProGan(nn.Module):
                                    nn.AvgPool2d(2))
         
     def forward(self, x):
-        return self.bock(x)
+        return self.block(x)
  
 # we also need to implemenet that mini batch standard deviation, the idea is to
-# check the standard deviation of the inputs so we can see how far values are from the mean
+# check the standard deviation of the inputs so we can see how far values lie from the mean
 # (basically measure how much variation existis within the batch of inputs)
 # and the standard deviation does exactly that. this in turn will help us understand
 # whether we are facing mode collapse or not because if the generator is producing identical
@@ -4587,12 +4587,9 @@ class DiscBlockProGan(nn.Module):
 # how does it do? we averge all the stds that we got for every feature/pixel in the whole batch
 # and concatenate it to the input batch as a standalone channel, this way, the generator needs 
 # to comeup with the same values or close enough that matches the real input avberage std.
-class MiniBatchStdDev(nn.Module):
-    def __init__(self):
-        super().__init__()
-    
+class AddBatchStdDev(nn.Module):
     def forward(self, x:torch.Tensor):
-        # calculate the input std (σ/var)
+        # calculate the input std(σ)
         # we could also do std = torch.sqrt(x.var(dim=0,unbiased=False)+1e-8)
         # but its numerically less stable than the dedicated std() pytorhc offers
         # simply because here we are first calculating the variance and then take
@@ -4600,14 +4597,14 @@ class MiniBatchStdDev(nn.Module):
         # or the oppositive, very small, this two stage calculation may accumulate
         # more rounding errors
         std = torch.std(x, dim=0, unbiased=False)
-        print(f'{std.shape=}')
+        # print(f'{std.shape=}')
         # we dont need individual stds for each pixel vector, so we average that to
         # get a single number across the whole batch and concatenate it to input as
         # new channel that shows us the situation
-        std_mean = torch.mean(std,dim=0).view(1,1,1,1)
+        std_mean = torch.mean(std).view(1,1,1,1)
         b,c,h,w = x.shape
-        out = torch.cat(x, std_mean.repeat(b,1,h,w),dim=1) #(b,c+1,h,w)
-        return out   
+        out = torch.cat([x, std_mean.repeat(b,1,h,w)],dim=1) #(b,c+1,h,w)
+        return out
     
 # for generator block, we need PixelNorm which simply is calculating l2 norm(in fact root mean square)
 # for each pixel across channels!and normalize the input by that! that is do x/sqrt(mean(x²)+eps) 
@@ -4656,7 +4653,6 @@ class MiniBatchStdDev(nn.Module):
 # print(f'both yield the same result: {out}')
 # 
 class PixelNorm(nn.Module):
-    
     def forward(self, x, eps=1e-8):
         # keepdim is to retain input shape so we get (b,1,h,w) and pytorch
         # broadcast it properly to the whole input volume
@@ -4684,7 +4680,10 @@ class GenBlockProGAN(nn.Module):
         return self.block(x)
 
 
-
+# now for the discriminator we build the architectures in steps
+# the initial block will process a small dimension, e.g. 4x4
+# then for the next stage, we merge the smaller size into the
+# larger size using alpha to specify how much 
 class DiscriminatorProGAN(nn.Module):
     def __init__(self, max_steps=6):
         super().__init__()
@@ -4697,27 +4696,114 @@ class DiscriminatorProGAN(nn.Module):
         print(f'{channels}')
         # we have to build two blocks, one is used for input images
         # and the other for the rest of the processing
-        self.input_layers = [DiscBlockProGan(3, channels[0], kernel_size=1, padding=0) for _ in range(max_steps)]
+        # note we have to use nn.modulelist or otherwise these wont be registered
+        # as modules and wont be found/discovered by other pytorch calls (.to(), .parameters() etc)
+        self.img_inputs = nn.ModuleList([DiscBlockProGan(3, channels[0], kernel_size=1, padding=0) for _ in range(max_steps)])
         # print(f'{self.input_layers=}')
         
-        self.block= [DiscBlockProGan(channels[i],channels[i-1],kernel_size=1,padding=0) for i in range(max_steps-1,0,-1)]
-        print(f'{self.block=}')
+        self.blocks = nn.ModuleList([DiscBlockProGan(channels[i],channels[i-1],kernel_size=1,padding=0) for i in range(max_steps-1,0,-1)])
+        # print(f'{self.blocks=}')
         
-        self.final = nn.Sequential(MiniBatchStdDev(),
+        self.final = nn.Sequential(# calculate and add average stddev to input samples
+                                   AddBatchStdDev(),
                                    nn.Conv2d(channels[0]+1, channels[0], kernel_size=1),
                                    nn.LeakyReLU(0.2),
                                    nn.Conv2d(channels[0], 1, kernel_size=4)) # 4x4 becomes 1x1 at the end
     
-        
+    def forward(self, x, alpha, step):
+        # if we are down to step 0
+        if step == 0:
+            out = self.img_inputs[0](x)
+            return self.final(out).view (-1,1)
+        # else process the input and merge it with the 
+        # previous step output
+        new_input_out = self.img_inputs[step](x)
+        # downsample the input to get the previous step output
+        x_downsampled = F.avg_pool2d(x, 2)
+        previous_input_out = self.img_inputs[step-1](x_downsampled)
+        #now merge the two so we have smooth transition between blocks (fade-in path)
+        out = alpha * new_input_out + (1-alpha)*previous_input_out
+        # and finally process the rest of the blocks from high res
+        # to the current lower res
+        for block in self.blocks[self.max_steps - step:]:
+            out = block(out)
+        return self.final(out).view(-1,1)
+ 
 
 class GeneratorProGAN(nn.Module):
-    def __init__(self, max_steps=6):
-        super().__init__()        
+    def __init__(self, z_size, max_steps=6):
+        super().__init__()  
+           
+        self.z_size = z_size   
         self.max_steps = max_steps
+        # generators like the discriminator but the oppiste!
+        channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
+        # print(f'{channels=}')
+        # convert to module list so they can be registered/identified properly in pytorch
+        self.img_output = nn.ModuleList([GenBlockProGAN(channels[0], 3, kernel_size=1, padding=0) for _ in range(max_steps)])
+        # print(f'{self.input_layers=}')
         
-disc = DiscriminatorProGAN()
-gen = GeneratorProGAN()
+        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i],kernel_size=1,padding=0) for i in range(1,max_steps)])
+        # print(f'{self.blocks=}')
         
+        self.initial = nn.Sequential(nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
+                                    # we could also do 
+                                    # nn.Linear(z_size, channels[0]* 4*4),
+                                    # nn.Unflatten(dim=1,unflattened_size=(z_size,4,4)),
+                                    # to get 4x4 fmap from the given latent vector, but 
+                                    # not nn.upsample, if we were to use upsample it would
+                                    # have simply copy the input to a 4x4 fmap basically
+                                    # instead of learning 4x4 pixels, it would copy 1 into
+                                    # 4x4 which would make it harder for the network to learn
+                                    # structures from inpyts. we can learn it during training,
+                                    # but not now well see how to do this in stylegan!
+                                     nn.LeakyReLU(0.2),
+                                     PixelNorm(),
+                                     nn.Conv2d(channels[0], channels[0], kernel_size=3,padding=1),
+                                     nn.LeakyReLU(0.2),
+                                     PixelNorm(),)
+    
+    def forward(self, z, alpha, step):
+            
+        if z.dim()==2:
+            # reshape z to be 4d so convtranspose works properly
+            z = z.view(z.size(0),-1,1,1)
+          
+        out = self.initial(z)
+        
+        # if last step, then grab the final image
+        if step==0:
+            return self.img_output[step](out)
+        # else upsample the output and merge it with the next step
+        # to get a higher resolution
+        for i in range(1, step+1):
+            # upsample the current res to next step res
+            out = F.interpolate(out, scale_factor=2, mode='bilinear')
+            # since we start from step=1(cuz we already called self.initial()),
+            # we do i-1 to start from the mmediatly next layer up to stepth layer!
+            out = self.blocks[i-1](out)
+        
+        # then get the image out
+        out_img_new = self.img_output[step](out)
+        # now we need to merge the current image with the previous layer
+        # image. note that we need to work with current output(out) here
+        # so it shouldnt be overwritten (thats why I used out_img_new)
+        # we need to downsample the last output(out), so it resembles the previous
+        # layer's input that has lower res.
+        out_img_old = self.img_output[step-1](F.avg_pool2d(out,2))
+        # now we need to upsample it so we can incorporate alpha for the final merge
+        out_img_old = F.interpolate(out_img_old, scale_factor=2,mode='bilinear')
+        final_img = alpha * out_img_new + (1-alpha)* out_img_old
+        return final_img
+        
+x = torch.randn(size=(5,3,1024,1024))
+z = torch.randn(size=(5,10))
+disc = DiscriminatorProGAN(max_steps=6)
+out = disc(x, alpha=0.7, step=5)
+print(f'{out.shape=}')
+gen = GeneratorProGAN(10,max_steps=6)
+out_img = gen(z,alpha=0.7,step=5)
+print(f'{out_img.shape=}')
 #%%
 # Stylegan2/3?
 #%%
