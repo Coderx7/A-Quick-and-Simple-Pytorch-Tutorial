@@ -4782,8 +4782,7 @@ class GeneratorProGAN(nn.Module):
         print(f'{channels=}')
         # this is the first layer we use to get latent vector and build a 4x4 initial output which
         # is then processed by the blocks and the rest.
-        self.initial = nn.Sequential(PixelNorm(),
-                                    nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
+        self.initial = nn.Sequential(nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
                                     # we could also do 
                                     # nn.Linear(z_size, channels[0]* 4*4),
                                     # nn.Unflatten(dim=1,unflattened_size=(z_size,4,4)),
@@ -4906,6 +4905,9 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
     fake_preds = critic(imgs_fake, *args)
     wgan_loss = wgan_critic_loss(real_preds, fake_preds)
     gp = gradient_penalty_progan(critic, imgs_real, imgs_fake, *args)
+    # gp shouldnt be large!
+    if gp>100:
+        print(f'WARNING: High Gradient Policy!{gp.item()}')
     return wgan_loss + (lambda_factor*gp)
 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
