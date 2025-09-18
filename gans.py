@@ -4698,16 +4698,31 @@ class DiscriminatorProGAN(nn.Module):
         # e.g 1024x1024!
         channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
-        # we have to build two blocks, one is used for input images
-        # and the other for the rest of the processing
+        # we have to build 3 blocks, one is used for input images
+        # and the other for the rest of the processing and a final one
+        # for the final output. this way managing things becomes so much easier
         # note we have to use nn.modulelist or otherwise these wont be registered
         # as modules and wont be found/discovered by other pytorch calls (.to(), .parameters() etc)
+        #
+        # like the name implies this part deals with image input exclusively. for each stage/step/depth
+        # of the network, we assign a dedicated imageprocessor (layer thataccepts images) and produces
+        # the output with proper number of channels for the next block to porcess
         self.fromImgs = nn.ModuleList([DiscBlockProGan(3, channels[i]) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
         
+        # and this part deals with the rest of processing, each block belongs to separate stage/step/depth
+        # here we only specify the channel configurations, the actual spatial size will be determined
+        # and handled in the forward pass. that is after each step, we halve the output like 32x32 -> 16x16
+        # ans so on 
         self.blocks = nn.ModuleList([DiscBlockProGan(channels[i],channels[i-1]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
-        
+         
+        # and the final block that grabs the final processed 4x4 output from previous processings(self.blocks)
+        # and gives us a final 1 output. note since we will be using wgangp we dont use any activation functions
+        # also note since we are working at the lowest rest (4x4), the channel configuration will be the first
+        # one, i.e. 512 in our case (higher channel count goes with lowest res and viceversa this is so
+        # when we recieve a high res image( i.e. with stage/step/depth>0), it starts with low channel count, and as
+        # the spatial size decreases the number of channels increases so the representational capacity is not hindered just like any normal cnn!)
         self.final = nn.Sequential(# calculate and add average stddev to input samples
                                    AddBatchStdDev(),
                                    # our final layer works on the lowest res, so the channels[0]
@@ -4717,10 +4732,10 @@ class DiscriminatorProGAN(nn.Module):
                                    # make the final 4x4 volume 1x1 at the end
                                    nn.Conv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
     
-    def forward(self, x, alpha, depth):
+    def forward(self, x, alpha, step):
         # if we at the lowest res/depth/step simply
         # return the result
-        if depth == 0:
+        if step == 0:
             out = self.fromImgs[0](x)
             # print(f'{out.shape=}')
             out = self.final(out)
@@ -4728,14 +4743,14 @@ class DiscriminatorProGAN(nn.Module):
         
         # otherwise, if we have high res image process the input
         # and merge it with the previous step output
-        new_input_out = self.fromImgs[depth](x)
-        new_input_out = self.blocks[depth-1](new_input_out)
+        new_input_out = self.fromImgs[step](x)
+        new_input_out = self.blocks[step-1](new_input_out)
         # downsample so we can merge it with the previous lower res output
         new_input_out = F.avg_pool2d(new_input_out,2)
         
         # to get the previous result, we need to downsample the input to get the proper size
         x_downsampled = F.avg_pool2d(x, 2)
-        previous_input_out = self.fromImgs[depth-1](x_downsampled)
+        previous_input_out = self.fromImgs[step-1](x_downsampled)
         
         # now merge the two so we have smooth transition between blocks (fade-in path)
         out = alpha * new_input_out + (1-alpha)*previous_input_out
@@ -4743,12 +4758,14 @@ class DiscriminatorProGAN(nn.Module):
         # and finally process the rest of the blocks from high res
         # to the last layer. after merging we are at depth-1, so we
         # need to continue from depth-2 to the end
-        for i in range(depth-2,-1,-1):
+        for i in range(step-2,-1,-1):
             out = self.blocks[i](out)
+            # at each step we lower the res for the next stage/block
             out = F.avg_pool2d(out, 2)
         
+        # and finally get the output
         out = self.final(out)
-        print(f'{out.shape=}')
+        # print(f'{out.shape=}')
         return out.view(-1,1)
  
 
@@ -4763,14 +4780,8 @@ class GeneratorProGAN(nn.Module):
         # channel count(i.e 512) to high res with low channel count(i.e. 16)
         channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
-        # convert to module list so they can be identified properly in pytorch
-        # we use this block to get image output
-        self.toImgs = nn.ModuleList([GenBlockProGAN(channels[i], 3) for i in range(max_steps)])
-        # print(f'{self.img_output=}')
-        # we use this to do the rest of processing 
-        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
-        # print(f'{self.blocks=}')
-        
+        # this is the first layer we use to get latent vector and build a 4x4 initial output which
+        # is then processed by the blocks and the rest.
         self.initial = nn.Sequential(PixelNorm(),
                                     nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
                                     # we could also do 
@@ -4788,6 +4799,16 @@ class GeneratorProGAN(nn.Module):
                                      nn.Conv2d(channels[0], channels[0], kernel_size=3,padding=1),
                                      nn.LeakyReLU(0.2),
                                      PixelNorm(),)
+        
+        # we use this block to get image output(final layer)
+        self.toImgs = nn.ModuleList([GenBlockProGAN(channels[i], 3) for i in range(max_steps)])
+        # print(f'{self.img_output=}')
+        
+        # and this to do the rest of processing. like before we only do chanel configs here and the
+        # actual upsampling for each step/stage/depth is done during forward pass
+        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
+        # print(f'{self.blocks=}')
+                
     
     def forward(self, z, alpha, step):
         if z.dim()==2:
@@ -4798,7 +4819,7 @@ class GeneratorProGAN(nn.Module):
         
         # the base case, if we are at step 0, stop and return the image
         # since there are no previous lyaer before 0! and we dont need
-        # to do fadein! (cuz theres nothing other than this!)
+        # to do fadein! (cuz theres nothing other than this to merge with!)
         if step==0:
             return self.toImgs[step](out)
         
@@ -4807,18 +4828,19 @@ class GeneratorProGAN(nn.Module):
         # to make it high res.
         previous_output = None
         for i in range(step):
-            # keep the previous output so later on we can use it
+            # keep the previous output so later on we can use it to get previous step output
             previous_output = out
             # upsample the current res to next step res
             out = F.interpolate(out, scale_factor=2, mode='bilinear')
             out = self.blocks[i](out)
         
-        # now get the image out
+        # now get the image out for this step
         out_img_new = self.toImgs[step](out)
-        # now we need to merge the current image with the previous lower res layer image
+        # now we need to merge the current image with the previous lower res image
         out_img_old = self.toImgs[step-1](previous_output)
         # now we need to upsample it so we can incorporate alpha for the final merge
         out_img_old = F.interpolate(out_img_old, scale_factor=2,mode='bilinear')
+        # now like some people like to call it, we merge the high res path(out_img_new) with the low res path(out_img_old)
         final_img = alpha * out_img_new + (1-alpha)* out_img_old
         return final_img
 
