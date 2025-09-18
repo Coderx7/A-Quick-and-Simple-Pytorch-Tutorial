@@ -4564,7 +4564,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # a simple 2 conv layer block with leakyrelu and this tiem around we will be using aveagepooling
 # to downsize the input instead of a larger stride
 
-class DiscBlockProGan(nn.Module):
+class DiscBlockProGAN(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super().__init__()
         self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
@@ -4707,14 +4707,14 @@ class DiscriminatorProGAN(nn.Module):
         # like the name implies this part deals with image input exclusively. for each stage/step/depth
         # of the network, we assign a dedicated imageprocessor (layer thataccepts images) and produces
         # the output with proper number of channels for the next block to porcess
-        self.fromImgs = nn.ModuleList([DiscBlockProGan(3, channels[i]) for i in range(max_steps)])
+        self.fromImgs = nn.ModuleList([DiscBlockProGAN(3, channels[i]) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
         
         # and this part deals with the rest of processing, each block belongs to separate stage/step/depth
         # here we only specify the channel configurations, the actual spatial size will be determined
         # and handled in the forward pass. that is after each step, we halve the output like 32x32 -> 16x16
         # ans so on 
-        self.blocks = nn.ModuleList([DiscBlockProGan(channels[i],channels[i-1]) for i in range(1,max_steps)])
+        self.blocks = nn.ModuleList([DiscBlockProGAN(channels[i],channels[i-1]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
          
         # and the final block that grabs the final processed 4x4 output from previous processings(self.blocks)
@@ -4844,15 +4844,21 @@ class GeneratorProGAN(nn.Module):
         final_img = alpha * out_img_new + (1-alpha)* out_img_old
         return final_img
 
-       
-x = torch.randn(size=(5,3,256,256))
-z = torch.randn(size=(5,100))
-disc = DiscriminatorProGAN(max_steps=7)
-out = disc(x, alpha=0.7, depth=6)
-print(f'{out.shape=}')
-gen = GeneratorProGAN(100,max_steps=7)
-out_img = gen(z,alpha=0.7,step=6)
-print(f'{out_img.shape=}')
+
+# x = torch.randn(size=(5,3,256,256))
+# z = torch.randn(size=(5,100))
+max_steps = 7
+disc = DiscriminatorProGAN(max_steps=max_steps)
+gen = GeneratorProGAN(100,max_steps=max_steps)
+# test all the stages/steps
+for i in range(max_steps):
+    H= W = 2**i*4
+    x = torch.randn(size=(5,3,H,W))
+    z = torch.randn(size=(5,100))
+    disc_out = disc(x, alpha=1, step=i)
+    print(f'disc_out.shape: {tuple(disc_out.shape)}')
+    gen_out = gen(z, alpha=1, step=i)
+    print(f'gen_out.shape : {tuple(gen_out.shape)}')
 
 #%%
 # Stylegan2/3?
