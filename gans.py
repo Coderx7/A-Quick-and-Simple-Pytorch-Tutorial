@@ -4907,7 +4907,7 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
     gp = gradient_penalty_progan(critic, imgs_real, imgs_fake, *args)
     # gp shouldnt be large!
     if gp>100:
-        print(f'WARNING: High Gradient Policy!{gp.item()}')
+        print(f'WARNING: High Gradient Policy: {gp.item():.2f}')
     return wgan_loss + (lambda_factor*gp)
 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
@@ -4973,12 +4973,24 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         training_step_counter = 0
         alpha=0
         
+        if step>0:
+            # increase the learing rate for larger steps because the initial step
+            # is very sensive, we had to use very small lr!
+            for gd,gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
+                gd["lr"] = 0.001
+                gg["lr"] = 0.001
+            
+        current_lr_d = [p['lr'] for p in disc_optimizer.param_groups]
+        current_lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+        
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                    {epochs} ')
         print(f'  --BatchSize:                 {batch_size} ')
         print(f'  --Interval:                  {interval} ')
         print(f'  --Fade-in Steps:             {fadein_steps} ')
-        
+        print(f'  --Current Discriminator LR:  {current_lr_d}')
+        print(f'  --Current Generator LR:      {current_lr_g}')
+    
         for epoch in range(epochs):
             discriminator.train()
             generator.train()
@@ -5192,7 +5204,37 @@ if loss_type=='lsgan':
 elif loss_type == 'wgan':
     lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
 else:#wgangp
-    lr_d, lr_g = 0.001, 0.001#0.001, 0.002
+    # lrs like 0.001/0.0003 all result in huge gradient penalties (gp)
+    # which would result in huge losses! this meant we had huge updates
+    # and unstale training so I hd to reduce the learning rate drastically!
+    # we can increase this during training for the next steps.
+    # the first step is very senstive so we had to keep lr low
+    # we should be able to use higher values for the next steps
+    lr_d, lr_g = 0.0001, 0.0001#0.001, 0.002
+
+# sidenote:
+# debugging: 
+# initialy I started with lr=0.002/0.001, the first step(0) 
+# went on, didnt notice much, until step=1 started and noticed
+# the loss was insanely huge! in the hundereds of thousands!
+# went back and noticed it started from the begining of the training
+# then noticed I had a misake in generator (had PixelNorm in first layer
+# where we accept input latent vector) removed it but the problem still
+# existed. then noticed the betas in adams, 0.9 was small, it meant
+# as I explained before, if we get a few batches of small gradients, adam
+# would take huge steps and we ould have huge parameter updates that would
+# cuz massive instablity in training. made it 0.99 to make it much smoother
+# still I was getting massive loss (but a lot smaller now but still huge)
+# this time I checked and saw the issue was comming from the gradient penalty
+# i.e. gp was huge! which when we added it to our loss our loss would be huge
+# as well. this meant again we had massive gradients, and the only source that
+# would contribute to this would be the learning rates, I set it to 0.0003 to
+# both discriminator and generators, but no luck, the loss dropped to a much smalle
+# r value but still it would go to huge magnitues. made it 0.0001 and it worked!
+# since the first stage is extremely sensitive , we have to use a smaller lr
+# we can then increase it for the following steps, which we did use 0.001!
+#  
+
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
