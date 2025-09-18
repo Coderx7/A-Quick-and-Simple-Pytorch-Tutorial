@@ -5160,14 +5160,37 @@ discriminator_progan = discriminator_progan.to(device)
 generator_progan = GeneratorProGAN(z_size, max_steps)
 generator_progan = generator_progan.to(device)
 
-betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+#sidenote:
+# in Adam optimizer beta1(the first value for betas) controls the momentum,
+# (i.e. it controls the exponential moving average of the gradients) setting it to 0 essentially disables it.
+# beta2 on the other hand controls the exponential moving average of the squared gradients which
+# captures the scale or variance of the gradients.
+# a lower beta2 value makes the optimizer react faster to recent gradient magintudes and likewise
+# a higher beta2 value would smooth things out and hence slow its reaction to recent gradient magnitudes!
+#
+# lets make it a bit more clear, imagine for example we chose a beta2=0.9 this is now like
+# we gave the optimizer a very short memory! since it has a short memory it now reacts very
+# quickly to the scale of the gradients it faces in the last few batches and if we for example
+# get a few batches with small gradients the optimizer's internal scaling factor can shrink 
+# and therefore cause the next step to be huge! which leads to an overshhoot and huge updates!(i.e. large parameter updates)
+# (Adam devides the learning rate by sqrt(v_t), so when v_t quickly shriks because of the 
+# small gradienst and short memory the denominator becomes small which in turn would increase
+# the effectiveness of the learning rate resulting in a large/huge optimizer step!)
+# if we chose a larger beta2 value like 0.99, it will provide a much longer memory, therefore
+# the estimates of the gradient variance will be much smoother and more stable!
+# the optimizer wont take sudden massive steps which would otherwise make training very unstable 
+# and make the gradient penalty very high! hence why larger beta2 like 0.99 make training more
+# stable and gradients magnitudes more smooth.
+# (so too small beta2 can cause instability (huge weight updates, ossiliations) and too large values
+# can also make updates very slow and slow the convergence.)
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.99]
 
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0004, 0.0001
 elif loss_type == 'wgan':
     lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
 else:#wgangp
-    lr_d, lr_g = 0.002, 0.001#0.001, 0.002
+    lr_d, lr_g = 0.001, 0.001#0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
