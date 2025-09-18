@@ -4859,6 +4859,237 @@ for i in range(max_steps):
     print(f'disc_out.shape: {tuple(disc_out.shape)}')
     gen_out = gen(z, alpha=1, step=i)
     print(f'gen_out.shape : {tuple(gen_out.shape)}')
+#%%
+# now training part!
+# before we write the training loop, there are a few things we need to be aware of
+# first we are dealing with different resolutions, so we need a separate dataloader
+# for each resolution so we can create one during the training. 
+# second, since we have different resolutions, we cant use the same batchsize for all
+# when the res is low, we can use larger batchsize, but as we get to higher res we maynot
+# be bale to fit all into our vram, so its best to create a separate batchsize for each resolution!
+# and third, we also need to take care of alpha, we need to grdaually increase it from
+# the initial 0 toward the final 1 which signals to use the new output. so we can specify
+# certain number of iterations before we go for alpha change and therefore fadein process.
+# and finally the epochs, it would be a good idea to have at last a few epochs for each res
+# so the network doesnt quit that res prematurely and learns porperly.
+# I guess I said it all lets write the training loop, if anything is left out I explain it 
+# in code
+def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
+                         gen_optimizer, EPOCHS:dict, BATCH_SIZES:dict, interval, gen_update_interval, dataset_name, loss_type='wgangp', 
+                         lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
+                         noise_addition=False, device='cuda', weights_save_dir='./weights',
+                         images_save_dir='./results/gan'):
+    
+    lr_d = [p['lr'] for p in disc_optimizer.param_groups]
+    lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+    
+    assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
+    
+    print(f'Dataset:                   {dataset_name}')
+    print(f'Loss type:                 {loss_type}')
+    print(f'Discriminator LR:          {lr_d}')
+    print(f'Generator LR:              {lr_g}')
+    print(f'Max Step:                  {discriminator.max_steps}')
+    print(f'Epochs:                    {epochs} ')
+    print(f'Interval:                  {interval} ')
+    print(f'Generator update interval: {gen_update_interval}')
+    print(f'WGAN weight cliping range: {wgan_range}')
+    print(f'Noise addition to input:   {noise_addition}')
+    print(f'WGAN-GP Lambda factor:     {lambda_factor}')
+    print(f'gen_num_samples:           {gen_num_samples}')
+    print(f'Checkpoint Directory:      {weights_save_dir}')
+    print(f'Images Directory:          {images_save_dir}')
+
+
+    metric = IS_FID_Calculator(device)
+
+    fixed_z = torch.randn((gen_num_samples,generator.z_size)).to(device)
+
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+    
+    print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+
+    for step in max_steps:
+        
+        # specify resolutions
+        # specify batchsizes for each resolution
+        # create dataloader for each res
+        # specify fadein transition iteration count
+        
+        batch_size = BATCH_SIZES[step]
+        epochs = EPOCHS[step]
+        # 4 is the lowest res so we want 8,16 etc
+        res = 2**step*4
+        train_loader = get_dataloader(dataset_name, resize_dims=(res,res), batch_size=batch_size)
+        # calculate how often fadein should kick in we give a bit of leeway
+        # so the model learns abit about the old/previous/lowres output and
+        # then increase alpha a bit so ultimately during the whole epochs for
+        # that res, its gradually increased without hurting the training
+        num_batches = len(train_loader)
+        fadein_interval = num_batches//2
+        alpha=0
+        
+        print(f'Training on {res}x{res}')
+        for epoch in range(epochs):
+            discriminator.train()
+            generator.train()
+            
+            losses = []
+            epoch_scores = []
+            
+            for i, (imgs_real, _) in enumerate(train_loader):
+                #scale input to [-1,1]
+                imgs_real = (2*imgs_real-1).to(device)
+                
+                # if adding noise makes trainig more stable and we get
+                # better looking images it means our discriminator is
+                # too powerful that messing the signal up and making it
+                # harder for it, improves our result! it acts as a regularizer
+                # (in terms of distribution impact, adding noise increases the variance
+                # for both real/fake images so the discriminator cant prefectly memorize
+                # the training data or latch onto a single fake mode!)
+                if noise_addition:
+                    imgs_real += 0.05 * torch.randn_like(imgs_real)
+                
+                # train discriminator/critic! 
+                # real image predictions
+                preds_real = discriminator(imgs_real,alpha,step)
+                # disc_real_loss = real_loss(preds_real, smooth=True, device=device)
+                # generate an image using generator 
+                z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                # we detach the imgs_fake so the discriminator cant use the gradients
+                # from the generator and quickly learn!
+                imgs_fake = generator(z_vector, alpha, step).detach()
+            
+                # add noise to fake images as well(not needed for dcgan)
+                if noise_addition:
+                    imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+            
+                preds_fake = discriminator(imgs_fake, alpha, step)
+                # disc_fake_loss = fake_loss(preds_fake, smooth=False, device=device)
+                # calculate discrimiator loss out of real and fake losses
+                if loss_type =='lsgan':
+                    disc_loss = lsgan_discriminator_loss(preds_real, preds_fake)
+                elif loss_type =='wgan':
+                    disc_loss = wgan_critic_loss(preds_real, preds_fake)
+                elif loss_type =='wgangp':
+                    disc_loss = wgangp_critic_loss(discriminator, imgs_real, imgs_fake, lambda_factor=lambda_factor)
+                else:
+                    raise ValueError(f"Invalid loss type:{loss_type} entered!")
+            
+                # for debugging purposes
+                # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
+                # then it means our discriminator is strong but if both are near the same
+                # value and the loss is low then it means our discriminator is confused
+                # or is over-regularized.
+                disc_real_mean = preds_real.mean().item()
+                disc_fake_mean = preds_fake.mean().item()
+                
+                # store average scores for real and fake images
+                epoch_scores.append((disc_real_mean, disc_fake_mean))
+                
+                # and optimize discrimnator 
+                disc_optimizer.zero_grad()
+                disc_loss.backward()
+                disc_optimizer.step()
+            
+                # dont forget to clip discriminator's weights in wgan
+                if loss_type=='wgan':
+                    for p in discriminator.parameters():
+                    # keep it roughly 1-lipschitz smaller than this
+                    # restricts the discriminator/critic too much!
+                    # larger values might be ok only if things go south!
+                        p.data.clip_(*wgan_range)
+
+                # now train genertor to create images that look real
+                z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+                fake_imgs = generator(z_vector, alpha, step)
+                preds_fake = discriminator(fake_imgs, alpha, step)
+            
+                # generator loss
+                # swap loss! treat fake images as real images
+                if loss_type=='lsgan':
+                    gen_real_loss = lsgan_generator_loss(preds_fake)
+                
+                elif 'wgan' in loss_type: #wgan-wgangp
+                    gen_real_loss = wgan_generator_loss(preds_fake)
+            
+                else:
+                    raise ValueError(f"losstype {loss_type} not detected!")
+                
+                # optimize generator
+                # update generator with a delay, usually update per 5 critic update
+                # seems to make convergence faster
+                if (i+1)%gen_update_interval == 0:
+                    gen_optimizer.zero_grad()
+                    gen_real_loss.backward()
+                    gen_optimizer.step()
+            
+                if (i+1)%interval==0:
+                    # append discriminator loss and generator loss
+                    # losses.append((disc_loss.item(), gen_real_loss.item()))
+                    # print discriminator and generator loss
+                    print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
+                    print(f" -- Batch-{i}: Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean = {disc_fake_mean:.4f}")
+                    
+                losses.append((disc_loss.item(), gen_real_loss.item()))
+                
+                # now lets tune alpha
+                if i<fadein_interval:
+                    alpha += 1/fadein_interval
+                    alpha = min(alpha,1) # clamp at 1
+        
+            d_loss_mean = np.mean(np.array(losses)[:,0])
+            g_loss_mean = np.mean(np.array(losses)[:,1])
+
+            average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
+            average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
+
+            # calculate is/fid scores
+            IS_score = metric.compute_IS(imgs_fake)
+            FID_score = metric.compute_FID(imgs_real, imgs_fake)
+        
+            print(f" -- Last Batch : Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean: {disc_fake_mean:.4f}")
+            print(f" -- Epoch's Avg: Disc's real mean: {average_score_real_mean:.4f} | Disc's fake mean: {average_score_fake_mean:.4f}")
+            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+            
+            #save model weights at each epoch
+            torch.save({"state_dict":generator.state_dict(),
+                    # "hidden_size":generator.hidden_size,
+                    "z_size":generator.z_size,
+                    "lr_d":lr_d,
+                    "lr_g":lr_g,
+                    "max_step":discriminator.max_steps,
+                    "noise_addition":noise_addition,
+                    "wgan_range":wgan_range,
+                    "epoch":epoch,
+                    "gen_update_interval":gen_update_interval,
+                    "loss_type":loss_type,
+                    "FID":FID_score,
+                    "IS":IS_score,
+                    "d_loss_mean":d_loss_mean,
+                    "g_loss_mean":g_loss_mean,
+                    "dataset_name":dataset_name,
+                    }, f"{weights_save_dir}/progan_generator_{loss_type}_{experiment_date}.pt")
+        
+            # generate some images mid training to evaluate our model's performance 
+            with torch.no_grad():
+                generator.eval()
+                # reshape images back to default shape (hxwxc)
+                generated_images = generator(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
+                display_images(generated_images, 
+                        cols=gen_num_samples//8,
+                        title=f'Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
+                        unnormalize=True,
+                        save_path=f'{images_save_dir}/progan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg',
+                        figsize=(16,8))
+    
+    print("ProGAN training is complete!")
+
+#%%
+
+
+
 
 #%%
 # Stylegan2/3?
