@@ -4959,14 +4959,23 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # that res, its gradually increased without hurting the training
         num_batches = len(train_loader)
         interval = num_batches//2+1
-        fadein_interval = num_batches//2+1
+        # for alpha we need to take the whole training into account
+        # so we need to see how many epochs we have and how many iterations
+        # so that we can specify at what point we want to tune it. 
+        # usually its gradually increased for the first half of training steps
+        # for that specific resolution, and then for the second half we use alpha=1
+        # I messed it up the first time and from step=1 I had terrible generations (totla mode collapse!)
+        # so getting alpha right is very important
+        total_number_of_steps = epochs*num_batches
+        fadein_steps = total_number_of_steps//2
+        training_step_counter = 0
         alpha=0
         
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                    {epochs} ')
         print(f'  --BatchSize:                 {batch_size} ')
         print(f'  --Interval:                  {interval} ')
-        print(f'  --Fade-in Interval:          {fadein_interval} ')
+        print(f'  --Fade-in Steps:             {fadein_steps} ')
         
         for epoch in range(epochs):
             discriminator.train()
@@ -4974,7 +4983,6 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             	
             losses = []
             epoch_scores = []
-            
             for i, (imgs_real, _) in enumerate(train_loader):
                 #scale input to [-1,1]
                 imgs_real = (2*imgs_real-1).to(device)
@@ -5072,10 +5080,16 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
-                # now lets tune alpha
-                if i<fadein_interval:
-                    alpha += 1/fadein_interval
-                    alpha = min(alpha,1) # clamp at 1
+                # after a good number of training steps (usually half)
+                # we switch to alpha=1 until then we gradually increase it
+                # at every training step for the specific step/resolution 
+                # we currenly are at
+                if training_step_counter<fadein_steps:
+                    alpha = training_step_counter/fadein_steps
+                else:
+                    alpha = 1
+                # update the training steps
+                training_step_counter += 1
         
             d_loss_mean = np.mean(np.array(losses)[:,0])
             g_loss_mean = np.mean(np.array(losses)[:,1])
@@ -5136,7 +5150,7 @@ z_size = 128
 max_steps = 7
 # 4,8,16,32,64,128,256
 BATCH_SIZES = [128,128,128,128,128,64,32]
-EPOCHS = [30]*max_steps
+EPOCHS = [10]*max_steps
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
