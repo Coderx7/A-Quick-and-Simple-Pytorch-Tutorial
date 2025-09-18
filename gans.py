@@ -4418,7 +4418,7 @@ gen_update_interval = 5 if loss_type == "wgan" else 1
 # lsgan keeps failing with mode collapse (repeative images)! 
 no_spec_list = [0,5]#[]# list(range(5)) #[] #[1,2]
 #discriminator
-discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
+discriminator_progan = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            no_spec_norm_list=no_spec_list,
                                            # we face mode collapse toward the end when using wgangp
                                            # so I had to set a higher dropout and compensate with 
@@ -4426,10 +4426,10 @@ discriminatorI64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            # mode collapse early on or later on(both form of mode collapses
                                            # occur if either overpower the other)
                                            dropout_rate=0.25 if loss_type=='wgangp' else 0.2)
-discriminatorI64 = discriminatorI64.to(device)
+discriminator_progan = discriminator_progan.to(device)
 #generator
-generatorI64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
-generatorI64 = generatorI64.to(device)
+generator_progan = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
+generator_progan = generator_progan.to(device)
 
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
@@ -4444,11 +4444,11 @@ else:#wgangp
     lr_d, lr_g = 0.002, 0.001#0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminatorI64.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generatorI64.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
 
-training_loop(discriminatorI64, 
-              generatorI64, 
+training_loop(discriminator_progan, 
+              generator_progan, 
               train_loader=train_loader,
               disc_optimizer=disc_optimizer,
               gen_optimizer=gen_optimizer, 
@@ -4476,9 +4476,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 # losses = np.array(checkpoint.pop("losses"))
 
-generatorI64 = GeneratorImproved64(z_size,hidden_size)
-generatorI64.load_state_dict(checkpoint.pop("state_dict"))
-generatorI64.eval()
+generator_progan = GeneratorImproved64(z_size,hidden_size)
+generator_progan.load_state_dict(checkpoint.pop("state_dict"))
+generator_progan.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -4486,7 +4486,7 @@ for k,v in checkpoint.items():
 # print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
-                      generator=generatorI64, 
+                      generator=generator_progan, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4500,7 +4500,7 @@ run_latent_arithmatic(attr_name='Male',
 
 #%%
 run_latent_arithmatic(attr_name='Smiling', 
-                      generator=generatorI64, 
+                      generator=generator_progan, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4513,7 +4513,7 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 #%%
 run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generatorI64, 
+                      generator=generator_progan, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4875,8 +4875,8 @@ for i in range(max_steps):
 # I guess I said it all lets write the training loop, if anything is left out I explain it 
 # in code
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
-                         gen_optimizer, EPOCHS:dict, BATCH_SIZES:dict, interval, gen_update_interval, dataset_name, loss_type='wgangp', 
-                         lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
+                         gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
+                         loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, device='cuda', weights_save_dir='./weights',
                          images_save_dir='./results/gan'):
     
@@ -4890,8 +4890,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print(f'Discriminator LR:          {lr_d}')
     print(f'Generator LR:              {lr_g}')
     print(f'Max Step:                  {discriminator.max_steps}')
-    print(f'Epochs:                    {epochs} ')
+    print(f'Epochs:                    {EPOCHS} ')
     print(f'Interval:                  {interval} ')
+    print(f'Fade-in Interval:          {fadein_interval} ')
     print(f'Generator update interval: {gen_update_interval}')
     print(f'WGAN weight cliping range: {wgan_range}')
     print(f'Noise addition to input:   {noise_addition}')
@@ -4926,7 +4927,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # then increase alpha a bit so ultimately during the whole epochs for
         # that res, its gradually increased without hurting the training
         num_batches = len(train_loader)
-        fadein_interval = num_batches//2
+        interval = num_batches//2+1
+        fadein_interval = num_batches//2+1
         alpha=0
         
         print(f'Training on {res}x{res}')
@@ -5087,9 +5089,53 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print("ProGAN training is complete!")
 
 #%%
+print(f'Training PROGAN!')
+loss_type = 'wgangp'
+lambda_factor=10
+dataset_name = 'celeba'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+z_size = 128
+max_steps = 7
+# 4,8,16,32,64,128,256
+BATCH_SIZES = [128,128,128,128,128,64,32]
+EPOCHS = [30]*max_steps
+gen_update_interval = 5 if loss_type == "wgan" else 1
 
+#discriminator
+discriminator_progan = DiscriminatorProGAN(max_steps)
+discriminator_progan = discriminator_progan.to(device)
+#generator
+generator_progan = GeneratorProGAN(z_size, max_steps)
+generator_progan = generator_progan.to(device)
 
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
+
+if loss_type=='lsgan':
+    lr_d, lr_g = 0.0004, 0.0001
+elif loss_type == 'wgan':
+    lr_d,lr_g = 0.00001, 0.00002#1e-5, 2e-5
+else:#wgangp
+    lr_d, lr_g = 0.002, 0.001#0.001, 0.002
+
+# disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
+disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
+
+training_loop_progan(discriminator_progan,
+                     generator_progan, 
+                     train_loader=train_loader,
+                     disc_optimizer=disc_optimizer,
+                     gen_optimizer=gen_optimizer, 
+                     epoch_list=EPOCHS, 
+                     batch_size_list=BATCH_SIZES,
+                     gen_update_interval=gen_update_interval, 
+                     dataset_name=dataset_name,
+                     loss_type=loss_type, 
+                     lambda_factor=lambda_factor,
+                     wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
+                     noise_addition=False,
+                     device=device)
 
 #%%
 # Stylegan2/3?
