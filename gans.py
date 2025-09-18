@@ -4874,6 +4874,40 @@ for i in range(max_steps):
 # so the network doesnt quit that res prematurely and learns porperly.
 # I guess I said it all lets write the training loop, if anything is left out I explain it 
 # in code
+
+# minor change in our wgangp loss, because ourt discriminator/critic needs alpha and step
+# we need to add these as well. we could go back and add an additional args to the original
+# implementation so the discriminator that needs additinal arguments can use that but I 
+# thought to keep things simple! so the flow of things stays intact and simple hence I 
+# reimplemented (copied them!) them here instead
+def gradient_penalty_progan(discriminator:DiscriminatorProGAN, imgs_real, imgs_fake, *args):
+    batch_size = imgs_real.size(0)
+    device = imgs_real.device
+    eps = torch.rand(batch_size, 1, 1, 1, device=device)
+    interpolated_input = eps * imgs_real + (1 - eps) * imgs_fake
+    interpolated_input.requires_grad_(True)
+    
+    inter_preds = discriminator(interpolated_input, *args)
+    grad = torch.autograd.grad(outputs=inter_preds,
+                               inputs=interpolated_input,
+                               grad_outputs=torch.ones_like(inter_preds),
+                               create_graph=True,
+                               retain_graph=True,
+                               only_inputs=True,)[0]
+    # caculate l2-norm of gradients
+    grad_norm = grad.view(batch_size, -1).norm(2, dim=1)
+    # make sure the gradient norm with respect to inputs is almost equal to 1
+    # any deviation from norm = 1 is therefore penalized
+    penalty = ((grad_norm - 1) ** 2).mean()
+    return penalty
+
+def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, lambda_factor, *args):
+    real_preds = critic(imgs_real, *args)
+    fake_preds = critic(imgs_fake, *args)
+    wgan_loss = wgan_critic_loss(real_preds, fake_preds)
+    gp = gradient_penalty_progan(critic, imgs_real, imgs_fake, *args)
+    return wgan_loss + (lambda_factor*gp)
+
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
                          gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
@@ -4885,23 +4919,6 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     
     assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
     
-    print(f'Dataset:                   {dataset_name}')
-    print(f'Loss type:                 {loss_type}')
-    print(f'Discriminator LR:          {lr_d}')
-    print(f'Generator LR:              {lr_g}')
-    print(f'Max Step:                  {discriminator.max_steps}')
-    print(f'Epochs:                    {EPOCHS} ')
-    print(f'Interval:                  {interval} ')
-    print(f'Fade-in Interval:          {fadein_interval} ')
-    print(f'Generator update interval: {gen_update_interval}')
-    print(f'WGAN weight cliping range: {wgan_range}')
-    print(f'Noise addition to input:   {noise_addition}')
-    print(f'WGAN-GP Lambda factor:     {lambda_factor}')
-    print(f'gen_num_samples:           {gen_num_samples}')
-    print(f'Checkpoint Directory:      {weights_save_dir}')
-    print(f'Images Directory:          {images_save_dir}')
-
-
     metric = IS_FID_Calculator(device)
 
     fixed_z = torch.randn((gen_num_samples,generator.z_size)).to(device)
@@ -4909,16 +4926,30 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+    print(f'--Dataset:                   {dataset_name}')
+    print(f'--Loss type:                 {loss_type}')
+    print(f'--Discriminator LR:          {lr_d}')
+    print(f'--Generator LR:              {lr_g}')
+    print(f'--Max Step:                  {discriminator.max_steps}')
+    print(f'--Epochs:                    {EPOCHS} ')
+    print(f'--Generator update interval: {gen_update_interval}')
+    print(f'--WGAN weight cliping range: {wgan_range}')
+    print(f'--Noise addition to input:   {noise_addition}')
+    print(f'--WGAN-GP Lambda factor:     {lambda_factor}')
+    print(f'--gen_num_samples:           {gen_num_samples}')
+    print(f'--Checkpoint Directory:      {weights_save_dir}')
+    print(f'--Images Directory:          {images_save_dir}')
 
-    for step in max_steps:
+    
+    for step in range(max_steps):
         
         # specify resolutions
         # specify batchsizes for each resolution
         # create dataloader for each res
         # specify fadein transition iteration count
         
-        batch_size = BATCH_SIZES[step]
-        epochs = EPOCHS[step]
+        batch_size = batch_size_list[step]
+        epochs = epoch_list[step]
         # 4 is the lowest res so we want 8,16 etc
         res = 2**step*4
         train_loader = get_dataloader(dataset_name, resize_dims=(res,res), batch_size=batch_size)
@@ -4931,11 +4962,16 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         fadein_interval = num_batches//2+1
         alpha=0
         
-        print(f'Training on {res}x{res}')
+        print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
+        print(f'  --Epochs:                    {epochs} ')
+        print(f'  --BatchSize:                 {batch_size} ')
+        print(f'  --Interval:                  {interval} ')
+        print(f'  --Fade-in Interval:          {fadein_interval} ')
+        
         for epoch in range(epochs):
             discriminator.train()
             generator.train()
-            
+            	
             losses = []
             epoch_scores = []
             
@@ -4975,7 +5011,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 elif loss_type =='wgan':
                     disc_loss = wgan_critic_loss(preds_real, preds_fake)
                 elif loss_type =='wgangp':
-                    disc_loss = wgangp_critic_loss(discriminator, imgs_real, imgs_fake, lambda_factor=lambda_factor)
+                    disc_loss = wgangp_critic_loss_progan(discriminator, imgs_real, imgs_fake, lambda_factor, alpha, step)
                 else:
                     raise ValueError(f"Invalid loss type:{loss_type} entered!")
             
@@ -5088,6 +5124,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     
     print("ProGAN training is complete!")
 
+
 #%%
 print(f'Training PROGAN!')
 loss_type = 'wgangp'
@@ -5124,7 +5161,6 @@ gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=beta
 
 training_loop_progan(discriminator_progan,
                      generator_progan, 
-                     train_loader=train_loader,
                      disc_optimizer=disc_optimizer,
                      gen_optimizer=gen_optimizer, 
                      epoch_list=EPOCHS, 
