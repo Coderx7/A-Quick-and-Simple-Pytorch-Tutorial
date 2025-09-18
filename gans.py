@@ -4976,9 +4976,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         if step>0:
             # increase the learing rate for larger steps because the initial step
             # is very sensive, we had to use very small lr!
+            # update: nope! lets go back to 1e-3 for now!
             for gd,gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
-                gd["lr"] = 0.001
-                gg["lr"] = 0.001
+                gd["lr"] = 0.0001
+                gg["lr"] = 0.0001
             
         current_lr_d = [p['lr'] for p in disc_optimizer.param_groups]
         current_lr_g = [p['lr'] for p in gen_optimizer.param_groups]
@@ -5216,7 +5217,7 @@ else:#wgangp
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
 # went on, didnt notice much, until step=1 started and noticed
-# the loss was insanely huge! in the hundereds of thousands!
+# the loss was insanely huge! in the hundereds of thousands to millions!
 # went back and noticed it started from the begining of the training
 # then noticed I had a misake in generator (had PixelNorm in first layer
 # where we accept input latent vector) removed it but the problem still
@@ -5233,6 +5234,8 @@ else:#wgangp
 # r value but still it would go to huge magnitues. made it 0.0001 and it worked!
 # since the first stage is extremely sensitive , we have to use a smaller lr
 # we can then increase it for the following steps, which we did use 0.001!
+# which didnt work for step1, turned it down back to 0.0001! and train till the end
+# and then we decide what values to experiment with for each step!
 #  
 
 
