@@ -781,7 +781,7 @@ plt.show()
 
 #%%
 # load a checkpoint and lets run some experiments on latent space
-states = torch.load('./weights/dcgan_generatorcnn_20250812172504.pt', weights_only=False)
+states = torch.load('./weights/dcgan_generatorcnn_20250812172504.pt',map_location="cpu", weights_only=False)
 z_size = states["z_size"]
 hidden_size = states["hidden_size"]
 dataset_name = states["dataset_name"]
@@ -4106,7 +4106,7 @@ doutput = disci64(x)
 goutput = geni64(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}')
-#%%
+#%% 
 # with the new changes in our architecture, we see much sharper/glossier images
 # which are due to using upsample layer. the trainig is a bit more stable
 # overall even without spectralnorm. with spectral norm it gets more stable but
@@ -4973,7 +4973,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         training_step_counter = 0
         alpha=0
         
-        if step>0:
+        if step>6:
             # increase the learing rate for larger steps because the initial step
             # is very sensive, we had to use very small lr!
             # update: nope! lets go back to 1e-3 for now!
@@ -5164,7 +5164,17 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 z_size = 128
 max_steps = 7
 # 4,8,16,32,64,128,256
-BATCH_SIZES = [128,128,128,128,128,64,32]
+# I got out of memory(vram) when I hit 32x32!(because of previously allocated vram for
+# previous tests in jupyternotebook!)I have 849MB/10GB full before I start the training!
+# vram usage using nvidia-smi for each step is as follows:
+# 4x4 - b128: 3200-(1500(7:58:36)->3200(8:00:08))
+# 8x8 - b128: 3875-(8:21:30)
+# 16x16-b128: 5357-(9:21:30)-5681
+# 32x32-b128: 9513-9837(e2)
+# 64x64-b64 : 
+# 128x128-b32: 
+# 256x256-b16: 
+BATCH_SIZES = [128,128,128,128,64,32,16]
 EPOCHS = [10]*max_steps
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
