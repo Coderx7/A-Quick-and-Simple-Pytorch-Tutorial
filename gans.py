@@ -4696,7 +4696,9 @@ class DiscriminatorProGAN(nn.Module):
         # that is 512 is for lowest res image we 
         # work with like 4x4 and 16 is for the highest res
         # e.g 1024x1024!
-        channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
+        # this takes a lot of time with max_steps=7 which I tried
+        # so lets use smaller channels so lets halve them all!
+        channels = [ 2**(i+2) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         # we have to build 3 blocks, one is used for input images
         # and the other for the rest of the processing and a final one
@@ -4778,7 +4780,11 @@ class GeneratorProGAN(nn.Module):
         # generators like the discriminator but the oppiste!
         # [512,256,128,64,32,16] we go from low res with high 
         # channel count(i.e 512) to high res with low channel count(i.e. 16)
-        channels = [ 2**(i+3) for i in range(max_steps,0,-1)]
+        # update: used max_steps=7 but its too large for me and my 
+        # rtx3080! it took me more than 5 hours and 9.84Gb vram 
+        # to get to 32x32, so im halving the channels to make it more managebale!
+        # so instead of i+3, we go with i+2
+        channels = [ 2**(i+2) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         # this is the first layer we use to get latent vector and build a 4x4 initial output which
         # is then processed by the blocks and the rest.
@@ -5174,6 +5180,9 @@ max_steps = 7
 # 64x64-b64 : 
 # 128x128-b32: 
 # 256x256-b16: 
+# update since it took a huge amount of time for training (5+hours only up tp 32x32
+# and 9.8GB vram, I decided to halve the channel numbers.
+# 
 BATCH_SIZES = [128,128,128,128,64,32,16]
 EPOCHS = [10]*max_steps
 gen_update_interval = 5 if loss_type == "wgan" else 1
