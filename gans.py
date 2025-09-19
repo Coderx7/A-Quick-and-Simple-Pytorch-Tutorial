@@ -5193,8 +5193,8 @@ max_steps = 7
 # vram usage using nvidia-smi for each step is as follows:
 # 4x4 - b128: 2653-(17:44:04)
 # 8x8 - b128: 3087-(17:52:21)
-# 16x16-b128: 3529-(18:21:25) 
-# 32x32-b128:  
+# 16x16-b128: 3529-(18:21:25) -crashed, retrained again
+# 32x32-b128: 3980-(20:32:10) -this is the new time for the new rtainig!
 # 64x64-b64 : 
 # 128x128-b32: 
 # 256x256-b16: 
@@ -5324,9 +5324,94 @@ else:#wgangp
 # new resolution to keep things stable. since we have been mostly ok up to 16x16
 # we can start halving the lr either at res 16x16 or 32x32. looking at the loss it seems
 # 16x16 could use some help(we should halve the lr for 32x32 and most definitely for everything
-# after ward)
-
-# full log
+# after ward). 
+# update:
+# did that but we faced disgusting images as early as res 32x32. we faced mode collapse!
+# looking at the log we can clearly see the discriminator is impeded by the drastic learning
+# rate reduction! and this caused the generator to take advantage and try to score lower by
+# repeating something that discriminator confusingly accepts! the discriminator ultimately
+# catches up but by that time our generator is long gone, stuck in a bad minima and collapsed!
+# as we can see in the log before, in 16x16 things are relatively healthy and everything 
+# is stable.
+# 
+# [16x16][Epoch 7/10 | Iter: 636/1272] Disc Loss: -22.291618 | Gen Loss: 49.185047
+# -- Batch-636: Disc's real mean: -28.7658 | Disc's fake mean = -59.9654
+# -- Last Batch : Disc's real mean: -28.1403 | Disc's fake mean: -57.5411
+# -- Epoch's Avg: Disc's real mean: -26.2675 | Disc's fake mean: -54.0882
+# [16x16][Epoch 7/10] Disc Loss-Avg: -21.439875 | Gen loss-Avg: 54.244800 | IS: (μ:2.3518, σ²:0.3569) | FID: 214.65
+# 
+# [16x16][Epoch 8/10 | Iter: 636/1272] Disc Loss: -21.416265 | Gen Loss: 54.202488
+# -- Batch-636: Disc's real mean: -25.8276 | Disc's fake mean = -53.0298
+# -- Last Batch : Disc's real mean: -25.6820 | Disc's fake mean: -51.4843
+# -- Epoch's Avg: Disc's real mean: -26.6747 | Disc's fake mean: -54.6126
+# [16x16][Epoch 8/10] Disc Loss-Avg: -21.534471 | Gen loss-Avg: 54.770717 | IS: (μ:2.4247, σ²:0.2343) | FID: 206.51
+# 
+# [16x16][Epoch 9/10 | Iter: 636/1272] Disc Loss: -21.474728 | Gen Loss: 57.242680
+# -- Batch-636: Disc's real mean: -26.2436 | Disc's fake mean = -52.3254
+# -- Last Batch : Disc's real mean: -27.3929 | Disc's fake mean: -57.1398
+# -- Epoch's Avg: Disc's real mean: -26.7484 | Disc's fake mean: -54.7311
+# [16x16][Epoch 9/10] Disc Loss-Avg: -21.575619 | Gen loss-Avg: 54.875121 | IS: (μ:2.3588, σ²:0.1684) | FID: 204.83
+# 
+# but the moment we go to the next step and lower the learning rate, the discriniator's loss
+# gets closer to zero (see loss-avg -12 to -2) and generators loss decreases suddenly as well
+# the scores for real and fake images also bcome close (from -34/-50 to -17/-20 in the next epoch)
+# and this continues for the next epoch, in 4th epoch, discriminator figures out whats goingon
+# and starts rejecting heavily, this is where the discriminator's feedback gets a massive gradient
+# for the absolutely horrendeous patterns generator has been producing. this is why our losses 
+# (for both disciminator and generator) gets huge all of a sudden in the 4th epoch. 
+# the generator tries to react to this masive gradient but it fails and the whole thing goes 
+# down the abyss and it diverges and its loss increases once more. at this point generator is
+# long gone, and has collapsed!
+#
+# Files already downloaded and verified
+# Step: 3/7 -> Training on [32x32]
+# --Epochs:                    10
+# --BatchSize:                 128
+# --Interval:                  637
+# --Fade-in Steps:             6360
+# --Current Discriminator LR:  5e-05
+# --Current Generator LR:      5e-05
+# [32x32][Epoch 0/10 | Iter: 636/1272] Disc Loss: -10.688290 | Gen Loss: 48.339836
+# -- Batch-636: Disc's real mean: -34.1420 | Disc's fake mean = -46.8792
+# -- Last Batch : Disc's real mean: -23.2028 | Disc's fake mean: -27.7775
+# -- Epoch's Avg: Disc's real mean: -34.5333 | Disc's fake mean: -50.6039
+# [32x32][Epoch 0/10] Disc Loss-Avg: -12.739969 | Gen loss-Avg: 50.921864 | IS: (μ:2.0661, σ²:0.2811) | FID: 265.04
+# 
+# [32x32][Epoch 1/10 | Iter: 636/1272] Disc Loss: -3.317345 | Gen Loss: 22.969427
+# -- Batch-636: Disc's real mean: -16.7480 | Disc's fake mean = -20.5004
+# -- Last Batch : Disc's real mean: -8.4562 | Disc's fake mean: -10.6902
+# -- Epoch's Avg: Disc's real mean: -17.4643 | Disc's fake mean: -20.5115
+# [32x32][Epoch 1/10] Disc Loss-Avg: -2.776609 | Gen loss-Avg: 20.925267 | IS: (μ:2.2124, σ²:0.2590) | FID: 193.58
+# 
+# [32x32][Epoch 2/10 | Iter: 636/1272] Disc Loss: -2.580442 | Gen Loss: 17.744585
+# -- Batch-636: Disc's real mean: -8.2727 | Disc's fake mean = -10.9937
+# -- Last Batch : Disc's real mean: -11.4209 | Disc's fake mean: -15.2118
+# -- Epoch's Avg: Disc's real mean: -10.2747 | Disc's fake mean: -13.2658
+# [32x32][Epoch 2/10] Disc Loss-Avg: -2.736482 | Gen loss-Avg: 13.715730 | IS: (μ:2.3364, σ²:0.3356) | FID: 187.93
+# 
+# [32x32][Epoch 3/10 | Iter: 636/1272] Disc Loss: -7.093531 | Gen Loss: 17.955961
+# -- Batch-636: Disc's real mean: -8.9597 | Disc's fake mean = -17.0247
+# -- Last Batch : Disc's real mean: -12.4538 | Disc's fake mean: -33.4308
+# -- Epoch's Avg: Disc's real mean: -9.4872 | Disc's fake mean: -18.2752
+# [32x32][Epoch 3/10] Disc Loss-Avg: -7.362884 | Gen loss-Avg: 18.680397 | IS: (μ:2.3080, σ²:0.2140) | FID: 208.76
+# 
+# [32x32][Epoch 4/10 | Iter: 636/1272] Disc Loss: -30.003349 | Gen Loss: 79.969521
+# -- Batch-636: Disc's real mean: -61.7957 | Disc's fake mean = -106.9964
+# -- Last Batch : Disc's real mean: -80.1722 | Disc's fake mean: -138.7608
+# -- Epoch's Avg: Disc's real mean: -52.8957 | Disc's fake mean: -95.7904
+# [32x32][Epoch 4/10] Disc Loss-Avg: -31.294711 | Gen loss-Avg: 96.287702 | IS: (μ:2.5499, σ²:0.3617) | FID: 247.23
+# 
+# [32x32][Epoch 5/10 | Iter: 636/1272] Disc Loss: -49.656693 | Gen Loss: 195.336334
+# -- Batch-636: Disc's real mean: -93.0573 | Disc's fake mean = -157.1307
+#
+# the balck circles and repeated patterns as I said, is a sign the generator is trying to
+# win by repeating what it has found to fool the discriminator and it tells us the discriminator
+# has been impeded by slow update(it takes a long time to react to generators wrong behavior)
+# when we decreased its learing rate. so what do we do? not what we just did! i.e. we need to
+# keep discriminators lr the same like the last time that worked or tune it properly so its
+# not too small so generator doesnt take advantge!
+#
+# full log 1
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
 # --Discriminator channels:      [1024, 512, 256, 128, 64, 32, 16]
 # --Generators channels:         [1024, 512, 256, 128, 64, 32, 16]
