@@ -4978,25 +4978,30 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         fadein_steps = total_number_of_steps//2
         training_step_counter = 0
         alpha=0
-        
-        if step>6:
-            # increase the learing rate for larger steps because the initial step
-            # is very sensive, we had to use very small lr!
-            # update: nope! lets go back to 1e-3 for now!
-            for gd,gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
-                gd["lr"] = 0.0001
-                gg["lr"] = 0.0001
+        #4,8,16,32,64,128,256
+        if step>=3:
+            # halve the learing rate for larger steps because 
+            # as we get to larger resolutions, it becomes much more
+            # sensive and to keep the training stable we need to use
+            # very small lr!
+            # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
+            decay = 0.5**(step-2)
+            lr_d, lr_g = [lr * decay for lr in (lr_d, lr_g)]
             
-        current_lr_d = [p['lr'] for p in disc_optimizer.param_groups]
-        current_lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+            for dg, gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
+                dg["lr"] = lr_d
+                gg["lr"] = lr_g
+            
+        lr_d = [p['lr'] for p in disc_optimizer.param_groups]
+        lr_g = [p['lr'] for p in gen_optimizer.param_groups]
         
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                    {epochs} ')
         print(f'  --BatchSize:                 {batch_size} ')
         print(f'  --Interval:                  {interval} ')
         print(f'  --Fade-in Steps:             {fadein_steps} ')
-        print(f'  --Current Discriminator LR:  {current_lr_d}')
-        print(f'  --Current Generator LR:      {current_lr_g}')
+        print(f'  --Current Discriminator LR:  {lr_d}')
+        print(f'  --Current Generator LR:      {lr_g}')
     
         for epoch in range(epochs):
             discriminator.train()
@@ -5177,7 +5182,7 @@ max_steps = 7
 # 8x8 - b128: 3875-(8:21:30)
 # 16x16-b128: 5357-(9:21:30)-5681
 # 32x32-b128: 9513-9837(e2)
-# 64x64-b64 : 
+# 64x64-b64 : 9849 (14:25) at this resolution images start to look half decent!
 # 128x128-b32: 
 # 256x256-b16: 
 # update since it took a huge amount of time for training (5+hours only up tp 32x32
@@ -5255,7 +5260,338 @@ else:#wgangp
 # we can then increase it for the following steps, which we did use 0.001!
 # which didnt work for step1, turned it down back to 0.0001! and train till the end
 # and then we decide what values to experiment with for each step!
-#  
+# things went smoothly up until 32x32 , when we hit 64x64 resolution, 
+# for the first two epochs, the image quality became much better, sharp and detailed
+# however as more epochs passed, the images became worse and the loss showed as well:
+# 
+# [64x64][Epoch 0/10 | Iter: 1272/2544] Disc Loss: -14.984601 | Gen Loss: 51.437641
+#  -- Batch-1272: Disc's real mean: -17.3619 | Disc's fake mean = -33.0078
+#  -- Last Batch : Disc's real mean: -28.3425 | Disc's fake mean: -32.9185
+#  -- Epoch's Avg: Disc's real mean: -58.1945 | Disc's fake mean: -93.2741
+# [64x64][Epoch 0/10] Disc Loss-Avg: -25.013562 | Gen loss-Avg: 94.841881 | IS: (μ:1.0000, σ²:0.0000) | FID: 333.02
+# 
+# [64x64][Epoch 1/10 | Iter: 1272/2544] Disc Loss: -5.097756 | Gen Loss: 0.344297
+#  -- Batch-1272: Disc's real mean: 7.5136 | Disc's fake mean = 2.2513
+#  -- Last Batch : Disc's real mean: -4.6169 | Disc's fake mean: -6.2919
+#  -- Epoch's Avg: Disc's real mean: 3.9837 | Disc's fake mean: -1.3474
+# [64x64][Epoch 1/10] Disc Loss-Avg: -4.625465 | Gen loss-Avg: 2.729605 | IS: (μ:1.0000, σ²:0.0000) | FID: 241.13
+# 
+# [64x64][Epoch 2/10 | Iter: 1272/2544] Disc Loss: -4.328329 | Gen Loss: 22.177746
+#  -- Batch-1272: Disc's real mean: -31.3004 | Disc's fake mean = -36.4820
+#  -- Last Batch : Disc's real mean: -24.6972 | Disc's fake mean: -30.4969
+#  -- Epoch's Avg: Disc's real mean: -10.4536 | Disc's fake mean: -15.6216
+# [64x64][Epoch 2/10] Disc Loss-Avg: -4.539772 | Gen loss-Avg: 16.904588 | IS: (μ:1.0000, σ²:0.0000) | FID: 222.88
+# 
+# [64x64][Epoch 3/10 | Iter: 1272/2544] Disc Loss: -14.829409 | Gen Loss: 44.549088
+#  -- Batch-1272: Disc's real mean: -31.8848 | Disc's fake mean = -50.9633
+#  -- Last Batch : Disc's real mean: -100.3516 | Disc's fake mean: -153.9123
+#  -- Epoch's Avg: Disc's real mean: -36.4500 | Disc's fake mean: -57.4129
+# [64x64][Epoch 3/10] Disc Loss-Avg: -16.055016 | Gen loss-Avg: 58.809311 | IS: (μ:1.0000, σ²:0.0000) | FID: 257.49
+#
+# [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
+#  -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
+#  -- Last Batch : Disc's real mean: -313.4012 | Disc's fake mean: -542.5110
+#  -- Epoch's Avg: Disc's real mean: -193.2854 | Disc's fake mean: -317.3992
+# [64x64][Epoch 4/10] Disc Loss-Avg: -81.167684 | Gen loss-Avg: 319.669814 | IS: (μ:1.0000, σ²:0.0000) | FID: 336.45
+
+# it seems as we get to larger resolutions, it becomes more sensitive because 
+# there are mo details to get right. the discriminator therefore can quickly 
+# learn whats missing or is out of place or not just right and reject it as fake
+# but the generator cant keepup as it gets small or no gradient from discrimnator
+# this is obvious by looking athe discrimnator loss and generator loss. the 
+# discriminator loss is small while the generator loss keeps going up. the average
+# scorer for real/fake also shows this, and we go from 3.9/-1, to -10/-15 which is 
+# still good/healthy but the next epoch -36/-57 shows things started to go south
+# and we see the next epoch we have -193/-317 which shows a much worse penalty for
+# divergence. at this stage we can see images have completely been destroyed with
+# ugly artifacts. so what do we do? the learning rate seems large for this larger 
+# resolutions. it seems as we get to larger adn larger resolutions it still is very
+# sesitive and everything can quickly destablize. we can lower the learning rate again
+# it seems one rule thats been used by people is to halve the learning rate for each
+# new resolution to keep things stable. since we have been mostly ok up to 16x16
+# we can start halving the lr either at res 16x16 or 32x32. looking at the loss it seems
+# 16x16 could use some help(we should halve the lr for 32x32 and most definitely for everything
+# after ward)
+
+# full log
+# ProGAN Training on celeba with loss=wgangp in 20250919075830
+# --Discriminator channels:      [1024, 512, 256, 128, 64, 32, 16]
+# --Generators channels:         [1024, 512, 256, 128, 64, 32, 16]
+# --Dataset:                   celeba
+# --Loss type:                 wgangp
+# --Discriminator LR:          [0.0001]
+# --Generator LR:              [0.0001]
+# --Max Step:                  7
+# --Epochs:                    [10, 10, 10, 10, 10, 10, 10]
+# --Generator update interval: 1
+# --WGAN weight cliping range: (-0.02, 0.02)
+# --Noise addition to input:   False
+# --WGAN-GP Lambda factor:     10
+# --gen_num_samples:           64
+# --Checkpoint Directory:      ./weights
+# --Images Directory:          ./results/gan
+# Files already downloaded and verified
+# Step: 0/7 -> Training on [4x4]
+# --Epochs:                    10
+# --BatchSize:                 128
+# --Interval:                  637
+# --Fade-in Steps:             6360
+# --Current Discriminator LR:  [0.0001]
+# --Current Generator LR:      [0.0001]
+# [4x4][Epoch 0/10 | Iter: 636/1272] Disc Loss: -4.925677 | Gen Loss: 8.639502
+# -- Batch-636: Disc's real mean: -3.4278 | Disc's fake mean = -9.0515
+# -- Last Batch : Disc's real mean: -3.5601 | Disc's fake mean: -9.2121
+# -- Epoch's Avg: Disc's real mean: -3.0610 | Disc's fake mean: -8.4252
+# [4x4][Epoch 0/10] Disc Loss-Avg: -4.617619 | Gen loss-Avg: 8.577881 | IS: (μ:1.3896, σ²:0.0953) | FID: 93.27
+# [4x4][Epoch 1/10 | Iter: 636/1272] Disc Loss: -4.865841 | Gen Loss: 8.279886
+# -- Batch-636: Disc's real mean: -3.3368 | Disc's fake mean = -9.0052
+# -- Last Batch : Disc's real mean: -3.1052 | Disc's fake mean: -8.5130
+# -- Epoch's Avg: Disc's real mean: -3.1897 | Disc's fake mean: -8.5223
+# [4x4][Epoch 1/10] Disc Loss-Avg: -4.781563 | Gen loss-Avg: 8.551735 | IS: (μ:1.4813, σ²:0.0960) | FID: 98.20
+# [4x4][Epoch 2/10 | Iter: 636/1272] Disc Loss: -4.744717 | Gen Loss: 8.948160
+# -- Batch-636: Disc's real mean: -2.8070 | Disc's fake mean = -7.7893
+# -- Last Batch : Disc's real mean: -3.2985 | Disc's fake mean: -8.8349
+# -- Epoch's Avg: Disc's real mean: -3.0226 | Disc's fake mean: -8.4156
+# [4x4][Epoch 2/10] Disc Loss-Avg: -4.842244 | Gen loss-Avg: 8.434741 | IS: (μ:1.4694, σ²:0.1286) | FID: 103.95
+# [4x4][Epoch 3/10 | Iter: 636/1272] Disc Loss: -4.845220 | Gen Loss: 8.880974
+# -- Batch-636: Disc's real mean: -2.8261 | Disc's fake mean = -7.9490
+# -- Last Batch : Disc's real mean: -3.1340 | Disc's fake mean: -8.3969
+# -- Epoch's Avg: Disc's real mean: -2.9363 | Disc's fake mean: -8.3838
+# [4x4][Epoch 3/10] Disc Loss-Avg: -4.889210 | Gen loss-Avg: 8.399119 | IS: (μ:1.4381, σ²:0.1449) | FID: 102.72
+# [4x4][Epoch 4/10 | Iter: 636/1272] Disc Loss: -5.092498 | Gen Loss: 8.336432
+# -- Batch-636: Disc's real mean: -2.8242 | Disc's fake mean = -8.6238
+# -- Last Batch : Disc's real mean: -3.0536 | Disc's fake mean: -8.7346
+# -- Epoch's Avg: Disc's real mean: -2.8819 | Disc's fake mean: -8.3612
+# [4x4][Epoch 4/10] Disc Loss-Avg: -4.921630 | Gen loss-Avg: 8.374806 | IS: (μ:1.3715, σ²:0.1099) | FID: 100.50
+# [4x4][Epoch 5/10 | Iter: 636/1272] Disc Loss: -4.762464 | Gen Loss: 7.676002
+# -- Batch-636: Disc's real mean: -3.1710 | Disc's fake mean = -8.7792
+# -- Last Batch : Disc's real mean: -2.7949 | Disc's fake mean: -8.2154
+# -- Epoch's Avg: Disc's real mean: -2.8177 | Disc's fake mean: -8.3175
+# [4x4][Epoch 5/10] Disc Loss-Avg: -4.938248 | Gen loss-Avg: 8.329852 | IS: (μ:1.4978, σ²:0.2215) | FID: 98.05
+# [4x4][Epoch 6/10 | Iter: 636/1272] Disc Loss: -5.119781 | Gen Loss: 8.698465
+# -- Batch-636: Disc's real mean: -2.4154 | Disc's fake mean = -7.9340
+# -- Last Batch : Disc's real mean: -2.8108 | Disc's fake mean: -8.5038
+# -- Epoch's Avg: Disc's real mean: -2.7774 | Disc's fake mean: -8.2924
+# [4x4][Epoch 6/10] Disc Loss-Avg: -4.952495 | Gen loss-Avg: 8.301826 | IS: (μ:1.4222, σ²:0.0776) | FID: 96.33
+# [4x4][Epoch 7/10 | Iter: 636/1272] Disc Loss: -4.991845 | Gen Loss: 7.971615
+# -- Batch-636: Disc's real mean: -2.9745 | Disc's fake mean = -8.8734
+# -- Last Batch : Disc's real mean: -2.6837 | Disc's fake mean: -8.0777
+# -- Epoch's Avg: Disc's real mean: -2.7869 | Disc's fake mean: -8.3084
+# [4x4][Epoch 7/10] Disc Loss-Avg: -4.956729 | Gen loss-Avg: 8.317844 | IS: (μ:1.4367, σ²:0.1053) | FID: 105.24
+# [4x4][Epoch 8/10 | Iter: 636/1272] Disc Loss: -5.075427 | Gen Loss: 8.320007
+# -- Batch-636: Disc's real mean: -2.7875 | Disc's fake mean = -8.4707
+# -- Last Batch : Disc's real mean: -2.9384 | Disc's fake mean: -8.6286
+# -- Epoch's Avg: Disc's real mean: -2.7941 | Disc's fake mean: -8.3234
+# [4x4][Epoch 8/10] Disc Loss-Avg: -4.964680 | Gen loss-Avg: 8.330603 | IS: (μ:1.4715, σ²:0.1896) | FID: 107.10
+# [4x4][Epoch 9/10 | Iter: 636/1272] Disc Loss: -4.868393 | Gen Loss: 8.235387
+# -- Batch-636: Disc's real mean: -2.8559 | Disc's fake mean = -8.2226
+# -- Last Batch : Disc's real mean: -2.8510 | Disc's fake mean: -8.4673
+# -- Epoch's Avg: Disc's real mean: -2.7859 | Disc's fake mean: -8.3241
+# [4x4][Epoch 9/10] Disc Loss-Avg: -4.971841 | Gen loss-Avg: 8.331405 | IS: (μ:1.4361, σ²:0.1627) | FID: 103.42
+# Files already downloaded and verified
+# Step: 1/7 -> Training on [8x8]
+# --Epochs:                    10
+# --BatchSize:                 128
+# --Interval:                  637
+# --Fade-in Steps:             6360
+# --Current Discriminator LR:  [0.0001]
+# --Current Generator LR:      [0.0001]
+# [8x8][Epoch 0/10 | Iter: 636/1272] Disc Loss: -3.942824 | Gen Loss: 4.006044
+# -- Batch-636: Disc's real mean: -3.3105 | Disc's fake mean = -8.3451
+# -- Last Batch : Disc's real mean: -1.1180 | Disc's fake mean: -3.5323
+# -- Epoch's Avg: Disc's real mean: -2.5742 | Disc's fake mean: -6.8915
+# [8x8][Epoch 0/10] Disc Loss-Avg: -3.793555 | Gen loss-Avg: 6.953594 | IS: (μ:1.5331, σ²:0.1087) | FID: 98.50
+# [8x8][Epoch 1/10 | Iter: 636/1272] Disc Loss: -0.976770 | Gen Loss: 4.483275
+# -- Batch-636: Disc's real mean: -3.3820 | Disc's fake mean = -4.4443
+# -- Last Batch : Disc's real mean: -1.4105 | Disc's fake mean: -2.1686
+# -- Epoch's Avg: Disc's real mean: -2.7687 | Disc's fake mean: -4.1819
+# [8x8][Epoch 1/10] Disc Loss-Avg: -1.237222 | Gen loss-Avg: 4.318108 | IS: (μ:1.6119, σ²:0.1315) | FID: 78.51
+# [8x8][Epoch 2/10 | Iter: 636/1272] Disc Loss: -0.713874 | Gen Loss: 3.783400
+# -- Batch-636: Disc's real mean: -2.1031 | Disc's fake mean = -3.0995
+# -- Last Batch : Disc's real mean: -2.5537 | Disc's fake mean: -3.6629
+# -- Epoch's Avg: Disc's real mean: -2.7358 | Disc's fake mean: -3.6460
+# [8x8][Epoch 2/10] Disc Loss-Avg: -0.715368 | Gen loss-Avg: 3.809226 | IS: (μ:1.7053, σ²:0.1853) | FID: 90.17
+# [8x8][Epoch 3/10 | Iter: 636/1272] Disc Loss: -2.171912 | Gen Loss: 5.163008
+# -- Batch-636: Disc's real mean: -2.6180 | Disc's fake mean = -4.9433
+# -- Last Batch : Disc's real mean: -7.7876 | Disc's fake mean: -12.5876
+# -- Epoch's Avg: Disc's real mean: -4.8014 | Disc's fake mean: -7.1733
+# [8x8][Epoch 3/10] Disc Loss-Avg: -2.053780 | Gen loss-Avg: 7.317423 | IS: (μ:2.2320, σ²:0.2663) | FID: 126.10
+# [8x8][Epoch 4/10 | Iter: 636/1272] Disc Loss: -6.651464 | Gen Loss: 14.208398
+# -- Batch-636: Disc's real mean: -10.7196 | Disc's fake mean = -19.4104
+# -- Last Batch : Disc's real mean: -8.1940 | Disc's fake mean: -19.2125
+# -- Epoch's Avg: Disc's real mean: -8.8186 | Disc's fake mean: -16.8516
+# [8x8][Epoch 4/10] Disc Loss-Avg: -6.892580 | Gen loss-Avg: 16.944392 | IS: (μ:2.2503, σ²:0.1996) | FID: 142.88
+# [8x8][Epoch 5/10 | Iter: 636/1272] Disc Loss: -9.578485 | Gen Loss: 23.625065
+# -- Batch-636: Disc's real mean: -7.0493 | Disc's fake mean = -17.3150
+# -- Last Batch : Disc's real mean: -9.1310 | Disc's fake mean: -22.0471
+# -- Epoch's Avg: Disc's real mean: -8.6074 | Disc's fake mean: -20.4968
+# [8x8][Epoch 5/10] Disc Loss-Avg: -9.963724 | Gen loss-Avg: 20.564052 | IS: (μ:2.4033, σ²:0.4934) | FID: 138.27
+# [8x8][Epoch 6/10 | Iter: 636/1272] Disc Loss: -10.238967 | Gen Loss: 18.904112
+# -- Batch-636: Disc's real mean: -8.4896 | Disc's fake mean = -21.1637
+# -- Last Batch : Disc's real mean: -8.5351 | Disc's fake mean: -21.2374
+# -- Epoch's Avg: Disc's real mean: -8.0157 | Disc's fake mean: -20.0544
+# [8x8][Epoch 6/10] Disc Loss-Avg: -10.078539 | Gen loss-Avg: 20.116750 | IS: (μ:2.4288, σ²:0.3593) | FID: 152.85
+# [8x8][Epoch 7/10 | Iter: 636/1272] Disc Loss: -10.101956 | Gen Loss: 16.769264
+# -- Batch-636: Disc's real mean: -9.0578 | Disc's fake mean = -22.5658
+# -- Last Batch : Disc's real mean: -7.1267 | Disc's fake mean: -18.1838
+# -- Epoch's Avg: Disc's real mean: -7.8162 | Disc's fake mean: -19.9497
+# [8x8][Epoch 7/10] Disc Loss-Avg: -10.146060 | Gen loss-Avg: 20.010850 | IS: (μ:2.1634, σ²:0.2896) | FID: 147.63
+# [8x8][Epoch 8/10 | Iter: 636/1272] Disc Loss: -10.350794 | Gen Loss: 21.058495
+# -- Batch-636: Disc's real mean: -7.0868 | Disc's fake mean = -18.8944
+# -- Last Batch : Disc's real mean: -7.9366 | Disc's fake mean: -20.4258
+# -- Epoch's Avg: Disc's real mean: -7.7232 | Disc's fake mean: -19.9228
+# [8x8][Epoch 8/10] Disc Loss-Avg: -10.197758 | Gen loss-Avg: 19.979316 | IS: (μ:2.2553, σ²:0.3744) | FID: 139.80
+# [8x8][Epoch 9/10 | Iter: 636/1272] Disc Loss: -10.080774 | Gen Loss: 17.941248
+# -- Batch-636: Disc's real mean: -8.1024 | Disc's fake mean = -20.9515
+# -- Last Batch : Disc's real mean: -6.8041 | Disc's fake mean: -18.5868
+# -- Epoch's Avg: Disc's real mean: -7.6544 | Disc's fake mean: -19.8999
+# [8x8][Epoch 9/10] Disc Loss-Avg: -10.232327 | Gen loss-Avg: 19.956750 | IS: (μ:2.2126, σ²:0.3614) | FID: 136.53
+# Files already downloaded and verified
+# Step: 2/7 -> Training on [16x16]
+# --Epochs:                    10
+# --BatchSize:                 128
+# --Interval:                  637
+# --Fade-in Steps:             6360
+# --Current Discriminator LR:  [0.0001]
+# --Current Generator LR:      [0.0001]
+# [16x16][Epoch 0/10 | Iter: 636/1272] Disc Loss: -7.659537 | Gen Loss: 14.488880
+# -- Batch-636: Disc's real mean: -13.5219 | Disc's fake mean = -23.4782
+# -- Last Batch : Disc's real mean: -6.6747 | Disc's fake mean: -10.8735
+# -- Epoch's Avg: Disc's real mean: -9.6144 | Disc's fake mean: -19.0800
+# [16x16][Epoch 0/10] Disc Loss-Avg: -7.970980 | Gen loss-Avg: 19.321590 | IS: (μ:1.6438, σ²:0.2244) | FID: 197.63
+# [16x16][Epoch 1/10 | Iter: 636/1272] Disc Loss: -2.020536 | Gen Loss: 6.696161
+# -- Batch-636: Disc's real mean: -6.0554 | Disc's fake mean = -8.2295
+# -- Last Batch : Disc's real mean: -4.9554 | Disc's fake mean: -6.2148
+# -- Epoch's Avg: Disc's real mean: -4.0256 | Disc's fake mean: -6.3547
+# [16x16][Epoch 1/10] Disc Loss-Avg: -2.111051 | Gen loss-Avg: 6.702969 | IS: (μ:1.8410, σ²:0.2926) | FID: 128.10
+# [16x16][Epoch 2/10 | Iter: 636/1272] Disc Loss: -1.739925 | Gen Loss: 3.560276
+# -- Batch-636: Disc's real mean: -4.9438 | Disc's fake mean = -6.8329
+# -- Last Batch : Disc's real mean: -6.5064 | Disc's fake mean: -8.5992
+# -- Epoch's Avg: Disc's real mean: -3.7870 | Disc's fake mean: -5.6142
+# [16x16][Epoch 2/10] Disc Loss-Avg: -1.595649 | Gen loss-Avg: 6.049932 | IS: (μ:2.0744, σ²:0.2274) | FID: 144.43
+# [16x16][Epoch 3/10 | Iter: 636/1272] Disc Loss: -3.705430 | Gen Loss: 13.437008
+# -- Batch-636: Disc's real mean: -8.5909 | Disc's fake mean = -13.2413
+# -- Last Batch : Disc's real mean: -14.0865 | Disc's fake mean: -22.1837
+# -- Epoch's Avg: Disc's real mean: -10.8148 | Disc's fake mean: -15.5159
+# [16x16][Epoch 3/10] Disc Loss-Avg: -4.039606 | Gen loss-Avg: 15.904802 | IS: (μ:2.3125, σ²:0.4237) | FID: 180.10
+# [16x16][Epoch 4/10 | Iter: 636/1272] Disc Loss: -14.294024 | Gen Loss: 35.716000
+# -- Batch-636: Disc's real mean: -23.3948 | Disc's fake mean = -43.2292
+# -- Last Batch : Disc's real mean: -18.3042 | Disc's fake mean: -40.5495
+# -- Epoch's Avg: Disc's real mean: -21.7162 | Disc's fake mean: -39.6128
+# [16x16][Epoch 4/10] Disc Loss-Avg: -14.260592 | Gen loss-Avg: 39.969417 | IS: (μ:2.0524, σ²:0.2302) | FID: 199.34
+# [16x16][Epoch 5/10 | Iter: 636/1272] Disc Loss: -21.822086 | Gen Loss: 51.630539
+# -- Batch-636: Disc's real mean: -22.9608 | Disc's fake mean = -51.1459
+# -- Last Batch : Disc's real mean: -27.5397 | Disc's fake mean: -60.3107
+# -- Epoch's Avg: Disc's real mean: -23.1056 | Disc's fake mean: -51.1131
+# [16x16][Epoch 5/10] Disc Loss-Avg: -21.496181 | Gen loss-Avg: 51.352162 | IS: (μ:2.3834, σ²:0.3537) | FID: 210.10
+# [16x16][Epoch 6/10 | Iter: 636/1272] Disc Loss: -22.095404 | Gen Loss: 54.631283
+# -- Batch-636: Disc's real mean: -21.4014 | Disc's fake mean = -48.5897
+# -- Last Batch : Disc's real mean: -25.7336 | Disc's fake mean: -56.9287
+# -- Epoch's Avg: Disc's real mean: -22.5394 | Disc's fake mean: -50.8309
+# [16x16][Epoch 6/10] Disc Loss-Avg: -21.714162 | Gen loss-Avg: 51.049461 | IS: (μ:2.4055, σ²:0.2742) | FID: 219.43
+# [16x16][Epoch 7/10 | Iter: 636/1272] Disc Loss: -22.313515 | Gen Loss: 47.001690
+# -- Batch-636: Disc's real mean: -25.0881 | Disc's fake mean = -55.9551
+# -- Last Batch : Disc's real mean: -25.4260 | Disc's fake mean: -57.7063
+# -- Epoch's Avg: Disc's real mean: -22.7652 | Disc's fake mean: -51.3375
+# [16x16][Epoch 7/10] Disc Loss-Avg: -21.930832 | Gen loss-Avg: 51.536230 | IS: (μ:2.6507, σ²:0.3991) | FID: 209.44
+# [16x16][Epoch 8/10 | Iter: 636/1272] Disc Loss: -21.818005 | Gen Loss: 54.625275
+# -- Batch-636: Disc's real mean: -22.1112 | Disc's fake mean = -49.2159
+# -- Last Batch : Disc's real mean: -24.8057 | Disc's fake mean: -53.4536
+# -- Epoch's Avg: Disc's real mean: -23.0335 | Disc's fake mean: -51.7901
+# [16x16][Epoch 8/10] Disc Loss-Avg: -22.060185 | Gen loss-Avg: 51.988842 | IS: (μ:2.3966, σ²:0.3689) | FID: 203.22
+# [16x16][Epoch 9/10 | Iter: 636/1272] Disc Loss: -21.474421 | Gen Loss: 42.068031
+# -- Batch-636: Disc's real mean: -27.8928 | Disc's fake mean = -59.5297
+# -- Last Batch : Disc's real mean: -21.0027 | Disc's fake mean: -47.1649
+# -- Epoch's Avg: Disc's real mean: -23.6127 | Disc's fake mean: -52.5325
+# [16x16][Epoch 9/10] Disc Loss-Avg: -22.175056 | Gen loss-Avg: 52.723336 | IS: (μ:2.3401, σ²:0.4043) | FID: 205.07
+# Files already downloaded and verified
+# Step: 3/7 -> Training on [32x32]
+# --Epochs:                    10
+# --BatchSize:                 128
+# --Interval:                  637
+# --Fade-in Steps:             6360
+# --Current Discriminator LR:  [0.0001]
+# --Current Generator LR:      [0.0001]
+# [32x32][Epoch 0/10 | Iter: 636/1272] Disc Loss: -9.742870 | Gen Loss: 22.850704
+# -- Batch-636: Disc's real mean: -31.4601 | Disc's fake mean = -45.6997
+# -- Last Batch : Disc's real mean: -9.6557 | Disc's fake mean: -15.0042
+# -- Epoch's Avg: Disc's real mean: -24.8806 | Disc's fake mean: -41.3923
+# [32x32][Epoch 0/10] Disc Loss-Avg: -12.990907 | Gen loss-Avg: 41.992856 | IS: (μ:2.1172, σ²:0.2746) | FID: 292.92
+# [32x32][Epoch 1/10 | Iter: 636/1272] Disc Loss: -3.576055 | Gen Loss: 9.675308
+# -- Batch-636: Disc's real mean: -9.8570 | Disc's fake mean = -13.9727
+# -- Last Batch : Disc's real mean: -2.8534 | Disc's fake mean: -5.3507
+# -- Epoch's Avg: Disc's real mean: -6.6131 | Disc's fake mean: -10.1418
+# [32x32][Epoch 1/10] Disc Loss-Avg: -3.124855 | Gen loss-Avg: 10.824034 | IS: (μ:2.1128, σ²:0.2201) | FID: 140.89
+# [32x32][Epoch 2/10 | Iter: 636/1272] Disc Loss: -3.419496 | Gen Loss: 4.430109
+# -- Batch-636: Disc's real mean: -8.3010 | Disc's fake mean = -12.1431
+# -- Last Batch : Disc's real mean: -4.7530 | Disc's fake mean: -7.6684
+# -- Epoch's Avg: Disc's real mean: -4.3094 | Disc's fake mean: -7.4291
+# [32x32][Epoch 2/10] Disc Loss-Avg: -2.788034 | Gen loss-Avg: 8.243693 | IS: (μ:2.1323, σ²:0.2053) | FID: 150.22
+# [32x32][Epoch 3/10 | Iter: 636/1272] Disc Loss: -6.667298 | Gen Loss: 22.475258
+# -- Batch-636: Disc's real mean: -6.3903 | Disc's fake mean = -13.2792
+# -- Last Batch : Disc's real mean: -24.2167 | Disc's fake mean: -43.2305
+# -- Epoch's Avg: Disc's real mean: -12.7801 | Disc's fake mean: -22.0853
+# [32x32][Epoch 3/10] Disc Loss-Avg: -7.668428 | Gen loss-Avg: 22.880436 | IS: (μ:2.1997, σ²:0.2628) | FID: 172.00
+# [32x32][Epoch 4/10 | Iter: 636/1272] Disc Loss: -29.124699 | Gen Loss: 96.169762
+# -- Batch-636: Disc's real mean: -49.6919 | Disc's fake mean = -87.8773
+# -- Last Batch : Disc's real mean: -82.3294 | Disc's fake mean: -164.1101
+# -- Epoch's Avg: Disc's real mean: -52.1123 | Disc's fake mean: -96.0587
+# [32x32][Epoch 4/10] Disc Loss-Avg: -31.948336 | Gen loss-Avg: 97.059814 | IS: (μ:2.3290, σ²:0.2181) | FID: 196.82
+# [32x32][Epoch 5/10 | Iter: 636/1272] Disc Loss: -53.967762 | Gen Loss: 129.994873
+# -- Batch-636: Disc's real mean: -86.0678 | Disc's fake mean = -172.2634
+# -- Last Batch : Disc's real mean: -88.3117 | Disc's fake mean: -171.4049
+# -- Epoch's Avg: Disc's real mean: -76.8118 | Disc's fake mean: -150.8211
+# [32x32][Epoch 5/10] Disc Loss-Avg: -51.307398 | Gen loss-Avg: 151.665356 | IS: (μ:2.2485, σ²:0.3168) | FID: 200.52
+# [32x32][Epoch 6/10 | Iter: 636/1272] Disc Loss: -52.603218 | Gen Loss: 148.264023
+# -- Batch-636: Disc's real mean: -81.8048 | Disc's fake mean = -160.9394
+# -- Last Batch : Disc's real mean: -72.4470 | Disc's fake mean: -140.2893
+# -- Epoch's Avg: Disc's real mean: -78.9150 | Disc's fake mean: -153.0085
+# [32x32][Epoch 6/10] Disc Loss-Avg: -51.385977 | Gen loss-Avg: 153.785579 | IS: (μ:2.3602, σ²:0.2871) | FID: 202.67
+# [32x32][Epoch 7/10 | Iter: 636/1272] Disc Loss: -53.027206 | Gen Loss: 157.106827
+# -- Batch-636: Disc's real mean: -91.4071 | Disc's fake mean = -170.6373
+# -- Last Batch : Disc's real mean: -63.2842 | Disc's fake mean: -121.8838
+# -- Epoch's Avg: Disc's real mean: -84.0880 | Disc's fake mean: -158.4912
+# [32x32][Epoch 7/10] Disc Loss-Avg: -51.570314 | Gen loss-Avg: 159.210803 | IS: (μ:2.3455, σ²:0.2675) | FID: 202.04
+# [32x32][Epoch 8/10 | Iter: 636/1272] Disc Loss: -50.969788 | Gen Loss: 184.474548
+# -- Batch-636: Disc's real mean: -79.6008 | Disc's fake mean = -146.3249
+# -- Last Batch : Disc's real mean: -93.2223 | Disc's fake mean: -171.6383
+# -- Epoch's Avg: Disc's real mean: -88.7116 | Disc's fake mean: -163.3899
+# [32x32][Epoch 8/10] Disc Loss-Avg: -51.760759 | Gen loss-Avg: 164.070204 | IS: (μ:2.3821, σ²:0.4678) | FID: 221.44
+# [32x32][Epoch 9/10 | Iter: 636/1272] Disc Loss: -53.924160 | Gen Loss: 168.099167
+# -- Batch-636: Disc's real mean: -93.9407 | Disc's fake mean = -173.9554
+# -- Last Batch : Disc's real mean: -86.6145 | Disc's fake mean: -158.3096
+# -- Epoch's Avg: Disc's real mean: -91.5164 | Disc's fake mean: -166.5711
+# [32x32][Epoch 9/10] Disc Loss-Avg: -52.006154 | Gen loss-Avg: 167.229953 | IS: (μ:2.3043, σ²:0.1846) | FID: 212.40
+# Files already downloaded and verified
+# Step: 4/7 -> Training on [64x64]
+# --Epochs:                    10
+# --BatchSize:                 64
+# --Interval:                  1273
+# --Fade-in Steps:             12720
+# --Current Discriminator LR:  [0.0001]
+# --Current Generator LR:      [0.0001]
+# [64x64][Epoch 0/10 | Iter: 1272/2544] Disc Loss: -14.984601 | Gen Loss: 51.437641
+# -- Batch-1272: Disc's real mean: -17.3619 | Disc's fake mean = -33.0078
+# -- Last Batch : Disc's real mean: -28.3425 | Disc's fake mean: -32.9185
+# -- Epoch's Avg: Disc's real mean: -58.1945 | Disc's fake mean: -93.2741
+# [64x64][Epoch 0/10] Disc Loss-Avg: -25.013562 | Gen loss-Avg: 94.841881 | IS: (μ:1.0000, σ²:0.0000) | FID: 333.02
+# [64x64][Epoch 1/10 | Iter: 1272/2544] Disc Loss: -5.097756 | Gen Loss: 0.344297
+# -- Batch-1272: Disc's real mean: 7.5136 | Disc's fake mean = 2.2513
+# -- Last Batch : Disc's real mean: -4.6169 | Disc's fake mean: -6.2919
+# -- Epoch's Avg: Disc's real mean: 3.9837 | Disc's fake mean: -1.3474
+# [64x64][Epoch 1/10] Disc Loss-Avg: -4.625465 | Gen loss-Avg: 2.729605 | IS: (μ:1.0000, σ²:0.0000) | FID: 241.13
+# [64x64][Epoch 2/10 | Iter: 1272/2544] Disc Loss: -4.328329 | Gen Loss: 22.177746
+# -- Batch-1272: Disc's real mean: -31.3004 | Disc's fake mean = -36.4820
+# -- Last Batch : Disc's real mean: -24.6972 | Disc's fake mean: -30.4969
+# -- Epoch's Avg: Disc's real mean: -10.4536 | Disc's fake mean: -15.6216
+# [64x64][Epoch 2/10] Disc Loss-Avg: -4.539772 | Gen loss-Avg: 16.904588 | IS: (μ:1.0000, σ²:0.0000) | FID: 222.88
+# [64x64][Epoch 3/10 | Iter: 1272/2544] Disc Loss: -14.829409 | Gen Loss: 44.549088
+# -- Batch-1272: Disc's real mean: -31.8848 | Disc's fake mean = -50.9633
+# -- Last Batch : Disc's real mean: -100.3516 | Disc's fake mean: -153.9123
+# -- Epoch's Avg: Disc's real mean: -36.4500 | Disc's fake mean: -57.4129
+# [64x64][Epoch 3/10] Disc Loss-Avg: -16.055016 | Gen loss-Avg: 58.809311 | IS: (μ:1.0000, σ²:0.0000) | FID: 257.49
+# [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
+# -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
@@ -5276,6 +5612,7 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device)
 
+#%%
 #%%
 # Stylegan2/3?
 #%%
