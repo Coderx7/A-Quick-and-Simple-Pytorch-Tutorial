@@ -5186,8 +5186,18 @@ max_steps = 7
 # 128x128-b32: 
 # 256x256-b16: 
 # update since it took a huge amount of time for training (5+hours only up tp 32x32
-# and 9.8GB vram, I decided to halve the channel numbers.
-# 
+# and 9.8GB vram, we went to 64x64 without goingout of memory but the traiing started
+# to destablize becasue of large lr at that stage so I decided to end the trainig. 
+# for the new round I decided to halve the channel numbers. so now we are going with
+# [512,256,128,64,32,16,8] and 825Mb vram already allocated
+# vram usage using nvidia-smi for each step is as follows:
+# 4x4 - b128: 2653-(17:44:04)
+# 8x8 - b128:  
+# 16x16-b128:  
+# 32x32-b128:  
+# 64x64-b64 : 
+# 128x128-b32: 
+# 256x256-b16: 
 BATCH_SIZES = [128,128,128,128,64,32,16]
 EPOCHS = [10]*max_steps
 gen_update_interval = 5 if loss_type == "wgan" else 1
@@ -5232,9 +5242,12 @@ else:#wgangp
     # lrs like 0.001/0.0003 all result in huge gradient penalties (gp)
     # which would result in huge losses! this meant we had huge updates
     # and unstale training so I hd to reduce the learning rate drastically!
-    # we can increase this during training for the next steps.
+    # we need to tune this during training for the next steps.
     # the first step is very senstive so we had to keep lr low
-    # we should be able to use higher values for the next steps
+    # the larger resolutions require careful tuning as well as we get to
+    # later steps, the resolution becomes larger, it becomes way harder to
+    # get things right and discrimnator/genertaor clash can destablize trainng
+    # really quickly (see the logs below)
     lr_d, lr_g = 0.0001, 0.0001#0.001, 0.002
 
 # sidenote:
