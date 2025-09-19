@@ -4922,8 +4922,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          noise_addition=False, device='cuda', weights_save_dir='./weights',
                          images_save_dir='./results/gan'):
     
-    lr_d = [p['lr'] for p in disc_optimizer.param_groups]
-    lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+    lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
+    lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
     
     assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
     
@@ -4986,22 +4986,22 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # very small lr!
             # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
             decay = 0.5**(step-2)
-            lr_d, lr_g = [lr * decay for lr in (lr_d, lr_g)]
+            current_lr_d, current_lr_g = [lr * decay for lr in (lr_d, lr_g)]
             
             for dg, gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
-                dg["lr"] = lr_d
-                gg["lr"] = lr_g
-            
-        lr_d = [p['lr'] for p in disc_optimizer.param_groups]
-        lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+                dg["lr"] = current_lr_d
+                gg["lr"] = current_lr_g
+
+        current_lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
+        current_lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
         
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                    {epochs} ')
         print(f'  --BatchSize:                 {batch_size} ')
         print(f'  --Interval:                  {interval} ')
         print(f'  --Fade-in Steps:             {fadein_steps} ')
-        print(f'  --Current Discriminator LR:  {lr_d}')
-        print(f'  --Current Generator LR:      {lr_g}')
+        print(f'  --Current Discriminator LR:  {current_lr_d}')
+        print(f'  --Current Generator LR:      {current_lr_g}')
     
         for epoch in range(epochs):
             discriminator.train()
@@ -5192,8 +5192,8 @@ max_steps = 7
 # [512,256,128,64,32,16,8] and 825Mb vram already allocated
 # vram usage using nvidia-smi for each step is as follows:
 # 4x4 - b128: 2653-(17:44:04)
-# 8x8 - b128:  
-# 16x16-b128:  
+# 8x8 - b128: 3087-(17:52:21)
+# 16x16-b128: 3529-(18:21:25) 
 # 32x32-b128:  
 # 64x64-b64 : 
 # 128x128-b32: 
