@@ -5204,7 +5204,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
-            checkpoint_dir = os.makedirs(f"{weights_save_dir}/progan_{dataset_name}_{loss_type}_{experiment_date}", exist_ok=True)
+            checkpoint_dir = f"{weights_save_dir}/progan_{dataset_name}_{loss_type}_{experiment_date}"
+            os.makedirs(checkpoint_dir, exist_ok=True)
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
                         "gen_state_dict":generator.state_dict(),
