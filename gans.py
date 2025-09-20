@@ -4931,7 +4931,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, device='cuda', resume=False, 
-                         weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_filename=None,):
+                         weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
     lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
@@ -4948,13 +4948,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
     # check for resuming from a checkpoint
     if resume:
-        if checkpoint_filename:
-            checkpoint_path = os.path.join(weights_save_dir, checkpoint_filename)
+        if checkpoint_path:
+            checkpoint_filename = os.path.split(checkpoint_path)[-1]
         else:
-            checkpoints = sorted([f for f in os.listdir(weights_save_dir) if f.endswith('.ckpt')])
+            checkpoints_dirs = sorted([subdir for subdir in os.listdir(weights_save_dir)\
+                                       if os.path.isdir(os.path.join(weights_save_dir, subdir))])
             #grab the last checkpoint/most recent one
-            checkpoint_filename = checkpoints[-1]
-            checkpoint_path = os.path.join(weights_save_dir, checkpoint_filename)
+            checkpoint_dirpath = os.path.join(weights_save_dir, checkpoints_dirs[-1])
+            # grab the latest checkpoint 
+            checkpoint_files = sorted([f for f in os.listdir(checkpoint_dirpath) if f.endswith(".ckpt")])
+            checkpoint_filename = checkpoint_files[-1]
+            checkpoint_path = os.path.join(checkpoint_dirpath, checkpoint_filename)
         
         if not os.path.exists(checkpoint_path):
             raise ValueError("The Path is not valid")
@@ -4975,8 +4979,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
         gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
         
+        loss_type = checkpoint["loss_type"]
         starting_step = checkpoint["step"]
+        epoch_list = checkpoint["epoch_list"]
+        batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
+        gen_update_interval = checkpoint["gen_update_interval"]
+        lambda_factor = checkpoint["lambda_factor"]
         noise_addition = checkpoint["noise_addition"]
         
         lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
@@ -4984,15 +4993,19 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
-    print(f'--Resume:                    {resume if not resume else checkpoint_filename}'
-          f'\n  --step:                  {starting_step}')
+    if resume:
+        print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
+            f'\n  --From Step:             {starting_step}'
+            f'\n  --Checkpoint Path:       {checkpoint_path}'
+            f'\n  --Last FID:              {checkpoint["FID"]}')
           
     print(f'--Dataset:                   {dataset_name}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
     print(f'--Max Step:                  {discriminator.max_steps}')
-    print(f'--Epochs:                    {EPOCHS} ')
+    print(f'--Epochs:                    {epoch_list} ')
+    print(f'--Batch-Sizes:               {batch_size_list} ')
     print(f'--Generator update interval: {gen_update_interval}')
     print(f'--WGAN weight cliping range: {wgan_range}')
     print(f'--Noise addition to input:   {noise_addition}')
@@ -5031,7 +5044,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         training_step_counter = 0
         alpha=0
         #4,8,16,32,64,128,256
-        if step>=3:
+        if step>=4:
             # halve the learing rate for larger steps because 
             # as we get to larger resolutions, it becomes much more
             # sensive and to keep the training stable we need to use
@@ -5190,6 +5203,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
+            checkpoint_dir = os.makedirs(f"{weights_save_dir}/progan_{dataset_name}_{loss_type}_{experiment_date}", exist_ok=True)
+            
             torch.save({"disc_state_dict":discriminator.state_dict(),
                         "gen_state_dict":generator.state_dict(),
                         "disc_optimizer":disc_optimizer,
@@ -5202,6 +5217,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "wgan_range":wgan_range,
                         "step":step,
                         "epoch":epoch,
+                        "epoch_list":epoch_list,
+                        "batch_size_list":batch_size_list,
+                        "lambda_factor":lambda_factor,
                         "gen_update_interval":gen_update_interval,
                         "loss_type":loss_type,
                         "FID":FID_score,
@@ -5209,7 +5227,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "d_loss_mean":d_loss_mean,
                         "g_loss_mean":g_loss_mean,
                         "dataset_name":dataset_name,
-                    }, f"{weights_save_dir}/progan_generator_{loss_type}_{experiment_date}.ckpt")
+                    }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
         
             # generate some images mid training to evaluate our model's performance 
             with torch.no_grad():
@@ -5785,7 +5803,8 @@ training_loop_progan(discriminator_progan,
                      lambda_factor=lambda_factor,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
-                     device=device)
+                     device=device,
+                     resume=False)
 
 #%%
 #%%
