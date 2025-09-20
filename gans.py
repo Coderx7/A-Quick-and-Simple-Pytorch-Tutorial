@@ -4970,12 +4970,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         max_steps = checkpoint["max_steps"]
         discriminator.setup_layers(max_steps)
         discriminator.load_state_dict(checkpoint["disc_state_dict"])
-        discriminator.to(device)
+        discriminator = discriminator.to(device)
         
         z_size = checkpoint["z_size"]
         generator.setup_layers(z_size, max_steps)
         generator.load_state_dict(checkpoint["gen_state_dict"])
-        generator.to(device)
+        generator = generator.to(device)
         
         # if we are not in the last epoch, then we still have epochs to process
         # therefore the optimizers state must be loaded otherwise everything will
@@ -4990,7 +4990,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
         gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])     
         
-        
+        # grab the initial lrs
+        lr_d = checkpoint["lr_d"]
+        lr_g = checkpoint["lr_g"]
+        print(f'{lr_d=} {lr_g=}')    
         loss_type = checkpoint["loss_type"]
         starting_step = checkpoint["step"]
         decay_step = checkpoint.get("decay_step",decay_step)
@@ -5011,10 +5014,6 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # and we shouldnt change anything!
         if epoch == epoch_list[starting_step]:
             starting_step += 1
-        
-        # grab the initial lrs
-        lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
-        lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
 
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
@@ -5855,7 +5854,13 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 #%%
-
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250920145202/checkpoint_step_3_20250920145202.ckpt'
+# checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+# print(checkpoint["lr_d"])
+# print(checkpoint["lr_g"])
+# # print(*checkpoint.keys(),sep='\n')
+#%%
+## torch.save(checkpoint,checkpoint_path)
 #%%
 # Stylegan2/3?
 #%%
