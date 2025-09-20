@@ -4927,8 +4927,8 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
         print(f'WARNING: High Gradient Policy: {gp.item():.2f}')
     return wgan_loss + (lambda_factor*gp)
 
-def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
-                         gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
+def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
+                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
@@ -4977,15 +4977,24 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator.to(device)
         
-        # this messes things up?
-        # disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
-        # gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+        # if we are not in the last epoch, then we still have epochs to process
+        # therefore the optimizers state must be loaded otherwise everything will
+        # go haywire!
+        # we dont want the optimizer states to to be available when we go for the 
+        # new step with new learning rate cuz probably the internal stats will not 
+        # go well with our manual lr change and we may verywell face huge update 
+        # or viceversa depending on what we are doing! so we only load optimizers
+        # when we are at the middle of the processing of a step! for each step that
+        # requires manual lr, we create a brand new optimizer there! so we can load
+        # the optimizer's state here just fine
+        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])     
+        
         
         loss_type = checkpoint["loss_type"]
-        # we want to start the next step. what we have here is the previous step
-        # the last epoch of the previous step.a +1 here puts us at the right place
-        starting_step = checkpoint["step"]+1
+        starting_step = checkpoint["step"]
         decay_step = checkpoint.get("decay_step",decay_step)
+        epoch = checkpoint["epoch"]
         epoch_list = checkpoint["epoch_list"]
         batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
@@ -4993,6 +5002,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         lambda_factor = checkpoint["lambda_factor"]
         noise_addition = checkpoint["noise_addition"]
         
+        # we want to start the next step when we resume. 
+        # remember during checkpoint saving, what we have here is the final previous step epoch
+        # (it was last epoch of the previous step we saved the checkpoint before we go for the next step).
+        # so when we resume, we are effectively at the start of the next step, and it should be obvious.
+        # so a +1 here puts us at the right place. note this is only the case if the checkpoint was
+        # saved at the final epoch of that step, otherwise it means we are at the middle of a step
+        # and we shouldnt change anything!
+        if epoch == epoch_list[starting_step]:
+            starting_step += 1
+        
+        # grab the initial lrs
         lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
         lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
 
@@ -5058,28 +5078,38 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # very small lr!
             # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
             decay = 0.5**(step-2)
+            
             # update:
             # when I decayed the lrs at 32x32, we faced mode collapsed 
             # because we made discriminator too slow to function/react
             # and generator went heywire and faced mode collapse!
             # so this time I want to use a higher lr for discriminator
-            for g in disc_optimizer.param_groups:
-                #multiplying this by 1.5 was too much, and by 1.1 is too small
-                g["lr"] = (lr_d * decay) 
-                
-            for g in gen_optimizer.param_groups:
-                g["lr"] = lr_g * decay
+            # for g in disc_optimizer.param_groups:
+            #     #multiplying this by 1.5 was too much, and by 1.1 is too small
+            #     g["lr"] = (lr_d * decay) 
+            # 
+            # for g in gen_optimizer.param_groups:
+            #     g["lr"] = lr_g * decay
+
+            # instead of changing the optimizers lr manually
+            # lets reset the optimizer so changing lr doesnt mess up anything
+            betas_d = disc_optimizer.defaults["betas"]
+            betas_g = gen_optimizer.defaults["betas"]
+            disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
+            gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g*decay, betas=betas_g)
 
         current_lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
         current_lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
         
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
-        print(f'  --Epochs:                    {epochs} ')
-        print(f'  --BatchSize:                 {batch_size} ')
-        print(f'  --Interval:                  {interval} ')
-        print(f'  --Fade-in Steps:             {fadein_steps} ')
-        print(f'  --Current Discriminator LR:  {current_lr_d}')
-        print(f'  --Current Generator LR:      {current_lr_g}')
+        print(f'  --Epochs:                      {epochs} ')
+        print(f'  --BatchSize:                   {batch_size} ')
+        print(f'  --Interval:                    {interval} ')
+        print(f'  --Fade-in Steps:               {fadein_steps} ')
+        print(f'  --Current Discriminator LR:    {current_lr_d}')
+        print(f'  --Current Generator LR:        {current_lr_g}')
+        print(f'  --Current Discriminator Betas: {betas_d}')
+        print(f'  --Current Generator Betas:     {betas_g}')
     
         for epoch in range(epochs):
             discriminator.train()
