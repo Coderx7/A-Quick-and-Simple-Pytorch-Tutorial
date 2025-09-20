@@ -5331,6 +5331,26 @@ else:#wgangp
     # really quickly (see the logs below)
     lr_d, lr_g = 0.0001, 0.0001#0.001, 0.002
 
+
+# disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
+disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
+
+training_loop_progan(discriminator_progan,
+                     generator_progan, 
+                     disc_optimizer=disc_optimizer,
+                     gen_optimizer=gen_optimizer, 
+                     epoch_list=EPOCHS, 
+                     batch_size_list=BATCH_SIZES,
+                     gen_update_interval=gen_update_interval, 
+                     dataset_name=dataset_name,
+                     loss_type=loss_type, 
+                     lambda_factor=lambda_factor,
+                     wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
+                     noise_addition=False,
+                     device=device,
+                     resume=False)
+
 # sidenote:
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
@@ -5498,6 +5518,10 @@ else:#wgangp
 # it didnt work and generator loss went south in 3 epochs. going with 1.1 didnt change
 # anything it was insignificant and lead to mode collapse. trying to decay lr in step4
 # isntead and see how that goes.
+#
+#
+#
+#
 #
 #
 #
@@ -5791,26 +5815,6 @@ else:#wgangp
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 
 
-# disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
-
-training_loop_progan(discriminator_progan,
-                     generator_progan, 
-                     disc_optimizer=disc_optimizer,
-                     gen_optimizer=gen_optimizer, 
-                     epoch_list=EPOCHS, 
-                     batch_size_list=BATCH_SIZES,
-                     gen_update_interval=gen_update_interval, 
-                     dataset_name=dataset_name,
-                     loss_type=loss_type, 
-                     lambda_factor=lambda_factor,
-                     wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
-                     noise_addition=False,
-                     device=device,
-                     resume=False)
-
-#%%
 #%%
 # Stylegan2/3?
 #%%
