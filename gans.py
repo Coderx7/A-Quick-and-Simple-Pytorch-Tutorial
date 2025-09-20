@@ -1371,7 +1371,7 @@ def apply_direction(generator, z, direction, alphas=(-3,-2,-1,0,1,2,3)):
         img = generator(z_new)
         imgs.append(img)
     return torch.cat(imgs, dim=0)
-
+#%%
 # calculate the direction for glasses attribute
 direction, info = calculate_direction_using_clip(generatorcnn, 
                                                text_positive="wearing eyeglasses",
@@ -4986,11 +4986,16 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # very small lr!
             # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
             decay = 0.5**(step-2)
-            current_lr_d, current_lr_g = [lr * decay for lr in (lr_d, lr_g)]
-            
-            for dg, gg in zip(disc_optimizer.param_groups, gen_optimizer.param_groups):
-                dg["lr"] = current_lr_d
-                gg["lr"] = current_lr_g
+            # update:
+            # when I decayed the lrs at 32x32, we faced mode collapsed 
+            # because we made discriminator too slow to function/react
+            # and generator went heywire and faced mode collapse!
+            # so this time I want to use a higher lr for discriminator
+            for g in disc_optimizer.param_groups:
+                g["lr"] = (lr_d * decay)*1.5
+                
+            for g in gen_optimizer.param_groups:
+                g["lr"] = lr_g * decay
 
         current_lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
         current_lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
@@ -5159,7 +5164,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         cols=gen_num_samples//8,
                         title=f'Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
                         unnormalize=True,
-                        save_path=f'{images_save_dir}/progan_{loss_type}/{experiment_date}/epoch_{epoch}.jpg',
+                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
                         figsize=(16,8))
     
     print("ProGAN training is complete!")
@@ -5410,6 +5415,10 @@ else:#wgangp
 # when we decreased its learing rate. so what do we do? not what we just did! i.e. we need to
 # keep discriminators lr the same like the last time that worked or tune it properly so its
 # not too small so generator doesnt take advantge!
+# I set the discriminator to have a bit larger lr lets see how this goes
+#
+#
+#
 #
 # full log 1
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
@@ -5620,46 +5629,55 @@ else:#wgangp
 # -- Last Batch : Disc's real mean: -2.8534 | Disc's fake mean: -5.3507
 # -- Epoch's Avg: Disc's real mean: -6.6131 | Disc's fake mean: -10.1418
 # [32x32][Epoch 1/10] Disc Loss-Avg: -3.124855 | Gen loss-Avg: 10.824034 | IS: (μ:2.1128, σ²:0.2201) | FID: 140.89
+# 
 # [32x32][Epoch 2/10 | Iter: 636/1272] Disc Loss: -3.419496 | Gen Loss: 4.430109
 # -- Batch-636: Disc's real mean: -8.3010 | Disc's fake mean = -12.1431
 # -- Last Batch : Disc's real mean: -4.7530 | Disc's fake mean: -7.6684
 # -- Epoch's Avg: Disc's real mean: -4.3094 | Disc's fake mean: -7.4291
 # [32x32][Epoch 2/10] Disc Loss-Avg: -2.788034 | Gen loss-Avg: 8.243693 | IS: (μ:2.1323, σ²:0.2053) | FID: 150.22
+# 
 # [32x32][Epoch 3/10 | Iter: 636/1272] Disc Loss: -6.667298 | Gen Loss: 22.475258
 # -- Batch-636: Disc's real mean: -6.3903 | Disc's fake mean = -13.2792
 # -- Last Batch : Disc's real mean: -24.2167 | Disc's fake mean: -43.2305
 # -- Epoch's Avg: Disc's real mean: -12.7801 | Disc's fake mean: -22.0853
 # [32x32][Epoch 3/10] Disc Loss-Avg: -7.668428 | Gen loss-Avg: 22.880436 | IS: (μ:2.1997, σ²:0.2628) | FID: 172.00
+# 
 # [32x32][Epoch 4/10 | Iter: 636/1272] Disc Loss: -29.124699 | Gen Loss: 96.169762
 # -- Batch-636: Disc's real mean: -49.6919 | Disc's fake mean = -87.8773
 # -- Last Batch : Disc's real mean: -82.3294 | Disc's fake mean: -164.1101
 # -- Epoch's Avg: Disc's real mean: -52.1123 | Disc's fake mean: -96.0587
 # [32x32][Epoch 4/10] Disc Loss-Avg: -31.948336 | Gen loss-Avg: 97.059814 | IS: (μ:2.3290, σ²:0.2181) | FID: 196.82
+# 
 # [32x32][Epoch 5/10 | Iter: 636/1272] Disc Loss: -53.967762 | Gen Loss: 129.994873
 # -- Batch-636: Disc's real mean: -86.0678 | Disc's fake mean = -172.2634
 # -- Last Batch : Disc's real mean: -88.3117 | Disc's fake mean: -171.4049
 # -- Epoch's Avg: Disc's real mean: -76.8118 | Disc's fake mean: -150.8211
 # [32x32][Epoch 5/10] Disc Loss-Avg: -51.307398 | Gen loss-Avg: 151.665356 | IS: (μ:2.2485, σ²:0.3168) | FID: 200.52
+# 
 # [32x32][Epoch 6/10 | Iter: 636/1272] Disc Loss: -52.603218 | Gen Loss: 148.264023
 # -- Batch-636: Disc's real mean: -81.8048 | Disc's fake mean = -160.9394
 # -- Last Batch : Disc's real mean: -72.4470 | Disc's fake mean: -140.2893
 # -- Epoch's Avg: Disc's real mean: -78.9150 | Disc's fake mean: -153.0085
 # [32x32][Epoch 6/10] Disc Loss-Avg: -51.385977 | Gen loss-Avg: 153.785579 | IS: (μ:2.3602, σ²:0.2871) | FID: 202.67
+# 
 # [32x32][Epoch 7/10 | Iter: 636/1272] Disc Loss: -53.027206 | Gen Loss: 157.106827
 # -- Batch-636: Disc's real mean: -91.4071 | Disc's fake mean = -170.6373
 # -- Last Batch : Disc's real mean: -63.2842 | Disc's fake mean: -121.8838
 # -- Epoch's Avg: Disc's real mean: -84.0880 | Disc's fake mean: -158.4912
 # [32x32][Epoch 7/10] Disc Loss-Avg: -51.570314 | Gen loss-Avg: 159.210803 | IS: (μ:2.3455, σ²:0.2675) | FID: 202.04
+# 
 # [32x32][Epoch 8/10 | Iter: 636/1272] Disc Loss: -50.969788 | Gen Loss: 184.474548
 # -- Batch-636: Disc's real mean: -79.6008 | Disc's fake mean = -146.3249
 # -- Last Batch : Disc's real mean: -93.2223 | Disc's fake mean: -171.6383
 # -- Epoch's Avg: Disc's real mean: -88.7116 | Disc's fake mean: -163.3899
 # [32x32][Epoch 8/10] Disc Loss-Avg: -51.760759 | Gen loss-Avg: 164.070204 | IS: (μ:2.3821, σ²:0.4678) | FID: 221.44
+# 
 # [32x32][Epoch 9/10 | Iter: 636/1272] Disc Loss: -53.924160 | Gen Loss: 168.099167
 # -- Batch-636: Disc's real mean: -93.9407 | Disc's fake mean = -173.9554
 # -- Last Batch : Disc's real mean: -86.6145 | Disc's fake mean: -158.3096
 # -- Epoch's Avg: Disc's real mean: -91.5164 | Disc's fake mean: -166.5711
 # [32x32][Epoch 9/10] Disc Loss-Avg: -52.006154 | Gen loss-Avg: 167.229953 | IS: (μ:2.3043, σ²:0.1846) | FID: 212.40
+# 
 # Files already downloaded and verified
 # Step: 4/7 -> Training on [64x64]
 # --Epochs:                    10
