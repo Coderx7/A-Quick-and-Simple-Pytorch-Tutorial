@@ -4930,7 +4930,7 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
                          gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
-                         noise_addition=False, device='cuda', resume=False, 
+                         noise_addition=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
@@ -4968,7 +4968,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         max_steps = checkpoint["max_steps"]
-        discriminator.setup_layers(checkpoint["max_steps"])
+        discriminator.setup_layers(max_steps)
         discriminator.load_state_dict(checkpoint["disc_state_dict"])
         discriminator.to(device)
         
@@ -4982,6 +4982,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         
         loss_type = checkpoint["loss_type"]
         starting_step = checkpoint["step"]
+        decay_step = checkpoint.get("decay_step",decay_step)
         epoch_list = checkpoint["epoch_list"]
         batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
@@ -5005,6 +5006,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
     print(f'--Max Step:                  {discriminator.max_steps}')
+    print(f'--Decay Step:                {decay_step}')
     print(f'--Epochs:                    {epoch_list} ')
     print(f'--Batch-Sizes:               {batch_size_list} ')
     print(f'--Generator update interval: {gen_update_interval}')
@@ -5044,8 +5046,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         fadein_steps = total_number_of_steps//2
         training_step_counter = 0
         alpha=0
+        
         #4,8,16,32,64,128,256
-        if step>=4:
+        if step>=decay_step:
             # halve the learing rate for larger steps because 
             # as we get to larger resolutions, it becomes much more
             # sensive and to keep the training stable we need to use
@@ -5209,12 +5212,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
                         "gen_state_dict":generator.state_dict(),
-                        "disc_optimizer":disc_optimizer,
-                        "gen_optimizer":gen_optimizer,
+                        "disc_optimizer":disc_optimizer.state_dict(),
+                        "gen_optimizer":gen_optimizer.state_dict(),
                         "z_size":generator.z_size,
                         "lr_d":lr_d,
                         "lr_g":lr_g,
-                        "max_step":discriminator.max_steps,
+                        "max_steps":discriminator.max_steps,
+                        "decay_step":decay_step,
                         "noise_addition":noise_addition,
                         "wgan_range":wgan_range,
                         "step":step,
@@ -5331,6 +5335,8 @@ else:#wgangp
     # really quickly (see the logs below)
     lr_d, lr_g = 0.0001, 0.0001#0.001, 0.002
 
+# decay at step=3 (32x32)
+decay_step = 3
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -5349,8 +5355,10 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=False)
+                     resume=True,
+                     decay_step=decay_step)
 
+#%%
 # sidenote:
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
@@ -5813,7 +5821,7 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 3/10] Disc Loss-Avg: -16.055016 | Gen loss-Avg: 58.809311 | IS: (μ:1.0000, σ²:0.0000) | FID: 257.49
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
-
+#%%
 
 #%%
 # Stylegan2/3?
