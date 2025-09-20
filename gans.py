@@ -4977,11 +4977,14 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator.to(device)
         
-        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
-        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+        # this messes things up?
+        # disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        # gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
         
         loss_type = checkpoint["loss_type"]
-        starting_step = checkpoint["step"]
+        # we want to start the next step. what we have here is the previous step
+        # the last epoch of the previous step.a +1 here puts us at the right place
+        starting_step = checkpoint["step"]+1
         decay_step = checkpoint.get("decay_step",decay_step)
         epoch_list = checkpoint["epoch_list"]
         batch_size_list = checkpoint["batch_size_list"]
