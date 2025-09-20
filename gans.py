@@ -4688,6 +4688,13 @@ class DiscriminatorProGAN(nn.Module):
     def __init__(self, max_steps=6):
         super().__init__()
         
+        # in order to be able to properly resume checkpoints
+        # we need to build the model properly so lets move all
+        # the logic into setup layers so we can call it easily
+        # whenever we like to reinitialze the network
+        self.setup_layers(max_steps)
+    
+    def setup_layers(self, max_steps):
         self.max_steps = max_steps
         # create some channels for our layers
         # its 2^max_steps all the way down to 2^3=16
@@ -4775,7 +4782,11 @@ class GeneratorProGAN(nn.Module):
     def __init__(self, z_size, max_steps=6):
         super().__init__()  
            
-        self.z_size = z_size   
+        # lets do the same thing for generator
+        self.setup_layers(z_size, max_steps)
+        
+    def setup_layers(self, z_size, max_steps):
+        self.z_size = z_size
         self.max_steps = max_steps
         # generators like the discriminator but the oppiste!
         # [512,256,128,64,32,16] we go from low res with high 
@@ -4813,7 +4824,7 @@ class GeneratorProGAN(nn.Module):
         # actual upsampling for each step/stage/depth is done during forward pass
         self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
-                
+    
     
     def forward(self, z, alpha, step):
         if z.dim()==2:
@@ -4919,8 +4930,8 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer, 
                          gen_optimizer, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
-                         noise_addition=False, device='cuda', weights_save_dir='./weights',
-                         images_save_dir='./results/gan'):
+                         noise_addition=False, device='cuda', resume=False, 
+                         weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_filename=None,):
     
     lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
     lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
@@ -4932,8 +4943,50 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     fixed_z = torch.randn((gen_num_samples,generator.z_size)).to(device)
 
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+
+    starting_step = 0
+
+    # check for resuming from a checkpoint
+    if resume:
+        if checkpoint_filename:
+            checkpoint_path = os.path.join(weights_save_dir, checkpoint_filename)
+        else:
+            checkpoints = sorted([f for f in os.listdir(weights_save_dir) if f.endswith('.ckpt')])
+            #grab the last checkpoint/most recent one
+            checkpoint_filename = checkpoints[-1]
+            checkpoint_path = os.path.join(weights_save_dir, checkpoint_filename)
+        
+        if not os.path.exists(checkpoint_path):
+            raise ValueError("The Path is not valid")
+        
+        # load the stuff
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        max_steps = checkpoint["max_steps"]
+        discriminator.setup_layers(checkpoint["max_steps"])
+        discriminator.load_state_dict(checkpoint["disc_state_dict"])
+        discriminator.to(device)
+        
+        z_size = checkpoint["z_size"]
+        generator.setup_layers(z_size, max_steps)
+        generator.load_state_dict(checkpoint["gen_state_dict"])
+        generator.to(device)
+        
+        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+        
+        starting_step = checkpoint["step"]
+        wgan_range = checkpoint["wgan_range"]
+        noise_addition = checkpoint["noise_addition"]
+        
+        lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
+        lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
+
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+    print(f'--Resume:                    {resume if not resume else checkpoint_filename}'
+          f'\n  --step:                  {starting_step}')
+          
     print(f'--Dataset:                   {dataset_name}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -4947,9 +5000,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print(f'--gen_num_samples:           {gen_num_samples}')
     print(f'--Checkpoint Directory:      {weights_save_dir}')
     print(f'--Images Directory:          {images_save_dir}')
-
     
-    for step in range(max_steps):
+    for step in range(starting_step, max_steps):
         
         # specify resolutions
         # specify batchsizes for each resolution
@@ -4992,7 +5044,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # and generator went heywire and faced mode collapse!
             # so this time I want to use a higher lr for discriminator
             for g in disc_optimizer.param_groups:
-                g["lr"] = (lr_d * decay)*1.5
+                #multiplying this by 1.5 was too much, and by 1.1 is too small
+                g["lr"] = (lr_d * decay) 
                 
             for g in gen_optimizer.param_groups:
                 g["lr"] = lr_g * decay
@@ -5137,23 +5190,26 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
-            torch.save({"state_dict":generator.state_dict(),
-                    # "hidden_size":generator.hidden_size,
-                    "z_size":generator.z_size,
-                    "lr_d":lr_d,
-                    "lr_g":lr_g,
-                    "max_step":discriminator.max_steps,
-                    "noise_addition":noise_addition,
-                    "wgan_range":wgan_range,
-                    "epoch":epoch,
-                    "gen_update_interval":gen_update_interval,
-                    "loss_type":loss_type,
-                    "FID":FID_score,
-                    "IS":IS_score,
-                    "d_loss_mean":d_loss_mean,
-                    "g_loss_mean":g_loss_mean,
-                    "dataset_name":dataset_name,
-                    }, f"{weights_save_dir}/progan_generator_{loss_type}_{experiment_date}.pt")
+            torch.save({"disc_state_dict":discriminator.state_dict(),
+                        "gen_state_dict":generator.state_dict(),
+                        "disc_optimizer":disc_optimizer,
+                        "gen_optimizer":gen_optimizer,
+                        "z_size":generator.z_size,
+                        "lr_d":lr_d,
+                        "lr_g":lr_g,
+                        "max_step":discriminator.max_steps,
+                        "noise_addition":noise_addition,
+                        "wgan_range":wgan_range,
+                        "step":step,
+                        "epoch":epoch,
+                        "gen_update_interval":gen_update_interval,
+                        "loss_type":loss_type,
+                        "FID":FID_score,
+                        "IS":IS_score,
+                        "d_loss_mean":d_loss_mean,
+                        "g_loss_mean":g_loss_mean,
+                        "dataset_name":dataset_name,
+                    }, f"{weights_save_dir}/progan_generator_{loss_type}_{experiment_date}.ckpt")
         
             # generate some images mid training to evaluate our model's performance 
             with torch.no_grad():
@@ -5416,7 +5472,10 @@ else:#wgangp
 # keep discriminators lr the same like the last time that worked or tune it properly so its
 # not too small so generator doesnt take advantge!
 # I set the discriminator to have a bit larger lr lets see how this goes
-#
+# update:
+# I multiplied discriminator lr by 1.5 it was good for 1 epoch and then it overpowered
+# the generator!lets make the difference a bit lower like 1.2 and see how it goes
+# it didnt work and generator loss went south in 3 epochs
 #
 #
 #
