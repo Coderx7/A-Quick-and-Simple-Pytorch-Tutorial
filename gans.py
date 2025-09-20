@@ -4940,12 +4940,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     
     metric = IS_FID_Calculator(device)
 
-    fixed_z = torch.randn((gen_num_samples,generator.z_size)).to(device)
+    fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
 
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 
     starting_step = 0
-
+    max_steps = discriminator.max_steps
+    z_size = generator.z_size
     # check for resuming from a checkpoint
     if resume:
         if checkpoint_path:
@@ -5493,7 +5494,9 @@ else:#wgangp
 # update:
 # I multiplied discriminator lr by 1.5 it was good for 1 epoch and then it overpowered
 # the generator!lets make the difference a bit lower like 1.2 and see how it goes
-# it didnt work and generator loss went south in 3 epochs
+# it didnt work and generator loss went south in 3 epochs. going with 1.1 didnt change
+# anything it was insignificant and lead to mode collapse. trying to decay lr in step4
+# isntead and see how that goes.
 #
 #
 #
