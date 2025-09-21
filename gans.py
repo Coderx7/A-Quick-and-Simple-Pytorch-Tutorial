@@ -4935,6 +4935,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     
     lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
     lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
+    betas_d = disc_optimizer.defaults["betas"]
+    betas_g = gen_optimizer.defaults["betas"]
     
     assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
     
@@ -4988,17 +4990,19 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # requires manual lr, we create a brand new optimizer there! so we can load
         # the optimizer's state here just fine
         disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
-        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])     
-        
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+
         # grab the initial lrs
         lr_d = checkpoint["lr_d"]
         lr_g = checkpoint["lr_g"]
-        print(f'{lr_d=} {lr_g=}')    
+        betas_d = disc_optimizer.defaults["betas"]
+        betas_g = gen_optimizer.defaults["betas"]
+
         loss_type = checkpoint["loss_type"]
         starting_step = checkpoint["step"]
-        decay_step = checkpoint.get("decay_step",decay_step)
-        epoch = checkpoint["epoch"]
+        decay_step = checkpoint.get("decay_step", decay_step)
         epoch_list = checkpoint["epoch_list"]
+        epoch = checkpoint["epoch"]
         batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
         gen_update_interval = checkpoint["gen_update_interval"]
@@ -5070,8 +5074,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # instead of having half of steps to old res, 
         # lets make it 80% so the other part gets to learn more
         # not sure how it affects early layers need to test this once 
-        # for the full training
-        fadein_steps = int(total_number_of_steps*0.8)
+        # for the full training (didnt work, discriminator got more powerful in epoch4+)
+        # lets go with 0.4 this time - didnt work! resetting this to default
+        fadein_steps = int(total_number_of_steps*0.5)
         training_step_counter = 0
         alpha=0
         
@@ -5098,8 +5103,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             # instead of changing the optimizers lr manually
             # lets reset the optimizer so changing lr doesnt mess up anything
-            betas_d = disc_optimizer.defaults["betas"]
-            betas_g = gen_optimizer.defaults["betas"]
+            # betas_d = disc_optimizer.defaults["betas"]
+            # betas_g = gen_optimizer.defaults["betas"]
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
             gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g*decay, betas=betas_g)
 
@@ -5322,7 +5327,7 @@ max_steps = 7
 # 128x128-b32: 
 # 256x256-b16: 
 BATCH_SIZES = [128,128,128,128,64,32,16]
-EPOCHS = [10]*max_steps
+EPOCHS = [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
@@ -5358,8 +5363,9 @@ generator_progan = generator_progan.to(device)
 #
 #! update:
 # change betas from 0-99 to 0.999 to make 32x32 stage stable
-# need to change this if things went south!
-betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.999]
+# need to change this if things went south! changed it back to 0.99
+# as that didnt fix the issue
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.99]
 
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0004, 0.0001
@@ -5395,9 +5401,9 @@ training_loop_progan(discriminator_progan,
                      loss_type=loss_type, 
                      lambda_factor=lambda_factor,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
-                     noise_addition=False,
+                     noise_addition=True,
                      device=device,
-                     resume=True,
+                     resume=False,
                      decay_step=decay_step)
 
 #%%
@@ -5574,6 +5580,22 @@ training_loop_progan(discriminator_progan,
 # when we resumed, the gp warnings quickly disapeared at each batch the gp magnitude decreased
 # from the intial 950! to 627 to 444 and ater a few other batches down to below 100! so the
 # optimizer state reset actually did something!
+# that was fixed by reseting the optimizer state, but the original issue of mode collapse 
+# in 32x32 (epoch 3) stays. I tred a larger beta2=0.999 didnt solve the issue. it hit me
+# that it could be the alpha or the short number of epochs for that resolution. 
+# I changed the alpha decay rate and instead of 50/50% of the whole trainig iteration
+# I allocated more (i.e. 80%) to the lower res so we have more time to learn properly
+# at step3 altha stays at 0.50 previously it was 0.80, and the loss still is low but I can
+# see the images quality sometimes drop but goes up the next epoch nonetheless.
+# I guess I dont decay the lr anymore and instead work on the more epochs for higher 
+# resolutions and see whether it fixes the issue (I might not need to change alpha,
+# just more epochs might do it!) ok simpl in creasing the alpha ratio for low res didnt work
+# the generator loss started increasing in epoch 4+, which means discriminator learnt whats
+# fake and overpowered the generator.lets do the opposite lower alpha for low res and see how
+# it goes. Im facing the same issue. using more epochs and by extension extending alpha
+# seemed to work at first but later on I faced the same issue, the loss for both started to
+# get really large (i,e, 140/190 etc) so I changed again and tried running this with noise=True
+# and more epochs for 8x8 and larger res to see if that helps
 # 
 #
 #
