@@ -3738,7 +3738,7 @@ training_loop(discriminatorcnn64,
 #%%
 # for lsgan 20250913135137
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901064034.pt",
+checkpoint = torch.load("./weights/gan/dcgan_generatorcnn_wgangp_20250901064034.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -4465,7 +4465,7 @@ training_loop(discriminator_progan,
 #%%
 # 20250913174046
 # load models 
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250913174046.pt",
+checkpoint = torch.load("./weights/gan/dcgan_generatorcnn_wgangp_20250913174046.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -5065,7 +5065,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # I messed it up the first time and from step=1 I had terrible generations (totla mode collapse!)
         # so getting alpha right is very important
         total_number_of_steps = epochs*num_batches
-        fadein_steps = total_number_of_steps//2
+        # fadein_steps = total_number_of_steps//2
+        #update:
+        # instead of having half of steps to old res, 
+        # lets make it 80% so the other part gets to learn more
+        # not sure how it affects early layers need to test this once 
+        # for the full training
+        fadein_steps = int(total_number_of_steps*0.8)
         training_step_counter = 0
         alpha=0
         
@@ -5349,7 +5355,11 @@ generator_progan = generator_progan.to(device)
 # stable and gradients magnitudes more smooth.
 # (so too small beta2 can cause instability (huge weight updates, ossiliations) and too large values
 # can also make updates very slow and slow the convergence.)
-betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.99]
+#
+#! update:
+# change betas from 0-99 to 0.999 to make 32x32 stage stable
+# need to change this if things went south!
+betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.999]
 
 if loss_type=='lsgan':
     lr_d, lr_g = 0.0004, 0.0001
@@ -5560,7 +5570,10 @@ training_loop_progan(discriminator_progan,
 # isntead and see how that goes. that didnt work either. using default lr again didnt
 # work either. 
 # update:
-# disabled optimizer states when manually setting new decayed lr :
+# disabled optimizer states when manually setting new decayed lr : by doing this I noticed
+# when we resumed, the gp warnings quickly disapeared at each batch the gp magnitude decreased
+# from the intial 950! to 627 to 444 and ater a few other batches down to below 100! so the
+# optimizer state reset actually did something!
 # 
 #
 #
