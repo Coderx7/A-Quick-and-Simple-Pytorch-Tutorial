@@ -4565,11 +4565,13 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # to downsize the input instead of a larger stride
 
 class DiscBlockProGAN(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
         super().__init__()
-        self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
+        # update:
+        # the original paper disabled bias (I trained with bias=True just fine)
+        self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
-                                   nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
+                                   nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
                                   )
         
@@ -4665,7 +4667,8 @@ class PixelNorm(nn.Module):
 # as well as disciminator made training much more stable, because it allows much better
 # gradient flow. so we do the same here. since we have stages, we do the upsampling later in code
 class GenBlockProGAN(nn.Module):
-     def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+    #update: like discriminator the paper uses bias=False (I disabled it the second time im reviewing this)
+     def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
          super().__init__()
          
          self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size,
@@ -4817,7 +4820,8 @@ class GeneratorProGAN(nn.Module):
                                      PixelNorm(),)
         
         # we use this block to get image output(final layer)
-        self.toImgs = nn.ModuleList([GenBlockProGAN(channels[i], 3) for i in range(max_steps)])
+        # update: forgot tanh!
+        self.toImgs = nn.ModuleList([nn.Sequential(GenBlockProGAN(channels[i], 3), nn.Tanh()) for i in range(max_steps)])
         # print(f'{self.img_output=}')
         
         # and this to do the rest of processing. like before we only do chanel configs here and the
@@ -4933,8 +4937,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          noise_addition=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
+    
     lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
     lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
+    
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
     
@@ -5027,6 +5033,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             f'\n  --Checkpoint Path:       {checkpoint_path}'
             f'\n  --Last FID:              {checkpoint["FID"]}')
           
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -5300,7 +5308,7 @@ lambda_factor=10
 dataset_name = 'celeba'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-z_size = 128
+z_size = 128#original paper uses 512
 max_steps = 7
 # 4,8,16,32,64,128,256
 # I got out of memory(vram) when I hit 32x32!(because of previously allocated vram for
