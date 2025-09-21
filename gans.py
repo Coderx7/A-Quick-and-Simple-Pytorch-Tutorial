@@ -4564,14 +4564,70 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # a simple 2 conv layer block with leakyrelu and this tiem around we will be using aveagepooling
 # to downsize the input instead of a larger stride
 
+# update:
+# Initially when I first tried to implement this I completely forgot EqualizedConv2d
+# and faced a lot of issues and instablity during traing especially from 32x32 resolution
+# and higher! as I found out the hardway, this is crucial to have for a stable training!
+# see the debug logs at the end
+#
+# now whats the idea behind equalizedconv2d? This module/technique was porposed by the authors
+# to make all conv layers learn at the same or similar consistent speed. both similar and consistent
+# are important here. (it tries to make the learning rate independant of a layers input size)
+# if you look at the dbeug logs ahead, you'll see we faced a lot of issues when we passed 
+# certain threshold(32x32 res), we were doing fine until all of sudden everything would go south!
+# this would happen because normally, the (bad) initializations can cause the magnitude (dynamic range)
+# of the activations to explode or vanish as they go through different layers in the network 
+# which means some layers might have massive gradients while others might have very small ones.
+# this obviously will make the optimizers job extremely difficult. we faced this when BatchNorm wasnt
+# proposed in early days of deeplearng, we had to do careful initialization to get things to work. 
+# we saw this in our previous experiments as well. we now face the same issue here. 
+# to fix this we cant obviously use BN, and if we dont use it as you already know we face a lot of issues
+# so we try to have equalized learing rates! and this way we can keep the dynamic range of all 
+# features and gradients consistent throughout the whole network and therefore make training
+# several times more stable and less sensative to the overal learning rate!
+# a large part of the  issues we have been having like exploding gp, discriminator/generator imbalance 
+# all stem from this fact and this technique should fix that for us!
+#
+# in this technique instead of using a standard/normal weight initialization algorithm like
+# Xavier, or Kaiming He (the author used kaminghe) "once", we dynamically rescale every convolutional
+# layers weights at every single forward pass! the scaling factor is based on the kaiminghe initialization
+# initializer constant((sqrt(2/fanin)).
+# also note the paper uses bias=False but I included for experimentation!
+class EqualizedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=False):
+        super().__init__()
+        
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
+        # initialize the weights 
+        self.conv.weight.data.normal_(0,1)
+        
+        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+                
+        # scaler is sqrt(2/fan-in)
+        # instead of math.sqrt we could also do 
+        # self.scaler = (2/(in_channels * kernel_size* kernel_size))**0.5
+        # also since scaler can be computed at runtime, theres no need to have
+        # self.register_buffer("scaler",...) 
+        self.scaler = math.sqrt(2/(in_channels * kernel_size* kernel_size))
+        
+    def forward(self, x):
+        # scale the conv weights, note that in backprop, the gradients are calculated
+        # with respect to self.conv.weight normally, and our scaler here, a python scaler!
+        # mind you, just acts as a scaler (obviously) and scales the gradients so they stay
+        # uniformly scaled!
+        scaled_weights = self.conv.weight * self.scaler
+        return F.conv2d(x, scaled_weights, self.bias, stride=self.conv.stride, padding=self.conv.padding)
+                
+
 class DiscBlockProGAN(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
         super().__init__()
         # update:
         # the original paper disabled bias (I trained with bias=True just fine)
-        self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
+        # update2: we use EqualizedConv2d instead of conv2d in all layers
+        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
-                                   nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
                                   )
         
@@ -4671,11 +4727,11 @@ class GenBlockProGAN(nn.Module):
      def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
          super().__init__()
          
-         self.block = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size,
+         self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size,
                                               stride, padding, bias=bias),
                                     nn.LeakyReLU(0.2),
                                     PixelNorm(),
-                                    nn.Conv2d(out_channels, out_channels, kernel_size,
+                                    EqualizedConv2d(out_channels, out_channels, kernel_size,
                                               stride, padding, bias=bias),
                                     nn.LeakyReLU(0.2),
                                     PixelNorm())
@@ -4722,7 +4778,7 @@ class DiscriminatorProGAN(nn.Module):
         # update: using simple 1x1conv with leakyrelu seems to be the norm my version seems
         # to be abit too complex!
         # self.fromImgs = nn.ModuleList([DiscBlockProGAN(3, channels[i]) for i in range(max_steps)])
-        self.fromImgs = nn.ModuleList([nn.Sequential(nn.Conv2d(3, channels[i], kernel_size=1),
+        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, channels[i], kernel_size=1),
                                                      nn.LeakyReLU(0.02)) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
         
@@ -4743,10 +4799,10 @@ class DiscriminatorProGAN(nn.Module):
                                    AddBatchStdDev(),
                                    # our final layer works on the lowest res, so the channels[0]
                                    # is what we want here!
-                                   nn.Conv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
+                                   EqualizedConv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
                                    nn.LeakyReLU(0.2),
                                    # make the final 4x4 volume 1x1 at the end
-                                   nn.Conv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
+                                   EqualizedConv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
     
     def forward(self, x, alpha, step):
         # if we at the lowest res/depth/step simply
@@ -4784,6 +4840,25 @@ class DiscriminatorProGAN(nn.Module):
         # print(f'{out.shape=}')
         return out.view(-1,1)
  
+ # like convlayers, we need to implement Equalized learning rate fo convtransposed aswell
+class EqualizedConvTrans(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0,bias=False):
+        super().__init__()
+        
+        self.conv_trans = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride,
+                                             padding, output_padding, bias=bias)
+        # initialize the weights with normal distribution
+        self.conv_trans.weight.data.normal_(0,1)
+        
+        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+        # sqrt(2/fan-in)        
+        self.scaler = math.sqrt(2/(in_channels * kernel_size* kernel_size))
+        
+    def forward(self, x):
+        scaled_weights = self.conv_trans.weight * self.scaler
+        return F.conv_transpose2d(x, scaled_weights, self.bias, stride=self.conv_trans.stride,
+                                  padding=self.conv_trans.padding,
+                                  output_padding=self.conv_trans.output_padding)
 
 class GeneratorProGAN(nn.Module):
     def __init__(self, z_size, max_steps=6):
@@ -4806,7 +4881,7 @@ class GeneratorProGAN(nn.Module):
         print(f'{channels=}')
         # this is the first layer we use to get latent vector and build a 4x4 initial output which
         # is then processed by the blocks and the rest.
-        self.initial = nn.Sequential(nn.ConvTranspose2d(z_size, channels[0], 4, 1, 0),
+        self.initial = nn.Sequential(EqualizedConvTrans(z_size, channels[0], 4, 1, 0),
                                     # we could also do 
                                     # nn.Linear(z_size, channels[0]* 4*4),
                                     # nn.Unflatten(dim=1,unflattened_size=(z_size,4,4)),
@@ -4819,7 +4894,7 @@ class GeneratorProGAN(nn.Module):
                                     # but not now well see how to do this in stylegan!
                                      nn.LeakyReLU(0.2),
                                      PixelNorm(),
-                                     nn.Conv2d(channels[0], channels[0], kernel_size=3,padding=1),
+                                     EqualizedConv2d(channels[0], channels[0], kernel_size=3,padding=1),
                                      nn.LeakyReLU(0.2),
                                      PixelNorm(),)
         
@@ -4829,7 +4904,7 @@ class GeneratorProGAN(nn.Module):
         # seems to be too complex and this might be one of the reasons why Im having so much
         # difficulty post 32x32 resolution. see debug log at the end for more information!
         # self.toImgs = nn.ModuleList([nn.Sequential(GenBlockProGAN(channels[i], 3), nn.Tanh()) for i in range(max_steps)])
-        self.toImgs = nn.ModuleList([nn.Sequential(nn.Conv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
+        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
         # print(f'{self.img_output=}')
         
         # and this to do the rest of processing. like before we only do chanel configs here and the
@@ -5628,8 +5703,23 @@ training_loop_progan(discriminator_progan,
 # the discriinator! it consitently was lower than discriminator from the very begiing
 # up to the 16x16 res epoch 5 where I ended the experiment.
 # now I want to increase discriminators loss to 0.0002 so its larger than generator!
-#
-#
+# that didntg help. even going as high as 0.0007 didnt help. the generator loss would
+# still be lower and we would also face exploding gp! it was bad andtrainig wsant going
+# smoothly. so I ended it.
+# update:
+# I simplified my fromImg and ToImg layers, and instead use a simple 1x1 conv and leaklyrelu
+# for discriminator(fromImg) and 1x1conv with tanh for toImg. this stablized the training a lot!
+# however the loss for discriminator and generator although very good/healthy (1 digit loss)
+# are very close, very close to each other, and it went on for many epochs up unti 16x16 epoch 13
+# which I ended the trainig. none of them could overpower the other, or get the higher hand!
+# and it seemed we were going at a very slow pace if at all!
+# update2:
+# I noticed I missed a crucial part of Progan which was Equalized learning rate, basically
+# dynamically scaling conv layers weights so the gradients are uniform and we dont face 
+# exploding or vanishing gradients issue. 
+# update:
+# after adding Equalized learning rate modules, the loss has drastically decreased! and the
+# trainig has been way more stable!
 #
 #
 #
