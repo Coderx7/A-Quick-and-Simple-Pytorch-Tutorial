@@ -757,7 +757,7 @@ for epoch in range(epochs):
                 "epoch":epoch,
                 "losses":losses,
                 "dataset_name":dataset_name,
-                }, f"./weights/dcgan_generatorcnn_{experiment_date}.pt")
+                }, f"./weights/gan/dcgan_generatorcnn_{experiment_date}.pt")
     
     # generate some images mid training to evaluate our model's performance 
     with torch.no_grad():
@@ -781,7 +781,7 @@ plt.show()
 
 #%%
 # load a checkpoint and lets run some experiments on latent space
-states = torch.load('./weights/dcgan_generatorcnn_20250812172504.pt',map_location="cpu", weights_only=False)
+states = torch.load('./weights/gan/dcgan_generatorcnn_20250812172504.pt',map_location="cpu", weights_only=False)
 z_size = states["z_size"]
 hidden_size = states["hidden_size"]
 dataset_name = states["dataset_name"]
@@ -1201,7 +1201,7 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
         imgs_grid = utils.make_grid(imgs,nrow=ncols)
         results.append(imgs_grid)
     return torch.stack(results)
-
+#%%
 seed = 10
 np.random.seed(seed)
 random_gen = torch.manual_seed(seed)
@@ -1791,7 +1791,7 @@ for epoch in range(epochs):
                 "epoch":epoch,
                 "losses":losses,
                 "dataset_name":dataset_name,
-                }, f"./weights/dcgan_generatorcnnconditional_{experiment_date}.pt")
+                }, f"./weights/gan/dcgan_generatorcnnconditional_{experiment_date}.pt")
     
     # generate some images mid training to evaluate our model's performance 
     with torch.no_grad():
@@ -1813,7 +1813,7 @@ plt.legend()
 plt.show()
 #%%
 # load a checkpoint and lets run some experiments on latent space
-states = torch.load('./weights/dcgan_generatorcnnconditional_20250813125606.pt',
+states = torch.load('./weights/gan/dcgan_generatorcnnconditional_20250813125606.pt',
                     map_location='cpu',
                     weights_only=False)
 
@@ -3091,7 +3091,7 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
 def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.optim.Adam, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
                   lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, wgan_range=(-0.01, 0.01),
-                  noise_addition=False,device='cuda', weights_save_dir='./weights', images_save_dir='./results/gan'):
+                  noise_addition=False,device='cuda', weights_save_dir='./weights/gan', images_save_dir='./results/gan'):
     
     lr_d = [p['lr'] for p in disc_optimizer.param_groups]
     lr_g = [p['lr'] for p in gen_optimizer.param_groups]
@@ -3386,7 +3386,7 @@ training_loop(discriminatorcnn,
 # dcgan_generatorcnn_wgangp_20250830150142
 # dcgan_generatorcnn_wgangp_20250901143328.pt
 # try models for sep 1 (20250901) after 17 which I applied the latest changes!
-checkpoint = torch.load("./weights/dcgan_generatorcnn_wgangp_20250901143328.pt",
+checkpoint = torch.load("./weights/gan/dcgan_generatorcnn_wgangp_20250901143328.pt",
                         map_location="cpu",
                         weights_only=False)
 
@@ -5557,7 +5557,11 @@ training_loop_progan(discriminator_progan,
 # the generator!lets make the difference a bit lower like 1.2 and see how it goes
 # it didnt work and generator loss went south in 3 epochs. going with 1.1 didnt change
 # anything it was insignificant and lead to mode collapse. trying to decay lr in step4
-# isntead and see how that goes.
+# isntead and see how that goes. that didnt work either. using default lr again didnt
+# work either. 
+# update:
+# disabled optimizer states when manually setting new decayed lr :
+# 
 #
 #
 #
