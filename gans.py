@@ -4719,7 +4719,11 @@ class DiscriminatorProGAN(nn.Module):
         # like the name implies this part deals with image input exclusively. for each stage/step/depth
         # of the network, we assign a dedicated imageprocessor (layer thataccepts images) and produces
         # the output with proper number of channels for the next block to porcess
-        self.fromImgs = nn.ModuleList([DiscBlockProGAN(3, channels[i]) for i in range(max_steps)])
+        # update: using simple 1x1conv with leakyrelu seems to be the norm my version seems
+        # to be abit too complex!
+        # self.fromImgs = nn.ModuleList([DiscBlockProGAN(3, channels[i]) for i in range(max_steps)])
+        self.fromImgs = nn.ModuleList([nn.Sequential(nn.Conv2d(3, channels[i], kernel_size=1),
+                                                     nn.LeakyReLU(0.02)) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
         
         # and this part deals with the rest of processing, each block belongs to separate stage/step/depth
@@ -4821,7 +4825,11 @@ class GeneratorProGAN(nn.Module):
         
         # we use this block to get image output(final layer)
         # update: forgot tanh!
-        self.toImgs = nn.ModuleList([nn.Sequential(GenBlockProGAN(channels[i], 3), nn.Tanh()) for i in range(max_steps)])
+        # update2: like discriminator only a single 1x1 conv layer should be enough my version
+        # seems to be too complex and this might be one of the reasons why Im having so much
+        # difficulty post 32x32 resolution. see debug log at the end for more information!
+        # self.toImgs = nn.ModuleList([nn.Sequential(GenBlockProGAN(channels[i], 3), nn.Tanh()) for i in range(max_steps)])
+        self.toImgs = nn.ModuleList([nn.Sequential(nn.Conv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
         # print(f'{self.img_output=}')
         
         # and this to do the rest of processing. like before we only do chanel configs here and the
@@ -5389,10 +5397,19 @@ else:#wgangp
     # later steps, the resolution becomes larger, it becomes way harder to
     # get things right and discrimnator/genertaor clash can destablize trainng
     # really quickly (see the logs below)
-    lr_d, lr_g = 0.0001, 0.0001#0.001, 0.002
+    # update: 
+    # part of this issue was I missed tanh from toimg layers in generator
+    # when I fixed that lr=0.0001 for both disc and gen lead to generator
+    # constantly having lower loss than discriminator (which wasnt the case
+    # before. so I increased the lr for discriminator to see how it goes)
+    # ok no matter what I do the the generator gets lower loss (I used x7
+    # larger lr for disciminator but still no luck(I even got large gp which is bad
+    # so I need to change it. reverted it back to 0.0001 for both.
+    # see debug log ahead!)
+    lr_d, lr_g = 0.0001, 0.0001#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
-decay_step = 3
+decay_step = 5
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -5409,7 +5426,7 @@ training_loop_progan(discriminator_progan,
                      loss_type=loss_type, 
                      lambda_factor=lambda_factor,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
-                     noise_addition=True,
+                     noise_addition=False,
                      device=device,
                      resume=False,
                      decay_step=decay_step)
@@ -5604,7 +5621,13 @@ training_loop_progan(discriminator_progan,
 # seemed to work at first but later on I faced the same issue, the loss for both started to
 # get really large (i,e, 140/190 etc) so I changed again and tried running this with noise=True
 # and more epochs for 8x8 and larger res to see if that helps
-# 
+# update:
+# I noticed I missed tanh from toimg layers in generator which output images!
+# I also set bias=False for all conv layers as the paper did the same!
+# when I started training again, I noticed now the generator has lower loss than 
+# the discriinator! it consitently was lower than discriminator from the very begiing
+# up to the 16x16 res epoch 5 where I ended the experiment.
+# now I want to increase discriminators loss to 0.0002 so its larger than generator!
 #
 #
 #
