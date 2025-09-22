@@ -5039,6 +5039,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 
     starting_step = 0
+    starting_epoch = 0
     max_steps = discriminator.max_steps
     z_size = generator.z_size
     # check for resuming from a checkpoint
@@ -5094,7 +5095,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         starting_step = checkpoint["step"]
         decay_step = checkpoint.get("decay_step", decay_step)
         epoch_list = checkpoint["epoch_list"]
-        epoch = checkpoint["epoch"]
+        starting_epoch = checkpoint["epoch"]
         batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
         gen_update_interval = checkpoint["gen_update_interval"]
@@ -5108,7 +5109,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # so a +1 here puts us at the right place. note this is only the case if the checkpoint was
         # saved at the final epoch of that step, otherwise it means we are at the middle of a step
         # and we shouldnt change anything!
-        if epoch == epoch_list[starting_step]:
+        if starting_epoch == epoch_list[starting_step]:
             starting_step += 1
 
     
@@ -5116,7 +5117,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
             f'\n  --From Step:             {starting_step}'
-            f'\n  --From Epoch:            {epoch}'
+            f'\n  --From Epoch:            {starting_epoch}'
             f'\n  --Checkpoint Path:       {checkpoint_path}'
             f'\n  --Last FID:              {checkpoint["FID"]}')
           
@@ -5205,7 +5206,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
         current_lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
         current_lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
-        
+
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                      {epochs} ')
         print(f'  --BatchSize:                   {batch_size} ')
@@ -5215,11 +5216,11 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         print(f'  --Current Generator LR:        {current_lr_g}')
         print(f'  --Current Discriminator Betas: {betas_d}')
         print(f'  --Current Generator Betas:     {betas_g}')
-    
-        for epoch in range(epochs):
+
+        for epoch in range(starting_epoch, epochs):
             discriminator.train()
             generator.train()
-            	
+
             losses = []
             epoch_scores = []
             for i, (imgs_real, _) in enumerate(train_loader):
