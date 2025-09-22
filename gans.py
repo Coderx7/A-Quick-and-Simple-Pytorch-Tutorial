@@ -5316,7 +5316,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # losses.append((disc_loss.item(), gen_real_loss.item()))
                     # print discriminator and generator loss
                     print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
-                    print(f" -- Batch-{i}: Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean = {disc_fake_mean:.4f}")
+                    # we want high positive score/number for real_mean and lower positive or <real for fake mean
+                    print(f" -- Batch-{i}: Disc's real mean(↑+): {disc_real_mean:.4f} | Disc's fake mean(↓ or <real): {disc_fake_mean:.4f}")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
@@ -5340,9 +5341,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # calculate is/fid scores
             IS_score = metric.compute_IS(imgs_fake)
             FID_score = metric.compute_FID(imgs_real, imgs_fake)
-        
-            print(f" -- Last Batch : Disc's real mean: {disc_real_mean:.4f} | Disc's fake mean: {disc_fake_mean:.4f}")
-            print(f" -- Epoch's Avg: Disc's real mean: {average_score_real_mean:.4f} | Disc's fake mean: {average_score_fake_mean:.4f}")
+            
+            print(f" -- Last Batch : Disc's real mean(↑): {disc_real_mean:.4f} | Disc's fake mean(↓ or <real): {disc_fake_mean:.4f}")
+            print(f" -- Epoch's Avg: Disc's real mean(↑): {average_score_real_mean:.4f} | Disc's fake mean(↓ or <real): {average_score_fake_mean:.4f}")
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
@@ -5486,7 +5487,7 @@ else:#wgangp
     # larger lr for disciminator but still no luck(I even got large gp which is bad
     # so I need to change it. reverted it back to 0.0001 for both.
     # see debug log ahead!)
-    lr_d, lr_g = 0.0001, 0.0001#0.0001, 0.0001 
+    lr_d, lr_g = 0.0003, 0.0001#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
 decay_step = 5
@@ -5508,7 +5509,7 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=True,
+                     resume=False,
                      decay_step=decay_step)
 
 #%%
