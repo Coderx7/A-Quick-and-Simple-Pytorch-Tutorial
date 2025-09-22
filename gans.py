@@ -4565,33 +4565,36 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # to downsize the input instead of a larger stride
 
 # update:
-# Initially when I first tried to implement this I completely forgot EqualizedConv2d
+# Initially when I first tried to implement this I completely forgot Equalized Learning Rate
 # and faced a lot of issues and instablity during traing especially from 32x32 resolution
 # and higher! as I found out the hardway, this is crucial to have for a stable training!
 # see the debug logs at the end
 #
-# now whats the idea behind equalizedconv2d? This module/technique was porposed by the authors
-# to make all conv layers learn at the same or similar consistent speed. both similar and consistent
-# are important here. (it tries to make the learning rate independant of a layers input size)
-# if you look at the dbeug logs ahead, you'll see we faced a lot of issues when we passed 
-# certain threshold(32x32 res), we were doing fine until all of sudden everything would go south!
+# now whats the idea behind equalize learning rate? the idea behind this was to make all 
+# conv layers learn at the same or similar consistent speed. both similar and consistent
+# are important here. in other words, to decouple the learning rate from the magnitudes 
+# of weights in the conv layers.(or we could also say to make the learning rate independant 
+# of a layers input size). if you look at the dbeug logs ahead, you'll see we faced a lot of
+# issues when we passed certain threshold(32x32 res), we were doing fine until all of sudden
+# everything would go south!
 # this would happen because normally, the (bad) initializations can cause the magnitude (dynamic range)
 # of the activations to explode or vanish as they go through different layers in the network 
 # which means some layers might have massive gradients while others might have very small ones.
-# this obviously will make the optimizers job extremely difficult. we faced this when BatchNorm wasnt
-# proposed in early days of deeplearng, we had to do careful initialization to get things to work. 
-# we saw this in our previous experiments as well. we now face the same issue here. 
-# to fix this we cant obviously use BN, and if we dont use it as you already know we face a lot of issues
-# so we try to have equalized learing rates! and this way we can keep the dynamic range of all 
-# features and gradients consistent throughout the whole network and therefore make training
-# several times more stable and less sensative to the overal learning rate!
-# a large part of the  issues we have been having like exploding gp, discriminator/generator imbalance 
-# all stem from this fact and this technique should fix that for us!
+# this obviously will make the optimizers job extremely difficult. we faced this when BatchNorm
+# couldnt be used, we saw this in our previous experiments as well where we had to do careful
+# initialization to get things to work. we now face the same issue here. 
+# to fix this we cannot obviously use BN, and if we dont use it as you already know we face a 
+# lot of issues so we try to have equalized learing rates! this way we can keep the magnitude 
+# of all features and gradients consistent throughout the whole network and therefore make 
+# training several times more stable and less sensative to our choice of learning rate!
+# (a large part of the  issues we have been having like exploding gp, discriminator/generator imbalance 
+# all stem from this fact and this technique should fix that for us!)
 #
-# in this technique instead of using a standard/normal weight initialization algorithm like
-# Xavier, or Kaiming He (the author used kaminghe) "once", we dynamically rescale every convolutional
-# layers weights at every single forward pass! the scaling factor is based on the kaiminghe initialization
-# initializer constant((sqrt(2/fanin)).
+# to implement this equalization/normalization technique, instead of using a standard/normal weight
+# initialization algorithm like Xavier, or Kaiming He (the author used kaminghe) "once", we 
+# rescale every convolutional layers weights at every single forward pass! the scaling factor
+# that we use is the same as the one used in KamingHe initialization algotrithm( i.e. sqrt(2/fanin)).
+# and thats it!
 # also note the paper uses bias=False but I included for experimentation!
 class EqualizedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=False):
@@ -4606,18 +4609,18 @@ class EqualizedConv2d(nn.Module):
         # scaler is sqrt(2/fan-in)
         # instead of math.sqrt we could also do 
         # self.scaler = (2/(in_channels * kernel_size* kernel_size))**0.5
-        # also since scaler can be computed at runtime, theres no need to have
-        # self.register_buffer("scaler",...) 
+        # note since scaler can be computed at runtime, theres no need to have
+        # self.register_buffer("scaler",...) to preserve it for inference!
         self.scaler = math.sqrt(2/(in_channels * kernel_size* kernel_size))
         
     def forward(self, x):
         # scale the conv weights, note that in backprop, the gradients are calculated
-        # with respect to self.conv.weight normally, and our scaler here, a python scaler!
-        # mind you, just acts as a scaler (obviously) and scales the gradients so they stay
-        # uniformly scaled!
+        # with respect to self.conv.weight normally, and our scaler here, a python scaler
+        # mind you!, just acts as a scaler (obviously) and scales the gradients so they stay
+        # uniformly scaled!!
         scaled_weights = self.conv.weight * self.scaler
         return F.conv2d(x, scaled_weights, self.bias, stride=self.conv.stride, padding=self.conv.padding)
-                
+
 
 class DiscBlockProGAN(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
@@ -5113,6 +5116,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
             f'\n  --From Step:             {starting_step}'
+            f'\n  --From Epoch:            {epoch}'
             f'\n  --Checkpoint Path:       {checkpoint_path}'
             f'\n  --Last FID:              {checkpoint["FID"]}')
           
@@ -5503,7 +5507,7 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=False,
+                     resume=True,
                      decay_step=decay_step)
 
 #%%
