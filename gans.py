@@ -5017,6 +5017,58 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
         print(f'WARNING: High Gradient Policy: {gp.item():.2f}')
     return wgan_loss + (lambda_factor*gp)
 
+# update: 
+# added this later to make reading logs much easier
+# todo: check values and tune them more accurately
+def get_status(score, higher_is_better=True):
+    if higher_is_better:
+        # for real score we want high positive numbers
+        # any positive number is good!
+        if score >0.8:
+            return "🟢"
+        
+        # ok, but worrisome, we want large positive nubers
+        # nothing close to 0!
+        elif score >0.4: 
+            return "🟡"
+        
+        # if its smaller than 0.4 we are in trouble! discriminator
+        # /critic is not learning! it has no idea what is real and
+        # whats not and is not giving high score to real images!
+        else:
+            return "🔴"
+    else:
+        # fake_score needs to be close to 0 or less!
+        # so any negative number for fake is good!
+        if score < 0.2:
+            return "🟢"
+        # if its larger its okish, but its worrisome it needs to
+        # get lower and lower, otherwise it means discriminator/
+        # critic has no idea about fake/real and generator may be
+        # winning
+        elif score < 0.6:
+            return "🟡"
+        # its larger than 0.6! and the generator may be wining!
+        else:
+            # larger than that its not good!
+            return "🔴"
+
+def get_overall_status(real_score, fake_score):
+    is_seperated = real_score > fake_score
+    if is_seperated:
+        # check for mode collapse, if both scores are low and fakescore
+        # is close to zero or discriminator hasnt given high score to real
+        # images, then the generator may be wining!
+        if real_score <0.3 and fake_score<0.3:
+            return "⚠️"
+        else:
+            return "✅"
+
+    else:
+        # we have an issue, and the discriminator may have collapsed or
+        # be going to! (we have inverted discriminator)‼️
+        return "❌"
+
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
@@ -5316,8 +5368,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # losses.append((disc_loss.item(), gen_real_loss.item()))
                     # print discriminator and generator loss
                     print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
-                    # we want high positive score/number for real_mean and lower positive or <real for fake mean
-                    print(f" -- Batch-{i}: Disc's real mean(↑+): {disc_real_mean:.4f} | Disc's fake mean(↓ or <real): {disc_fake_mean:.4f}")
+                    # we want high positive score/number for real_mean and
+                    # lower positive or <real for fake mean
+                    status_r = get_status(disc_real_mean, higher_is_better=True)
+                    status_f = get_status(disc_fake_mean, higher_is_better=False)
+                    status_o = get_overall_status(disc_real_mean, disc_fake_mean)
+                    print(f" -- {status_o} Batch-{i}: Disc's real mean: {status_r} {disc_real_mean:.4f} | Disc's fake mean:  {status_f} {disc_fake_mean:.4f}")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
@@ -5337,13 +5393,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
             average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
-
+            
+            status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
+            status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
+            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean)
+            
             # calculate is/fid scores
             IS_score = metric.compute_IS(imgs_fake)
             FID_score = metric.compute_FID(imgs_real, imgs_fake)
             
-            print(f" -- Last Batch : Disc's real mean(↑): {disc_real_mean:.4f} | Disc's fake mean(↓ or <real): {disc_fake_mean:.4f}")
-            print(f" -- Epoch's Avg: Disc's real mean(↑): {average_score_real_mean:.4f} | Disc's fake mean(↓ or <real): {average_score_fake_mean:.4f}")
+            print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:.4f} 📉")
+            print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:.4f} 📉")
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
