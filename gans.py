@@ -3015,7 +3015,7 @@ class IS_FID_Calculator():
         # celeba have diferent splits like train, extra, test so if user
         # tries to use different splits, we should be able to handle it
         if dataset_name and self._stats_exists(dataset_name, split):
-            print(f'Using FID stats for Real images from cache...')
+            print(f'Using FID stats for {dataset_name}-{split} from cache...')
             real_mean, real_cov = self._read_existing_file(dataset_name, split)
         else:
             real_mean,real_cov = self._get_FID_mean_covariance(real_imgs)
@@ -3094,21 +3094,43 @@ imgs = torch.randn(size=(10,3,32,32))
 metric = IS_FID_Calculator()
 iss = metric.compute_IS(imgs)
 fids = metric.compute_FID(imgs,imgs)
-torch.cuda.synchronize()
+# note we are feeding noise! so we should get (1,0)
 print(f'{iss=}')
+# note we are feeding noise as well, but we compare them 
+# against eachother, so our fid should show us they are 
+# very close so we should get a low number around 0!
 print(f'{fids=}')
 del metric
 gc.collect()
 #%%
 # test with dataloaders
-dataset_name = 'cifar10'
+dataset_name = 'celeba'
+split='train' # train, test, extra(for celeba)
 batch_size=64
-loader = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
+loader = get_dataloader(dataset_name=dataset_name, split=split, batch_size=batch_size)
 loader2 = iter(loader)
 metric = IS_FID_Calculator(device='cuda')
 iss = metric.compute_IS(loader)
-fids = metric.compute_FID(loader,loader2, dataset_name, split="train")
+fids = metric.compute_FID(loader,loader2, dataset_name=dataset_name, split=split)
+# note when we used a real dataset we get a much larger mean and a small std
+# (for cifar10 I get mu=7.44 and std=0.07. which if we look back we can see the mean is
+# much larger than the random noise which was N(1,0) really. the mean/std can be differnt
+# for different datasets (for example for celeba-train its iss=(2.8332451581954956, 0.012351234134362015)
+# but nonetheless this goes to show if we get small means, as low as 1 or around it, 
+# it means our generator has collapsed!
+# note that this number is only valid if we used a large number of images, like around
+# 10k and more. cifar10 training has 50k images! and if we try the test split we get
+# a bit different score (we get slightly different numbers: note we get larger std for
+# test as the number of samples is smaller
+# iss(train)=(7.4428346157073975, 0.07107214257352347)
+# iss(test )=(7.255614423751831, 0.2497227828365655)
 print(f'{iss=}')
+# looking athe fid we can also see, the score is extremely small, for me I get -0.001
+# which shows giving absolutely identical images (we used  the same loader by coping 
+# only the iterator) we get that small number. if we use cifar10 test we get slightly
+# larger number, so larger images give more accurate estimate
+# fids(train)=-0.0010211613262072206
+# fids(test )=-0.0026117772795259953
 print(f'{fids=}')
 del metric
 gc.collect()
