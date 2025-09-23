@@ -2829,6 +2829,11 @@ print(f'{goutput.shape=}')
 # and is used in BigGAN, StyleGAN, other generative models like diffusion models (which 
 # we'll see in diffusion chapter).
 # so we will be using FID but will also have IS and compare them 
+# 
+# update: 
+# added support for dataloader so we can get more accurate estimates 
+# I happened to need them for easier debugging later on (progan section)
+
 from scipy import linalg
 class IS_FID_Calculator():
     def __init__(self, device='cpu'):
@@ -2891,14 +2896,29 @@ class IS_FID_Calculator():
     #     self.model(imgs)
         
     @torch.no_grad()
-    def compute_IS(self, images, splits=10):
+    def compute_IS(self, inputs, splits=10):
         # calculate IS = exp(Ex​[KL(p(y∣x) ∥ p(y))]), p(y)=Ex​[p(y∣x)]
         # Ex is expectation of x
         # assign back the classifier in case FID was called
         self.model.fc = self.fc
-        images = self._preprocess(images)
-        preds = self.model(images).softmax(dim=-1)
-                
+        
+        # if we have a batch of images run them quickly
+        if isinstance(inputs, torch.Tensor):
+            inputs = inputs.to(self.device)
+            processed_imgs = self._preprocess(inputs)
+            preds = self.model(processed_imgs).softmax(dim=-1).cpu()
+        
+        else:
+            # otherwise we have a dataloader, because we need to process 
+            # at least 10k! or more images to get an accurate estimate!
+            preds = []
+            for imgs,_ in inputs:
+                imgs = imgs.to(self.device)
+                processed_imgs = self._preprocess(imgs)
+                out = self.model(processed_imgs).softmax(dim=-1).cpu()
+                preds.append(out)
+            preds = torch.cat(preds)
+            
         # to calculate the IS score, we can do it in one go
         # or do it in splits as the authors did. if we do
         # this in one go, we would only get a single score
@@ -2943,9 +2963,21 @@ class IS_FID_Calculator():
         return float(np.mean(scores)), float(np.std(scores))
 
     @torch.no_grad()
-    def _get_FID_mean_covariance(self, imgs):
-        imgs = self._preprocess(imgs)
-        features = self.model(imgs)
+    def _get_FID_mean_covariance(self, inputs):
+        # if inputs is a batch of images
+        if isinstance(inputs, torch.Tensor):
+            inputs = inputs.to(self.device)
+            processed_imgs = self._preprocess(inputs)
+            features = self.model(processed_imgs).cpu()
+        else:
+            preds = []
+            for imgs,_ in inputs:
+                imgs = imgs.to(self.device)
+                processed_imgs = self._preprocess(imgs)
+                features = self.model(processed_imgs).cpu()
+                preds.append(features)
+            features = torch.cat(preds)
+
         mean = features.mean(dim=0)
         covariance = torch.cov(features.T)
         return mean, covariance
@@ -2991,7 +3023,7 @@ class IS_FID_Calculator():
         # pytorch doesnt offer sqrtm function (tf does by the way!) so we
         # have to use scipy for sqrtm.
         cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
-        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).to(real_imgs.device)
+        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).cpu()
         # if the result contains imaginary components, get rid of it!
         if torch.is_complex(cov_prod_sqrt):
             cov_prod_sqrt = cov_prod_sqrt.real
@@ -3034,6 +3066,19 @@ iss = metric.compute_IS(imgs)
 fids = metric.compute_FID(imgs,imgs+torch.randn_like(imgs))
 print(f'{iss=}')
 print(f'{fids=}')
+del metric
+# test with dataloaders
+#%%
+dataset_name = 'cifar10'
+batch_size=64
+loader1 = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
+loader2 = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
+metric = IS_FID_Calculator(device='cuda')
+iss = metric.compute_IS(loader1)
+fids = metric.compute_FID(loader1,loader2)
+print(f'{iss=}')
+print(f'{fids=}')
+
 #%%
 # lets add a few more datasets 
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
@@ -5417,7 +5462,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     status_r = get_status(disc_real_mean, higher_is_better=True)
                     status_f = get_status(disc_fake_mean, higher_is_better=False)
                     status_o = get_overall_status(disc_real_mean, disc_fake_mean)
-                    print(f" -- {status_o} Batch-{i}:  Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean:  {status_f} {disc_fake_mean:+.4f} 📉")
+                    print(f" -- {status_o} Batch-{i}:  Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
@@ -6126,9 +6171,9 @@ training_loop_progan(discriminator_progan,
 #%%
 checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_5_20250922102238.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-# print(*checkpoint.keys(),sep='\n')
-# checkpoint["decay_step"] = 7
-# print(checkpoint["decay_step"])
+print(*checkpoint.keys(),sep='\n')
+# checkpoint["lr_d"] = 0.0003
+print(checkpoint["lr_d"])
 # print(*checkpoint.keys(),sep='\n')
 #%%
 # torch.save(checkpoint,checkpoint_path)
