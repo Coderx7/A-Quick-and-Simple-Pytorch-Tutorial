@@ -20,6 +20,7 @@
 # real looking images. 
 # so lets see how we can do this
 import os
+import gc
 from datetime import datetime
 from pathlib import Path
 
@@ -2906,7 +2907,7 @@ class IS_FID_Calculator():
         if isinstance(inputs, torch.Tensor):
             inputs = inputs.to(self.device)
             processed_imgs = self._preprocess(inputs)
-            preds = self.model(processed_imgs).softmax(dim=-1).cpu()
+            preds = self.model(processed_imgs).softmax(dim=-1)
         
         else:
             # otherwise we have a dataloader, because we need to process 
@@ -2915,7 +2916,7 @@ class IS_FID_Calculator():
             for imgs,_ in inputs:
                 imgs = imgs.to(self.device)
                 processed_imgs = self._preprocess(imgs)
-                out = self.model(processed_imgs).softmax(dim=-1).cpu()
+                out = self.model(processed_imgs).softmax(dim=-1)
                 preds.append(out)
             preds = torch.cat(preds)
             
@@ -2968,13 +2969,13 @@ class IS_FID_Calculator():
         if isinstance(inputs, torch.Tensor):
             inputs = inputs.to(self.device)
             processed_imgs = self._preprocess(inputs)
-            features = self.model(processed_imgs).cpu()
+            features = self.model(processed_imgs)
         else:
             preds = []
             for imgs,_ in inputs:
                 imgs = imgs.to(self.device)
                 processed_imgs = self._preprocess(imgs)
-                features = self.model(processed_imgs).cpu()
+                features = self.model(processed_imgs)
                 preds.append(features)
             features = torch.cat(preds)
 
@@ -3023,7 +3024,7 @@ class IS_FID_Calculator():
         # pytorch doesnt offer sqrtm function (tf does by the way!) so we
         # have to use scipy for sqrtm.
         cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
-        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).cpu()
+        cov_prod_sqrt = torch.from_numpy(cov_prod_sqrt).to(self.device)
         # if the result contains imaginary components, get rid of it!
         if torch.is_complex(cov_prod_sqrt):
             cov_prod_sqrt = cov_prod_sqrt.real
@@ -3059,26 +3060,30 @@ class IS_FID_Calculator():
         # so to get real score we need to use large number of images!
         fid = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
         return fid.item()
-
+#%%
 imgs = torch.randn(size=(10,3,32,32))
 metric = IS_FID_Calculator()
 iss = metric.compute_IS(imgs)
 fids = metric.compute_FID(imgs,imgs+torch.randn_like(imgs))
+torch.cuda.synchronize()
 print(f'{iss=}')
 print(f'{fids=}')
 del metric
-# test with dataloaders
+gc.collect()
 #%%
+import time
+# test with dataloaders
 dataset_name = 'cifar10'
 batch_size=64
-loader1 = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
-loader2 = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
+loader = get_dataloader(dataset_name=dataset_name, split='train', batch_size=batch_size)
+loader2 = iter(loader)
 metric = IS_FID_Calculator(device='cuda')
-iss = metric.compute_IS(loader1)
-fids = metric.compute_FID(loader1,loader2)
+iss = metric.compute_IS(loader)
+fids = metric.compute_FID(loader,loader2)
 print(f'{iss=}')
 print(f'{fids=}')
-
+del metric
+gc.collect()
 #%%
 # lets add a few more datasets 
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
