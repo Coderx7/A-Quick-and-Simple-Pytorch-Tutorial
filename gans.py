@@ -5267,7 +5267,8 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
             current_batch_size = min(batch_size, num_samples - i*batch_size)
             z = torch.randn(size=(current_batch_size, gen.z_size), device=device)
             fakes = gen(z, alpha, step)
-            yield fakes
+            # return a tuple to mimic an actual dataloader!
+            yield fakes, torch.zeros((current_batch_size,1))
     
     IS_score = metric.compute_IS(fake_loader(num_samples, batch_size, alpha, step))
     FID_score = metric.compute_FID(real_loader,
