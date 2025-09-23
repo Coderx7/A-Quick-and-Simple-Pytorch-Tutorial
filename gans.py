@@ -5053,21 +5053,65 @@ def get_status(score, higher_is_better=True):
             # larger than that its not good!
             return "🔴"
 
-def get_overall_status(real_score, fake_score):
-    is_seperated = real_score > fake_score
-    if is_seperated:
-        # check for mode collapse, if both scores are low and fakescore
-        # is close to zero or discriminator hasnt given high score to real
-        # images, then the generator may be wining!
-        if real_score <0.3 and fake_score<0.3:
-            return "⚠️"
-        else:
-            return "✅"
+def get_overall_status(real_mean, fake_mean, IS_score=None):
+    is_seperated = real_mean > fake_mean
+    
+    # to have better control we first check for the worse case
+    # scenario and then go from there to milder cases until we
+    # get to the ok case!
+    
+    # # using IS_score we can also quickly show if we have mode collapse
+    # # or not. the mean must be larger than 1, the more the better, if
+    # # its close to 1 (e.g. 1.1) or 1, the generator has collapsed! we
+    # # cant have that! 
+    # # also the variance must obviously be large, a low
+    # # variance or worst! 0, means low diversity or no diversity if its
+    # # too small(practically zero) and means the generator has collpased
+    # # 
+    # # is_std measures consitency, lower value is better it means generator
+    # # is doing a good job creating the same quality images, but it needs
+    # to be done in large amounts (10k) not our 128! this is wrong and I need
+    # to make this right 
+    # is_mu, is_std = IS_score
+    
+    # if the discriminator cant decide what real is and assings higher
+    # score to the fake image, we have a serious issue!
+    # the discriminator may have collapsed or be going to! 
+    # (we have flipped discriminator instead of giving + to real its treating
+    # fakes as real and giving them higher scores than it gives to the real ones)‼️
+    if not is_seperated:
+        return "❌"
+    
+    # # check for mode collapse
+    # if IS_mu <=1.2:
+    #     return "❌"
+    
+    # if the fake_score is larger than 0 regardless of the real_score, 
+    # we may be going toward mode collapse! fake_score needs to be a small
+    # number close to zero or preferably negative. the more negative the better!
+    # so when its not negative, and its not early in the traiing, the discriminator
+    # is either weak or the generator as already collpased and has found a 
+    # pattern/image/way to keep fooling the discrminitator as being real
+    # we can know this with more certainity using IS score. if the variance is too
+    # tiny or zero, it means we have no diversity and generator is basically using
+    # a single image/pattern e.g. to fool the discriminator
+    elif fake_mean >= 0:
+            return "☣️"
+
+    # real score needs to be larger than fake score thats the base line but
+    # they also need to be far away from eachother. the discriminator is supposed
+    # to give large positive scores to the real image and tiny score to the fakes
+    # so if they are both positive, they need to be a large gap between them.
+    # here we say if the difference is less than 1, then they are too close, 
+    # and we might be having a problem! but its not as bad as the previous one
+    # when the fake_score is a large positive number!
+    elif (real_mean - fake_mean) < 1.0:
+        return "⚠️"
 
     else:
-        # we have an issue, and the discriminator may have collapsed or
-        # be going to! (we have inverted discriminator)‼️
-        return "❌"
+        # everything should be fine!
+        return "✅"
+   
 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
@@ -5373,7 +5417,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     status_r = get_status(disc_real_mean, higher_is_better=True)
                     status_f = get_status(disc_fake_mean, higher_is_better=False)
                     status_o = get_overall_status(disc_real_mean, disc_fake_mean)
-                    print(f" -- {status_o} Batch-{i}: Disc's real mean: {status_r} {disc_real_mean:.4f} | Disc's fake mean:  {status_f} {disc_fake_mean:.4f}")
+                    print(f" -- {status_o} Batch-{i}:  Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean:  {status_f} {disc_fake_mean:+.4f} 📉")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
@@ -5394,17 +5438,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
             average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
             
-            status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
-            status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
-            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean)
-            
             # calculate is/fid scores
             IS_score = metric.compute_IS(imgs_fake)
             FID_score = metric.compute_FID(imgs_real, imgs_fake)
-            
-            print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:.4f} 📉")
-            print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:.4f} 📉")
-            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.4f}) | FID: {FID_score:.2f}')
+
+            status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
+            status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
+            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean)
+           
+            print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
+            print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:+.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:+.4f} 📉")
+            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.6f}) | FID: {FID_score:.2f}')
             
             #save model weights at each epoch
             checkpoint_dir = f"{weights_save_dir}/progan_{dataset_name}_{loss_type}_{experiment_date}"
@@ -5550,7 +5594,7 @@ else:#wgangp
     lr_d, lr_g = 0.0003, 0.0001#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
-decay_step = 5
+decay_step = 7#5
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -5569,7 +5613,7 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=False,
+                     resume=True,
                      decay_step=decay_step)
 
 #%%
@@ -6080,13 +6124,14 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 #%%
-# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250920145202/checkpoint_step_3_20250920145202.ckpt'
-# checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-# print(checkpoint["lr_d"])
-# print(checkpoint["lr_g"])
-# # print(*checkpoint.keys(),sep='\n')
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_5_20250922102238.ckpt'
+checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+# print(*checkpoint.keys(),sep='\n')
+# checkpoint["decay_step"] = 7
+# print(checkpoint["decay_step"])
+# print(*checkpoint.keys(),sep='\n')
 #%%
-## torch.save(checkpoint,checkpoint_path)
+# torch.save(checkpoint,checkpoint_path)
 #%%
 # Stylegan2/3?
 #%%
