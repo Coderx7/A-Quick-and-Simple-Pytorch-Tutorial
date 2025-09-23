@@ -2983,8 +2983,24 @@ class IS_FID_Calculator():
         covariance = torch.cov(features.T)
         return mean, covariance
     
+    def _get_fname(self, dataset_name, split):
+        # create a filename to save/load fid stats to/from disk
+        parts = ['fid_stats']
+        if dataset_name: parts.append(dataset_name);
+        if split: parts.append(split);
+        fname = "_".join(parts)+".pt"
+        return fname
+    
+    def _stats_exists(self, dataset_name, split):
+        fname = self._get_fname(dataset_name, split)
+        return os.path.exists(fname)
+    
+    def _read_existing_file(self, dataset_name, split):
+        fname = self._get_fname(dataset_name, split)
+        return torch.load(fname, weights_only=False)["mean_cov"]
+    
     @torch.no_grad()
-    def compute_FID(self, real_imgs, fake_imgs):
+    def compute_FID(self, real_imgs, fake_imgs, dataset_name=None, split=None):
         #
         # compute FID=∥ μ_r - μ_f ​∥² + Tr(Σr​ + Σf​ - 2 * (Σr​Σf​)1/2)
         # mu is mean and sigma is covariance matrix
@@ -2993,7 +3009,20 @@ class IS_FID_Calculator():
         
         # remove the classifier, we want 2048 features
         self.model.fc = nn.Identity()
-        real_mean,real_cov = self._get_FID_mean_covariance(real_imgs)
+        
+        # for real dataset if we have already calculated mean_cov use them
+        # we need to check both the name and split, some datasets such as
+        # celeba have diferent splits like train, extra, test so if user
+        # tries to use different splits, we should be able to handle it
+        if dataset_name and self._stats_exists(dataset_name, split):
+            print(f'Using FID stats for Real images from cache...')
+            real_mean, real_cov = self._read_existing_file(dataset_name, split)
+        else:
+            real_mean,real_cov = self._get_FID_mean_covariance(real_imgs)
+            # save to disk for future reuse
+            fname = self._get_fname(dataset_name, split)
+            torch.save({"mean_cov":(real_mean, real_cov)}, fname)
+            
         fake_mean,fake_cov = self._get_FID_mean_covariance(fake_imgs)
         
         mean_diff = real_mean - fake_mean
@@ -3064,14 +3093,13 @@ class IS_FID_Calculator():
 imgs = torch.randn(size=(10,3,32,32))
 metric = IS_FID_Calculator()
 iss = metric.compute_IS(imgs)
-fids = metric.compute_FID(imgs,imgs+torch.randn_like(imgs))
+fids = metric.compute_FID(imgs,imgs)
 torch.cuda.synchronize()
 print(f'{iss=}')
 print(f'{fids=}')
 del metric
 gc.collect()
 #%%
-import time
 # test with dataloaders
 dataset_name = 'cifar10'
 batch_size=64
@@ -3079,7 +3107,7 @@ loader = get_dataloader(dataset_name=dataset_name, split='train', batch_size=bat
 loader2 = iter(loader)
 metric = IS_FID_Calculator(device='cuda')
 iss = metric.compute_IS(loader)
-fids = metric.compute_FID(loader,loader2)
+fids = metric.compute_FID(loader,loader2, dataset_name, split="train")
 print(f'{iss=}')
 print(f'{fids=}')
 del metric
