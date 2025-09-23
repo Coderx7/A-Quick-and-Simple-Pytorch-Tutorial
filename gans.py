@@ -5356,7 +5356,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         starting_step = checkpoint["step"]
         decay_step = checkpoint.get("decay_step", decay_step)
         epoch_list = checkpoint["epoch_list"]
-        starting_epoch = checkpoint["epoch"]
+        starting_epoch = checkpoint["epoch"]+1
         batch_size_list = checkpoint["batch_size_list"]
         wgan_range = checkpoint["wgan_range"]
         gen_update_interval = checkpoint["gen_update_interval"]
@@ -5364,14 +5364,15 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         noise_addition = checkpoint["noise_addition"]
         
         # we want to start the next step when we resume. 
-        # remember during checkpoint saving, what we have here is the final previous step epoch
-        # (it was last epoch of the previous step we saved the checkpoint before we go for the next step).
-        # so when we resume, we are effectively at the start of the next step, and it should be obvious.
-        # so a +1 here puts us at the right place. note this is only the case if the checkpoint was
-        # saved at the final epoch of that step, otherwise it means we are at the middle of a step
-        # and we shouldnt change anything!
+        # remember during checkpoint saving, we save the finished epoch, so on resume we start 
+        # with epoch+1. if this is total number of epochs, then that step is done so we increase
+        # the step by 1 as well, if not, the step stays intact and we resume from the next epoch
+        # as normal.
         if starting_epoch == epoch_list[starting_step]:
             starting_step += 1
+            # also reset the initial epoch for the new step
+            starting_epoch = 0
+            
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
     if resume:
@@ -5768,7 +5769,7 @@ decay_step = 7#5
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
-
+ 
 training_loop_progan(discriminator_progan,
                      generator_progan, 
                      disc_optimizer=disc_optimizer,
@@ -6295,11 +6296,19 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 #%%
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_5_20250922102238.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-print(*checkpoint.keys(),sep='\n')
-# checkpoint["lr_d"] = 0.0003
-print(checkpoint["lr_d"])
+
+# checkpoint.pop('disc_optimizer')
+# checkpoint.pop('gen_optimizer')
+# checkpoint.pop('disc_state_dict')
+# checkpoint.pop('gen_state_dict')
+# for k,v in checkpoint.items():
+#     print(f'{k}:{v}')
+    
+# print(*checkpoint.keys(),sep='\n')
+# checkpoint["step"] = 2
+# print(checkpoint["lr_d"])
 # print(*checkpoint.keys(),sep='\n')
 #%%
 # torch.save(checkpoint,checkpoint_path)
