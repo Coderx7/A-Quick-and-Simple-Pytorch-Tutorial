@@ -5164,14 +5164,14 @@ def get_status(score, higher_is_better=True):
             # larger than that its not good!
             return "🔴"
 
-def get_overall_status(real_mean, fake_mean, is_score=None):
+def get_overall_status(real_mean, fake_mean, IS_score=None):
     is_seperated = real_mean > fake_mean
     
     # to have better control we first check for the worse case
     # scenario and then go from there to milder cases until we
     # get to the ok case!
     
-    # using is_score we can also quickly show if we have mode collapse
+    # using IS_score we can also quickly show if we have mode collapse
     # or not. the mean must be larger than 1, the more the better, if
     # its close to 1 (e.g. 1.1) or 1, the generator has collapsed! we
     # cant have that! 
@@ -5184,7 +5184,7 @@ def get_overall_status(real_mean, fake_mean, is_score=None):
     # it means we have low diversity or no diversity if its too small(practically zero)
     # and means the generator has collpased. 
     # 
-    # is_std measures consitency, lower value is better it means generator
+    # IS_std measures consitency, lower value is better it means generator
     # is doing a good job creating the same quality images, but it needs
     # to be done in large amounts (10k) not our 128! this is wrong and I need
     # to make this right 
@@ -5194,7 +5194,7 @@ def get_overall_status(real_mean, fake_mean, is_score=None):
     # grab the epoch and calculate accurate is_score/fid every couple of epochs
     # so it doesnt affect our training speed too much(a single round of fid_is 
     # calculation for celeba train takes around 5 mins for me)
-    # is_mu, is_std = IS_score
+    IS_mu, IS_std = IS_score if not IS_score else None, None
     
     # if the discriminator cant decide what real is and assings higher
     # score to the fake image, we have a serious issue!
@@ -5204,10 +5204,20 @@ def get_overall_status(real_mean, fake_mean, is_score=None):
     if not is_seperated:
         return "❌"
     
-    # # check for mode collapse
-    # if IS_mu <=1.2:
-    #     return "❌"
+    # check for mode collapse
+    # the mean must be larger than 1 as we already explained
+    # anything near 1, could simply mean gaussian noise! N(1,0)
+    if IS_mu and IS_mu <=1.2:
+        return "❌"
     
+    # the std can very from dataset to dataset more than it does for
+    # mean. so im not going to check for it here
+    # 0.3 could be too much, but much lower std can also show critical issue
+    # depending on the dataset and number of smaples used so lets ignore it
+    # for now!
+    # if IS_std and IS_std >=0.3:
+    #     return "❌"
+        
     # if the fake_score is larger than 0 regardless of the real_score, 
     # we may be going toward mode collapse! fake_score needs to be a small
     # number close to zero or preferably negative. the more negative the better!
@@ -5218,7 +5228,7 @@ def get_overall_status(real_mean, fake_mean, is_score=None):
     # tiny or zero, it means we have no diversity and generator is basically using
     # a single image/pattern e.g. to fool the discriminator
     elif fake_mean >= 0:
-            return "☣️"
+        return "☣️"
 
     # real score needs to be larger than fake score thats the base line but
     # they also need to be far away from eachother. the discriminator is supposed
@@ -5600,7 +5610,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
-            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean)
+            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean, IS_score)
            
             print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
             print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:+.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:+.4f} 📉")
@@ -5684,7 +5694,7 @@ max_steps = 7
 # 128x128-b32: 
 # 256x256-b16: 
 BATCH_SIZES = [128,128,128,128,64,32,16]
-EPOCHS = [10,10,20,20,30,30,30]
+EPOCHS = [10,10,20,20,30,30,30] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
