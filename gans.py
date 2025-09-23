@@ -5379,7 +5379,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             f'\n  --From Epoch:            {starting_epoch}'
             f'\n  --Checkpoint Path:       {checkpoint_path}'
             f'\n  --Last FID:              {checkpoint["FID"]}'
-            f'\n  --Last IS:               {checkpoint["IS"][0]} ± {checkpoint["IS"][1]}')
+            f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
           
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
@@ -5783,6 +5783,7 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device,
                      resume=True,
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt',
                      decay_step=decay_step)
 
 #%%
