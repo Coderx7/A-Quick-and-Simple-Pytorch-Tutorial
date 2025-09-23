@@ -5371,7 +5371,6 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # and we shouldnt change anything!
         if starting_epoch == epoch_list[starting_step]:
             starting_step += 1
-
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
     if resume:
@@ -5379,7 +5378,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             f'\n  --From Step:             {starting_step}'
             f'\n  --From Epoch:            {starting_epoch}'
             f'\n  --Checkpoint Path:       {checkpoint_path}'
-            f'\n  --Last FID:              {checkpoint["FID"]}')
+            f'\n  --Last FID:              {checkpoint["FID"]}'
+            f'\n  --Last IS:               {checkpoint["IS"][0]} ± {checkpoint["IS"][1]}')
           
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
@@ -5643,6 +5643,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "d_loss_mean":d_loss_mean,
                         "g_loss_mean":g_loss_mean,
                         "dataset_name":dataset_name,
+                        "split":split,
                     }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
         
             # generate some images mid training to evaluate our model's performance 
@@ -5665,6 +5666,7 @@ print(f'Training PROGAN!')
 loss_type = 'wgangp'
 lambda_factor=10
 dataset_name = 'celeba'
+split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 z_size = 128#original paper uses 512
@@ -5774,6 +5776,7 @@ training_loop_progan(discriminator_progan,
                      batch_size_list=BATCH_SIZES,
                      gen_update_interval=gen_update_interval, 
                      dataset_name=dataset_name,
+                     split=split,
                      loss_type=loss_type, 
                      lambda_factor=lambda_factor,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
