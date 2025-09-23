@@ -5131,16 +5131,16 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
 # update: 
 # added this later to make reading logs much easier
 # todo: check values and tune them more accurately
-def get_status(score, higher_is_better=True):
+def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0.4, low_threshold=0.2):
     if higher_is_better:
         # for real score we want high positive numbers
         # any positive number is good!
-        if score >0.8:
+        if score >=high_threshold:
             return "🟢"
         
         # ok, but worrisome, we want large positive nubers
         # nothing close to 0!
-        elif score >0.4: 
+        elif score >=mid_threshold: 
             return "🟡"
         
         # if its smaller than 0.4 we are in trouble! discriminator
@@ -5151,21 +5151,21 @@ def get_status(score, higher_is_better=True):
     else:
         # fake_score needs to be close to 0 or less!
         # so any negative number for fake is good!
-        if score < 0.2:
+        if score <= low_threshold:
             return "🟢"
         # if its larger its okish, but its worrisome it needs to
         # get lower and lower, otherwise it means discriminator/
         # critic has no idea about fake/real and generator may be
         # winning
-        elif score < 0.6:
+        elif score <= mid_threshold:
             return "🟡"
         # its larger than 0.6! and the generator may be wining!
         else:
             # larger than that its not good!
             return "🔴"
 
-def get_overall_status(real_mean, fake_mean, IS_score=None):
-    is_seperated = real_mean > fake_mean
+def get_overall_status(real_mean, fake_mean, IS_score=None, 
+                       min_mu=1.2, max_fake_threshold=0, min_disance=1.0):
     
     # to have better control we first check for the worse case
     # scenario and then go from there to milder cases until we
@@ -5186,38 +5186,27 @@ def get_overall_status(real_mean, fake_mean, IS_score=None):
     # 
     # IS_std measures consitency, lower value is better it means generator
     # is doing a good job creating the same quality images, but it needs
-    # to be done in large amounts (10k) not our 128! this is wrong and I need
-    # to make this right 
-    #
-    # we can calculate the accurate is_score if we find some worrying condition
-    # to know for sure if things are critially bad for example, or we can
-    # grab the epoch and calculate accurate is_score/fid every couple of epochs
-    # so it doesnt affect our training speed too much(a single round of fid_is 
-    # calculation for celeba train takes around 5 mins for me)
-    IS_mu, IS_std = IS_score if not IS_score else None, None
+    # to be done in large amounts (e.g. 10k) to be reliable
+    (IS_mu, IS_std) = IS_score if IS_score is not None else None, None
     
     # if the discriminator cant decide what real is and assings higher
     # score to the fake image, we have a serious issue!
     # the discriminator may have collapsed or be going to! 
     # (we have flipped discriminator instead of giving + to real its treating
     # fakes as real and giving them higher scores than it gives to the real ones)‼️
-    if not is_seperated:
+    if real_mean <= fake_mean:
         return "❌"
     
     # check for mode collapse
+    # 
     # the mean must be larger than 1 as we already explained
     # anything near 1, could simply mean gaussian noise! N(1,0)
-    if IS_mu and IS_mu <=1.2:
-        return "❌"
-    
     # the std can very from dataset to dataset more than it does for
     # mean. so im not going to check for it here
     # 0.3 could be too much, but much lower std can also show critical issue
     # depending on the dataset and number of smaples used so lets ignore it
     # for now!
-    # if IS_std and IS_std >=0.3:
-    #     return "❌"
-        
+    #    
     # if the fake_score is larger than 0 regardless of the real_score, 
     # we may be going toward mode collapse! fake_score needs to be a small
     # number close to zero or preferably negative. the more negative the better!
@@ -5227,8 +5216,8 @@ def get_overall_status(real_mean, fake_mean, IS_score=None):
     # we can know this with more certainity using IS score. if the variance is too
     # tiny or zero, it means we have no diversity and generator is basically using
     # a single image/pattern e.g. to fool the discriminator
-    elif fake_mean >= 0:
-        return "☣️"
+    elif fake_mean >= max_fake_threshold or (IS_mu is not None and IS_mu <= min_mu):
+        return "☢️"
 
     # real score needs to be larger than fake score thats the base line but
     # they also need to be far away from eachother. the discriminator is supposed
@@ -5237,7 +5226,7 @@ def get_overall_status(real_mean, fake_mean, IS_score=None):
     # here we say if the difference is less than 1, then they are too close, 
     # and we might be having a problem! but its not as bad as the previous one
     # when the fake_score is a large positive number!
-    elif (real_mean - fake_mean) < 1.0:
+    elif (real_mean - fake_mean) <= min_disance:
         return "⚠️"
 
     else:
@@ -5612,7 +5601,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
-            status_avg_o = get_overall_status(average_score_real_mean, average_score_fake_mean, IS_score)
+            status_avg_o = get_overall_status(average_score_real_mean, 
+                                              average_score_fake_mean,
+                                              IS_score)
            
             print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
             print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:+.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:+.4f} 📉")
@@ -5698,7 +5689,7 @@ max_steps = 7
 # 128x128-b32: 
 # 256x256-b16: 
 BATCH_SIZES = [128,128,128,128,64,32,16]
-EPOCHS = [10,10,20,20,30,30,30] # [10,10,20,20,30,30,30]
+EPOCHS = [10,10,10,10,15,15,15] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
@@ -5784,8 +5775,8 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=True,
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt',
+                    #  resume=True,
+                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt',
                      decay_step=decay_step)
 
 #%%
