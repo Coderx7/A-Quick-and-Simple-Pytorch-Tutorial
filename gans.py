@@ -3327,7 +3327,11 @@ def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.o
         average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
         average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
 
-        # calculate is/fid scores
+        # calculate is/fid scores-
+        # we simply use a single batch to get a rough idea
+        # how things are, they cannot be used to compare with
+        # whats reported in papers, for that we need to run on
+        # a large number of images(real and fake)
         IS_score = metric.compute_IS(imgs_fake)
         FID_score = metric.compute_FID(imgs_real, imgs_fake)
     
@@ -3614,17 +3618,19 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # There are several issues with our previous implementation, if we want 
 # to get any imporvements we need to address every single one of them. 
 # first we cant go ahead and simply do anything with our blocks
-# GANs are extremely finiky/fragile to work with, even a slight 
+# GANs are extremely fragile/sensitive to work with, even a slight 
 # seemingly okish change can result in complete failure!
 # to make this more practical, lets create a version first and then
 # analyze it and improve it. 
+# 
 # sidenote: 
 # The following version causes massive instability in trainig!
 # we can only train porperly with large lr and even then we dont get
 # good results! the lsgan completely fails with severe mode collapse!
 # the wgan also fails, and only wgangp manages to produce something intersting!
 # (In GANs we need to have simple discriminator anything complex
-# powerful complicates things!see explanations ahead!)
+# powerful complicates things! having said that lets continue and 
+# later see explanations ahead!)
 class ConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=2, padding=1, batch_norm=False, act_func=nn.LeakyReLU(0.2)):
@@ -4252,6 +4258,11 @@ print(f'{goutput.shape=}')
 # the discriminators average score became much larger (Discriminator's real mean: 5.0224 | Discriminator's fake mean = 4.4442)
 # there were still some black blobs, but the image qualy became 10x better! when I 
 # disabled the spectral norm the quality decreased but the training seems stable.
+# 
+# (quicknote: 
+# note that is score/fid are very noisy(because we didnt run them on large number of images, we just
+# used single batch each time to get a rough idea) so for detailed debugging we need to look at other
+# clues to be sure of what is ok and whats not)
 # 
 # Epoch/Epochs: 2/50 | Iter: 636/1272 | Disc Loss: -15.749696 | Gen Loss: -12.988724
 # Epoch/Epochs: 2/50 | Disc Loss : -20.169931 | Gen loss: -12.215222 | IS: (μ:2.0913, σ²:0.4107) | FID: 290.18
@@ -5153,25 +5164,36 @@ def get_status(score, higher_is_better=True):
             # larger than that its not good!
             return "🔴"
 
-def get_overall_status(real_mean, fake_mean, IS_score=None):
+def get_overall_status(real_mean, fake_mean, is_score=None):
     is_seperated = real_mean > fake_mean
     
     # to have better control we first check for the worse case
     # scenario and then go from there to milder cases until we
     # get to the ok case!
     
-    # # using IS_score we can also quickly show if we have mode collapse
-    # # or not. the mean must be larger than 1, the more the better, if
-    # # its close to 1 (e.g. 1.1) or 1, the generator has collapsed! we
-    # # cant have that! 
-    # # also the variance must obviously be large, a low
-    # # variance or worst! 0, means low diversity or no diversity if its
-    # # too small(practically zero) and means the generator has collpased
-    # # 
-    # # is_std measures consitency, lower value is better it means generator
-    # # is doing a good job creating the same quality images, but it needs
+    # using is_score we can also quickly show if we have mode collapse
+    # or not. the mean must be larger than 1, the more the better, if
+    # its close to 1 (e.g. 1.1) or 1, the generator has collapsed! we
+    # cant have that! 
+    # also the std must obviously be low, a high variance or worst! >1,
+    # means our generator is very unstable and creates very different images
+    # this is not about diversity! we want to match our original dataset and
+    # our IS should reflect its closeness to the dataset. 
+    # 
+    # the fake_images variance on the other hand needs to be high, if its low
+    # it means we have low diversity or no diversity if its too small(practically zero)
+    # and means the generator has collpased. 
+    # 
+    # is_std measures consitency, lower value is better it means generator
+    # is doing a good job creating the same quality images, but it needs
     # to be done in large amounts (10k) not our 128! this is wrong and I need
     # to make this right 
+    #
+    # we can calculate the accurate is_score if we find some worrying condition
+    # to know for sure if things are critially bad for example, or we can
+    # grab the epoch and calculate accurate is_score/fid every couple of epochs
+    # so it doesnt affect our training speed too much(a single round of fid_is 
+    # calculation for celeba train takes around 5 mins for me)
     # is_mu, is_std = IS_score
     
     # if the discriminator cant decide what real is and assings higher
@@ -5211,11 +5233,43 @@ def get_overall_status(real_mean, fake_mean, IS_score=None):
     else:
         # everything should be fine!
         return "✅"
-   
 
+@torch.no_grad()   
+def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
+                     dataset_name, split, alpha, step, batch_size=64, num_samples=10_000):
+    # instead of going over the whole trainig sets, we can choose
+    # a portion of them instead grab a subset of the dataloader as many as num_samples
+    # and generate as many as num_samples fake_loader
+    subset = torch.utils.data.Subset(data_loader.dataset, range(num_samples))
+    real_loader = DataLoader(subset, batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    
+    real_batch_cnt = len(real_loader)
+    fake_batch_cnt = math.ceil(num_samples/batch_size)
+    
+    assert real_batch_cnt == fake_batch_cnt, f'real and fake images count must match ({real_batch_cnt} vs {fake_batch_cnt})'    
+    
+    def fake_loader(num_samples, batch_size, alpha, step):
+        device = next(gen.parameters()).device
+        
+        for i in range(fake_batch_cnt):
+            # so if there are some left that dont fit a prefect batch only
+            # grab as many as they are not more
+            current_batch_size = min(batch_size, num_samples - i*batch_size)
+            z = torch.randn(size=(current_batch_size, gen.z_size), device=device)
+            fakes = gen(z, alpha, step)
+            yield fakes
+    
+    IS_score = metric.compute_IS(fake_loader(num_samples, batch_size, alpha, step))
+    FID_score = metric.compute_FID(real_loader,
+                                   fake_loader(num_samples, batch_size, alpha, step),
+                                   dataset_name=dataset_name,
+                                   split=f'{split}_{num_samples//1000}K')
+    return IS_score, FID_score
+
+#%%
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
+                         split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
@@ -5319,7 +5373,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
           
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
-    print(f'--Dataset:                   {dataset_name}')
+    print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
@@ -5346,7 +5400,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         epochs = epoch_list[step]
         # 4 is the lowest res so we want 8,16 etc
         res = 2**step*4
-        train_loader = get_dataloader(dataset_name, resize_dims=(res,res), batch_size=batch_size)
+        train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res), batch_size=batch_size)
         # calculate how often fadein should kick in we give a bit of leeway
         # so the model learns abit about the old/previous/lowres output and
         # then increase alpha a bit so ultimately during the whole epochs for
@@ -5539,8 +5593,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
             
             # calculate is/fid scores
-            IS_score = metric.compute_IS(imgs_fake)
-            FID_score = metric.compute_FID(imgs_real, imgs_fake)
+            # IS_score = metric.compute_IS(imgs_fake)
+            # FID_score = metric.compute_FID(imgs_real, imgs_fake)
+            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader,
+                                                  dataset_name, split, alpha, step)
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
