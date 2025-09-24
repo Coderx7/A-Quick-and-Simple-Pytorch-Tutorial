@@ -5608,8 +5608,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # we want high positive score/average number for real_mean and
                     # lower positive or <real for fake mean (its basically 
                     # like this for them, the real_mean means, on average 
-                    # how good is the discriminator at detecting fake images and
-                    # for fake_mean it means on average how good is the generator
+                    # how good(confident) is the discriminator at detecting real images
+                    # and for fake_mean it means on average how good is the generator
                     # at fooling the discriminator. as you can see we want a high
                     # positive average number for discriminator and a low average
                     # number(preferably 0 or less) for generator.
@@ -5854,6 +5854,53 @@ training_loop_progan(discriminator_progan,
 
 #%%
 # sidenote:
+#
+# reminder before going over for debugging:
+# d_real_mean-> we want high positive number that shows on averge how
+#               confident the discriminator is in detecting real images.
+#               we want high positive score (high confidence for real image detections)
+#
+# d_fake_mean-> we want small number (even negative) that shows on average
+#               how many times has the generator fooled the discriminator.
+# d_fake_std:-> we want a high std for fake images. it shows diversity
+# d_real_std:-> we want a high std for real images. it shows diveristy
+#               for the fake images its understandable that we might get
+#               something else, but what about real images std being small?
+#               it should onl happen at the start of the training when
+#               the discriminator has just started learning whats real 
+#               and whats not. as training goes on and discriminator is
+#               more knowledgable, it should be high. if not either discrimnator
+#               is too weak that cannot learn whats real/fake, or data
+#               or preprocessing may have issues and need to be checked
+# 
+# IS_score   -> we want a mean larger than 1 and a std very low close to 0.
+#               if mean is 1 or close to it, its basically bad quality((1,0))
+#               std or standard deviation, shows the consitency of the final
+#               inception score. it shows the stability of the generator's
+#               overall performance through different samples it generated 
+#               over time.(remember we split the input into k(10) splits
+#               and calculate a score for each split, the std shows the 
+#               deviation among these scores. so a small deviation means 
+#               we consistently achieved the same score for several splits
+#               of its input (basically different subset of our generators output))
+#               
+# D_loss     -> remember the loss is simply preds_fake.mean() - preds_real.mean()
+#               we want negative loss for real images. this means discriminator
+#               is identifying fakes very well. if its positive it means the discrimnator
+#               has given larger positive score to fake images than it has given
+#               to the real images. so it means the discriminator has flipped!
+#               and is doing the opposite of what it should be doing!
+#
+# G_loss      -> remember the loss is simply -preds_fake.mean() for the generator so
+#                we want the loss for generated images be negative. it means
+#                the generator has created realistic images that discriminator 
+#                is fooled and it has assigned a positive score to it. if we
+#                get a positive loss, it means, the generator has failed to 
+#                come up with good images, it either has collapsed or the discriminator
+#                is more powerful and identifies all images as fake.
+#                at the begining of the training, the discrimnator that cannot
+#                identify real/fake well, we might get negative or positive loss
+#                but as the trainig goes we want the generator loss to be negative
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
 # went on, didnt notice much, until step=1 started and noticed
