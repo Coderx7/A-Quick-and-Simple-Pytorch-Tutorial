@@ -20,13 +20,15 @@
 # real looking images. 
 # so lets see how we can do this
 import os
-import gc
+import math
+import time
 from datetime import datetime
 from pathlib import Path
+import gc
 
-import torch 
 import numpy as np 
 
+import torch 
 import torch.nn as nn 
 import torch.nn.functional as F 
 from torch.utils.data import DataLoader
@@ -5136,33 +5138,39 @@ def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0
         # for real score we want high positive numbers
         # any positive number is good!
         if score >=high_threshold:
-            return "🟢"
+            return "😎"
         
         # ok, but worrisome, we want large positive nubers
         # nothing close to 0!
         elif score >=mid_threshold: 
-            return "🟡"
+            return "😟"
         
+        elif score >=mid_threshold/2: 
+            return "😰"
         # if its smaller than 0.4 we are in trouble! discriminator
         # /critic is not learning! it has no idea what is real and
         # whats not and is not giving high score to real images!
         else:
-            return "🔴"
+            return "😵"
     else:
         # fake_score needs to be close to 0 or less!
         # so any negative number for fake is good!
         if score <= low_threshold:
-            return "🟢"
+            return "😎"
         # if its larger its okish, but its worrisome it needs to
         # get lower and lower, otherwise it means discriminator/
         # critic has no idea about fake/real and generator may be
         # winning
         elif score <= mid_threshold:
-            return "🟡"
+            return "😟"
+        
         # its larger than 0.6! and the generator may be wining!
+        elif score <= mid_threshold/2:
+            return "😰"
+        
         else:
             # larger than that its not good!
-            return "🔴"
+            return "😵"
 
 def get_overall_status(real_mean, fake_mean, IS_score=None, 
                        min_mu=1.2, max_fake_threshold=0, min_disance=1.0):
@@ -5187,7 +5195,10 @@ def get_overall_status(real_mean, fake_mean, IS_score=None,
     # IS_std measures consitency, lower value is better it means generator
     # is doing a good job creating the same quality images, but it needs
     # to be done in large amounts (e.g. 10k) to be reliable
-    (IS_mu, IS_std) = IS_score if IS_score is not None else None, None
+    if IS_score is not None:
+        IS_mu, IS_std = IS_score
+    else:
+        IS_mu, IS_std = None, None
     
     # if the discriminator cant decide what real is and assings higher
     # score to the fake image, we have a serious issue!
@@ -5195,7 +5206,7 @@ def get_overall_status(real_mean, fake_mean, IS_score=None,
     # (we have flipped discriminator instead of giving + to real its treating
     # fakes as real and giving them higher scores than it gives to the real ones)‼️
     if real_mean <= fake_mean:
-        return "❌"
+        return "😡"
     
     # check for mode collapse
     # 
@@ -5217,7 +5228,7 @@ def get_overall_status(real_mean, fake_mean, IS_score=None,
     # tiny or zero, it means we have no diversity and generator is basically using
     # a single image/pattern e.g. to fool the discriminator
     elif fake_mean >= max_fake_threshold or (IS_mu is not None and IS_mu <= min_mu):
-        return "☢️"
+        return "😱"
 
     # real score needs to be larger than fake score thats the base line but
     # they also need to be far away from eachother. the discriminator is supposed
@@ -5227,11 +5238,11 @@ def get_overall_status(real_mean, fake_mean, IS_score=None,
     # and we might be having a problem! but its not as bad as the previous one
     # when the fake_score is a large positive number!
     elif (real_mean - fake_mean) <= min_disance:
-        return "⚠️"
+        return "🫤"
 
     else:
         # everything should be fine!
-        return "✅"
+        return "😀"
 
 @torch.no_grad()   
 def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
