@@ -5537,7 +5537,28 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 # or is over-regularized.
                 disc_real_mean = preds_real.mean().item()
                 disc_fake_mean = preds_fake.mean().item()
-                
+                        
+                # we can also check the fake_images std and understand if everything is OK
+                # for that it needs to be high, if its low it means we have low diversity 
+                # or no diversity at all if its too small(practically zero)! and therefore
+                # it means the generator has collpased. 
+                # note that we dont use the images rather we get the fake_preds because we 
+                # dont want to work in pixel space, but rather in features space that have
+                # semantic and fake_preds give us that.
+                # calculating its mean/std gives us the info we want.
+                # 
+                # note:
+                # first we need to detach the preds so our mean()/std() operations
+                # are not recorded in computational graph. its not
+                # part of training and we dont want to optimize anything
+                # we just want to get some stats.
+                preds_detached = preds_fake.detach()
+                # we have the mean already so we just get std
+                disc_fake_std = preds_detached.std()
+                # now that we calculated the std for fakes, lets do that for real
+                # we can now better compare them every time
+                disc_real_std = preds_real.detach().std()
+                            
                 # store average scores for real and fake images
                 epoch_scores.append((disc_real_mean, disc_fake_mean))
                 
@@ -5558,7 +5579,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
                 fake_imgs = generator(z_vector, alpha, step)
                 preds_fake = discriminator(fake_imgs, alpha, step)
-            
+                        
                 # generator loss
                 # swap loss! treat fake images as real images
                 if loss_type=='lsgan':
@@ -5582,29 +5603,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # append discriminator loss and generator loss
                     # losses.append((disc_loss.item(), gen_real_loss.item()))
                     # print discriminator and generator loss
-                    print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
-                    
-                    # we can also check the fake_images std and understand if everything is OK
-                    # for that it needs to be high, if its low it means we have low diversity 
-                    # or no diversity at all if its too small(practically zero)! and therefore
-                    # it means the generator has collpased. 
-                    # note that we dont use the images rather we get the fake_preds because we 
-                    # dont want to work in pixel space, but rather in features space that have
-                    # semantic and fake_preds give us that.
-                    # calculating its mean/std gives us the info we want.
-                    # 
-                    # note:
-                    # first we need to detach the preds so our mean()/std() operations
-                    # are not recorded in computational graph. its not
-                    # part of training and we dont want to optimize anything
-                    # we just want to get some stats.
-                    preds_detached = preds_fake.detach()
-                    # we have the mean already so we just get std
-                    disc_fake_std = preds_detached.std()
-                    
-                    # now that we calculated the std for fakes, lets do that for real
-                    # we can now better compare them every time
-                    disc_real_std = preds_real.detach().std()
+                    print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f}')
                     
                     # we want high positive score/average number for real_mean and
                     # lower positive or <real for fake mean (its basically 
@@ -5616,10 +5615,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # number(preferably 0 or less) for generator.
                     status_r = get_status(disc_real_mean, higher_is_better=True)
                     status_f = get_status(disc_fake_mean, higher_is_better=False)
-                    status_o = get_overall_status(disc_real_mean, disc_fake_mean, disc_fake_std)
+                    status_o = get_overall_status(disc_real_mean, disc_fake_mean, 
+                                                  disc_fake_std,
+                                                  min_std=0.5)# should go higher 0.5 is too low 
                     
-                    d_real_stat_str = f"D(real): {status_r} {disc_real_mean:+.4f} ± {disc_real_std:.4f} 📈"
-                    d_fake_stat_str = f"D(fake): {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:.4f} 📉"
+                    d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+                    d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
                     
                     print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
                     
@@ -5657,22 +5658,22 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             status_avg_o = get_overall_status(average_score_real_mean, 
                                               average_score_fake_mean,
                                               average_score_fake_std,
-                                              min_std=0.04,
+                                              min_std=0.5,# should go higher 0.5 is too low 
                                               IS_score=IS_score,
                                               min_mu=1.2)
            
            
             # included the std for real and fake so it makes it much clearer to compare and see where we are standing
-            real_stats_batch_str = f"D(real): {status_r} {disc_real_mean:+.4f} ± {disc_real_std:.6f} 📈"
-            fake_stats_batch_str = f"D(fake): {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:.6f} 📉"
+            real_stats_batch_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+            fake_stats_batch_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
            
-            real_stats_avg_str = f"D(real): {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<.6f} 📈"
-            fake_stats_avg_str = f"D(fake): {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<.6f} 📉"
+            real_stats_avg_str = f"D_real_avg: {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<+.4f} 📈"
+            fake_stats_avg_str = f"D_fake_avg: {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<+.4f} 📉"
             
-            dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.6f}"
-            gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.6f}"
+            dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.4f}"
+            gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.4f}"
 
-            is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.6f})"
+            is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
             fid_score_str = f"FID: {FID_score:.2f}"
 
             summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str}"
@@ -5824,7 +5825,7 @@ else:#wgangp
     # larger lr for disciminator but still no luck(I even got large gp which is bad
     # so I need to change it. reverted it back to 0.0001 for both.
     # see debug log ahead!)
-    lr_d, lr_g = 0.0001, 0.0001#0.0001, 0.0001 
+    lr_d, lr_g = 0.0003, 0.0001#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
 decay_step = 7#5
