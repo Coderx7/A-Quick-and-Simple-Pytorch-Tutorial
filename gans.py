@@ -5172,8 +5172,8 @@ def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0
             # larger than that its not good!
             return "😵"
 
-def get_overall_status(real_mean, fake_mean, fake_preds=None, IS_score=None, 
-                       min_mu=1.2, max_fake_threshold=0, min_disance=1.0):
+def get_overall_status(real_mean, fake_mean, fake_std=None, IS_score=None, 
+                       min_mu=1.2, min_std=0.04, max_fake_threshold=0, min_disance=1.0):
     
     # using IS_score we can also quickly show if we have mode collapse
     # or not. the mean must be larger than 1, the more the better, if
@@ -5191,17 +5191,7 @@ def get_overall_status(real_mean, fake_mean, fake_preds=None, IS_score=None,
     # rather we get the fake_preds because we dont want to work in pixel space,
     # but rather in features space that have semantic and fake_preds give us that.
     # calculating its mean/std gives us the info we want.
-    
-    mu_fake = std_fake = None
-    if fake_preds is not None:
-        # first we need to detach the preds so our mean()/std() operations
-        # are not recorded in computational graph. its not
-        # part of training and we dont want to optimize anything
-        # we just want to get some stats.
-        preds_detached = fake_preds.detach()
-        mu_fake = preds_detached.mean()
-        std_fake = preds_detached.std()
-        
+                       
     # IS_std measures consitency, lower value is better it means generator
     # is doing a good job creating the same quality images, but it needs
     # to be calculated over a large amounts of images (e.g. 10k) to be reliable
@@ -5242,7 +5232,7 @@ def get_overall_status(real_mean, fake_mean, fake_preds=None, IS_score=None,
     # we have no diversity and generator is basically using a single image/pattern
     # e.g. to fool the discriminator!
     elif fake_mean >= max_fake_threshold or (mu_is is not None and mu_is <= min_mu)\
-    or (std_fake is not None and std_fake <=min_std):
+    or (fake_std is not None and fake_std <=min_std):
         return "😱"
 
     # real score needs to be larger than fake score thats the base line but
@@ -5593,12 +5583,45 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # losses.append((disc_loss.item(), gen_real_loss.item()))
                     # print discriminator and generator loss
                     print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.6f} | Gen Loss: {gen_real_loss:.6f}')
-                    # we want high positive score/number for real_mean and
-                    # lower positive or <real for fake mean
+                    
+                    # we can also check the fake_images std and understand if everything is OK
+                    # for that it needs to be high, if its low it means we have low diversity 
+                    # or no diversity at all if its too small(practically zero)! and therefore
+                    # it means the generator has collpased. 
+                    # note that we dont use the images rather we get the fake_preds because we 
+                    # dont want to work in pixel space, but rather in features space that have
+                    # semantic and fake_preds give us that.
+                    # calculating its mean/std gives us the info we want.
+                    # 
+                    # note:
+                    # first we need to detach the preds so our mean()/std() operations
+                    # are not recorded in computational graph. its not
+                    # part of training and we dont want to optimize anything
+                    # we just want to get some stats.
+                    preds_detached = preds_fake.detach()
+                    # we have the mean already so we just get std
+                    disc_fake_std = preds_detached.std()
+                    
+                    # now that we calculated the std for fakes, lets do that for real
+                    # we can now better compare them every time
+                    disc_real_std = preds_real.detach().std()
+                    
+                    # we want high positive score/average number for real_mean and
+                    # lower positive or <real for fake mean (its basically 
+                    # like this for them, the real_mean means, on average 
+                    # how good is the discriminator at detecting fake images and
+                    # for fake_mean it means on average how good is the generator
+                    # at fooling the discriminator. as you can see we want a high
+                    # positive average number for discriminator and a low average
+                    # number(preferably 0 or less) for generator.
                     status_r = get_status(disc_real_mean, higher_is_better=True)
                     status_f = get_status(disc_fake_mean, higher_is_better=False)
-                    status_o = get_overall_status(disc_real_mean, disc_fake_mean, preds_fake)
-                    print(f" -- {status_o} Batch-{i}:  Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
+                    status_o = get_overall_status(disc_real_mean, disc_fake_mean, disc_fake_std)
+                    
+                    d_real_stat_str = f"D(real): {status_r} {disc_real_mean:+.4f} ± {disc_real_std:.4f} 📈"
+                    d_fake_stat_str = f"D(fake): {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:.4f} 📉"
+                    
+                    print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
                 
@@ -5616,8 +5639,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             d_loss_mean = np.mean(np.array(losses)[:,0])
             g_loss_mean = np.mean(np.array(losses)[:,1])
 
+            # real
             average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
+            average_score_real_std = np.mean(np.array(epoch_scores)[:,0])
+            # fake
             average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
+            average_score_fake_std = np.std(np.array(epoch_scores)[:,1])
             
             # calculate is/fid scores
             # IS_score = metric.compute_IS(imgs_fake)
@@ -5629,11 +5656,30 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
             status_avg_o = get_overall_status(average_score_real_mean, 
                                               average_score_fake_mean,
-                                              IS_score)
+                                              average_score_fake_std,
+                                              min_std=0.04,
+                                              IS_score=IS_score,
+                                              min_mu=1.2)
            
-            print(f" -- {status_o} Last Batch : Disc's real mean: {status_r} {disc_real_mean:+.4f} 📈| Disc's fake mean: {status_f} {disc_fake_mean:+.4f} 📉")
-            print(f" -- {status_avg_o} Epoch's Avg: Disc's real mean: {status_avg_r} {average_score_real_mean:+.4f} 📈| Disc's fake mean: {status_avg_f} {average_score_fake_mean:+.4f} 📉")
-            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] Disc Loss-Avg: {d_loss_mean:.6f} | Gen loss-Avg: {g_loss_mean:.6f} | IS: (μ:{IS_score[0]:.4f}, σ²:{IS_score[1]:.6f}) | FID: {FID_score:.2f}')
+           
+            # included the std for real and fake so it makes it much clearer to compare and see where we are standing
+            real_stats_batch_str = f"D(real): {status_r} {disc_real_mean:+.4f} ± {disc_real_std:.6f} 📈"
+            fake_stats_batch_str = f"D(fake): {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:.6f} 📉"
+           
+            real_stats_avg_str = f"D(real): {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<.6f} 📈"
+            fake_stats_avg_str = f"D(fake): {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<.6f} 📉"
+            
+            dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.6f}"
+            gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.6f}"
+
+            is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.6f})"
+            fid_score_str = f"FID: {FID_score:.2f}"
+
+            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str}"
+            
+            print(f" -- {status_o} Last Batch : {real_stats_batch_str} | {fake_stats_batch_str}")
+            print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
+            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] {summary}')
             
             #save model weights at each epoch
             checkpoint_dir = f"{weights_save_dir}/progan_{dataset_name}_{loss_type}_{experiment_date}"
