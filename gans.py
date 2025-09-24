@@ -5862,17 +5862,78 @@ training_loop_progan(discriminator_progan,
 #
 # d_fake_mean-> we want small number (even negative) that shows on average
 #               how many times has the generator fooled the discriminator.
-# d_fake_std:-> we want a high std for fake images. it shows diversity
-# d_real_std:-> we want a high std for real images. it shows diveristy
-#               for the fake images its understandable that we might get
-#               something else, but what about real images std being small?
-#               it should onl happen at the start of the training when
-#               the discriminator has just started learning whats real 
-#               and whats not. as training goes on and discriminator is
-#               more knowledgable, it should be high. if not either discrimnator
-#               is too weak that cannot learn whats real/fake, or data
-#               or preprocessing may have issues and need to be checked
-# 
+# d_fake_std:-> std can be low and high and means its a good sign for generator
+#               or bad! it depends on the context. for example we
+#   high good-> can say a high std is good sign for fake images because it 
+#               shows diversity since it shows the generator is generating 
+#               very different images that discriminator finds different!
+#               and assigns different scores to them!(which we could then
+#               interperet as having different quality or types of images
+#               which is a good sign) or the otherway around!
+#               to be more specific, in the beginning of the training, 
+#               since the generator and discrimator are not yet trained
+#               properly, we can see high std for fake images because the
+#               generator is producing very different images and it can 
+#               differ widly from class/image to class/image(i.e. diverse outputs)
+#    high bad-> however, as the training continues and both the discriminator and generator
+#               are trained more, a high std could also mean either the discriminator
+#               has issues (is weak, etc that gives different scores to generators outputs)
+#               or the generator faces instability and keeps generating very different 
+#               images that are not consistent.(i.e. is weak, lr is high it fluctuates,
+#               or it can generate only some images better while some others worse, etc).
+#               so a high std can also mean instablity in either discriminator/generator
+#               or both if its not at the begining stages of the training.
+# medium good-> we want as training continues, the generator produces diverse but
+#               consistently high quality images which may lead to a lower std,
+#               not high not too low, somewhere in between.
+#     low bad-> if on the other hand, the std becomes very low (e.g. near zero)
+#               it can mean a mode collapse has occured, because either the generator
+#               is producing nearly identical images so discriminator keeps
+#               assiging the same score to them hence low std. or it could also mean
+#               the discriminator has gone nuts and keeps giving the same scores
+#               to all images, which means the trainig is just gone off the rails!
+#               this should be visible in the disc_loss, gen_loss as well along with
+#               other ways like visualizing generators outputs, or even looking at IS score!
+#               so  high std at beginning -> its normal, models are still learning.
+#               if  high std at the mid/end -> its unstable discriminator or generator
+#               if very low std at the beginning -> its mode collapse, (generator keeps making the same images)
+#               if very low std at the mid/end -> its mode collapse
+#               if not high not very low -> training is going ok, generator is generating high quality images
+#               note, we can have high/low stds during training, but if they presist for
+#               a considerable time, then we can say for sure.
+#               
+#               as you can see, we cant say much without taking other info into account
+#               so use other metrics as well that may be easier and more straight forward
+#               to get an idea whats going on.
+#
+# d_real_std:-> like before, the std for real images is a bit nuasanced here aswell
+#               because both low and high can be good or bad! for example since the images
+#               in datasets are fixed, we cant simply say it shows the diversity
+#               of images in our dataset because they are fixed, we dont generate
+#               them, so its not about the data itself, rather its about the
+#               discriminator's action. therefore we can say it can show the 
+#               variable scoring of the discriminator for real images.
+#               if its high, then it means the discriminator is giving a lot of
+#               different scores,(a wide range of scores) to the real images
+#               which could mean either we are at the begining of the trainig so 
+#               the discriminator hasnt properly learnt to consistently give 
+#               high scores to real images so it has hit and miss here and there,
+#               or it simply shows the variety of images(diversity) in the dataset
+#               itsel(basically shows the dataset has very different types of images,
+#               that some are harder/some are easier for the discriminator to identify
+#               hence the different score it gives each. for example in our celeba
+#               datasets we have different images with different lightinig conditions,
+#               poses, etc that can conttibute to this). 
+#               so high score either comes from inefficent/weak discriminator(early in training)
+#               or from very different images that make discriminator give different scores!
+#               However when the model is trained properly and has learned to consistently
+#               give high scores to real images, then the std should be low, espcially
+#               if the dataset is uniform and the discriminator assigns a similar
+#               score to all real images(which brings the std down) or it could simply 
+#               reflect the diversity of images in the dataset. when we have low diversity,
+#               and the discriminator learns well to identify and score them all very 
+#               highly and that lowers the std down. 
+#               
 # IS_score   -> we want a mean larger than 1 and a std very low close to 0.
 #               if mean is 1 or close to it, its basically bad quality((1,0))
 #               std or standard deviation, shows the consitency of the final
@@ -5884,8 +5945,8 @@ training_loop_progan(discriminator_progan,
 #               we consistently achieved the same score for several splits
 #               of its input (basically different subset of our generators output))
 #               
-# D_loss     -> remember the loss is simply preds_fake.mean() - preds_real.mean()
-#               we want negative loss for real images. this means discriminator
+# D_loss     -> remember the major part of the loss is simply preds_fake.mean() - preds_real.mean()
+#               we want negative loss for discrimnator. this means discriminator
 #               is identifying fakes very well. if its positive it means the discrimnator
 #               has given larger positive score to fake images than it has given
 #               to the real images. so it means the discriminator has flipped!
@@ -5894,13 +5955,18 @@ training_loop_progan(discriminator_progan,
 # G_loss      -> remember the loss is simply -preds_fake.mean() for the generator so
 #                we want the loss for generated images be negative. it means
 #                the generator has created realistic images that discriminator 
-#                is fooled and it has assigned a positive score to it. if we
-#                get a positive loss, it means, the generator has failed to 
+#                is fooled and it has assigned a positive score to it(D(fake)).
+#                the generators goald is to maximize D(fake), ie creates realistic
+#                images that fools discriminator and get a high positive score, which
+#                will be reflected as negative number(because it -D(fake)). 
+#                so the more negative gloss the better.
+#                if we get a positive gloss, it means, the generator has failed to 
 #                come up with good images, it either has collapsed or the discriminator
-#                is more powerful and identifies all images as fake.
+#                is more powerful and identifies all images as fakes hence a very negative
+#                number is given to D(fake) which when -(-D(fake)) becomes a positive loss)
 #                at the begining of the training, the discrimnator that cannot
 #                identify real/fake well, we might get negative or positive loss
-#                but as the trainig goes we want the generator loss to be negative
+#                but as the trainig goes we want the generator loss to be negative.
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
 # went on, didnt notice much, until step=1 started and noticed
