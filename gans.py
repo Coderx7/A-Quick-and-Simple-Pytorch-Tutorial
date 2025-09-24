@@ -2657,7 +2657,7 @@ def lsgan_generator_loss(preds_fake):
     return _lsgan_real_loss(preds_fake, smooth=False)
 
 # for wgan we use our discriminator/critic raw logits like before
-# and the loss is simply the everage of fake-real values
+# and the loss is simply the average of fake-real values
 # we then need to clip the model weights after each discriminator 
 # optimizer step.
 # 
@@ -5172,8 +5172,8 @@ def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0
             # larger than that its not good!
             return "😵"
 
-def get_overall_status(real_mean, fake_mean, fake_std=None, IS_score=None, 
-                       min_mu=1.2, min_std=0.04, max_fake_threshold=0, min_disance=1.0):
+def get_overall_status(real_mean, fake_mean, IS_score=None, 
+                       min_mu=1.2, max_fake_threshold=0, min_disance=1.0):
     
     # using IS_score we can also quickly show if we have mode collapse
     # or not. the mean must be larger than 1, the more the better, if
@@ -5185,12 +5185,11 @@ def get_overall_status(real_mean, fake_mean, fake_std=None, IS_score=None,
     # our IS should reflect its closeness to the dataset. 
     # 
     # sidenote:
-    # the fake_images std on the other hand needs to be high, if its low
-    # it means we have low diversity or no diversity at all if its too small(practically zero)
-    # and it means the generator has collpased. note that we dont use the images
-    # rather we get the fake_preds because we dont want to work in pixel space,
-    # but rather in features space that have semantic and fake_preds give us that.
-    # calculating its mean/std gives us the info we want.
+    # the fake_images std can be both low and high and be okay and not ok at the same time!
+    # since its complicated (I explained this in detail in debugging section)
+    # I therefore remove the std check, as it can give false positive/false negative
+    # depending on the situation which defeats the purpose of its use here!
+    #
                        
     # IS_std measures consitency, lower value is better it means generator
     # is doing a good job creating the same quality images, but it needs
@@ -5210,7 +5209,7 @@ def get_overall_status(real_mean, fake_mean, fake_std=None, IS_score=None,
     # check for mode collapse
     # 
     # the mean must be larger than 1 anything close to 1, could simply
-    # mean collapsed generator (it creates gaussian noise N(1,0))
+    # mean collapsed generator (it creates bad images (1,0) e.g. means terribe score)
     # the std like the mean can very from dataset to dataset, more than
     # it does for the mean. so I'm not going to check for it here
     # 0.3 could be too much, while much lower std can also show critical issues
@@ -5220,28 +5219,35 @@ def get_overall_status(real_mean, fake_mean, fake_std=None, IS_score=None,
         
     # if the fake_score is larger than 0 regardless of the real_score, 
     # we may be going toward mode collapse! fake_score needs to be a small
-    # number close to zero or preferably negative. the more negative the better!
-    # so when its not negative, and its not early in the traiing, the discriminator
-    # is either weak or the generator has already collpased and has found a 
-    # pattern/image/way to keep fooling the discrminitator as being real
-    # we can know this with more certainity using IS score. 
+    # number, the smaller the better, or more accurately the more negative the better!
+    # so when its not negative, and its not early in the training, 
+    # the discriminator is either weak or the generator has already
+    # collpased or has found a loop hole(a pattern e.g.) to exploit discriminators
+    # weakness because, it has managed to fool the discrimnator and get 
+    # a high positive number. obviously we dont want that to happen.so when
+    # this happens it means something has gone very wrong. either generator
+    # overpowered the discriminator (or we can say discriminator is weak)
+    # or the generator has collapsed and keeps repeating something that gets
+    # it identified as real, both of which results in horrible output which
+    # we dont want! we can also figure this out with more certainity using IS score.
     # if the IS std is too large it means the generator is all over the place, 
     # it produces wildly different values that shows it hasnt learned properly
     # and is generating nonsense noise!
-    # we can also use fake_images std (std_fake) to see if its too low means 
-    # we have no diversity and generator is basically using a single image/pattern
-    # e.g. to fool the discriminator!
-    elif fake_mean >= max_fake_threshold or (mu_is is not None and mu_is <= min_mu)\
-    or (fake_std is not None and fake_std <=min_std):
+    elif fake_mean >= max_fake_threshold or (mu_is is not None and mu_is <= min_mu):
         return "😱"
 
     # real score needs to be larger than fake score thats the base line but
     # they also need to be far away from eachother. the discriminator is supposed
     # to give large positive scores to the real image and tiny score to the fakes
-    # so if they are both positive, they need to be a large gap between them.
+    # it needs to be negative as we said just now! so if they are both positive,
+    # theres something wrong! if we are at the start of training its ok, but they
+    # need to be a large gap between them that ultimately leads to fakes becoming
+    # negative and real becoming more positive. 
     # here we say if the difference is less than 1, then they are too close, 
     # and we might be having a problem! but its not as bad as the previous one
-    # when the fake_score is a large positive number!
+    # when the fake_score is a large positive number! but if they are both large
+    # positive numbers, then its game over! (one can be 20 the other can be 19! i
+    # t would still be catasrophic!)
     elif (real_mean - fake_mean) <= min_disance:
         return "🫤"
 
@@ -5537,11 +5543,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 # or is over-regularized.
                 disc_real_mean = preds_real.mean().item()
                 disc_fake_mean = preds_fake.mean().item()
-                        
-                # we can also check the fake_images std and understand if everything is OK
-                # for that it needs to be high, if its low it means we have low diversity 
-                # or no diversity at all if its too small(practically zero)! and therefore
-                # it means the generator has collpased. 
+                
+                
+                # we can also check the fake_images std and understand if everything is OK or not
+                # the fake_images std can be both low and high and be okay and not ok at 
+                # the same time!
+                # I explained this in detail in debugging section. see that
                 # note that we dont use the images rather we get the fake_preds because we 
                 # dont want to work in pixel space, but rather in features space that have
                 # semantic and fake_preds give us that.
@@ -5556,9 +5563,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 # we have the mean already so we just get std
                 disc_fake_std = preds_detached.std()
                 # now that we calculated the std for fakes, lets do that for real
-                # we can now better compare them every time
+                # we can now better compare them!
                 disc_real_std = preds_real.detach().std()
-                            
+
                 # store average scores for real and fake images
                 epoch_scores.append((disc_real_mean, disc_fake_mean))
                 
@@ -5615,9 +5622,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     # number(preferably 0 or less) for generator.
                     status_r = get_status(disc_real_mean, higher_is_better=True)
                     status_f = get_status(disc_fake_mean, higher_is_better=False)
-                    status_o = get_overall_status(disc_real_mean, disc_fake_mean, 
-                                                  disc_fake_std,
-                                                  min_std=0.5)# should go higher 0.5 is too low 
+                    status_o = get_overall_status(disc_real_mean, disc_fake_mean)
                     
                     d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
                     d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
@@ -5655,13 +5660,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
-            status_avg_o = get_overall_status(average_score_real_mean, 
+            status_avg_o = get_overall_status(average_score_real_mean,
                                               average_score_fake_mean,
-                                              average_score_fake_std,
-                                              min_std=0.5,# should go higher 0.5 is too low 
                                               IS_score=IS_score,
                                               min_mu=1.2)
-           
            
             # included the std for real and fake so it makes it much clearer to compare and see where we are standing
             real_stats_batch_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
@@ -5825,7 +5827,7 @@ else:#wgangp
     # larger lr for disciminator but still no luck(I even got large gp which is bad
     # so I need to change it. reverted it back to 0.0001 for both.
     # see debug log ahead!)
-    lr_d, lr_g = 0.0003, 0.0001#0.0001, 0.0001 
+    lr_d, lr_g = 0.0003, 0.0002#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
 decay_step = 7#5
