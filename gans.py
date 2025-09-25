@@ -6234,7 +6234,24 @@ for k,v in checkpoint.items():
 # condition.) also sometimes the generator loss becomes positive, while loss is negative, let it
 # train for more, usualyy it learns a long the way and things improve otherwise when it grows! then
 # its time to end the traiing we dont want large positive loss for generator (or discriminator!)
-#
+# update:
+# I couldnt get rid of the artifacts, no matter what it seemed, more epochs, different lrs,..
+# until it dawned on me to reset optimizers for each step and treat each step as a seperate 
+# thing! I had done it previously when I wanted to lower the lr, but not for each step and with
+# that training never went smoothly, it was never about high lr(it was, but the actual underlying
+# issue was the large gradients and moving average from previous step that messed up the new more
+# sensitive step). 
+# after I reset the optimizers for each step, and increased epochs for larger res like 32x32,
+# I started getting massively better image quality at 32x32! images formed properly
+# but less detailed obviously!(due to being 32x32!) the training became much mor stable, 
+# losses became so much more well behaved. it seems obvious now, but the gradient magnitudes 
+# and moving average of the previous stage would hurt the new higher resolution stage and 
+# make it go haywire completely! when I reset the optimizers for each stage, it became so 
+# much better! we now get fid of 36! previously I couldnt imagine this we were hovering in
+# 200s, 300s, or at best 150s! we had to do this all along!
+# we could have really not faced any of previous issues had we done this! (in retrospect 
+# aside from several days of training with different hyperparameters, we got to do a lot of
+# debugging and learn a lot as well which is a good thing!)
 #
 #
 #
