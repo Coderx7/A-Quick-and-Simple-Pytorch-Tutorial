@@ -5383,7 +5383,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             starting_step += 1
             # also reset the initial epoch for the new step
             starting_epoch = 0
-            
+                    
+                        
     
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
     if resume:
@@ -5414,11 +5415,24 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     
     for step in range(starting_step, max_steps):
         
+        # reset the optimizer for each new step, so the gradients from previous step doesnt 
+        # interfere with new, if we were at the middle of training continue with resumed
+        # optermizer states, otherwise create brand new ones for each step
+        if starting_epoch == 0:
+            disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
+            gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g, betas=betas_g)
+        
+        # if we resumed from a half trained model, we continue from the statring_epoch to 
+        # the end, however after that we need to reset the starting_epoch for the rest of
+        # the steps so they go start from 0
+        if step>starting_step:
+            starting_epoch = 0
+        
         # specify resolutions
         # specify batchsizes for each resolution
         # create dataloader for each res
         # specify fadein transition iteration count
-        
+                
         batch_size = batch_size_list[step]
         epochs = epoch_list[step]
         # 4 is the lowest res so we want 8,16 etc
@@ -5463,17 +5477,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # because we made discriminator too slow to function/react
             # and generator went heywire and faced mode collapse!
             # so this time I want to use a higher lr for discriminator
-            # for g in disc_optimizer.param_groups:
-            #     #multiplying this by 1.5 was too much, and by 1.1 is too small
-            #     g["lr"] = (lr_d * decay) 
-            # 
-            # for g in gen_optimizer.param_groups:
-            #     g["lr"] = lr_g * decay
-
+            # see update logs at the end.
+            
             # instead of changing the optimizers lr manually
             # lets reset the optimizer so changing lr doesnt mess up anything
-            # betas_d = disc_optimizer.defaults["betas"]
-            # betas_g = gen_optimizer.defaults["betas"]
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
             gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g*decay, betas=betas_g)
 
@@ -5764,7 +5771,7 @@ max_steps = 7
 # 128x128-b32: 
 # 256x256-b16: 
 BATCH_SIZES = [128,128,128,128,64,32,16]
-EPOCHS = [10,10,10,10,15,15,15] # [10,10,20,20,30,30,30]
+EPOCHS = [10,10,10,30,30,30,30] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
@@ -5850,26 +5857,26 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=False,
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250924155759/checkpoint_step_5_20250924155759.ckpt',
+                     resume=True,
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250925101735/checkpoint_step_1_20250925101735.ckpt',
                      decay_step=decay_step)
 
 #%%
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250924155759/checkpoint_step_4_20250924155759.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250925101735/checkpoint_step_5_20250925101735.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-# print(*checkpoint.keys(),sep='\n')
-# key="decay_step"
+# for k,v in checkpoint.items():
+#     if not isinstance(v,dict):
+#         print(f'{k:<15} {v}')
+# key="epoch_list"
 # print(f'{key}={checkpoint[key]}')
-# checkpoint[key] = 5
-# print(*checkpoint.keys(),sep='\n')
+# checkpoint[key] = [10,10,10,30,30,30,30]
+
 #%%
 # torch.save(checkpoint,checkpoint_path)
-# checkpoint.pop('disc_optimizer')
-# checkpoint.pop('gen_optimizer')
-# checkpoint.pop('disc_state_dict')
-# checkpoint.pop('gen_state_dict')
-# for k,v in checkpoint.items():
-#     print(f'{k}:{v}')
+
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
 #%%
 # sidenote:
 #
