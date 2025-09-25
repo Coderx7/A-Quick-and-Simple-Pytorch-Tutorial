@@ -5737,7 +5737,7 @@ dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-z_size = 128#original paper uses 512
+z_size = 512#original paper uses 512
 max_steps = 7
 # 4,8,16,32,64,128,256
 # I got out of memory(vram) when I hit 32x32!(because of previously allocated vram for
@@ -5830,7 +5830,7 @@ else:#wgangp
     lr_d, lr_g = 0.0003, 0.0002#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
-decay_step = 7#5
+decay_step = 5#5
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -5850,14 +5850,48 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                    #  resume=True,
-                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt',
+                     resume=False,
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250924155759/checkpoint_step_5_20250924155759.ckpt',
                      decay_step=decay_step)
 
+#%%
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250924155759/checkpoint_step_4_20250924155759.ckpt'
+checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+# print(*checkpoint.keys(),sep='\n')
+# key="decay_step"
+# print(f'{key}={checkpoint[key]}')
+# checkpoint[key] = 5
+# print(*checkpoint.keys(),sep='\n')
+#%%
+# torch.save(checkpoint,checkpoint_path)
+# checkpoint.pop('disc_optimizer')
+# checkpoint.pop('gen_optimizer')
+# checkpoint.pop('disc_state_dict')
+# checkpoint.pop('gen_state_dict')
+# for k,v in checkpoint.items():
+#     print(f'{k}:{v}')
 #%%
 # sidenote:
 #
 # reminder before going over for debugging:
+# first remember that in gan training the discriminator and generator 
+# can not possibly dominate the other one. they should and always be
+# in a never ending competition to overcome eachother. so we cant 
+# have one get an extremely low loss, while the other has not!
+# its basically a cat and mouse game, if anyone wins its over for
+# the other one, for example if the discrimnator becomes prefect
+# and always identifies fakes 100% of the times, then its gradients 
+# vanish and the generator stops learning! its over!(so no prefect model!)
+# so instead it should be like this, the generator does a bit better
+# then the discriminator needs to catch up, then discriminator does
+# better and identifies fakes well and generator needs to catch up
+# and this should continue, this is what we say, they need to be in 
+# a state of constant equiliberium!(i.e. neither one wins)
+# having said that, both can have decreasing loss. wild ossiliations/
+# fluctuations is a bad sign, but a downward loss for both is good.
+# if one loss is nearly constant while the other one is changing it
+# means one model has stopped learning and its a bad sign as well.
+# 
 # d_real_mean-> we want high positive number that shows on averge how
 #               confident the discriminator is in detecting real images.
 #               we want high positive score (high confidence for real image detections)
@@ -6181,7 +6215,18 @@ training_loop_progan(discriminator_progan,
 # update:
 # after adding Equalized learning rate modules, the loss has drastically decreased! and the
 # trainig has been way more stable!
-#
+# update:
+# starting with 64x64, we can see images become much sharper, but they are malformed or smeared
+# looking, as if someone draw a paint brush, that kind of smearness!, this is seemingly normal
+# as the netowkr has learned general structures in the image and it hasnot yet known or figured 
+# out the fine details, like exact hair strands, colors, face elements, eyes, basically all the
+# fine details! and from there it tries to learn those in higher resolutions. this is directly
+# realted to how training goes, if we choose proper settings, images develop with much better
+# details early on (my own experience), but none the less the transition from lower to higher 
+# res seems to always have these kinds of artifacts to some extend (depending on res and trainig
+# condition.) also sometimes the generator loss becomes positive, while loss is negative, let it
+# train for more, usualyy it learns a long the way and things improve otherwise when it grows! then
+# its time to end the traiing we dont want large positive loss for generator (or discriminator!)
 #
 #
 #
@@ -6475,22 +6520,7 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 #%%
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250922102238/checkpoint_step_2_20250922102238.ckpt'
-checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
-# checkpoint.pop('disc_optimizer')
-# checkpoint.pop('gen_optimizer')
-# checkpoint.pop('disc_state_dict')
-# checkpoint.pop('gen_state_dict')
-# for k,v in checkpoint.items():
-#     print(f'{k}:{v}')
-    
-# print(*checkpoint.keys(),sep='\n')
-# checkpoint["step"] = 2
-# print(checkpoint["lr_d"])
-# print(*checkpoint.keys(),sep='\n')
-#%%
-# torch.save(checkpoint,checkpoint_path)
 #%%
 # Stylegan2/3?
 #%%
