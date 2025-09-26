@@ -2219,7 +2219,7 @@ def get_neutral_latents(generator:GeneratorCNN, classifier:CelebAClassifier,
     # and finally grab the latens that dont have that attribute
     z_base = z_base[ids]
     return z_base
-
+#%%
 attr_name = 'Smiling'
 z = get_neutral_latents(generatorcnn,celeba_classifier, 
                     celeba_attr_word2idx,
@@ -3105,7 +3105,7 @@ print(f'{fids=}')
 del metric
 gc.collect()
 #%%
-# test with dataloaders
+# test with dataloaders and cuda
 dataset_name = 'celeba'
 split='train' # train, test, extra(for celeba)
 batch_size=64
@@ -5312,6 +5312,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
     starting_step = 0
     starting_epoch = 0
+    last_training_step_counter = 0
     max_steps = discriminator.max_steps
     z_size = generator.z_size
     # check for resuming from a checkpoint
@@ -5365,6 +5366,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
         loss_type = checkpoint["loss_type"]
         starting_step = checkpoint["step"]
+        last_training_step_counter = checkpoint["training_step_counter"]
         decay_step = checkpoint.get("decay_step", decay_step)
         epoch_list = checkpoint["epoch_list"]
         starting_epoch = checkpoint["epoch"]+1
@@ -5460,7 +5462,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         # for the full training (didnt work, discriminator got more powerful in epoch4+)
         # lets go with 0.4 this time - didnt work! resetting this to default
         fadein_steps = int(total_number_of_steps*0.5)
-        training_step_counter = 0
+        # if we are in brand new step, set it to 0 otherwise if we are resuming
+        # use the last training step counter so alpha is restored properly!
+        training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
         alpha=0
         
         #4,8,16,32,64,128,256
@@ -5490,8 +5494,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                      {epochs} ')
         print(f'  --BatchSize:                   {batch_size} ')
+        print(f'  --Number of Batches:           {num_batches} ')
         print(f'  --Interval:                    {interval} ')
         print(f'  --Fade-in Steps:               {fadein_steps} ')
+        print(f'  --Last training Step taken:    {training_step_counter} ')
         print(f'  --Current Discriminator LR:    {current_lr_d}')
         print(f'  --Current Generator LR:        {current_lr_g}')
         print(f'  --Current Discriminator Betas: {betas_d}')
@@ -5707,6 +5713,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "noise_addition":noise_addition,
                         "wgan_range":wgan_range,
                         "step":step,
+                        "training_step_counter":training_step_counter,
                         "epoch":epoch,
                         "epoch_list":epoch_list,
                         "batch_size_list":batch_size_list,
@@ -5770,7 +5777,13 @@ max_steps = 7
 # 64x64-b64 : 
 # 128x128-b32: 
 # 256x256-b16: 
+# sidenote:
+# if we resume cleanly from later stages say 64x64/128x128 we can use
+# much larger batchsizes than we can use from training them backtoback
+# using larger batchsizes directly affects the convergence and stability
+# resumed from stage 4, but instead of 32, went with 128 batchsize
 BATCH_SIZES = [128,128,128,128,64,32,16]
+# 64x64 might need >30 epochs maybe 50?
 EPOCHS = [10,10,10,30,30,30,30] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
@@ -5858,18 +5871,20 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device,
                      resume=True,
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250925101735/checkpoint_step_1_20250925101735.ckpt',
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt',
                      decay_step=decay_step)
 
 #%%
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250925101735/checkpoint_step_5_20250925101735.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-# for k,v in checkpoint.items():
-#     if not isinstance(v,dict):
-#         print(f'{k:<15} {v}')
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+
+# checkpoint["training_step_counter"] = 2544*30
 # key="epoch_list"
 # print(f'{key}={checkpoint[key]}')
-# checkpoint[key] = [10,10,10,30,30,30,30]
+# checkpoint[key] = [10, 10, 10, 30, 45, 45, 50]
 
 #%%
 # torch.save(checkpoint,checkpoint_path)
@@ -6235,7 +6250,9 @@ for k,v in checkpoint.items():
 # train for more, usualyy it learns a long the way and things improve otherwise when it grows! then
 # its time to end the traiing we dont want large positive loss for generator (or discriminator!)
 # update:
-# I couldnt get rid of the artifacts, no matter what it seemed, more epochs, different lrs,..
+# I couldnt get rid of the artifacts, no matter what! I tried more epochs, different lrs,..
+# when we got to higher res, we either faced mode collapse with severely artifact driven images!
+# or when mode collapse wasnt happenig, the severe artifacts and bad quality persisted! itwasntjust working!
 # until it dawned on me to reset optimizers for each step and treat each step as a seperate 
 # thing! I had done it previously when I wanted to lower the lr, but not for each step and with
 # that training never went smoothly, it was never about high lr(it was, but the actual underlying
