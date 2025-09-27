@@ -4782,7 +4782,9 @@ class AddBatchStdDev(nn.Module):
         # new channel that shows us the situation
         std_mean = torch.mean(std).view(1,1,1,1)
         b,c,h,w = x.shape
-        out = torch.cat([x, std_mean.repeat(b,1,h,w)],dim=1) #(b,c+1,h,w)
+        # out = torch.cat([x, std_mean.repeat(b,1,h,w)],dim=1) #(b,c+1,h,w)
+        # expand is more memory efficient than repeat so lets use that
+        out = torch.cat([x, std_mean.expand(b, 1, h, w)], dim=1)
         return out
     
 # for generator block, we need PixelNorm which simply is calculating l2 norm(in fact root mean square)
@@ -4837,6 +4839,8 @@ class PixelNorm(nn.Module):
         # broadcast it properly to the whole input volume
         # we could also use l2norm and still get the same effect but rms is more stable
         # return x / torch.sqrt(torch.sum(x**2, dim=1, keepdim=True)+eps)
+        # note for fp16 in order to be safe its a good idea to set eps to a
+        # larger value like 1e-5 so we dont face numerical instability! 
         return x / torch.sqrt(torch.mean(x**2, dim=1, keepdim=True)+eps)
 
 # just like the discriminator generator block will be simple 2 layer conv blocks
@@ -4956,7 +4960,10 @@ class DiscriminatorProGAN(nn.Module):
         # (see the code in commit 7fbaef5c7e96333c30fb06d7a56ce59e9e55aedb which is just before I change this
         # the architecture and explanations make much more snese incase you get confused!)
         self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, channels[i], kernel_size=1),
-                                                     nn.LeakyReLU(0.02)) for i in range(max_steps)])
+                                                     # update: damn it I mistyped 0.02 as 0.2 and it 
+                                                     # created so much issues, this practically lowered
+                                                     # the gradient flow 10x!
+                                                     nn.LeakyReLU(0.2)) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
         
         # and this part deals with the rest of processing, each block belongs to separate stage/step/depth
@@ -5972,12 +5979,14 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=False,
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt',
+                     resume=True,
+                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt',
+                    checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927102320/checkpoint_step_2_20250927102320.ckpt',
                      decay_step=decay_step)
 
 #%%
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927102320/checkpoint_step_2_20250927102320.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
