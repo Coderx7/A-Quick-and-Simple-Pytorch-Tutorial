@@ -4866,39 +4866,86 @@ class GenBlockProGAN(nn.Module):
 # now for the discriminator we build the architectures in steps
 # the initial block will process a small dimension, e.g. 4x4
 # then for the next stage, we merge the smaller size into the
-# larger size using alpha to specify how much 
+# larger size (using alpha to gradually do the transition from
+# low res to higher res, otherwise it wont learn properly and
+# trainingw ill be very unstable).
 class DiscriminatorProGAN(nn.Module):
     def __init__(self, max_steps=6):
         super().__init__()
         
         # in order to be able to properly resume checkpoints
-        # we need to build the model properly so lets move all
-        # the logic into setup layers so we can call it easily
-        # whenever we like to reinitialze the network
+        # we need to build the model properly at resume aswell
+        # so lets move all the logic into setup layers so we 
+        # can call it easily whenever we like to reinitialze the network
         self.setup_layers(max_steps)
     
     def setup_layers(self, max_steps):
         self.max_steps = max_steps
         # create some channels for our layers
-        # its 2^max_steps all the way down to 2^3=16
-        # i.e. [512,256,128,64,32,16] 
-        # we go from lowest res to highest res, 
-        # that is 512 is for lowest res image we 
-        # work with like 4x4 and 16 is for the highest res
-        # e.g 1024x1024!
-        # this takes a lot of time with max_steps=7 which I tried
-        # so lets use smaller channels so lets halve them all!
+        # we can choose any number for our channels
+        # we like, but to keep things simple and like
+        # the original paper, we go in power of 2.
+        # to specify the minimum number of channels 
+        # we simply startthe power at that desired size
+        # i.e. if we want the smallest number of channels
+        # be 16 we simply use 2^3 = 8!
+        # so its 2^max_steps all the way down to 2^3=8
+        # i.e. [512, 256, 128, 64, 32, 16, 8]
+        # also note we go from lowest res with highest number
+        # of channels to the highest res with the lowest
+        # number of channels. in other words, 512 is for
+        # lowest res image we work with like 4x4 and 16 
+        # is for the highest res e.g 512x512 or whatever we
+        # choose as the highest resolution!
+        # Initially I went with 1024 as the l argest channel count
+        # but it proved to be extremeley taxing on my vram!(rtx3080)
+        # and it also took a lot of time(with max_steps=7)
+        # so lets use smaller channels!
         channels = [ 2**(i+2) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         # we have to build 3 blocks, one is used for input images
         # and the other for the rest of the processing and a final one
         # for the final output. this way managing things becomes so much easier
         # note we have to use nn.modulelist or otherwise these wont be registered
-        # as modules and wont be found/discovered by other pytorch calls (.to(), .parameters() etc)
+        # as submodules of this module and wont be found/discovered by other pytorch calls (.to(), .parameters() etc)
         #
-        # like the name implies this part deals with image input exclusively. for each stage/step/depth
-        # of the network, we assign a dedicated imageprocessor (layer thataccepts images) and produces
-        # the output with proper number of channels for the next block to porcess
+        # like the name implies this part deals with image input exclusively. 
+        # for each stage/step/depth of the network, we assign a dedicated 
+        # imageprocessor (layer thataccepts images) and produces the output
+        # with proper number of channels for the next block to porcess
+        #
+        # quicknote:
+        # we are basically creating several subnetworks dynamically, each subnetwork 
+        # needs to get an input image, downsamples it and send it to final layer to 
+        # get a pridiction.
+        # to make things easy, we decided our final layer accepts 4x4 input and produces
+        # the pridiction by a pooling at the end.
+        # the first subnetwork therefore only has one layer that accepts the image
+        # the first image is 4x4, so no further processing will be needed, we directly send the
+        # output to final layer and get a pridiction. 
+        # the next subnetwork will work with 8x8 images, so it has an input layer of its own
+        # that accepts an 8x8 image, but since its 8x8, we need to run more processing to get
+        # good result, so we add an additional block to process it, since we
+        # want pridiction, and final layer accepts 4x4, we downsample it to 4x4 but before we 
+        # send that 4x4 to final layer, we must merge it with the previous lower res output,
+        # to get the previous res output, we downsample our 8x8 input image to 4x4 and feed
+        # it to the previous subnetwork image layer, so it process it only and the res is retained,
+        # we now have the output from previous layer, we merge our downsampled output with this
+        # one, and get a new output, we need to run some processing on this one and finally
+        # feed the result to final layer for prediction.
+        # the next network will work with 16x16 images, so this needs to do the same thing, 
+        # process it and downsample it to 8x8, now to merge the output with the previous 
+        # subnetwork's output, we do the same, downsample the 16x16 input image to 8x8 image,
+        # feed it to the previous (low res) subnetwork imagelayer, get 8x8 image, merged it
+        # with the new downampled high res output, process it and feed it to the final layer.
+        # so basically every subnetwork uses larger input, has an intial processing, then 
+        # downsamples it to lower res, feed it to previous lower res, get the initial processing
+        # and then merges the highres downsampled to lowres from previous step and does some
+        # processing on it and sends it to final layer!
+        # the generator does the same thing but in reverse!
+        # we can create these subnetworks individually and call them as subnetworks
+        # at proper steps, or we can build them like this dynamically
+        #          
         # update: 
         # using simple 1x1conv with leakyrelu seems to be the norm my version seems
         # to be abit too complex! using simple conv1x1-leakyrelu made everything much better!
@@ -4940,7 +4987,8 @@ class DiscriminatorProGAN(nn.Module):
         # also note since we are working at the lowest rest (4x4), the channel configuration will be the first
         # one, i.e. 512 in our case (higher channel count goes with lowest res and viceversa this is so
         # when we recieve a high res image( i.e. with stage/step/depth>0), it starts with low channel count, and as
-        # the spatial size decreases the number of channels increases so the representational capacity is not hindered just like any normal cnn!)
+        # the spatial size decreases the number of channels increases so the representational capacity is not 
+        # hindered just like any normal cnn!)
         self.final = nn.Sequential(# calculate and add average stddev to input samples
                                    AddBatchStdDev(),
                                    # our final layer works on the lowest res, so the channels[0]
@@ -5897,7 +5945,7 @@ else:#wgangp
     # training. by this we finally managed to get rid of those smear like patterns
     # liquaady pattern around the hair,face which can be seen in experiments (celeba_20250925180621,
     # celeba_20250926072732 and celeba_20250926192919).
-    lr_d, lr_g = 0.0003, 0.0002#0.0001, 0.0001 
+    lr_d, lr_g = 0.0001, 0.0001#0.0003, 0.0002 
 
 # decay at step=3 (32x32)
 decay_step = 5#5
@@ -5924,7 +5972,7 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=True,
+                     resume=False,
                      checkpoint_path='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt',
                      decay_step=decay_step)
 
@@ -5936,7 +5984,7 @@ for k,v in checkpoint.items():
         print(f'{k:<15} {v}')
 
 checkpoint["lr_d"] = 0.0001
-checkpoint["lr_g"] = 0.0002
+checkpoint["lr_g"] = 0.0001
 # batch_size_list = [128, 128, 128, 128, 64, 64, 32]
 
 #%%
