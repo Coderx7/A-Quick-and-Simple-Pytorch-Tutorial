@@ -1066,7 +1066,7 @@ def show_images(imgs, title, cols=8, figsize=(4,3)):
     plt.axis("off")
     plt.title(title)
     plt.show()
-
+#%%
 # z1 = 2*torch.rand(generatorcnn.z_size)-1
 # z2 = 2*torch.rand(generatorcnn.z_size)-1
 steps = 8
@@ -4745,6 +4745,11 @@ class DiscBlockProGAN(nn.Module):
                                    nn.LeakyReLU(0.2),
                                    EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
+                                   # update from future: 
+                                   # previously I downsampled in forward-pass, but since this is
+                                   # only used in block, to make things more efficient I add
+                                   # the pooling here! so each discganblock downsamples the input 
+                                   nn.AvgPool2d(2),
                                   )
         
     def forward(self, x):
@@ -4843,7 +4848,10 @@ class GenBlockProGAN(nn.Module):
      def __init__(self,in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
          super().__init__()
          
-         self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size,
+         self.block = nn.Sequential(# include the upsampling layer for efficieny so we dont
+                                    # do it in forward pass!
+                                    nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                                    EqualizedConv2d(in_channels, out_channels, kernel_size,
                                               stride, padding, bias=bias),
                                     nn.LeakyReLU(0.2),
                                     PixelNorm(),
@@ -4891,9 +4899,15 @@ class DiscriminatorProGAN(nn.Module):
         # like the name implies this part deals with image input exclusively. for each stage/step/depth
         # of the network, we assign a dedicated imageprocessor (layer thataccepts images) and produces
         # the output with proper number of channels for the next block to porcess
-        # update: using simple 1x1conv with leakyrelu seems to be the norm my version seems
-        # to be abit too complex!
+        # update: 
+        # using simple 1x1conv with leakyrelu seems to be the norm my version seems
+        # to be abit too complex! using simple conv1x1-leakyrelu made everything much better!
         # self.fromImgs = nn.ModuleList([DiscBlockProGAN(3, channels[i]) for i in range(max_steps)])
+        # update2:
+        # I later added downsampling to DiscBlockProgan and removed the downsampling from forwardpass
+        # so if you eevr wanted to retest this, remember not to downsample again! you dont need to now!
+        # (see the code in commit 7fbaef5c7e96333c30fb06d7a56ce59e9e55aedb which is just before I change this
+        # the architecture and explanations make much more snese incase you get confused!)
         self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, channels[i], kernel_size=1),
                                                      nn.LeakyReLU(0.02)) for i in range(max_steps)])
         # print(f'{self.fromImgs=}')
@@ -4904,6 +4918,22 @@ class DiscriminatorProGAN(nn.Module):
         # ans so on 
         self.blocks = nn.ModuleList([DiscBlockProGAN(channels[i],channels[i-1]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
+        
+        # update:
+        # to make things more efficeint and faster, I replaced this loop
+        # from the forward pass. this is used to process the input for the
+        # remainig layers/blocks after we processed the step and step-1 blocks.
+        # for i in range(step-2,-1,-1):
+        #     out = self.blocks[i](out)
+        #     # at each step we lower the res for the next stage/block
+        #     out = F.avg_pool2d(out, 2)
+        self.remaining_blocks = nn.ModuleList()
+        for step in range(self.max_steps):
+            remaining = []
+            for i in range(step-2,-1,-1):
+                remaining.append( self.blocks[i])
+            # each step needs its own sequence, so we store each in a list to call when needed
+            self.remaining_blocks.append(nn.Sequential(*remaining) if remaining else nn.Identity())
          
         # and the final block that grabs the final processed 4x4 output from previous processings(self.blocks)
         # and gives us a final 1 output. note since we will be using wgangp we dont use any activation functions
@@ -4934,7 +4964,8 @@ class DiscriminatorProGAN(nn.Module):
         new_input_out = self.fromImgs[step](x)
         new_input_out = self.blocks[step-1](new_input_out)
         # downsample so we can merge it with the previous lower res output
-        new_input_out = F.avg_pool2d(new_input_out,2)
+        # update: each block downsamples its input so no need to downsample again!
+        # new_input_out = F.avg_pool2d(new_input_out,2)
         
         # to get the previous result, we need to downsample the input to get the proper size
         x_downsampled = F.avg_pool2d(x, 2)
@@ -4946,10 +4977,12 @@ class DiscriminatorProGAN(nn.Module):
         # and finally process the rest of the blocks from high res
         # to the last layer. after merging we are at depth-1, so we
         # need to continue from depth-2 to the end
-        for i in range(step-2,-1,-1):
-            out = self.blocks[i](out)
-            # at each step we lower the res for the next stage/block
-            out = F.avg_pool2d(out, 2)
+        # for i in range(step-2,-1,-1):
+        #     out = self.blocks[i](out)
+        #     # at each step we lower the res for the next stage/block
+        #     out = F.avg_pool2d(out, 2)
+        # precomputed the layer configurations so we get much faster training!
+        out = self.remaining_blocks[step](out)
         
         # and finally get the output
         out = self.final(out)
@@ -5025,6 +5058,8 @@ class GeneratorProGAN(nn.Module):
         
         # and this to do the rest of processing. like before we only do chanel configs here and the
         # actual upsampling for each step/stage/depth is done during forward pass
+        # update: like in discriminator , I included the upsampling in GenBlockProGAN to make
+        # things more efficient and much faster! and remove the upsampling part from forward pass below
         self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
         # print(f'{self.blocks=}')
     
@@ -5049,8 +5084,9 @@ class GeneratorProGAN(nn.Module):
         for i in range(step):
             # keep the previous output so later on we can use it to get previous step output
             previous_output = out
-            # upsample the current res to next step res
-            out = F.interpolate(out, scale_factor=2, mode='bilinear')
+            # upsample the current res to next step res, 
+            # update: removed, blocks now does downsampling aswell
+            # out = F.interpolate(out, scale_factor=2, mode='bilinear')
             out = self.blocks[i](out)
         
         # now get the image out for this step
@@ -5287,6 +5323,7 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
                                    dataset_name=dataset_name,
                                    split=f'{split}_{num_samples//1000}K')
     return IS_score, FID_score
+
 
 #%%
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
@@ -5781,9 +5818,9 @@ max_steps = 7
 # if we resume cleanly from later stages say 64x64/128x128 we can use
 # much larger batchsizes than we can use from training them backtoback
 # using larger batchsizes directly affects the convergence and stability
-# resumed from stage 4, but instead of 32, went with 128 batchsize
+# resumed from stage 4, but instead of 32, went with 64!
 BATCH_SIZES = [128,128,128,128,64,32,16]
-# 64x64 might need >30 epochs maybe 50?
+# 64x64 might need >30 epochs (like 35?)
 EPOCHS = [10,10,10,30,30,30,30] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
@@ -5847,6 +5884,19 @@ else:#wgangp
     # larger lr for disciminator but still no luck(I even got large gp which is bad
     # so I need to change it. reverted it back to 0.0001 for both.
     # see debug log ahead!)
+    # update:
+    # started the training with larger lr for discriminator (3e-3) than 
+    # the generator (2e-3), until we hit 64x64, at which point I noticed
+    # discriminator constantly overpowers the generator enough to not
+    # allow the generator create more fine details, even more epochs wouldnt
+    # help, the generator loss would stay around the same thing, and images
+    # look smeared. I went to 128x128 and this didnt resolve. so I resumed
+    # from stage4, increased its epoch to 35 (it was end of step4 with 30 epochs)
+    # and set the lr_d and lr_g back to 0,0001 for both and set decay_step=4
+    # as well, lowering and then halving the learning rates. then resumed the
+    # training. by this we finally managed to get rid of those smear like patterns
+    # liquaady pattern around the hair,face which can be seen in experiments (celeba_20250925180621,
+    # celeba_20250926072732 and celeba_20250926192919).
     lr_d, lr_g = 0.0003, 0.0002#0.0001, 0.0001 
 
 # decay at step=3 (32x32)
@@ -5855,7 +5905,11 @@ decay_step = 5#5
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
- 
+
+#compile the models for faster training!
+# discriminator_progan.compile()
+# generator_progan.compile()
+
 training_loop_progan(discriminator_progan,
                      generator_progan, 
                      disc_optimizer=disc_optimizer,
@@ -5881,13 +5935,12 @@ for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
 
-# checkpoint["training_step_counter"] = 2544*30
-# key="epoch_list"
-# print(f'{key}={checkpoint[key]}')
-# checkpoint[key] = [10, 10, 10, 30, 45, 45, 50]
+checkpoint["lr_d"] = 0.0001
+checkpoint["lr_g"] = 0.0002
+# batch_size_list = [128, 128, 128, 128, 64, 64, 32]
 
 #%%
-# torch.save(checkpoint,checkpoint_path)
+torch.save(checkpoint,checkpoint_path)
 
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
