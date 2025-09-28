@@ -5219,7 +5219,9 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
     # gp shouldnt be large!
     if gp>100:
         print(f'WARNING: High Gradient Policy: {gp.item():.2f}')
-    return wgan_loss + (lambda_factor*gp)
+        # returning gp is a good idea cause allows us to log it
+        # and check it to see whats happening during training! 
+    return wgan_loss + (lambda_factor*gp), gp.item()
 
 # update: 
 # added this later to make reading logs much easier
@@ -5407,6 +5409,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     last_training_step_counter = 0
     max_steps = discriminator.max_steps
     z_size = generator.z_size
+    
     # check for resuming from a checkpoint
     if resume:
         if checkpoint_path:
@@ -5478,8 +5481,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # also reset the initial epoch for the new step
             starting_epoch = 0
                     
-                        
-    
+    # store training log for each step  
+    all_training_losses = [[] for _ in range(max_steps)]
+    all_gradient_penalties = [[] for _ in range(max_steps)]
+  
     print(f'ProGAN Training on {dataset_name} with loss={loss_type} in {experiment_date}')
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
@@ -5595,11 +5600,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         print(f'  --Current Discriminator Betas: {betas_d}')
         print(f'  --Current Generator Betas:     {betas_g}')
 
+        
         for epoch in range(starting_epoch, epochs):
             discriminator.train()
             generator.train()
 
             losses = []
+            step_all_gps = []
             epoch_scores = []
             for i, (imgs_real, _) in enumerate(train_loader):
                 #scale input to [-1,1]
@@ -5637,7 +5644,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 elif loss_type =='wgan':
                     disc_loss = wgan_critic_loss(preds_real, preds_fake)
                 elif loss_type =='wgangp':
-                    disc_loss = wgangp_critic_loss_progan(discriminator, imgs_real, imgs_fake, lambda_factor, alpha, step)
+                    disc_loss,gp_value = wgangp_critic_loss_progan(discriminator, imgs_real, imgs_fake, lambda_factor, alpha, step)
                 else:
                     raise ValueError(f"Invalid loss type:{loss_type} entered!")
             
@@ -5649,7 +5656,12 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 disc_real_mean = preds_real.mean().item()
                 disc_fake_mean = preds_fake.mean().item()
                 
-                
+                # keep track of gp trends during training 
+                # can help us choose a better lambda and 
+                # see if we are using too strong of a lambda
+                # that constrains/limits our discriminator too much!
+                step_all_gps.append(gp_value)
+
                 # we can also check the fake_images std and understand if everything is OK or not
                 # the fake_images std can be both low and high and be okay and not ok at 
                 # the same time!
@@ -5688,6 +5700,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         p.data.clip_(*wgan_range)
 
                 # now train genertor to create images that look real
+                # todo put this in gen_update_interval check so we only run this
+                # when we want to optimize, but since currently im doing wgangp
+                # and its 1:1 that check is really not needed. also I check preds_fake
+                # in loss, so lets leave it be for now, until we get this working!
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
                 fake_imgs = generator(z_vector, alpha, step)
                 preds_fake = discriminator(fake_imgs, alpha, step)
@@ -5750,6 +5766,11 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             d_loss_mean = np.mean(np.array(losses)[:,0])
             g_loss_mean = np.mean(np.array(losses)[:,1])
 
+            # always update the last step per epoch 
+            all_training_losses[step].append((d_loss_mean, g_loss_mean))
+            gp_mean_epoch = np.mean(step_all_gps)
+            all_gradient_penalties[step].append(gp_mean_epoch)
+            
             # real
             average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
             average_score_real_std = np.mean(np.array(epoch_scores)[:,0])
@@ -5783,7 +5804,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
             fid_score_str = f"FID: {FID_score:.2f}"
 
-            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str}"
+            gp_str = f"GP[avg]: {gp_mean_epoch:.2f}"
+            
+            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {gp_str}"
             
             print(f" -- {status_o} Last Batch : {real_stats_batch_str} | {fake_stats_batch_str}")
             print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
@@ -5816,6 +5839,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "IS":IS_score,
                         "d_loss_mean":d_loss_mean,
                         "g_loss_mean":g_loss_mean,
+                        "all_training_losses":all_training_losses,
+                        "all_gradient_penalties":all_gradient_penalties,
                         "dataset_name":dataset_name,
                         "split":split,
                     }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
@@ -5838,7 +5863,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 #%%
 print(f'Training PROGAN!')
 loss_type = 'wgangp'
-lambda_factor=10
+# initially set to 10, but during trainig since 64x64, discriminator is not performing well
+# and constantly fails, this might be due to strong/large lambda factor! so im using a smaller
+# value for now!
+lambda_factor=5
 dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -5952,7 +5980,11 @@ else:#wgangp
     # training. by this we finally managed to get rid of those smear like patterns
     # liquaady pattern around the hair,face which can be seen in experiments (celeba_20250925180621,
     # celeba_20250926072732 and celeba_20250926192919).
-    lr_d, lr_g = 0.0001, 0.0001#0.0003, 0.0002 
+    # update:
+    # start with lrs = 3e-4/2e-4 or 2e-4/2e-4 up until 64x64
+    # for 64x64 decrease lr_d and increase lr_g so generator
+    # doeesnt lose
+    lr_d, lr_g = 0.0002, 0.00025#0.0003, 0.0002 
 
 # decay at step=3 (32x32)
 decay_step = 5#5
@@ -5962,9 +5994,13 @@ disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas
 gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
 
 #compile the models for faster training!
+# update: it doesntw ork for models that have double backwardpass!
 # discriminator_progan.compile()
 # generator_progan.compile()
-
+# next fix equalize learning rate code, use conv(x*scaler)?
+# this time instead of weight that we are doinG!
+# use conv3x3 instead of conv1x1 that we are currently doing
+# 
 training_loop_progan(discriminator_progan,
                      generator_progan, 
                      disc_optimizer=disc_optimizer,
@@ -5980,28 +6016,47 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device,
                      resume=True,
-                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt',
-                    checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927102320/checkpoint_step_2_20250927102320.ckpt',
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt',
                      decay_step=decay_step)
 
 #%%
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927102320/checkpoint_step_2_20250927102320.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
 
-checkpoint["lr_d"] = 0.0001
-checkpoint["lr_g"] = 0.0001
-# batch_size_list = [128, 128, 128, 128, 64, 64, 32]
-
+checkpoint["lr_d"] = 0.0002
+checkpoint["lr_g"] = 0.00025
 #%%
 torch.save(checkpoint,checkpoint_path)
 
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
+#%%
+
+def plot_loss(loss_lists, label=''):
+  
+    plt.figure(figsize=(12,6))
+    
+    losses = np.array(loss_lists)
+    plt.plot(losses[:,0],"r-")
+    plt.plot(losses[:,1],"b--")
+    plt.title(f"Training loss for {label}")
+
+    plt.xlabel("Iterations")
+    plt.ylabel("Losses")
+    plt.legend()
+    plt.show()
+    
+# Sample data: 6 steps with synthetic loss values
+labels = [f"{2**(i+2)}x{2**(i+2)}" for i in range(7)]
+print(f'{labels=}')
+print(f'{loss_lists[0][:10]}')
+plot_loss(loss_lists[2])
+
 #%%
 # sidenote:
 #
@@ -6379,7 +6434,101 @@ for k,v in checkpoint.items():
 # we could have really not faced any of previous issues had we done this! (in retrospect 
 # aside from several days of training with different hyperparameters, we got to do a lot of
 # debugging and learn a lot as well which is a good thing!)
-#
+# update:
+# started the training with larger lr for discriminator (3e-3) than 
+# the generator (2e-3), until we hit 64x64, at which point I noticed
+# discriminator constantly overpowers the generator enough to not
+# allow the generator create more fine details, even more epochs wouldnt
+# help, the generator loss would stay around the same thing, and images
+# look smeared. I went to 128x128 and this didnt resolve. so I resumed
+# from stage4, increased its epoch to 35 (it was end of step4 with 30 epochs)
+# and set the lr_d and lr_g back to 0,0001 for both and set decay_step=4
+# as well, lowering and then halving the learning rates. then resumed the
+# training. by this we finally managed to get rid of those smear like patterns
+# liquaady pattern around the hair,face which can be seen in experiments (celeba_20250925180621,
+# celeba_20250926072732 and celeba_20250926192919).
+# update:
+# things didnt go as I expected for 128x128. 32x32 was really good, 64x64 really improved
+# but 128x128 not at all.
+# update:
+# spotted a bug in discriminator! I had used slop="0.02" instead of 0.2 for fromImgs!which
+# had weakened the gradient flow 10x! fixed it and im not trying to test if this helps!
+# update:
+# after the fix tried training with lr=2e-4 for both discriminatr and generator. 
+# it went kind of smoothly up to 32x32, we achieved roughly the same FID and quality
+# that we achieved previously with lr_d=3e-4 and lr_g=2e-4, a bit worse this time.
+# the 64x64 started and itw as roughly the same, maybe a bit worse cuz we used lower lr
+# this time. however the 128x128, not only didnt improve, but it got worse, we went from
+# FID 34 in 32x32 to fid 79 in 64x64 to 160 in epoch 21/30 for 128x128! something needs
+# to change! starting from 16x16 we need to be getting good quality, 4x4 and 8x8 we dont
+# have images so we cant say much, FID cant be used and its in 200/300s,but when we get
+# to 16x16 we should be having proper general form of images, and by 32x32, we should have
+# decent looking images, a lbeigt low resi! but prefectly identifiable, and likewise 64x64
+# needs to make it much clearer looking. so if we are not improving and seeing good quality
+# images at any of these steps something is wrong! also the changes I did caused our memory
+# consumption to drop drastically! (removing loops in discriminator) previously when we hit
+# 128x128, we would have hit 9.6GB but now its 6.5!
+# update:
+# im trying to resume from 32x32 and use lr=3e-4 and lr2e-4 to see how it goes and I wont
+# go beyond 64x64 until I get decent images, when I do then im sure 128x128 shouldnt be
+# an issue! I have spent too much time on this cuz it takes too long to train!
+# update:
+# resumed from the step3 (begiing of 64x64 step4) with the lr that i mentioned just now
+# (3e-4/2e-4) initially everything seems to be going well, the fid was around 40/41 
+# but as training went, each epoch it got worse! it fake got positive stores which
+# says discriminator cant identify fake images properly and struggles to do that! 
+# since we already used a larger lr for discriminator, we can increase its rate of update
+# by seting gen_update_interval to something like 2 or more, but I guess this is wrong
+# and will cause discriminator to dominate the generator. another thing that could be
+# happening is that we might have been using the wrong lambda_factor, i.e. its too large
+# and limits/constrains the discriminator too much (remember the weight initiatlization
+# issue we had for wgan?) this might be it. so now im going to use a much smaller gp and
+# see how it goes!
+# update:
+# I printed the average gp to see if the lambda was large, its around 0.1~0.15 which is great
+# it shows its stable and not exploding like before we introduce equalized learning rate and
+# other stuff we did. so far so good however, starting with 64x64 generator starts to struggle
+# the fake_mean has become positive, a large positive number, which means generator has failed 
+# to fool discriminator repeatedly(discriminator asssigned negative scores to signify its fake!
+# and did it with a good confidence! -fake_mean thus becomes a large positive number!) and it shows
+# the FID quickly drops from 40 to 68 to 78 etc.
+# the balance between discriminator and generator was great up until now, but now we need to make
+# generator a bit more powerful so it can deal with all the new missing detailes from new higher res!
+# this is the resume log by the way :
+# Step: 4/7 -> Training on [64x64]
+# [64x64][Epoch 0/30 | Iter: 1272/2544] Disc Loss: -3.2945 | Gen Loss: -1.5743
+# -- 😱 Batch-1272:  D_real_avg: 😎 +14.0373 ± +2.9058 📈| D_fake_avg: 😵 +10.5777 ± +1.9900 📉
+# Using FID stats for celeba-train_10K from cache...
+# -- 😱 Last Batch : D_real_avg: 😎 +7.2324 ± +3.9085 📈 | D_fake_avg: 😵 +4.1415 ± +2.5747 📉
+# -- 😱 Epoch's Avg: D_real_avg: 😎 +7.3060 ± +7.3060 📈 | D_fake_avg: 😵 +3.4679 ± +6.6141 📉
+# [64x64][Epoch 0/30] DLoss(Avg): -3.5450 | GLoss(Avg): -2.5923 | IS: 2.7384 ± 0.0461) | FID: 40.64 | GP[avg]: 0.06
+# 
+# [64x64][Epoch 1/30 | Iter: 1272/2544] Disc Loss: -3.7887 | Gen Loss: -6.4448
+# -- 😱 Batch-1272:  D_real_avg: 😎 +7.5593 ± +2.7882 📈| D_fake_avg: 😵 +3.3704 ± +2.2962 📉
+# Using FID stats for celeba-train_10K from cache...
+# -- 😱 Last Batch : D_real_avg: 😎 +9.5385 ± +2.6258 📈 | D_fake_avg: 😵 +4.2515 ± +1.4386 📉
+# -- 😱 Epoch's Avg: D_real_avg: 😎 +8.6388 ± +8.6388 📈 | D_fake_avg: 😵 +3.7770 ± +6.8083 📉
+# [64x64][Epoch 1/30] DLoss(Avg): -4.2924 | GLoss(Avg): -2.8783 | IS: 2.6073 ± 0.0502) | FID: 41.06 | GP[avg]: 0.11
+# 
+# [64x64][Epoch 2/30 | Iter: 1272/2544] Disc Loss: -4.9872 | Gen Loss: -7.5516
+# -- 😱 Batch-1272:  D_real_avg: 😎 +6.2007 ± +2.3118 📈| D_fake_avg: 😟 +0.3874 ± +1.5063 📉
+# Using FID stats for celeba-train_10K from cache...
+# -- 😱 Last Batch : D_real_avg: 😎 +8.7716 ± +2.5128 📈 | D_fake_avg: 😟 +3.4392 ± +2.1746 📉
+# -- 😱 Epoch's Avg: D_real_avg: 😎 +7.6186 ± +7.6186 📈 | D_fake_avg: 😵 +1.9932 ± +7.6857 📉
+# [64x64][Epoch 2/30] DLoss(Avg): -4.8152 | GLoss(Avg): -1.0651 | IS: 2.6001 ± 0.0313) | FID: 68.66 | GP[avg]: 0.16
+# 
+# [64x64][Epoch 3/30 | Iter: 1272/2544] Disc Loss: -4.2191 | Gen Loss: 11.4249
+# -- 😀 Batch-1272:  D_real_avg: 😵 -0.4766 ± +3.5924 📈| D_fake_avg: 😎 -5.3919 ± +3.7549 📉
+# Using FID stats for celeba-train_10K from cache...
+# -- 😀 Last Batch : D_real_avg: 😵 +9.7364 ± +1.9480 📈 | D_fake_avg: 😎 +4.9699 ± +1.6249 📉
+# -- 😱 Epoch's Avg: D_real_avg: 😎 +6.9414 ± +6.9414 📈 | D_fake_avg: 😵 +1.5484 ± +6.9933 📉
+# [64x64][Epoch 3/30] DLoss(Avg): -4.6348 | GLoss(Avg): -0.7618 | IS: 2.7645 ± 0.0490) | FID: 78.97 | GP[avg]: 0.15
+# 
+# [64x64][Epoch 4/30 | Iter: 1272/2544] Disc Loss: -3.3210 | Gen Loss: 7.5638
+# -- 😱 Batch-1272:  D_real_avg: 😎 +7.3455 ± +2.8731 📈| D_fake_avg: 😵 +3.3457 ± +2.5463 📉
+# update:
+# lets use lr_d=0.0002 and lr_g = 0.00025 (decrease discriminator abit and increase generators a bit)
+# 
 #
 #
 # full log 1
