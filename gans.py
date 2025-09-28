@@ -6028,7 +6028,8 @@ for k,v in checkpoint.items():
         print(f'{k:<15} {v}')
 
 checkpoint["lr_d"] = 0.0002
-checkpoint["lr_g"] = 0.00025
+checkpoint["lr_g"] = 0.0001
+checkpoint["lambda_factor"] = 5
 #%%
 torch.save(checkpoint,checkpoint_path)
 
@@ -6491,7 +6492,8 @@ plot_loss(loss_lists[2])
 # the fake_mean has become positive, a large positive number, which means generator has failed 
 # to fool discriminator repeatedly(discriminator asssigned negative scores to signify its fake!
 # and did it with a good confidence! -fake_mean thus becomes a large positive number!) and it shows
-# the FID quickly drops from 40 to 68 to 78 etc.
+# the FID quickly drops from 40 to 68 to 78 etc.(also I lowered the lambda_factor to 5 it seems
+# this makes it more stable? i.e. I get lower FID/better fake-mean when resuming with lower lambda_factor)
 # the balance between discriminator and generator was great up until now, but now we need to make
 # generator a bit more powerful so it can deal with all the new missing detailes from new higher res!
 # this is the resume log by the way :
@@ -6528,8 +6530,16 @@ plot_loss(loss_lists[2])
 # -- 😱 Batch-1272:  D_real_avg: 😎 +7.3455 ± +2.8731 📈| D_fake_avg: 😵 +3.3457 ± +2.5463 📉
 # update:
 # lets use lr_d=0.0002 and lr_g = 0.00025 (decrease discriminator abit and increase generators a bit)
-# 
-#
+# ok it was good for 1 epoch! we started with FID37, but the next epoch it went up to 47! 
+# I guess we need to crank the lr more for generator! or better make discrinator slower to
+# response
+# update:
+# set lr_d = 0.0001, and keep lr_g=0.0002 (with lambda_factor=5)
+# that made discriminator stronger! it seems lower lr made it less jumpy! and do better
+# so instead now Im doing the opposite, lowering lr_g to 0.0001 and lr_d=0.0002!
+# ok it made it much worse! generator needs to be made more powerful!
+# update:
+# make it more powerful
 #
 # full log 1
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
