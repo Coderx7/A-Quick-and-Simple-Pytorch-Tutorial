@@ -6562,8 +6562,22 @@ plt.show()
 # with the discriminator (things seems balanced now), and we improved FID ever since.
 # we might be able to make convergence faster by using larger lr_g, like 0.00023 or even 0.00025
 # without hurting discriminator that much. at this rate, I guess we need more epochs for 64x64
-# and 30 epochs is not enough(@25 we have FID=68.62)
-#
+# and 30 epochs is not enough(@25 we have FID=68.62) also looking at later epochs, we can see
+# we have ossiliations, we jump to FID 68 to 70, back to 67 and ... so I guess maybe we instead
+# need to lower the lr a bit for both but keep the ratio intact?(if we remove the lr_d too much
+# we may make it more powerful like our previous test! so maybe lets continue abit like this
+# for some more epochs and then decide?)for now im waiting it til 128x128 ends and see how it
+# performs there as well(the lrs are shrunk to 2.5e-05/2.75e-05). the image quality is obviously
+# a lot better than before. we are 100% on the right track. the 128x128 also shows very good images
+# compared to before which were infested with weird artifacts. we still have artifacts but we
+# clearly see some images very well formed and with minial artifacts, we sitll need work to do
+# but it shows good progress.we see ossiliations here (128x128) as well, one epoch we are down
+# 75 the next epoch it jumps to 90! then down to 87 adn then back to 91 and then 97!
+# the lr maybe high, also generator seems to be struggling and needs a push at this step aswell
+# 
+# update:
+# increase the previous 64x64 checkpoint (checkpoint_step_4_20250929131133) training with
+# additional 20 epochs
 # 
 #
 # 
