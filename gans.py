@@ -6554,7 +6554,17 @@ plt.show()
 # update:
 # this time around the generator constantly overpowered the discrimnator!
 # update:
-# resume the new 64x64 with the same lr = 2e-4!
+# resume the new 64x64(checkpoint_step_3_20250929080324) with the same lr = 2e-4 failed with discriminator overpowering geneator
+# in 2~3 epochs.
+# update:
+# resume the new 64x64(checkpoint_step_3_20250929080324) with lr_d=0.0002 and lr_g=0.00022:
+# this actually worked and after several epochs, generator finally pulled ahead and seems on par
+# with the discriminator (things seems balanced now), and we improved FID ever since.
+# we might be able to make convergence faster by using larger lr_g, like 0.00023 or even 0.00025
+# without hurting discriminator that much. at this rate, I guess we need more epochs for 64x64
+# and 30 epochs is not enough(@25 we have FID=68.62)
+#
+# 
 #
 # 
 # 
