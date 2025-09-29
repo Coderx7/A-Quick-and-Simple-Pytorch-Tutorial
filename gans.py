@@ -5226,7 +5226,7 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
 # update: 
 # added this later to make reading logs much easier
 # todo: check values and tune them more accurately
-def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0.4, low_threshold=0.2):
+def get_status(score, higher_is_better=True, high_threshold=0.8, mid_threshold=0.4, low_threshold=0):
     if higher_is_better:
         # for real score we want high positive numbers
         # any positive number is good!
@@ -5390,9 +5390,22 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     
-    lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
-    lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
+    # lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
+    # lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
+    # since we want the default lr/betas we set when we created optimizers 
+    # we can use defaults dictionary. these as the name implies are our
+    # default values. the ones in parameter_groups are the updated ones
+    # if e.g. we use a scheduler, the lr in parameter_groups will change
+    # but the defaults will be intact! we dont use a scheduler for now so
+    # its the same for us here!(note param_groups can be more than 1,
+    # and its saved with satet_dict, but defaults is not!)
+    # to be sure we catch this if later on we used more lrs for optimizers
+    # heres an assert!
+    assert len(disc_optimizer.param_groups)==1 and\
+           len(gen_optimizer.param_groups)==1, 'We expect to have only one param_groups only!'
     
+    lr_d = disc_optimizer.param_groups[0]["lr"]
+    lr_g = gen_optimizer.param_groups[0]["lr"]
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
     
@@ -5727,27 +5740,24 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     gen_real_loss.backward()
                     gen_optimizer.step()
             
+                # we want high positive score/average number for real_mean and
+                # lower positive or <real for fake mean (its basically 
+                # like this for them, the real_mean means, on average 
+                # how good(confident) is the discriminator at detecting real images
+                # and for fake_mean it means on average how good is the generator
+                # at fooling the discriminator. as you can see we want a high
+                # positive average number for discriminator and a low average
+                # number(preferably 0 or less) for generator.
+                status_r = get_status(disc_real_mean, higher_is_better=True)
+                status_f = get_status(disc_fake_mean, higher_is_better=False)
+                status_o = get_overall_status(disc_real_mean, disc_fake_mean)
+                # included the std for real and fake so it makes it much clearer 
+                # to compare and see where we are standing   
+                d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+                d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
+
                 if (i+1)%interval==0:
-                    # append discriminator loss and generator loss
-                    # losses.append((disc_loss.item(), gen_real_loss.item()))
-                    # print discriminator and generator loss
                     print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f}')
-                    
-                    # we want high positive score/average number for real_mean and
-                    # lower positive or <real for fake mean (its basically 
-                    # like this for them, the real_mean means, on average 
-                    # how good(confident) is the discriminator at detecting real images
-                    # and for fake_mean it means on average how good is the generator
-                    # at fooling the discriminator. as you can see we want a high
-                    # positive average number for discriminator and a low average
-                    # number(preferably 0 or less) for generator.
-                    status_r = get_status(disc_real_mean, higher_is_better=True)
-                    status_f = get_status(disc_fake_mean, higher_is_better=False)
-                    status_o = get_overall_status(disc_real_mean, disc_fake_mean)
-                    
-                    d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
-                    d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
-                    
                     print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
                     
                 losses.append((disc_loss.item(), gen_real_loss.item()))
@@ -5768,7 +5778,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 
             # always update the last step per epoch 
             all_training_losses[step].append((d_loss_mean, g_loss_mean))
-            gp_mean_epoch = np.mean(step_all_gps)
+            gp_mean_epoch = float(np.mean(step_all_gps))
             all_gradient_penalties[step].append(gp_mean_epoch)
             
             # real
@@ -5791,13 +5801,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                                               IS_score=IS_score,
                                               min_mu=1.2)
            
-            # included the std for real and fake so it makes it much clearer to compare and see where we are standing
-            real_stats_batch_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
-            fake_stats_batch_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
-           
             real_stats_avg_str = f"D_real_avg: {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<+.4f} 📈"
             fake_stats_avg_str = f"D_fake_avg: {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<+.4f} 📉"
-            
+
             dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.4f}"
             gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.4f}"
 
@@ -5808,7 +5814,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             
             summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {gp_str}"
             
-            print(f" -- {status_o} Last Batch : {real_stats_batch_str} | {fake_stats_batch_str}")
+            print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
             print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] {summary}')
             
@@ -5984,7 +5990,7 @@ else:#wgangp
     # start with lrs = 3e-4/2e-4 or 2e-4/2e-4 up until 64x64
     # for 64x64 decrease lr_d and increase lr_g so generator
     # doeesnt lose
-    lr_d, lr_g = 0.0002, 0.00025#0.0003, 0.0002 
+    lr_d, lr_g = 0.0002, 0.0002#0.0003, 0.0002 
 
 # decay at step=3 (32x32)
 decay_step = 5#5
@@ -6016,48 +6022,46 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device,
                      resume=True,
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt',
+                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt',
+                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt',
                      decay_step=decay_step)
 
 #%%
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
-
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+            
 checkpoint["lr_d"] = 0.0002
-checkpoint["lr_g"] = 0.0001
-checkpoint["lambda_factor"] = 5
+checkpoint["lr_g"] = 0.00022
+checkpoint["lambda_factor"] = 10
+# since we changed the epochs, lr_d/lr_g wont take effect and instead
+# we need to change the optimizers lr!
+checkpoint["epoch_list"]=[10, 10, 10, 40, 30, 30, 30]
+checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.0002
+checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.00022
 #%%
 torch.save(checkpoint,checkpoint_path)
 
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+
 #%%
-
-def plot_loss(loss_lists, label=''):
-  
-    plt.figure(figsize=(12,6))
-    
-    losses = np.array(loss_lists)
-    plt.plot(losses[:,0],"r-")
-    plt.plot(losses[:,1],"b--")
-    plt.title(f"Training loss for {label}")
-
-    plt.xlabel("Iterations")
-    plt.ylabel("Losses")
-    plt.legend()
-    plt.show()
-    
-# Sample data: 6 steps with synthetic loss values
-labels = [f"{2**(i+2)}x{2**(i+2)}" for i in range(7)]
-print(f'{labels=}')
-print(f'{loss_lists[0][:10]}')
-plot_loss(loss_lists[2])
-
+all_losses = checkpoint["all_training_losses"]
+all_gps = checkpoint["all_gradient_penalties"]
+idx=3
+plt.plot(np.array(all_losses[idx]))
+plt.show()
+plt.plot(np.array(all_gps[idx]))
+plt.show()
 #%%
 # sidenote:
 #
@@ -6201,7 +6205,7 @@ plot_loss(loss_lists[2])
 # existed. then noticed the betas in adams, 0.9 was small, it meant
 # as I explained before, if we get a few batches of small gradients, adam
 # would take huge steps and we ould have huge parameter updates that would
-# cuz massive instablity in training. made it 0.99 to make it much smoother
+# cause massive instablity in training. made it 0.99 to make it much smoother
 # still I was getting massive loss (but a lot smaller now but still huge)
 # this time I checked and saw the issue was comming from the gradient penalty
 # i.e. gp was huge! which when we added it to our loss our loss would be huge
@@ -6424,9 +6428,10 @@ plot_loss(loss_lists[2])
 # that training never went smoothly, it was never about high lr(it was, but the actual underlying
 # issue was the large gradients and moving average from previous step that messed up the new more
 # sensitive step). 
+# update:
 # after I reset the optimizers for each step, and increased epochs for larger res like 32x32,
 # I started getting massively better image quality at 32x32! images formed properly
-# but less detailed obviously!(due to being 32x32!) the training became much mor stable, 
+# but less detailed obviously!(due to being 32x32!) the training became much more stable, 
 # losses became so much more well behaved. it seems obvious now, but the gradient magnitudes 
 # and moving average of the previous stage would hurt the new higher resolution stage and 
 # make it go haywire completely! when I reset the optimizers for each stage, it became so 
@@ -6539,8 +6544,45 @@ plot_loss(loss_lists[2])
 # so instead now Im doing the opposite, lowering lr_g to 0.0001 and lr_d=0.0002!
 # ok it made it much worse! generator needs to be made more powerful!
 # update:
-# make it more powerful
+# make it more powerful. decied to increase 32x32 step by 10 epochs with 
+# lr_d=0.0002 and lr_g=0.0003 and see how it affects the 32x32 step and whether
+# training more in previous step would help the next step
+# update:
+# the combo lr_d=0.0002 and lr_g=0.0003 didnt work and generator quickly overpowered the discrinator
+# and we got two consecutive bad epochs which I then ended.made it lr_d=0.0002 and lr_g=0.00025
+# instead to see how it goes.
+# update:
+# this time around the generator constantly overpowered the discrimnator!
+# update:
+# resume the new 64x64 with the same lr = 2e-4!
 #
+# 
+# 
+# 
+# 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # full log 1
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
 # --Discriminator channels:      [1024, 512, 256, 128, 64, 32, 16]
