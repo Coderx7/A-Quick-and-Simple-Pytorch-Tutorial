@@ -5381,12 +5381,17 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
                                    split=f'{split}_{num_samples//1000}K')
     return IS_score, FID_score
 
+@torch.no_grad()
+def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
+    for ema_p,p in zip(g_ema.parameters(),g.parameters()):
+        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
 
 #%%
+import copy
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
-                         noise_addition=False, device='cuda', resume=False, decay_step=3, 
+                         noise_addition=False, use_ema_inference=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     
@@ -5408,6 +5413,11 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     lr_g = gen_optimizer.param_groups[0]["lr"]
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
+    
+    # get a copy of the generator so we can calculate the exponential moving average
+    # for its weights to be used for better visualization/inference
+    # we need to update this after each iteration
+    ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
     
     assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
     
@@ -5739,7 +5749,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     gen_optimizer.zero_grad()
                     gen_real_loss.backward()
                     gen_optimizer.step()
-            
+
+                # update the ema version
+                update_ema_generator(generator, ema_generator)
+                
                 # we want high positive score/average number for real_mean and
                 # lower positive or <real for fake mean (its basically 
                 # like this for them, the real_mean means, on average 
@@ -5824,6 +5837,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
                         "gen_state_dict":generator.state_dict(),
+                        "gen_ema_state_dict":ema_generator.state_dict(),
                         "disc_optimizer":disc_optimizer.state_dict(),
                         "gen_optimizer":gen_optimizer.state_dict(),
                         "z_size":generator.z_size,
@@ -5853,12 +5867,13 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         
             # generate some images mid training to evaluate our model's performance 
             with torch.no_grad():
-                generator.eval()
+                gen = ema_generator.eval() if use_ema_inference else generator.eval()
                 # reshape images back to default shape (hxwxc)
-                generated_images = generator(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
+                generated_images = gen(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
                 display_images(generated_images, 
                         cols=gen_num_samples//8,
-                        title=f'Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
+                        ema_marker_str = "[EMA] " if use_ema_inference else ""
+                        title=f'{ema_marker_str}Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
                         unnormalize=True,
                         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
                         figsize=(16,8))
@@ -5910,7 +5925,7 @@ max_steps = 7
 # resumed from stage 4, but instead of 32, went with 64!
 BATCH_SIZES = [128,128,128,128,64,32,16]
 # 64x64 might need >30 epochs (like 35?)
-EPOCHS = [10,10,10,30,30,30,30] # [10,10,20,20,30,30,30]
+EPOCHS = [10,10,10,20,40,40,40] # [10,10,20,20,30,30,30]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
@@ -5989,11 +6004,11 @@ else:#wgangp
     # update:
     # start with lrs = 3e-4/2e-4 or 2e-4/2e-4 up until 64x64
     # for 64x64 decrease lr_d and increase lr_g so generator
-    # doeesnt lose
-    lr_d, lr_g = 0.0002, 0.0002#0.0003, 0.0002 
+    # only a tiny bit so it doeesnt lose and doesnt overpower
+    # the discriminator!
+    lr_d, lr_g = 0.001, 0.001#0.0003, 0.0002 
 
-# decay at step=3 (32x32)
-decay_step = 5#5
+decay_step = 7#5
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -6006,7 +6021,11 @@ gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=beta
 # next fix equalize learning rate code, use conv(x*scaler)?
 # this time instead of weight that we are doinG!
 # use conv3x3 instead of conv1x1 that we are currently doing
-# 
+# todo: next rampup the lr to 0.001 and dont decrease for any steps
+# just like the paper, see why ours fail! it shouldnt fail
+# if it failes, then use conv3x3! it might be generator needs that
+# power to work well with ihgher lr! the original paper arch is 23m
+# while ours is 7m!
 training_loop_progan(discriminator_progan,
                      generator_progan, 
                      disc_optimizer=disc_optimizer,
@@ -6021,30 +6040,31 @@ training_loop_progan(discriminator_progan,
                      wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
                      noise_addition=False,
                      device=device,
-                     resume=True,
+                     resume=False,
                     #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt',
-                     checkpoint_path='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt',
+                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt',
                      decay_step=decay_step)
 
 #%%
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
         print(f'{k:<15} {v}')
     elif "param_groups" in v.keys():
         print(f'{k:<15} {v["param_groups"]}')
-            
-checkpoint["lr_d"] = 0.0002
-checkpoint["lr_g"] = 0.00022
+
+checkpoint["lr_d"] = 0.00004
+checkpoint["lr_g"] = 0.000042
 checkpoint["lambda_factor"] = 10
 # since we changed the epochs, lr_d/lr_g wont take effect and instead
 # we need to change the optimizers lr!
-checkpoint["epoch_list"]=[10, 10, 10, 40, 30, 30, 30]
-checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.0002
-checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.00022
+checkpoint["epoch_list"]=[10, 10, 10, 40, 45, 50, 50]
+checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
+checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
 #%%
 torch.save(checkpoint,checkpoint_path)
 
@@ -6057,7 +6077,7 @@ for k,v in checkpoint.items():
 #%%
 all_losses = checkpoint["all_training_losses"]
 all_gps = checkpoint["all_gradient_penalties"]
-idx=3
+idx=5
 plt.plot(np.array(all_losses[idx]))
 plt.show()
 plt.plot(np.array(all_gps[idx]))
@@ -6572,12 +6592,36 @@ plt.show()
 # compared to before which were infested with weird artifacts. we still have artifacts but we
 # clearly see some images very well formed and with minial artifacts, we sitll need work to do
 # but it shows good progress.we see ossiliations here (128x128) as well, one epoch we are down
-# 75 the next epoch it jumps to 90! then down to 87 adn then back to 91 and then 97!
+# 75 the next epoch it jumps to 90! then down to 87 adn then back to 91 and then 97,105,...
 # the lr maybe high, also generator seems to be struggling and needs a push at this step aswell
 # 
 # update:
 # increase the previous 64x64 checkpoint (checkpoint_step_4_20250929131133) training with
-# additional 20 epochs
+# additional 20 epochs, did that, lowered the lr to 0.00004 and 0.000042, but the same ossilications
+# exist and the convergence rate became really slow! so Im scrapping all of this and starting
+# new
+# update:
+# started with lr=0.001 just like the paper and see how it goes, we should see something different
+# cuase I have had a few bugs back when we initially used this. if this doesnt work, and discrimnator
+# dominates the generator (I can use noise like before, but as paper also says, it affects the
+# image quality, so using small amounts might not do much and if we use more affects the image
+# we can use this with lsgan just like the paper did, but I want to achieve what the paper has achieved
+# aswell as close as I can) so it means the generator is weaker, and I will use conv3x3 for both
+# this time ramping both up to 23m and recheck for final time. currently we achieve good results
+# fid that previously we couldnt, and we can continue improving it with careful lr, but it takes too much time
+# and I cant have that! so we are going full beast nafter this!
+# update:
+# thank God! so far as of epoch 5 of 32x32 (alpha=0.4) we are down to FID 35 which is pretty good!
+# the high learning rate that previously kept messing up, after using equalized learnng rate
+# seems to be fine and give us a fast convergence. at epoch 19 we are at FID 21! it seems we
+# can get better result by decaying the lr after epoch 15! cuz we see ossilications every other
+# epochs, we go from 35-27-32-30-34-27-26-28-23 etc)
+# however I just noticed I havent implemented
+# the the ema for generator's weights for inference/generation. this should give us a much lower
+# FID/higher quality (ema always gives better result based on my experience) so after im done 
+# in this part, I'll do the ema and see how far we can get our scores!
+# 
+# 
 # 
 #
 # 
