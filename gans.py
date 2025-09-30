@@ -6006,8 +6006,13 @@ else:#wgangp
     # for 64x64 decrease lr_d and increase lr_g so generator
     # only a tiny bit so it doeesnt lose and doesnt overpower
     # the discriminator!
+    # update:
+    # after implementing equalized leanring rate layer, we 
+    # can use large lrs like 0.001 for both and not decay at all
+    # we will get very decent images! see debug logs ahead!
     lr_d, lr_g = 0.001, 0.001#0.0003, 0.0002 
 
+# no need to decay now!
 decay_step = 7#5
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
@@ -6609,17 +6614,31 @@ plt.show()
 # aswell as close as I can) so it means the generator is weaker, and I will use conv3x3 for both
 # this time ramping both up to 23m and recheck for final time. currently we achieve good results
 # fid that previously we couldnt, and we can continue improving it with careful lr, but it takes too much time
-# and I cant have that! so we are going full beast nafter this!
+# and I cant have that! so we are going full beast after this!
 # update:
 # thank God! so far as of epoch 5 of 32x32 (alpha=0.4) we are down to FID 35 which is pretty good!
 # the high learning rate that previously kept messing up, after using equalized learnng rate
 # seems to be fine and give us a fast convergence. at epoch 19 we are at FID 21! it seems we
 # can get better result by decaying the lr after epoch 15! cuz we see ossilications every other
 # epochs, we go from 35-27-32-30-34-27-26-28-23 etc)
-# however I just noticed I havent implemented
-# the the ema for generator's weights for inference/generation. this should give us a much lower
-# FID/higher quality (ema always gives better result based on my experience) so after im done 
+# ok starting from 64x64 I'm seeing the results are getting worse, each epoch!
+# ok they are not, infact the FID fluctuates from epch to epoch, but as more epochs are passed
+# images get much detailed and better, especially when we get to alpha=1 (e.g. at epoch 20 we
+# our FID is 73, its much more clear and good than its epoch 15 with FID=64!(alpha=0.8)
+# the thing is, the loss is decreasing for both discriminator and generator! and that counts!
+# the fake_avg becomes positive but hovers around +2/+3 at max but mostly around 0 or negative
+# but I guess as long as loss is decreasing its good, which have been our case so far!)
+# so its going good.(progan_celeba_wgangp_20250930091608)
+# however I just noticed I havent implemented the the ema for generator's weights for 
+# inference/generation. this should give us a much lower FID/higher quality 
+# (ema always gives better result based on my experience) so after im done 
 # in this part, I'll do the ema and see how far we can get our scores!
+# im pretty satisfied with the results so far, so Im going to call it a day and
+# finish our progan saga here. the image quality is very good the diversity is 
+# verygood without ema! (I havent tained with ema) and we did this with 7m! not 23
+# (of course we havent gone to 1024x1024 like the original, butalso we dont have 
+# the gpus they had! and we know wha to do to get higher res now! its only a mater of
+# time and maybe a bit of lr tuning!)
 # 
 # 
 # 
