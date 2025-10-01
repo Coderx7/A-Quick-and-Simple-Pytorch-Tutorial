@@ -5401,7 +5401,7 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
-                         noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=100_000,
+                         noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=1_500_000,
                          device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
@@ -5465,8 +5465,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     # things started to look normal (i.e. not solid grays!) but then they also transitioned to
     # other solid colors like maron(brown/redish color) that is it was still too early! also it
     # could be caused by our large lr! so I guess the second method would be as effective 
-    # because im not storin bunch of variables in the checkpoint! just start from step x and
-    # carry on!
+    # because im not storin bunch of variables in the checkpoint! just start from step x and 
+    # carry on! ok I tested that and the second method doesnt work! first it limits us, that is
+    # imagine we want to start the ema at the middle of step2 (16x16 res) because right at the
+    # very start of step 2, it doesnt work, its still very unstable! we cant do anything! cuz
+    # we can only specify the step! moreover, if we start at step=2 e.g. we need to keep checking
+    # if the outer most loop, the step loop itself, and until we reach the specific step(i.e. e.g. 2)
+    # we use the generators weights, and if we do that, its simply reseting the ema at each step
+    # and we update that at each iteration which would result in solid gray images! 
+    # if we dont update by having an if statement to see if we are passed that warmup step(i.e.2)
+    # that would be two checks! so we dont want the second method, its inefficient and not good
+    # the first method gives us more flexibility
     #
     # instead of copy.deepcopy we could instantiate a new copy adn simply do 
     # load_statedict() on it. i.e. do 
@@ -5969,6 +5978,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg',
                         figsize=(16,8))
                 
+                # save the original images anyway?
                 # generated_images = generator(fixed_z, alpha, step)
                 # display_images(generated_images, 
                 #         cols=gen_num_samples//8,
