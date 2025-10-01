@@ -5381,6 +5381,12 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
                                    split=f'{split}_{num_samples//1000}K')
     return IS_score, FID_score
 
+# like the paper, we can use an exponential moving average of weights for
+# the generator and get a much better output (the paper always used this
+# for inference/visualization, whereas we always used the generator itself
+# im adding this at the end when I got great results normally, im just
+# adding this for the sake of completeness cuz I wasnt sure if my changes
+# were good enough to give me good results initially (see debug logs at the end))
 @torch.no_grad()
 def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
     for ema_p,p in zip(g_ema.parameters(),g.parameters()):
@@ -5870,9 +5876,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 gen = ema_generator.eval() if use_ema_inference else generator.eval()
                 # reshape images back to default shape (hxwxc)
                 generated_images = gen(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
+                ema_marker_str = "[EMA] " if use_ema_inference else ""
                 display_images(generated_images, 
                         cols=gen_num_samples//8,
-                        ema_marker_str = "[EMA] " if use_ema_inference else ""
                         title=f'{ema_marker_str}Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
                         unnormalize=True,
                         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
@@ -5884,48 +5890,37 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
 #%%
 print(f'Training PROGAN!')
 loss_type = 'wgangp'
-# initially set to 10, but during trainig since 64x64, discriminator is not performing well
-# and constantly fails, this might be due to strong/large lambda factor! so im using a smaller
-# value for now!
-lambda_factor=5
+# initially set to 10, but during trainig since 64x64,
+# discriminator was not performing well and constantly
+# failed, this might be due to strong/large lambda factor!
+# so im using a smaller value for now!
+# update: that wasnt the issue 10 is ok, 5 is ok as well!
+lambda_factor=10
 dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-z_size = 512#original paper uses 512
+# original paper uses 512
+z_size = 512
+# 7 means 4x4 up to 256x256
 max_steps = 7
-# 4,8,16,32,64,128,256
-# I got out of memory(vram) when I hit 32x32!(because of previously allocated vram for
-# previous tests in jupyternotebook!)I have 849MB/10GB full before I start the training!
-# vram usage using nvidia-smi for each step is as follows:
-# 4x4 - b128: 3200-(1500(7:58:36)->3200(8:00:08))
-# 8x8 - b128: 3875-(8:21:30)
-# 16x16-b128: 5357-(9:21:30)-5681
-# 32x32-b128: 9513-9837(e2)
-# 64x64-b64 : 9849 (14:25) at this resolution images start to look half decent!
-# 128x128-b32: 
-# 256x256-b16: 
-# update since it took a huge amount of time for training (5+hours only up tp 32x32
-# and 9.8GB vram, we went to 64x64 without goingout of memory but the traiing started
-# to destablize becasue of large lr at that stage so I decided to end the trainig. 
+# update:
+# my initial implementation used a loop, and this somehow caused memory leakage
+# at each step in jupyternotebook (it wouldnt release someo of the previously 
+# allocated vram and this cuased the vram to quickly run out!
+# additinally we have started with 1024 as the largest channel size which took
+# a huge amount of time for training (5+hours only up tp 32x32 and 9.8GB vram,
+# (64x64 without goingout of memory but the training started to destablize becasue
+# of large lr at that stage so I decided to end the trainig.)
 # for the new round I decided to halve the channel numbers. so now we are going with
-# [512,256,128,64,32,16,8] and 825Mb vram already allocated
-# vram usage using nvidia-smi for each step is as follows:
-# 4x4 - b128: 2653-(17:44:04)
-# 8x8 - b128: 3087-(17:52:21)
-# 16x16-b128: 3529-(18:21:25) -crashed, retrained again
-# 32x32-b128: 3980-(20:32:10) -this is the new time for the new rtainig!
-# 64x64-b64 : 
-# 128x128-b32: 
-# 256x256-b16: 
-# sidenote:
-# if we resume cleanly from later stages say 64x64/128x128 we can use
-# much larger batchsizes than we can use from training them backtoback
-# using larger batchsizes directly affects the convergence and stability
-# resumed from stage 4, but instead of 32, went with 64!
+# [512,256,128,64,32,16,8] 
+ 
+# up to 64x64 it takes around 6.4~7GB, 128 aroud 7.4 basically its below 10G
 BATCH_SIZES = [128,128,128,128,64,32,16]
-# 64x64 might need >30 epochs (like 35?)
-EPOCHS = [10,10,10,20,40,40,40] # [10,10,20,20,30,30,30]
+# the more epochs the better result we get, despite the FID 
+# that may flucturate but the image quality 100% gets better
+# with more epochs.
+EPOCHS = [10,10,10,20,40,40,40]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
@@ -5937,32 +5932,40 @@ generator_progan = generator_progan.to(device)
 
 #sidenote:
 # in Adam optimizer beta1(the first value for betas) controls the momentum,
-# (i.e. it controls the exponential moving average of the gradients) setting it to 0 essentially disables it.
-# beta2 on the other hand controls the exponential moving average of the squared gradients which
-# captures the scale or variance of the gradients.
-# a lower beta2 value makes the optimizer react faster to recent gradient magintudes and likewise
-# a higher beta2 value would smooth things out and hence slow its reaction to recent gradient magnitudes!
+# (i.e. it controls the exponential moving average of the gradients) setting
+# it to 0 essentially disables it.
+# beta2 on the other hand controls the exponential moving average of the 
+# squared gradients which represents its scale or variance(of the gradients)
+# a lower beta2 makes the optimizer react faster to recent gradient magintudes and likewise
+# a higher beta2 would smooth things out and hence slow its reaction to recent gradient magnitudes!
 #
-# lets make it a bit more clear, imagine for example we chose a beta2=0.9 this is now like
+# lets make it a bit more clear, imagine for example we chose beta2=0.9 this is now like
 # we gave the optimizer a very short memory! since it has a short memory it now reacts very
 # quickly to the scale of the gradients it faces in the last few batches and if we for example
 # get a few batches with small gradients the optimizer's internal scaling factor can shrink 
-# and therefore cause the next step to be huge! which leads to an overshhoot and huge updates!(i.e. large parameter updates)
+# and therefore cause the next step to be huge! which obviously will lead to an overshhoot 
+# and huge updates!(i.e. large parameter updates)
 # (Adam devides the learning rate by sqrt(v_t), so when v_t quickly shriks because of the 
 # small gradienst and short memory the denominator becomes small which in turn would increase
-# the effectiveness of the learning rate resulting in a large/huge optimizer step!)
-# if we chose a larger beta2 value like 0.99, it will provide a much longer memory, therefore
-# the estimates of the gradient variance will be much smoother and more stable!
-# the optimizer wont take sudden massive steps which would otherwise make training very unstable 
-# and make the gradient penalty very high! hence why larger beta2 like 0.99 make training more
-# stable and gradients magnitudes more smooth.
-# (so too small beta2 can cause instability (huge weight updates, ossiliations) and too large values
-# can also make updates very slow and slow the convergence.)
+# the impact of the learning rate resulting in a large/huge optimizer step!)
+# if we chose a larger beta2 like 0.99, it will provide a much longer memory, therefore
+# the estimates of the gradient variance will be much smoother and more stable.
+# the optimizer therefore wont take sudden massive steps anymore which would otherwise make 
+# training very unstable and make the gradient penalty very high! hence why larger beta2 
+# like 0.99 make training more stable and gradients magnitudes more smooth.
+# (so too small beta2 can cause instability (huge weight updates, ossiliations) and 
+# too large values can also make updates very slow and slow the convergence)
 #
-#! update:
-# change betas from 0-99 to 0.999 to make 32x32 stage stable
-# need to change this if things went south! changed it back to 0.99
-# as that didnt fix the issue
+# update:
+# change betas from 0.99 to 0.999 to make 32x32 stage stable
+# need to change this if things went south! 
+# changed it back to 0.99 as that didnt fix the issue
+# update: after introducing several fixes in the implementation
+# and adding equalized learning rate, 0, 0.99 is the right choice
+# and works great. see debug log at the end.
+# I have not tested the lsgan/wgan though so their numbers
+# are from previous tests, in paper, the lsgan used the same
+# betas as wgangp, plus noise addition. see debug log for information
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.99]
 
 if loss_type=='lsgan':
@@ -6020,17 +6023,17 @@ disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas
 gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
 
 #compile the models for faster training!
-# update: it doesntw ork for models that have double backwardpass!
+# update: it doesnt work for models that have double backwardpass!
 # discriminator_progan.compile()
 # generator_progan.compile()
-# next fix equalize learning rate code, use conv(x*scaler)?
-# this time instead of weight that we are doinG!
-# use conv3x3 instead of conv1x1 that we are currently doing
+#
 # todo: next rampup the lr to 0.001 and dont decrease for any steps
 # just like the paper, see why ours fail! it shouldnt fail
 # if it failes, then use conv3x3! it might be generator needs that
 # power to work well with ihgher lr! the original paper arch is 23m
 # while ours is 7m!
+# ok everything went fine adn got great results! 
+#
 training_loop_progan(discriminator_progan,
                      generator_progan, 
                      disc_optimizer=disc_optimizer,
@@ -6042,15 +6045,14 @@ training_loop_progan(discriminator_progan,
                      split=split,
                      loss_type=loss_type, 
                      lambda_factor=lambda_factor,
-                     wgan_range=(-0.02, 0.02), #(-0.02, 0.02) (-0.05, 0.05)
+                     wgan_range=(-0.02, 0.02),
                      noise_addition=False,
                      device=device,
                      resume=False,
-                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt',
-                    #  checkpoint_path='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt',
                      decay_step=decay_step)
 
 #%%
+# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
@@ -6220,6 +6222,11 @@ plt.show()
 #                at the begining of the training, the discrimnator that cannot
 #                identify real/fake well, we might get negative or positive loss
 #                but as the trainig goes we want the generator loss to be negative.
+#                note if the loss fluctuates its ok as long as we see images getting
+#                improved, the gloss and dloss need to be in constant back and forth so
+#                we cant see one be prefect, we cant have both of them being prefect
+#                just good enough for the images to get improved, see our results at the
+#                end you'll understand!
 # debugging: 
 # initialy I started with lr=0.002/0.001, the first step(0) 
 # went on, didnt notice much, until step=1 started and noticed
@@ -6615,7 +6622,7 @@ plt.show()
 # this time ramping both up to 23m and recheck for final time. currently we achieve good results
 # fid that previously we couldnt, and we can continue improving it with careful lr, but it takes too much time
 # and I cant have that! so we are going full beast after this!
-# update:
+# update:(experiment 20250930091608)
 # thank God! so far as of epoch 5 of 32x32 (alpha=0.4) we are down to FID 35 which is pretty good!
 # the high learning rate that previously kept messing up, after using equalized learnng rate
 # seems to be fine and give us a fast convergence. at epoch 19 we are at FID 21! it seems we
@@ -6639,7 +6646,11 @@ plt.show()
 # (of course we havent gone to 1024x1024 like the original, butalso we dont have 
 # the gpus they had! and we know wha to do to get higher res now! its only a mater of
 # time and maybe a bit of lr tuning!)
-# 
+# I endted the training at the start of 128x128 and Im satisfied with t he resulys
+# it just took too much . 
+# the weights and logs are available here. jupyternotebook 11 are the ones having
+# training experiments weights and results: 
+# url: https://mega.nz/folder/zoRxRSbQ#5cvLQtlRHvnmk7oQo8BTlA
 # 
 # 
 #
