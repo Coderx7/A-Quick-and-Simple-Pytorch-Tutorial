@@ -5599,6 +5599,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # as we get to larger resolutions, it becomes much more
             # sensive and to keep the training stable we need to use
             # very small lr!
+            # update after the fixes, decaying lr is not needed see
+            # debug log for more information
+            
             # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
             decay = 0.5**(step-2)
             
@@ -6049,6 +6052,11 @@ training_loop_progan(discriminator_progan,
                      noise_addition=False,
                      device=device,
                      resume=False,
+                     # paper uses ema enable if you like and it 
+                     # must only be enabled for fresh training 
+                     # not resumes!
+                     use_ema_inference=False,
+                    #  checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
 #%%
@@ -6056,39 +6064,37 @@ training_loop_progan(discriminator_progan,
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250926072732/checkpoint_step_4_20250926072732.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
-checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
-checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
-
-checkpoint["lr_d"] = 0.00004
-checkpoint["lr_g"] = 0.000042
-checkpoint["lambda_factor"] = 10
-# since we changed the epochs, lr_d/lr_g wont take effect and instead
-# we need to change the optimizers lr!
-checkpoint["epoch_list"]=[10, 10, 10, 40, 45, 50, 50]
-checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
-checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
-#%%
-torch.save(checkpoint,checkpoint_path)
-
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
-
-#%%
-all_losses = checkpoint["all_training_losses"]
-all_gps = checkpoint["all_gradient_penalties"]
-idx=5
-plt.plot(np.array(all_losses[idx]))
-plt.show()
-plt.plot(np.array(all_gps[idx]))
-plt.show()
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
+# checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+# for k,v in checkpoint.items():
+#     if not isinstance(v,dict):
+#         print(f'{k:<15} {v}')
+#     elif "param_groups" in v.keys():
+#         print(f'{k:<15} {v["param_groups"]}')
+# 
+# checkpoint["lr_d"] = 0.00004
+# checkpoint["lr_g"] = 0.000042
+# checkpoint["lambda_factor"] = 10
+# # since we changed the epochs, lr_d/lr_g wont take effect and instead
+# # we need to change the optimizers lr!
+# checkpoint["epoch_list"]=[10, 10, 10, 40, 45, 50, 50]
+# checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
+# checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
+# #%%
+# torch.save(checkpoint,checkpoint_path)
+# for k,v in checkpoint.items():
+#     if not isinstance(v,dict):
+#         print(f'{k:<15} {v}')
+#     elif "param_groups" in v.keys():
+#         print(f'{k:<15} {v["param_groups"]}')
+# #%%
+# all_losses = checkpoint["all_training_losses"]
+# all_gps = checkpoint["all_gradient_penalties"]
+# idx=5
+# plt.plot(np.array(all_losses[idx]))
+# plt.show()
+# plt.plot(np.array(all_gps[idx]))
+# plt.show()
 #%%
 # sidenote:
 #
@@ -6948,7 +6954,11 @@ plt.show()
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
 #%%
 # now lets load the last experiment and see the result
-#32x32
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
+# good models using high lr
+# 32x32
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt'
 #64x64
 checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_5_20250930091608.ckpt'
