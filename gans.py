@@ -22,6 +22,7 @@
 import os
 import math
 import time
+import copy
 from datetime import datetime
 from pathlib import Path
 import gc
@@ -4704,7 +4705,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
 # all stem from this fact and this technique should fix that for us!)
 #
 # to implement this equalization/normalization technique, instead of using a standard/normal weight
-# initialization algorithm like Xavier, or Kaiming He (the author used kaminghe) "once", we 
+# initialization algorithm like Xavier, or Kaiming He (the authors used kaminghe) "once", we 
 # rescale every convolutional layers weights at every single forward pass! the scaling factor
 # that we use is the same as the one used in KamingHe initialization algotrithm( i.e. sqrt(2/fanin)).
 # and thats it!
@@ -5393,7 +5394,7 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
 
 #%%
-import copy
+
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
@@ -5468,6 +5469,10 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         generator.setup_layers(z_size, max_steps)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
+        
+        # load the ema version
+        ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
+        ema_generator = ema_generator.to(device)
         
         # if we are not in the last epoch, then we still have epochs to process
         # therefore the optimizers state must be loaded otherwise everything will
@@ -6021,6 +6026,11 @@ else:#wgangp
 # no need to decay now!
 decay_step = 7#5
 
+# use ema of generator weights for inference/ mid traiing visualization
+# note this is only for visualization/reporting, we calculate ema and 
+# save it in the checkpoints anyway!
+use_ema_inference = False
+
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
@@ -6055,7 +6065,7 @@ training_loop_progan(discriminator_progan,
                      # paper uses ema enable if you like and it 
                      # must only be enabled for fresh training 
                      # not resumes!
-                     use_ema_inference=False,
+                     use_ema_inference=use_ema_inference,
                     #  checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
