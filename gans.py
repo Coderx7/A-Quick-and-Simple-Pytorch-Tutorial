@@ -5895,7 +5895,7 @@ loss_type = 'wgangp'
 # failed, this might be due to strong/large lambda factor!
 # so im using a smaller value for now!
 # update: that wasnt the issue 10 is ok, 5 is ok as well!
-lambda_factor=10
+lambda_factor=5
 dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -6653,35 +6653,12 @@ plt.show()
 # url: https://mega.nz/folder/zoRxRSbQ#5cvLQtlRHvnmk7oQo8BTlA
 # 
 # 
-#
-# 
-# 
-# 
-# 
+#%%
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# full log 1
+# full log 1 - the initial log when we started (with bugs in our implemenation)
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
 # --Discriminator channels:      [1024, 512, 256, 128, 64, 32, 16]
 # --Generators channels:         [1024, 512, 256, 128, 64, 32, 16]
@@ -6969,6 +6946,70 @@ plt.show()
 # [64x64][Epoch 3/10] Disc Loss-Avg: -16.055016 | Gen loss-Avg: 58.809311 | IS: (μ:1.0000, σ²:0.0000) | FID: 257.49
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
+#%%
+# now lets load the last experiment and see the result
+#32x32
+# checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt'
+#64x64
+checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_5_20250930091608.ckpt'
+
+checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+# print(checkpoint.keys())
+last_step = checkpoint["step"]
+all_training_losses = checkpoint.pop("all_training_losses")
+all_gradient_penalties = checkpoint.pop("all_gradient_penalties")
+
+generator_pgan = GeneratorProGAN(checkpoint["z_size"], checkpoint["max_steps"])
+generator_pgan.load_state_dict(checkpoint["gen_state_dict"])
+generator_pgan = generator_pgan.eval()
+generator_pgan = generator_pgan.to(device)
+
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+
+#%%
+# lets generator some images
+num_samples=36
+z = torch.randn((num_samples, generator_pgan.z_size),device=device)
+dim = 2**(last_step+1)
+res=f"{dim}x{dim}"
+with torch.no_grad():
+    imgs = generator_pgan(z, alpha=1, step=last_step)
+    display_images(imgs, 
+                   cols=6, 
+                   title=f'Step {last_step} [{res}]',
+                   unnormalize=True, 
+                   figsize=(16,8))
+
+#%%
+#
+# 
+# 
+# 
+# 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #%%
 
 #%%
