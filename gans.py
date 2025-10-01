@@ -5390,6 +5390,9 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
 # were good enough to give me good results initially (see debug logs at the end))
 @torch.no_grad()
 def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
+    # sidenote, we only update the parameters we dont touch buffers (we dont have
+    # any, but if we had like batchnorm, we wouldnt touch them as it would have
+    # destroyed their stats!)
     for ema_p,p in zip(g_ema.parameters(),g.parameters()):
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
 
@@ -5398,7 +5401,8 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
-                         noise_addition=False, use_ema_inference=False, device='cuda', resume=False, decay_step=3, 
+                         noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=100_000,
+                         device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     
@@ -5424,7 +5428,55 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     # get a copy of the generator so we can calculate the exponential moving average
     # for its weights to be used for better visualization/inference
     # we need to update this after each iteration
+    # sidenote: 
+    # during my initial experiments I noticed whenever I tried to use ema version for
+    # visualization I would get solid grays for images. it would start off fine in the
+    # 4x4 step, but gradually fade into solid gray and from there it was solid gray for
+    # the subsequent steps. turns out, my ema is ok but since at the start the model
+    # is just random weights, the updates are eratic / random as well. when we use the
+    # original generator the images are ok because they show the weighst at that exact 
+    # time, but when we use the ema version, its the smoothed out version from the begining
+    # each random update that was applied on our ema_version, gradually made it go toward
+    # 0! some random weights were higher (e.g. +0.05) but then there were other random upades
+    # (e.g. -0.04) and as you can see, if we average these random values, we endup with 0 
+    # or very close to it, hence why we get the gray images! 
+    # so what the authors did was they only enabled ema after some warm up steps/epochs?
+    # and this way, they jumped over the random weights. 
+    # so we dont want these initial junk/meaningless updates to destroy our ema because going
+    # with decay rate like 0.999 which is our default, it will take a lot to replace the effect
+    # of these initial updates( our original generator may very well learn alot but the ema
+    # will be far far behind).
+    # so the idea is to wait until the updates become reasonable, and generator actually learns
+    # something and then enable ema. we can do this in a few ways. one way is to have a counter
+    # and track how many real images have been seen in the training, like e.g. 10k/100k images,
+    # and only after this value we start the ema process, which is to initialize it with the
+    # weights of generator and from carry on! 
+    # the other way is to simply start this at a later step like 16x16 res, when the generator
+    # has learned something. its much easier as well but the issue with the second method is 
+    # that, we start at a later state, the 16x16 weights themselevs may be unstable, and 
+    # averaging them might not help much. or it gives us the smooth transition we can have 
+    # with the previous method. so having started before would help more. also we can set 
+    # the image number a higher number and achive the same result, moreover, 16x16 might work
+    # for some datasets and not for others, so I guess we do the first method! 
+    # for that we select a threshold for the number of real images that the network need to
+    # see before we go for ema, and a global counter to count that!
+    # sidenote: 10k images may not be enough for all datasets for example in my experiments,
+    # 10K was nothing! and I would get gray images, even 100k wasnt enough, I used 1M! and then
+    # things started to look normal (i.e. not solid grays!) but then they also transitioned to
+    # other solid colors like maron(brown/redish color) that is it was still too early! also it
+    # could be caused by our large lr! so I guess the second method would be as effective 
+    # because im not storin bunch of variables in the checkpoint! just start from step x and
+    # carry on!
+    #
+    # instead of copy.deepcopy we could instantiate a new copy adn simply do 
+    # load_statedict() on it. i.e. do 
+    # ema_generator = GeneratorProGAN(generator.z_size, generator.max_steps).requires_grad_(False).eval()
+    # ema_generator.to(device)
+    # ema_generator.load_state_dict(generator.state_dict())
     ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
+    
+    # real images seen so far during training
+    ema_warmup_images_seen = 0
     
     assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
     
@@ -5470,7 +5522,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
-        # load the ema version
+        # load the ema version, dont forget to also load the images seen so far!
+        ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
+        ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
         ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
         ema_generator = ema_generator.to(device)
         
@@ -5538,6 +5592,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print(f'--Decay Step:                {decay_step}')
     print(f'--Epochs:                    {epoch_list} ')
     print(f'--Batch-Sizes:               {batch_size_list} ')
+    print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
+    print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
     print(f'--Generator update interval: {gen_update_interval}')
     print(f'--WGAN weight cliping range: {wgan_range}')
     print(f'--Noise addition to input:   {noise_addition}')
@@ -5554,12 +5610,16 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
         if starting_epoch == 0:
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
             gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g, betas=betas_g)
-        
+           
         # if we resumed from a half trained model, we continue from the statring_epoch to 
         # the end, however after that we need to reset the starting_epoch for the rest of
         # the steps so they go start from 0
         if step>starting_step:
             starting_epoch = 0
+        
+        # if step==ema_starting_step:
+            # start the ema after some steps so generator weights are not complete random!
+            # ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
         
         # specify resolutions
         # specify batchsizes for each resolution
@@ -5648,6 +5708,9 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             for i, (imgs_real, _) in enumerate(train_loader):
                 #scale input to [-1,1]
                 imgs_real = (2*imgs_real-1).to(device)
+                
+                # track how many real images the network has seen
+                ema_warmup_images_seen += imgs_real.size(0)
                 
                 # if adding noise makes trainig more stable and we get
                 # better looking images it means our discriminator is
@@ -5764,7 +5827,20 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     gen_real_loss.backward()
                     gen_optimizer.step()
                     # only update the ema when the main is also updated
-                    update_ema_generator(generator, ema_generator)
+                    # otherwise if generator is not updated but we update
+                    # the ema, we are practically reapplying old ema again
+                    # and agaian (depending on gen_update_interval). for 
+                    # our default case which is wgangp, this interval is 1
+                    # so it doesnt make any difference if its inside ifblock
+                    # or outside, but for other loss types since this can change
+                    # it can cause issues, so we better do it properly here!
+                    # also until we have not seen as many images as we'd like
+                    # dont starting the actual ema update! instead use the 
+                    # generators weights!
+                    if ema_warmup_images_seen < ema_warmup_images_threshold:
+                        ema_generator.load_state_dict(generator.state_dict())
+                    else:
+                        update_ema_generator(generator, ema_generator)
                 
                 # we want high positive score/average number for real_mean and
                 # lower positive or <real for fake mean (its basically 
@@ -5862,6 +5938,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         "wgan_range":wgan_range,
                         "step":step,
                         "training_step_counter":training_step_counter,
+                        "ema_warmup_images_threshold":ema_warmup_images_threshold,
+                        "ema_warmup_images_seen":ema_warmup_images_seen,
                         "epoch":epoch,
                         "epoch_list":epoch_list,
                         "batch_size_list":batch_size_list,
@@ -5883,13 +5961,21 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 gen = ema_generator.eval() if use_ema_inference else generator.eval()
                 # reshape images back to default shape (hxwxc)
                 generated_images = gen(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
-                ema_marker_str = "[EMA] " if use_ema_inference else ""
+                ema_marker_str = "[EMA]_" if use_ema_inference else ""
                 display_images(generated_images, 
                         cols=gen_num_samples//8,
                         title=f'{ema_marker_str}Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
                         unnormalize=True,
-                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
+                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg',
                         figsize=(16,8))
+                
+                # generated_images = generator(fixed_z, alpha, step)
+                # display_images(generated_images, 
+                #         cols=gen_num_samples//8,
+                #         title=f'RAW',
+                #         unnormalize=True,
+                #         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
+                #         figsize=(16,8))
     
     print("ProGAN training is complete!")
 
@@ -6065,6 +6151,7 @@ training_loop_progan(discriminator_progan,
                      # must only be enabled for fresh training 
                      # not resumes!
                      use_ema_inference=use_ema_inference,
+                    #  ema_warmup_images_threshold=1000_000,
                     #  checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
