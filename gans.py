@@ -6952,15 +6952,973 @@ training_loop_progan(discriminator_progan,
 # [64x64][Epoch 3/10] Disc Loss-Avg: -16.055016 | Gen loss-Avg: 58.809311 | IS: (μ:1.0000, σ²:0.0000) | FID: 257.49
 # [64x64][Epoch 4/10 | Iter: 1272/2544] Disc Loss: -82.065460 | Gen Loss: 286.170471
 # -- Batch-1272: Disc's real mean: -244.0014 | Disc's fake mean = -383.1243
+
+#
+#
+#
+#
+# now our final log after fixing all bugs 
+# and issues (look at the scale of loss/means)
+# note that the smilies for fake_mean is not accurate (I set the low threshold very harshly
+# and if you look you'll see its around 0, and when it gets to +1~+2 which is still okish
+# the std shows massive variance. if the variance was low that would be an issue but high
+# variance means the generator is comming up with very diverse images and is trying well)
+# 
+# Training PROGAN!
+# channels=[512, 256, 128, 64, 32, 16, 8]
+# channels=[512, 256, 128, 64, 32, 16, 8]
+# ProGAN Training on celeba with loss=wgangp in 20250930091608
+# --Disc Param Count:          7,092,584
+# --Genr Param Count:          7,092,584
+# --Dataset:                   celeba-train
+# --Loss type:                 wgangp
+# --Discriminator LR:          0.001
+# --Generator LR:              0.001
+# --Max Step:                  7
+# --Decay Step:                7
+# --Epochs:                    [10, 10, 10, 30, 40, 40, 40] 
+# --Batch-Sizes:               [128, 128, 128, 128, 64, 32, 16] 
+# --Generator update interval: 1
+# --WGAN weight cliping range: (-0.02, 0.02)
+# --Noise addition to input:   False
+# --WGAN-GP Lambda factor:     5
+# --gen_num_samples:           64
+# --Checkpoint Directory:      ./weights/gan
+# --Images Directory:          ./results/gan
+# Files already downloaded and verified
+#  Step: 0/7 -> Training on [4x4]
+#   --Epochs:                      10 
+#   --BatchSize:                   128 
+#   --Number of Batches:           1272 
+#   --Interval:                    637 
+#   --Fade-in Steps:               6360 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [4x4][Epoch 0/10 | Iter: 636/1272] Disc Loss: -0.2637 | Gen Loss: 0.7397
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.3313 ± +0.3181 📈| D_fake_avg: 😎 -0.6711 ± +0.2464 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.0063 ± +0.2137 📈 | D_fake_avg: 😎 -0.1435 ± +0.1836 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 -0.1635 ± -0.1635 📈 | D_fake_avg: 😎 -0.8983 ± +1.0369 📉
+# [4x4][Epoch 0/10] DLoss(Avg): -0.6027 | GLoss(Avg): 1.0167 | IS: 1.1468 ± 0.0046) | FID: 326.88 | GP[avg]: 0.03
+# [4x4][Epoch 1/10 | Iter: 636/1272] Disc Loss: -0.1480 | Gen Loss: 0.2829
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.0329 ± +0.2893 📈| D_fake_avg: 😎 -0.1553 ± +0.2336 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😵 +0.1147 ± +0.2916 📈 | D_fake_avg: 😟 +0.0323 ± +0.3174 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.0517 ± +0.0517 📈 | D_fake_avg: 😎 -0.1023 ± +0.1598 📉
+# [4x4][Epoch 1/10] DLoss(Avg): -0.1033 | GLoss(Avg): 0.1412 | IS: 1.1617 ± 0.0054) | FID: 321.46 | GP[avg]: 0.01
+# [4x4][Epoch 2/10 | Iter: 636/1272] Disc Loss: -0.0992 | Gen Loss: 0.0070
+#  -- 😱 Batch-636:  D_real_avg: 😵 +0.1551 ± +0.3857 📈| D_fake_avg: 😟 +0.0035 ± +0.3081 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.1071 ± +0.4185 📈 | D_fake_avg: 😎 -0.1707 ± +0.2789 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1437 ± +0.1437 📈 | D_fake_avg: 😟 +0.0131 ± +0.1593 📉
+# [4x4][Epoch 2/10] DLoss(Avg): -0.0796 | GLoss(Avg): 0.0204 | IS: 1.1619 ± 0.0042) | FID: 322.94 | GP[avg]: 0.01
+# [4x4][Epoch 3/10 | Iter: 636/1272] Disc Loss: -0.0961 | Gen Loss: -0.0755
+#  -- 😱 Batch-636:  D_real_avg: 😰 +0.2300 ± +0.2761 📈| D_fake_avg: 😟 +0.0904 ± +0.2167 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.1629 ± +0.4184 📈 | D_fake_avg: 😎 -0.2334 ± +0.3547 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1419 ± +0.1419 📈 | D_fake_avg: 😟 +0.0164 ± +0.1306 📉
+# [4x4][Epoch 3/10] DLoss(Avg): -0.0769 | GLoss(Avg): 0.0142 | IS: 1.1615 ± 0.0036) | FID: 321.73 | GP[avg]: 0.01
+# [4x4][Epoch 4/10 | Iter: 636/1272] Disc Loss: -0.0468 | Gen Loss: -0.0218
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.0095 ± +0.3608 📈| D_fake_avg: 😎 -0.0866 ± +0.2892 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.0231 ± +0.3782 📈 | D_fake_avg: 😎 -0.0752 ± +0.3137 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1369 ± +0.1369 📈 | D_fake_avg: 😟 +0.0122 ± +0.1381 📉
+# [4x4][Epoch 4/10] DLoss(Avg): -0.0763 | GLoss(Avg): 0.0135 | IS: 1.1624 ± 0.0041) | FID: 319.47 | GP[avg]: 0.01
+# [4x4][Epoch 5/10 | Iter: 636/1272] Disc Loss: -0.0832 | Gen Loss: -0.0306
+#  -- 😱 Batch-636:  D_real_avg: 😰 +0.3013 ± +0.3035 📈| D_fake_avg: 😟 +0.1657 ± +0.2733 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.0479 ± +0.2912 📈 | D_fake_avg: 😎 -0.0306 ± +0.2595 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1397 ± +0.1397 📈 | D_fake_avg: 😟 +0.0183 ± +0.1539 📉
+# [4x4][Epoch 5/10] DLoss(Avg): -0.0742 | GLoss(Avg): 0.0061 | IS: 1.1632 ± 0.0043) | FID: 321.61 | GP[avg]: 0.01
+# [4x4][Epoch 6/10 | Iter: 636/1272] Disc Loss: -0.1235 | Gen Loss: -0.1953
+#  -- 😱 Batch-636:  D_real_avg: 😰 +0.2288 ± +0.3014 📈| D_fake_avg: 😟 +0.0584 ± +0.2759 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😵 +0.1004 ± +0.2650 📈 | D_fake_avg: 😟 +0.0291 ± +0.2185 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1174 ± +0.1174 📈 | D_fake_avg: 😎 -0.0005 ± +0.1574 📉
+# [4x4][Epoch 6/10] DLoss(Avg): -0.0710 | GLoss(Avg): 0.0214 | IS: 1.1616 ± 0.0041) | FID: 320.06 | GP[avg]: 0.01
+# [4x4][Epoch 7/10 | Iter: 636/1272] Disc Loss: -0.0021 | Gen Loss: 0.0462
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.0418 ± +0.3210 📈| D_fake_avg: 😎 -0.0224 ± +0.2712 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😰 +0.2154 ± +0.3457 📈 | D_fake_avg: 😟 +0.0501 ± +0.2006 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1012 ± +0.1012 📈 | D_fake_avg: 😎 -0.0146 ± +0.1304 📉
+# [4x4][Epoch 7/10] DLoss(Avg): -0.0686 | GLoss(Avg): 0.0375 | IS: 1.1653 ± 0.0040) | FID: 319.07 | GP[avg]: 0.01
+# [4x4][Epoch 8/10 | Iter: 636/1272] Disc Loss: -0.0110 | Gen Loss: 0.1256
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.0470 ± +0.4295 📈| D_fake_avg: 😎 -0.1039 ± +0.3213 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.0521 ± +0.3049 📈 | D_fake_avg: 😎 -0.0215 ± +0.3186 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.0761 ± +0.0761 📈 | D_fake_avg: 😎 -0.0372 ± +0.1469 📉
+# [4x4][Epoch 8/10] DLoss(Avg): -0.0658 | GLoss(Avg): 0.0584 | IS: 1.1587 ± 0.0027) | FID: 324.20 | GP[avg]: 0.01
+# [4x4][Epoch 9/10 | Iter: 636/1272] Disc Loss: -0.0445 | Gen Loss: -0.0962
+#  -- 😱 Batch-636:  D_real_avg: 😵 +0.1792 ± +0.2247 📈| D_fake_avg: 😟 +0.0989 ± +0.2071 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.1321 ± +0.3128 📈 | D_fake_avg: 😎 -0.0009 ± +0.3535 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.0665 ± +0.0665 📈 | D_fake_avg: 😎 -0.0415 ± +0.1381 📉
+# [4x4][Epoch 9/10] DLoss(Avg): -0.0609 | GLoss(Avg): 0.0626 | IS: 1.1677 ± 0.0030) | FID: 321.05 | GP[avg]: 0.01
+# Files already downloaded and verified
+#  Step: 1/7 -> Training on [8x8]
+#   --Epochs:                      10 
+#   --BatchSize:                   128 
+#   --Number of Batches:           1272 
+#   --Interval:                    637 
+#   --Fade-in Steps:               6360 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [8x8][Epoch 0/10 | Iter: 636/1272] Disc Loss: -1.4576 | Gen Loss: -0.3277
+#  -- 😀 Batch-636:  D_real_avg: 😎 +1.2772 ± +1.0212 📈| D_fake_avg: 😎 -0.3468 ± +0.5478 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.7041 ± +0.7461 📈 | D_fake_avg: 😵 +1.1932 ± +0.7825 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.7663 ± +1.7663 📈 | D_fake_avg: 😵 +0.5964 ± +0.5807 📉
+# [8x8][Epoch 0/10] DLoss(Avg): -1.0227 | GLoss(Avg): -0.5101 | IS: 1.7498 ± 0.0275) | FID: 252.08 | GP[avg]: 0.03
+# [8x8][Epoch 1/10 | Iter: 636/1272] Disc Loss: -0.2365 | Gen Loss: 0.6164
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.1550 ± +0.5990 📈| D_fake_avg: 😵 +0.8748 ± +0.3766 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😰 +0.3898 ± +0.4860 📈 | D_fake_avg: 😟 +0.0723 ± +0.5324 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8224 ± +0.8224 📈 | D_fake_avg: 😵 +0.4308 ± +0.6690 📉
+# [8x8][Epoch 1/10] DLoss(Avg): -0.3381 | GLoss(Avg): -0.2518 | IS: 1.8398 ± 0.0162) | FID: 237.82 | GP[avg]: 0.01
+# [8x8][Epoch 2/10 | Iter: 636/1272] Disc Loss: -0.3928 | Gen Loss: -0.2920
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.6953 ± +0.5276 📈| D_fake_avg: 😟 +0.2330 ± +0.4417 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😰 +0.2190 ± +0.6184 📈 | D_fake_avg: 😟 +0.0753 ± +0.6187 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😟 +0.5082 ± +0.5082 📈 | D_fake_avg: 😟 +0.2243 ± +0.4580 📉
+# [8x8][Epoch 2/10] DLoss(Avg): -0.2317 | GLoss(Avg): -0.0205 | IS: 1.9827 ± 0.0250) | FID: 246.65 | GP[avg]: 0.01
+# [8x8][Epoch 3/10 | Iter: 636/1272] Disc Loss: -0.3901 | Gen Loss: 0.2850
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.6061 ± +0.6391 📈| D_fake_avg: 😟 +0.1602 ± +0.5669 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.7216 ± +0.4983 📈 | D_fake_avg: 😵 +0.6259 ± +0.3808 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😟 +0.4913 ± +0.4913 📈 | D_fake_avg: 😟 +0.2682 ± +0.3911 📉
+# [8x8][Epoch 3/10] DLoss(Avg): -0.1820 | GLoss(Avg): -0.0614 | IS: 1.9779 ± 0.0293) | FID: 247.36 | GP[avg]: 0.01
+# [8x8][Epoch 4/10 | Iter: 636/1272] Disc Loss: -0.0616 | Gen Loss: -0.0945
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.6809 ± +0.4455 📈| D_fake_avg: 😵 +0.5875 ± +0.4418 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.4865 ± +0.3512 📈 | D_fake_avg: 😟 +0.2868 ± +0.3185 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3781 ± +0.3781 📈 | D_fake_avg: 😟 +0.1800 ± +0.3677 📉
+# [8x8][Epoch 4/10] DLoss(Avg): -0.1616 | GLoss(Avg): 0.0310 | IS: 1.9988 ± 0.0295) | FID: 245.54 | GP[avg]: 0.01
+# [8x8][Epoch 5/10 | Iter: 636/1272] Disc Loss: -0.1111 | Gen Loss: -0.0302
+#  -- 😱 Batch-636:  D_real_avg: 😵 +0.1661 ± +0.5042 📈| D_fake_avg: 😟 +0.0206 ± +0.4234 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- ‼️ Last Batch : D_real_avg: 😟 +0.7617 ± +0.4295 📈 | D_fake_avg: 😵 +0.9282 ± +0.3697 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.2393 ± +0.2393 📈 | D_fake_avg: 😟 +0.0741 ± +0.3246 📉
+# [8x8][Epoch 5/10] DLoss(Avg): -0.1327 | GLoss(Avg): 0.1152 | IS: 2.0626 ± 0.0292) | FID: 241.29 | GP[avg]: 0.01
+# [8x8][Epoch 6/10 | Iter: 636/1272] Disc Loss: -0.1085 | Gen Loss: 0.0298
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.0150 ± +0.3219 📈| D_fake_avg: 😎 -0.1494 ± +0.3251 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.1711 ± +0.4231 📈 | D_fake_avg: 😎 -0.3154 ± +0.3866 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.2100 ± +0.2100 📈 | D_fake_avg: 😟 +0.0730 ± +0.3167 📉
+# [8x8][Epoch 6/10] DLoss(Avg): -0.1081 | GLoss(Avg): 0.0941 | IS: 1.9326 ± 0.0264) | FID: 244.56 | GP[avg]: 0.01
+# [8x8][Epoch 7/10 | Iter: 636/1272] Disc Loss: -0.1162 | Gen Loss: -0.0734
+#  -- 😱 Batch-636:  D_real_avg: 😰 +0.2823 ± +0.3283 📈| D_fake_avg: 😟 +0.1356 ± +0.2357 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😰 +0.2803 ± +0.4583 📈 | D_fake_avg: 😟 +0.0942 ± +0.4144 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.2126 ± +0.2126 📈 | D_fake_avg: 😟 +0.0798 ± +0.2894 📉
+# [8x8][Epoch 7/10] DLoss(Avg): -0.1052 | GLoss(Avg): 0.0707 | IS: 2.0704 ± 0.0235) | FID: 241.79 | GP[avg]: 0.01
+# [8x8][Epoch 8/10 | Iter: 636/1272] Disc Loss: -0.1329 | Gen Loss: -0.5302
+#  -- 😱 Batch-636:  D_real_avg: 😎 +0.8480 ± +0.3319 📈| D_fake_avg: 😵 +0.6935 ± +0.3151 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.4432 ± +0.3448 📈 | D_fake_avg: 😟 +0.2893 ± +0.3459 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.2009 ± +0.2009 📈 | D_fake_avg: 😟 +0.0745 ± +0.2864 📉
+# [8x8][Epoch 8/10] DLoss(Avg): -0.0998 | GLoss(Avg): 0.0635 | IS: 2.0692 ± 0.0281) | FID: 246.39 | GP[avg]: 0.01
+# [8x8][Epoch 9/10 | Iter: 636/1272] Disc Loss: -0.2325 | Gen Loss: 0.6407
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.2819 ± +0.2937 📈| D_fake_avg: 😎 -0.5358 ± +0.3255 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.1488 ± +0.3815 📈 | D_fake_avg: 😎 -0.2810 ± +0.3117 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😵 +0.1829 ± +0.1829 📈 | D_fake_avg: 😟 +0.0616 ± +0.2737 📉
+# [8x8][Epoch 9/10] DLoss(Avg): -0.0950 | GLoss(Avg): 0.0628 | IS: 2.0104 ± 0.0168) | FID: 243.27 | GP[avg]: 0.01
+# Files already downloaded and verified
+#  Step: 2/7 -> Training on [16x16]
+#   --Epochs:                      10 
+#   --BatchSize:                   128 
+#   --Number of Batches:           1272 
+#   --Interval:                    637 
+#   --Fade-in Steps:               6360 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [16x16][Epoch 0/10 | Iter: 636/1272] Disc Loss: -1.6957 | Gen Loss: -1.3111
+#  -- 😱 Batch-636:  D_real_avg: 😎 +5.5809 ± +1.1949 📈| D_fake_avg: 😵 +3.6694 ± +0.8042 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +5.4075 ± +1.1244 📈 | D_fake_avg: 😵 +4.5114 ± +0.7527 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +2.0893 ± +2.0893 📈 | D_fake_avg: 😵 +0.8669 ± +1.6463 📉
+# [16x16][Epoch 0/10] DLoss(Avg): -1.0787 | GLoss(Avg): -0.4270 | IS: 2.5254 ± 0.0405) | FID: 205.54 | GP[avg]: 0.03
+# [16x16][Epoch 1/10 | Iter: 636/1272] Disc Loss: -0.5668 | Gen Loss: 0.1282
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.0358 ± +0.6200 📈| D_fake_avg: 😎 -0.5675 ± +0.5959 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.8472 ± +0.6349 📈 | D_fake_avg: 😵 +2.2517 ± +0.5536 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.1790 ± +1.1790 📈 | D_fake_avg: 😵 +0.6332 ± +1.4976 📉
+# [16x16][Epoch 1/10] DLoss(Avg): -0.5065 | GLoss(Avg): -0.2252 | IS: 2.7223 ± 0.0275) | FID: 126.94 | GP[avg]: 0.01
+# [16x16][Epoch 2/10 | Iter: 636/1272] Disc Loss: -0.3604 | Gen Loss: 2.3163
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.8462 ± +0.6164 📈| D_fake_avg: 😎 -1.2259 ± +0.6466 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.4722 ± +1.0725 📈 | D_fake_avg: 😵 +2.2629 ± +1.0466 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😟 +0.6340 ± +0.6340 📈 | D_fake_avg: 😟 +0.2803 ± +1.0039 📉
+# [16x16][Epoch 2/10] DLoss(Avg): -0.3279 | GLoss(Avg): 0.1194 | IS: 2.7263 ± 0.0597) | FID: 113.29 | GP[avg]: 0.01
+# [16x16][Epoch 3/10 | Iter: 636/1272] Disc Loss: -0.1763 | Gen Loss: 0.7588
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.1146 ± +0.5819 📈| D_fake_avg: 😎 -0.3131 ± +0.4780 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.7771 ± +0.5570 📈 | D_fake_avg: 😵 +0.4243 ± +0.4130 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😟 +0.6181 ± +0.6181 📈 | D_fake_avg: 😟 +0.3078 ± +0.8407 📉
+# [16x16][Epoch 3/10] DLoss(Avg): -0.2879 | GLoss(Avg): 0.0765 | IS: 2.8125 ± 0.0304) | FID: 125.60 | GP[avg]: 0.00
+# [16x16][Epoch 4/10 | Iter: 636/1272] Disc Loss: -0.4061 | Gen Loss: 0.5118
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.5907 ± +0.4273 📈| D_fake_avg: 😟 +0.1635 ± +0.3792 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😰 +0.3471 ± +0.4665 📈 | D_fake_avg: 😎 -0.2026 ± +0.4244 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😟 +0.5199 ± +0.5199 📈 | D_fake_avg: 😟 +0.1900 ± +0.8223 📉
+# [16x16][Epoch 4/10] DLoss(Avg): -0.3041 | GLoss(Avg): 0.1682 | IS: 2.7698 ± 0.0395) | FID: 136.20 | GP[avg]: 0.01
+# [16x16][Epoch 5/10 | Iter: 636/1272] Disc Loss: -0.3806 | Gen Loss: 0.5930
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.1718 ± +0.5092 📈| D_fake_avg: 😎 -0.5715 ± +0.4476 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.8277 ± +0.8382 📈 | D_fake_avg: 😎 -1.0742 ± +0.9041 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3509 ± +0.3509 📈 | D_fake_avg: 😟 +0.0013 ± +0.8271 📉
+# [16x16][Epoch 5/10] DLoss(Avg): -0.3238 | GLoss(Avg): 0.3292 | IS: 2.5848 ± 0.0276) | FID: 126.24 | GP[avg]: 0.01
+# [16x16][Epoch 6/10 | Iter: 636/1272] Disc Loss: -0.3106 | Gen Loss: -0.4958
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.0463 ± +0.5847 📈| D_fake_avg: 😎 -0.3976 ± +0.4725 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😰 +0.2484 ± +0.4992 📈 | D_fake_avg: 😎 -0.0994 ± +0.4024 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3740 ± +0.3740 📈 | D_fake_avg: 😟 +0.0356 ± +0.7752 📉
+# [16x16][Epoch 6/10] DLoss(Avg): -0.3127 | GLoss(Avg): 0.2583 | IS: 2.8236 ± 0.0421) | FID: 140.11 | GP[avg]: 0.01
+# [16x16][Epoch 7/10 | Iter: 636/1272] Disc Loss: -0.2459 | Gen Loss: 0.4088
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.1897 ± +0.5413 📈| D_fake_avg: 😎 -0.4573 ± +0.4820 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.3622 ± +0.4673 📈 | D_fake_avg: 😎 -0.6549 ± +0.4061 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3841 ± +0.3841 📈 | D_fake_avg: 😟 +0.0618 ± +0.7023 📉
+# [16x16][Epoch 7/10] DLoss(Avg): -0.2977 | GLoss(Avg): 0.2133 | IS: 2.9116 ± 0.0853) | FID: 123.96 | GP[avg]: 0.00
+# [16x16][Epoch 8/10 | Iter: 636/1272] Disc Loss: -0.3340 | Gen Loss: -0.2769
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.1737 ± +0.4660 📈| D_fake_avg: 😎 -0.1835 ± +0.3934 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.1004 ± +0.7620 📈 | D_fake_avg: 😵 +0.7897 ± +0.6406 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3905 ± +0.3905 📈 | D_fake_avg: 😟 +0.0813 ± +0.6914 📉
+# [16x16][Epoch 8/10] DLoss(Avg): -0.2848 | GLoss(Avg): 0.1744 | IS: 2.8451 ± 0.0615) | FID: 117.93 | GP[avg]: 0.00
+# [16x16][Epoch 9/10 | Iter: 636/1272] Disc Loss: -0.3294 | Gen Loss: -0.7759
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.0814 ± +0.4496 📈| D_fake_avg: 😵 +0.7289 ± +0.4362 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +0.8952 ± +0.4993 📈 | D_fake_avg: 😵 +0.5611 ± +0.5205 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😰 +0.3884 ± +0.3884 📈 | D_fake_avg: 😟 +0.0912 ± +0.7115 📉
+# [16x16][Epoch 9/10] DLoss(Avg): -0.2732 | GLoss(Avg): 0.1466 | IS: 2.9151 ± 0.0369) | FID: 117.43 | GP[avg]: 0.00
+# Files already downloaded and verified
+#  Step: 3/7 -> Training on [32x32]
+#   --Epochs:                      30 
+#   --BatchSize:                   128 
+#   --Number of Batches:           1272 
+#   --Interval:                    637 
+#   --Fade-in Steps:               19080 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [32x32][Epoch 0/30 | Iter: 636/1272] Disc Loss: -1.2415 | Gen Loss: 1.2311
+#  -- 😱 Batch-636:  D_real_avg: 😎 +3.2820 ± +0.8886 📈| D_fake_avg: 😵 +1.9968 ± +0.6764 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +1.6370 ± +1.9188 📈 | D_fake_avg: 😎 -0.3086 ± +1.9319 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.3526 ± +3.3526 📈 | D_fake_avg: 😵 +1.9043 ± +2.8738 📉
+# [32x32][Epoch 0/30] DLoss(Avg): -1.3134 | GLoss(Avg): -1.0944 | IS: 2.7931 ± 0.0405) | FID: 91.49 | GP[avg]: 0.03
+# [32x32][Epoch 1/30 | Iter: 636/1272] Disc Loss: -2.2392 | Gen Loss: -1.6712
+#  -- 😱 Batch-636:  D_real_avg: 😎 +4.7975 ± +1.7515 📈| D_fake_avg: 😵 +2.1521 ± +1.0200 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.8652 ± +1.0632 📈 | D_fake_avg: 😵 +2.4115 ± +0.7919 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.6619 ± +4.6619 📈 | D_fake_avg: 😵 +2.2233 ± +4.5768 📉
+# [32x32][Epoch 1/30] DLoss(Avg): -2.0911 | GLoss(Avg): -1.4029 | IS: 2.8740 ± 0.0921) | FID: 61.93 | GP[avg]: 0.07
+# [32x32][Epoch 2/30 | Iter: 636/1272] Disc Loss: -0.7903 | Gen Loss: -0.0256
+#  -- 😱 Batch-636:  D_real_avg: 😎 +7.4767 ± +1.8407 📈| D_fake_avg: 😵 +6.5758 ± +1.3343 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -1.3233 ± +1.5201 📈 | D_fake_avg: 😎 -1.5672 ± +1.3964 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.3923 ± +3.3923 📈 | D_fake_avg: 😵 +2.3048 ± +3.1573 📉
+# [32x32][Epoch 2/30] DLoss(Avg): -1.0026 | GLoss(Avg): -1.7433 | IS: 2.8791 ± 0.0504) | FID: 48.39 | GP[avg]: 0.02
+# [32x32][Epoch 3/30 | Iter: 636/1272] Disc Loss: -0.3220 | Gen Loss: 2.7174
+#  -- 😱 Batch-636:  D_real_avg: 😎 +4.5638 ± +1.2720 📈| D_fake_avg: 😵 +4.1975 ± +1.0616 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.2821 ± +1.4367 📈 | D_fake_avg: 😎 -1.0777 ± +1.5884 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.7225 ± +1.7225 📈 | D_fake_avg: 😵 +0.8940 ± +2.3195 📉
+# [32x32][Epoch 3/30] DLoss(Avg): -0.7738 | GLoss(Avg): -0.3705 | IS: 2.7227 ± 0.0367) | FID: 43.49 | GP[avg]: 0.01
+# [32x32][Epoch 4/30 | Iter: 636/1272] Disc Loss: -0.8247 | Gen Loss: -1.7893
+#  -- 😱 Batch-636:  D_real_avg: 😎 +2.0981 ± +1.1602 📈| D_fake_avg: 😵 +1.2248 ± +0.9431 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 +0.0243 ± +1.0373 📈 | D_fake_avg: 😎 -1.0651 ± +0.8500 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.2037 ± +1.2037 📈 | D_fake_avg: 😵 +0.4122 ± +2.1329 📉
+# [32x32][Epoch 4/30] DLoss(Avg): -0.7436 | GLoss(Avg): 0.0863 | IS: 3.0275 ± 0.0940) | FID: 47.10 | GP[avg]: 0.01
+# [32x32][Epoch 5/30 | Iter: 636/1272] Disc Loss: -0.5505 | Gen Loss: 0.7406
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.7330 ± +1.4294 📈| D_fake_avg: 😟 +0.1132 ± +1.4256 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.1216 ± +1.2034 📈 | D_fake_avg: 😵 +2.8845 ± +1.4065 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.1855 ± +1.1855 📈 | D_fake_avg: 😵 +0.4501 ± +1.8358 📉
+# [32x32][Epoch 5/30] DLoss(Avg): -0.6927 | GLoss(Avg): 0.0460 | IS: 2.8536 ± 0.0589) | FID: 35.30 | GP[avg]: 0.01
+# [32x32][Epoch 6/30 | Iter: 636/1272] Disc Loss: -0.6134 | Gen Loss: 2.2153
+#  -- 🫤 Batch-636:  D_real_avg: 😵 +0.0506 ± +0.9454 📈| D_fake_avg: 😎 -0.6048 ± +0.9557 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -1.2289 ± +1.8000 📈 | D_fake_avg: 😎 -1.6221 ± +1.7056 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.1055 ± +1.1055 📈 | D_fake_avg: 😵 +0.4144 ± +1.7439 📉
+# [32x32][Epoch 6/30] DLoss(Avg): -0.6516 | GLoss(Avg): 0.0580 | IS: 2.9178 ± 0.0593) | FID: 33.56 | GP[avg]: 0.01
+# [32x32][Epoch 7/30 | Iter: 636/1272] Disc Loss: -0.6638 | Gen Loss: 2.9274
+#  -- 😱 Batch-636:  D_real_avg: 😎 +0.8025 ± +1.0183 📈| D_fake_avg: 😟 +0.1146 ± +0.8499 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.0947 ± +1.0736 📈 | D_fake_avg: 😎 -0.9884 ± +0.6895 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.0212 ± +1.0212 📈 | D_fake_avg: 😟 +0.3426 ± +1.6567 📉
+# [32x32][Epoch 7/30] DLoss(Avg): -0.6401 | GLoss(Avg): 0.1031 | IS: 3.0165 ± 0.0843) | FID: 37.53 | GP[avg]: 0.01
+# [32x32][Epoch 8/30 | Iter: 636/1272] Disc Loss: -0.8619 | Gen Loss: -0.0956
+#  -- 🫤 Batch-636:  D_real_avg: 😎 +0.8038 ± +0.9285 📈| D_fake_avg: 😎 -0.0908 ± +0.8900 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.9116 ± +0.9160 📈 | D_fake_avg: 😵 +1.2660 ± +0.6584 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9924 ± +0.9924 📈 | D_fake_avg: 😟 +0.3460 ± +1.5652 📉
+# [32x32][Epoch 8/30] DLoss(Avg): -0.6092 | GLoss(Avg): 0.1074 | IS: 2.9905 ± 0.0372) | FID: 35.09 | GP[avg]: 0.01
+# [32x32][Epoch 9/30 | Iter: 636/1272] Disc Loss: -0.4993 | Gen Loss: -0.0859
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.5621 ± +0.7032 📈| D_fake_avg: 😟 +0.0139 ± +0.7481 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.6655 ± +0.9580 📈 | D_fake_avg: 😵 +2.8334 ± +0.7183 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9931 ± +0.9931 📈 | D_fake_avg: 😟 +0.3593 ± +1.5462 📉
+# [32x32][Epoch 9/30] DLoss(Avg): -0.5972 | GLoss(Avg): 0.0733 | IS: 2.9283 ± 0.0741) | FID: 27.42 | GP[avg]: 0.01
+# [32x32][Epoch 10/30 | Iter: 636/1272] Disc Loss: -0.5938 | Gen Loss: 0.2614
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -1.6225 ± +1.1940 📈| D_fake_avg: 😎 -2.2421 ± +1.0547 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.2091 ± +1.1076 📈 | D_fake_avg: 😵 +1.8263 ± +0.9922 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9693 ± +0.9693 📈 | D_fake_avg: 😟 +0.3469 ± +1.5726 📉
+# [32x32][Epoch 10/30] DLoss(Avg): -0.5867 | GLoss(Avg): 0.0691 | IS: 2.9123 ± 0.0728) | FID: 32.15 | GP[avg]: 0.01
+# [32x32][Epoch 11/30 | Iter: 636/1272] Disc Loss: -0.4922 | Gen Loss: 1.5231
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -1.3257 ± +0.9523 📈| D_fake_avg: 😎 -1.8373 ± +1.0139 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.2527 ± +1.1900 📈 | D_fake_avg: 😵 +2.4109 ± +1.1352 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9774 ± +0.9774 📈 | D_fake_avg: 😟 +0.3584 ± +1.4098 📉
+# [32x32][Epoch 11/30] DLoss(Avg): -0.5838 | GLoss(Avg): 0.0386 | IS: 3.0923 ± 0.0623) | FID: 30.00 | GP[avg]: 0.01
+# [32x32][Epoch 12/30 | Iter: 636/1272] Disc Loss: -0.4460 | Gen Loss: 0.2487
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.8363 ± +0.8561 📈| D_fake_avg: 😵 +1.3628 ± +0.7475 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +0.9999 ± +0.8563 📈 | D_fake_avg: 😟 +0.3194 ± +0.8979 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9320 ± +0.9320 📈 | D_fake_avg: 😟 +0.3135 ± +1.4616 📉
+# [32x32][Epoch 12/30] DLoss(Avg): -0.5828 | GLoss(Avg): 0.0783 | IS: 3.1266 ± 0.0642) | FID: 34.79 | GP[avg]: 0.01
+# [32x32][Epoch 13/30 | Iter: 636/1272] Disc Loss: -0.6977 | Gen Loss: 1.3642
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.5987 ± +0.8572 📈| D_fake_avg: 😎 -1.3282 ± +0.8520 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.6376 ± +1.3089 📈 | D_fake_avg: 😵 +1.3252 ± +0.9650 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9237 ± +0.9237 📈 | D_fake_avg: 😟 +0.3046 ± +1.3019 📉
+# [32x32][Epoch 13/30] DLoss(Avg): -0.5829 | GLoss(Avg): 0.0775 | IS: 2.7303 ± 0.0655) | FID: 27.46 | GP[avg]: 0.01
+# [32x32][Epoch 14/30 | Iter: 636/1272] Disc Loss: -0.4140 | Gen Loss: 2.9280
+#  -- 😱 Batch-636:  D_real_avg: 😟 +0.5215 ± +0.9950 📈| D_fake_avg: 😟 +0.0788 ± +0.8784 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.8319 ± +0.9070 📈 | D_fake_avg: 😵 +1.3725 ± +1.1905 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9072 ± +0.9072 📈 | D_fake_avg: 😟 +0.2912 ± +1.3243 📉
+# [32x32][Epoch 14/30] DLoss(Avg): -0.5793 | GLoss(Avg): 0.0901 | IS: 2.9889 ± 0.0612) | FID: 26.29 | GP[avg]: 0.01
+# [32x32][Epoch 15/30 | Iter: 636/1272] Disc Loss: -0.5717 | Gen Loss: -1.8330
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.9164 ± +0.7670 📈| D_fake_avg: 😵 +1.3263 ± +0.7602 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +0.9776 ± +0.8548 📈 | D_fake_avg: 😟 +0.2628 ± +0.7911 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8887 ± +0.8887 📈 | D_fake_avg: 😟 +0.2744 ± +1.3714 📉
+# [32x32][Epoch 15/30] DLoss(Avg): -0.5785 | GLoss(Avg): 0.0908 | IS: 2.9324 ± 0.0598) | FID: 28.09 | GP[avg]: 0.01
+# [32x32][Epoch 16/30 | Iter: 636/1272] Disc Loss: -0.3912 | Gen Loss: -1.0041
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.4663 ± +0.8790 📈| D_fake_avg: 😵 +1.0173 ± +0.7189 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -1.4241 ± +0.7353 📈 | D_fake_avg: 😎 -2.1096 ± +0.7244 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.9013 ± +0.9013 📈 | D_fake_avg: 😟 +0.3093 ± +1.3239 📉
+# [32x32][Epoch 16/30] DLoss(Avg): -0.5581 | GLoss(Avg): 0.0604 | IS: 2.6926 ± 0.0658) | FID: 23.75 | GP[avg]: 0.01
+# [32x32][Epoch 17/30 | Iter: 636/1272] Disc Loss: -0.5939 | Gen Loss: 1.2384
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.1352 ± +0.7595 📈| D_fake_avg: 😎 -0.7596 ± +0.6301 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😟 +0.7376 ± +0.7065 📈 | D_fake_avg: 😎 -0.0775 ± +0.6680 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8834 ± +0.8834 📈 | D_fake_avg: 😟 +0.2974 ± +1.3471 📉
+# [32x32][Epoch 17/30] DLoss(Avg): -0.5530 | GLoss(Avg): 0.0506 | IS: 2.7085 ± 0.0553) | FID: 27.85 | GP[avg]: 0.01
+# [32x32][Epoch 18/30 | Iter: 636/1272] Disc Loss: -0.5757 | Gen Loss: -0.1095
+#  -- 🫤 Batch-636:  D_real_avg: 😰 +0.2166 ± +1.2918 📈| D_fake_avg: 😎 -0.3887 ± +1.4000 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😟 +0.5816 ± +0.8916 📈 | D_fake_avg: 😎 -0.1902 ± +0.9276 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8896 ± +0.8896 📈 | D_fake_avg: 😟 +0.3137 ± +1.2571 📉
+# [32x32][Epoch 18/30] DLoss(Avg): -0.5442 | GLoss(Avg): 0.0347 | IS: 2.7845 ± 0.0777) | FID: 25.36 | GP[avg]: 0.01
+# [32x32][Epoch 19/30 | Iter: 636/1272] Disc Loss: -0.3702 | Gen Loss: 0.5716
+#  -- 😱 Batch-636:  D_real_avg: 😎 +2.2336 ± +0.8430 📈| D_fake_avg: 😵 +1.8136 ± +0.7803 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😰 +0.3305 ± +0.8058 📈 | D_fake_avg: 😎 -0.6500 ± +0.6904 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8715 ± +0.8715 📈 | D_fake_avg: 😟 +0.3006 ± +1.2489 📉
+# [32x32][Epoch 19/30] DLoss(Avg): -0.5395 | GLoss(Avg): 0.0381 | IS: 2.7540 ± 0.0876) | FID: 21.90 | GP[avg]: 0.01
+# [32x32][Epoch 20/30 | Iter: 636/1272] Disc Loss: -0.5681 | Gen Loss: -0.4281
+#  -- 😱 Batch-636:  D_real_avg: 😎 +2.8541 ± +0.8903 📈| D_fake_avg: 😵 +2.2388 ± +0.6918 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😟 +0.7119 ± +0.8407 📈 | D_fake_avg: 😎 -0.0528 ± +0.5734 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8683 ± +0.8683 📈 | D_fake_avg: 😟 +0.3021 ± +1.2771 📉
+# [32x32][Epoch 20/30] DLoss(Avg): -0.5356 | GLoss(Avg): 0.0254 | IS: 2.7466 ± 0.0707) | FID: 22.63 | GP[avg]: 0.01
+# [32x32][Epoch 21/30 | Iter: 636/1272] Disc Loss: -0.5507 | Gen Loss: -1.6498
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.1822 ± +0.8738 📈| D_fake_avg: 😵 +0.6029 ± +0.9107 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.7627 ± +0.9516 📈 | D_fake_avg: 😟 +0.3380 ± +0.9860 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8749 ± +0.8749 📈 | D_fake_avg: 😟 +0.3143 ± +1.3247 📉
+# [32x32][Epoch 21/30] DLoss(Avg): -0.5306 | GLoss(Avg): 0.0085 | IS: 3.0025 ± 0.0567) | FID: 28.10 | GP[avg]: 0.01
+# [32x32][Epoch 22/30 | Iter: 636/1272] Disc Loss: -0.5689 | Gen Loss: 0.9175
+#  -- 🫤 Batch-636:  D_real_avg: 😟 +0.4471 ± +0.7179 📈| D_fake_avg: 😎 -0.1477 ± +0.5155 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😟 +0.6908 ± +0.7218 📈 | D_fake_avg: 😟 +0.0820 ± +0.5564 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8578 ± +0.8578 📈 | D_fake_avg: 😟 +0.3015 ± +1.3132 📉
+# [32x32][Epoch 22/30] DLoss(Avg): -0.5270 | GLoss(Avg): 0.0062 | IS: 2.9091 ± 0.0557) | FID: 22.99 | GP[avg]: 0.01
+# [32x32][Epoch 23/30 | Iter: 636/1272] Disc Loss: -0.3891 | Gen Loss: 1.1437
+#  -- 🫤 Batch-636:  D_real_avg: 😵 -0.7894 ± +0.7378 📈| D_fake_avg: 😎 -1.1993 ± +0.6694 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.8940 ± +0.8243 📈 | D_fake_avg: 😵 +1.0989 ± +0.5710 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8517 ± +0.8517 📈 | D_fake_avg: 😟 +0.3029 ± +1.2704 📉
+# [32x32][Epoch 23/30] DLoss(Avg): -0.5200 | GLoss(Avg): 0.0041 | IS: 2.8218 ± 0.0553) | FID: 21.76 | GP[avg]: 0.01
+# [32x32][Epoch 24/30 | Iter: 636/1272] Disc Loss: -0.4252 | Gen Loss: 0.5874
+#  -- 😱 Batch-636:  D_real_avg: 😎 +2.2106 ± +0.9274 📈| D_fake_avg: 😵 +1.7404 ± +0.9802 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.6306 ± +0.7557 📈 | D_fake_avg: 😵 +1.2126 ± +0.5428 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8462 ± +0.8462 📈 | D_fake_avg: 😟 +0.3018 ± +1.2588 📉
+# [32x32][Epoch 24/30] DLoss(Avg): -0.5159 | GLoss(Avg): 0.0011 | IS: 2.9249 ± 0.0659) | FID: 23.95 | GP[avg]: 0.01
+# [32x32][Epoch 25/30 | Iter: 636/1272] Disc Loss: -0.6005 | Gen Loss: -2.5432
+#  -- 🫤 Batch-636:  D_real_avg: 😰 +0.2494 ± +0.7393 📈| D_fake_avg: 😎 -0.3779 ± +0.6238 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.3033 ± +0.9440 📈 | D_fake_avg: 😵 +0.6487 ± +0.8208 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8580 ± +0.8580 📈 | D_fake_avg: 😟 +0.3159 ± +1.2066 📉
+# [32x32][Epoch 25/30] DLoss(Avg): -0.5137 | GLoss(Avg): -0.0188 | IS: 2.8837 ± 0.0407) | FID: 24.54 | GP[avg]: 0.01
+# [32x32][Epoch 26/30 | Iter: 636/1272] Disc Loss: -0.7327 | Gen Loss: 1.9403
+#  -- 🫤 Batch-636:  D_real_avg: 😰 +0.2124 ± +0.6102 📈| D_fake_avg: 😎 -0.5344 ± +0.6471 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -0.6423 ± +0.6164 📈 | D_fake_avg: 😎 -1.2752 ± +0.6255 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8414 ± +0.8414 📈 | D_fake_avg: 😟 +0.3013 ± +1.1002 📉
+# [32x32][Epoch 26/30] DLoss(Avg): -0.5119 | GLoss(Avg): -0.0139 | IS: 2.8261 ± 0.0652) | FID: 23.27 | GP[avg]: 0.01
+# [32x32][Epoch 27/30 | Iter: 636/1272] Disc Loss: -0.5652 | Gen Loss: -2.8197
+#  -- 😱 Batch-636:  D_real_avg: 😎 +1.2503 ± +0.8081 📈| D_fake_avg: 😵 +0.6629 ± +0.6213 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.0472 ± +0.8724 📈 | D_fake_avg: 😵 +1.4286 ± +0.8351 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8645 ± +0.8645 📈 | D_fake_avg: 😟 +0.3285 ± +1.2486 📉
+# [32x32][Epoch 27/30] DLoss(Avg): -0.5076 | GLoss(Avg): -0.0381 | IS: 2.6699 ± 0.0596) | FID: 22.98 | GP[avg]: 0.01
+# [32x32][Epoch 28/30 | Iter: 636/1272] Disc Loss: -0.1303 | Gen Loss: 0.6649
+#  -- 😱 Batch-636:  D_real_avg: 😎 +2.2225 ± +1.2938 📈| D_fake_avg: 😵 +2.0476 ± +1.3143 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 +0.0162 ± +0.7318 📈 | D_fake_avg: 😎 -0.4953 ± +0.7081 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8419 ± +0.8419 📈 | D_fake_avg: 😟 +0.3076 ± +1.2777 📉
+# [32x32][Epoch 28/30] DLoss(Avg): -0.5060 | GLoss(Avg): -0.0212 | IS: 2.8846 ± 0.0574) | FID: 23.35 | GP[avg]: 0.01
+# [32x32][Epoch 29/30 | Iter: 636/1272] Disc Loss: -0.5694 | Gen Loss: 0.9096
+#  -- 🫤 Batch-636:  D_real_avg: 😟 +0.6047 ± +0.7055 📈| D_fake_avg: 😎 -0.0061 ± +0.6057 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.4808 ± +0.8470 📈 | D_fake_avg: 😵 +1.7664 ± +0.8116 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +0.8405 ± +0.8405 📈 | D_fake_avg: 😟 +0.3043 ± +1.0644 📉
+# [32x32][Epoch 29/30] DLoss(Avg): -0.5085 | GLoss(Avg): -0.0355 | IS: 2.8701 ± 0.0643) | FID: 23.52 | GP[avg]: 0.01
+# Files already downloaded and verified
+#  Step: 4/7 -> Training on [64x64]
+#   --Epochs:                      40 
+#   --BatchSize:                   64 
+#   --Number of Batches:           2544 
+#   --Interval:                    1273 
+#   --Fade-in Steps:               50880 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [64x64][Epoch 0/40 | Iter: 1272/2544] Disc Loss: -1.4680 | Gen Loss: -2.1855
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.4003 ± +1.5967 📈| D_fake_avg: 😵 +0.8773 ± +1.4818 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +15.0507 ± +3.3533 📈 | D_fake_avg: 😵 +13.1487 ± +3.2024 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.3896 ± +3.3896 📈 | D_fake_avg: 😵 +1.8741 ± +3.3982 📉
+# [64x64][Epoch 0/40] DLoss(Avg): -1.4212 | GLoss(Avg): -1.1424 | IS: 2.7524 ± 0.0453) | FID: 28.14 | GP[avg]: 0.02
+# [64x64][Epoch 1/40 | Iter: 1272/2544] Disc Loss: -3.0494 | Gen Loss: 1.1169
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +9.4841 ± +2.1930 📈| D_fake_avg: 😵 +5.9894 ± +1.4849 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +9.7822 ± +3.3100 📈 | D_fake_avg: 😵 +8.7852 ± +3.5171 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +5.5693 ± +5.5693 📈 | D_fake_avg: 😵 +2.8582 ± +6.0780 📉
+# [64x64][Epoch 1/40] DLoss(Avg): -2.3609 | GLoss(Avg): -1.8870 | IS: 2.6446 ± 0.0516) | FID: 49.29 | GP[avg]: 0.07
+# [64x64][Epoch 2/40 | Iter: 1272/2544] Disc Loss: -1.5936 | Gen Loss: -1.8544
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.4493 ± +1.5209 📈| D_fake_avg: 😵 +1.7603 ± +1.3438 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 +0.0381 ± +1.9450 📈 | D_fake_avg: 😎 -1.4863 ± +1.3510 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +5.6077 ± +5.6077 📈 | D_fake_avg: 😵 +3.8337 ± +4.0341 📉
+# [64x64][Epoch 2/40] DLoss(Avg): -1.5798 | GLoss(Avg): -3.2073 | IS: 2.7108 ± 0.0531) | FID: 55.37 | GP[avg]: 0.04
+# [64x64][Epoch 3/40 | Iter: 1272/2544] Disc Loss: -1.2476 | Gen Loss: -1.5275
+#  -- 😀 Batch-1272:  D_real_avg: 😟 +0.7618 ± +1.4616 📈| D_fake_avg: 😎 -0.6022 ± +1.6931 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +11.3602 ± +2.6425 📈 | D_fake_avg: 😵 +8.4061 ± +1.4889 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.5265 ± +3.5265 📈 | D_fake_avg: 😵 +2.0708 ± +3.3875 📉
+# [64x64][Epoch 3/40] DLoss(Avg): -1.3256 | GLoss(Avg): -1.4850 | IS: 2.8746 ± 0.0689) | FID: 52.29 | GP[avg]: 0.03
+# [64x64][Epoch 4/40 | Iter: 1272/2544] Disc Loss: -1.2363 | Gen Loss: -1.0228
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +5.6925 ± +1.9085 📈| D_fake_avg: 😵 +4.3455 ± +1.5079 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +6.2164 ± +1.2220 📈 | D_fake_avg: 😵 +4.9725 ± +1.6367 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +2.1503 ± +2.1503 📈 | D_fake_avg: 😵 +0.7459 ± +3.4379 📉
+# [64x64][Epoch 4/40] DLoss(Avg): -1.2954 | GLoss(Avg): -0.1379 | IS: 2.8162 ± 0.0752) | FID: 62.12 | GP[avg]: 0.02
+# [64x64][Epoch 5/40 | Iter: 1272/2544] Disc Loss: -1.9901 | Gen Loss: 1.0257
+#  -- 😀 Batch-1272:  D_real_avg: 😎 +1.8335 ± +1.4198 📈| D_fake_avg: 😎 -0.2302 ± +1.2452 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +0.9981 ± +1.4415 📈 | D_fake_avg: 😵 +0.4003 ± +1.0066 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +2.0487 ± +2.0487 📈 | D_fake_avg: 😵 +0.7102 ± +3.1348 📉
+# [64x64][Epoch 5/40] DLoss(Avg): -1.2405 | GLoss(Avg): -0.0954 | IS: 2.6971 ± 0.0491) | FID: 62.25 | GP[avg]: 0.02
+# [64x64][Epoch 6/40 | Iter: 1272/2544] Disc Loss: -0.7203 | Gen Loss: -1.4223
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.0558 ± +1.8790 📈| D_fake_avg: 😵 +2.2162 ± +1.6737 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.0796 ± +1.8789 📈 | D_fake_avg: 😵 +1.1729 ± +1.4523 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +2.0084 ± +2.0084 📈 | D_fake_avg: 😵 +0.7010 ± +3.1554 📉
+# [64x64][Epoch 6/40] DLoss(Avg): -1.2140 | GLoss(Avg): -0.1099 | IS: 2.6950 ± 0.0620) | FID: 59.30 | GP[avg]: 0.02
+# [64x64][Epoch 7/40 | Iter: 1272/2544] Disc Loss: -1.9917 | Gen Loss: -0.3455
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.1676 ± +1.5663 📈| D_fake_avg: 😟 +0.1179 ± +1.2565 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -2.0632 ± +1.8170 📈 | D_fake_avg: 😎 -3.9134 ± +2.4764 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.9545 ± +1.9545 📈 | D_fake_avg: 😵 +0.6722 ± +3.0503 📉
+# [64x64][Epoch 7/40] DLoss(Avg): -1.1917 | GLoss(Avg): -0.0946 | IS: 2.7984 ± 0.0547) | FID: 64.37 | GP[avg]: 0.02
+# [64x64][Epoch 8/40 | Iter: 1272/2544] Disc Loss: -1.1614 | Gen Loss: -3.4301
+#  -- 😀 Batch-1272:  D_real_avg: 😟 +0.4851 ± +1.4345 📈| D_fake_avg: 😎 -0.7412 ± +1.1555 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.1431 ± +2.2417 📈 | D_fake_avg: 😵 +2.6022 ± +1.9255 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.9273 ± +1.9273 📈 | D_fake_avg: 😵 +0.6729 ± +2.8438 📉
+# [64x64][Epoch 8/40] DLoss(Avg): -1.1674 | GLoss(Avg): -0.1167 | IS: 2.6318 ± 0.0581) | FID: 65.52 | GP[avg]: 0.02
+# [64x64][Epoch 9/40 | Iter: 1272/2544] Disc Loss: -1.1499 | Gen Loss: -1.6860
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.9679 ± +1.3505 📈| D_fake_avg: 😵 +0.7485 ± +1.1892 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😟 +0.7394 ± +1.5605 📈 | D_fake_avg: 😎 -0.9630 ± +1.1569 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.8176 ± +1.8176 📈 | D_fake_avg: 😵 +0.5834 ± +2.8270 📉
+# [64x64][Epoch 9/40] DLoss(Avg): -1.1498 | GLoss(Avg): -0.0403 | IS: 2.5871 ± 0.0510) | FID: 60.82 | GP[avg]: 0.02
+# [64x64][Epoch 10/40 | Iter: 1272/2544] Disc Loss: -1.3226 | Gen Loss: 1.1982
+#  -- 😀 Batch-1272:  D_real_avg: 😎 +1.3234 ± +1.3425 📈| D_fake_avg: 😎 -0.0876 ± +1.0847 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.6630 ± +1.3270 📈 | D_fake_avg: 😵 +1.1062 ± +2.2158 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.7576 ± +1.7576 📈 | D_fake_avg: 😵 +0.5423 ± +2.7147 📉
+# [64x64][Epoch 10/40] DLoss(Avg): -1.1329 | GLoss(Avg): -0.0032 | IS: 2.9608 ± 0.0881) | FID: 58.74 | GP[avg]: 0.02
+# [64x64][Epoch 11/40 | Iter: 1272/2544] Disc Loss: -1.1577 | Gen Loss: -1.3166
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +4.5795 ± +1.7538 📈| D_fake_avg: 😵 +3.3292 ± +1.6106 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.3502 ± +1.9997 📈 | D_fake_avg: 😵 +0.6703 ± +1.9375 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6948 ± +1.6948 📈 | D_fake_avg: 😵 +0.4808 ± +2.5454 📉
+# [64x64][Epoch 11/40] DLoss(Avg): -1.1317 | GLoss(Avg): 0.0296 | IS: 2.6625 ± 0.0492) | FID: 64.52 | GP[avg]: 0.02
+# [64x64][Epoch 12/40 | Iter: 1272/2544] Disc Loss: -1.2384 | Gen Loss: -2.0209
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.4528 ± +1.9141 📈| D_fake_avg: 😟 +0.1309 ± +1.3352 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.7457 ± +1.1857 📈 | D_fake_avg: 😵 +0.9853 ± +1.0823 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6751 ± +1.6751 📈 | D_fake_avg: 😵 +0.4757 ± +2.4823 📉
+# [64x64][Epoch 12/40] DLoss(Avg): -1.1186 | GLoss(Avg): 0.0285 | IS: 2.7383 ± 0.0629) | FID: 67.88 | GP[avg]: 0.02
+# [64x64][Epoch 13/40 | Iter: 1272/2544] Disc Loss: -1.3775 | Gen Loss: -1.7569
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.6858 ± +1.4092 📈| D_fake_avg: 😟 +0.2274 ± +1.4578 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.0747 ± +1.3434 📈 | D_fake_avg: 😎 -2.8030 ± +1.5862 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6921 ± +1.6921 📈 | D_fake_avg: 😵 +0.5103 ± +2.7070 📉
+# [64x64][Epoch 13/40] DLoss(Avg): -1.1017 | GLoss(Avg): -0.0014 | IS: 2.6536 ± 0.0450) | FID: 63.38 | GP[avg]: 0.02
+# [64x64][Epoch 14/40 | Iter: 1272/2544] Disc Loss: -0.7095 | Gen Loss: 1.3063
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.8443 ± +1.3784 📈| D_fake_avg: 😵 +3.0536 ± +1.4700 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.0896 ± +2.6750 📈 | D_fake_avg: 😟 +0.3350 ± +1.9076 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6687 ± +1.6687 📈 | D_fake_avg: 😵 +0.4823 ± +2.5251 📉
+# [64x64][Epoch 14/40] DLoss(Avg): -1.1062 | GLoss(Avg): -0.0015 | IS: 2.7843 ± 0.0554) | FID: 62.94 | GP[avg]: 0.02
+# [64x64][Epoch 15/40 | Iter: 1272/2544] Disc Loss: -0.5022 | Gen Loss: -1.4597
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.6165 ± +1.2689 📈| D_fake_avg: 😵 +3.0659 ± +0.9862 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😰 +0.2178 ± +1.5204 📈 | D_fake_avg: 😎 -1.8475 ± +1.2804 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6543 ± +1.6543 📈 | D_fake_avg: 😵 +0.4803 ± +2.5515 📉
+# [64x64][Epoch 15/40] DLoss(Avg): -1.0953 | GLoss(Avg): 0.0132 | IS: 2.7547 ± 0.0464) | FID: 64.63 | GP[avg]: 0.02
+# [64x64][Epoch 16/40 | Iter: 1272/2544] Disc Loss: -0.7733 | Gen Loss: -0.2229
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.8142 ± +1.7137 📈| D_fake_avg: 😵 +0.9535 ± +1.5001 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.9696 ± +2.0064 📈 | D_fake_avg: 😵 +3.0314 ± +1.6491 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6644 ± +1.6644 📈 | D_fake_avg: 😵 +0.4837 ± +2.5728 📉
+# [64x64][Epoch 16/40] DLoss(Avg): -1.0999 | GLoss(Avg): 0.0012 | IS: 2.8617 ± 0.0685) | FID: 72.26 | GP[avg]: 0.02
+# [64x64][Epoch 17/40 | Iter: 1272/2544] Disc Loss: -1.1121 | Gen Loss: -1.5329
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +4.9105 ± +1.8222 📈| D_fake_avg: 😵 +3.6734 ± +1.4905 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.0104 ± +1.5599 📈 | D_fake_avg: 😎 -2.2319 ± +1.1933 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6362 ± +1.6362 📈 | D_fake_avg: 😵 +0.4622 ± +2.4045 📉
+# [64x64][Epoch 17/40] DLoss(Avg): -1.0940 | GLoss(Avg): 0.0111 | IS: 2.7002 ± 0.0410) | FID: 63.93 | GP[avg]: 0.02
+# [64x64][Epoch 18/40 | Iter: 1272/2544] Disc Loss: -1.2856 | Gen Loss: -4.3384
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +5.5401 ± +1.5721 📈| D_fake_avg: 😵 +4.1940 ± +1.2313 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -2.1552 ± +1.5232 📈 | D_fake_avg: 😎 -2.7384 ± +1.7321 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6719 ± +1.6719 📈 | D_fake_avg: 😵 +0.4943 ± +2.5349 📉
+# [64x64][Epoch 18/40] DLoss(Avg): -1.0968 | GLoss(Avg): -0.0055 | IS: 2.7701 ± 0.0490) | FID: 66.20 | GP[avg]: 0.02
+# [64x64][Epoch 19/40 | Iter: 1272/2544] Disc Loss: -1.1490 | Gen Loss: -0.2216
+#  -- 😀 Batch-1272:  D_real_avg: 😵 +0.0847 ± +1.7079 📈| D_fake_avg: 😎 -1.1738 ± +1.7451 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😟 +0.7417 ± +1.5284 📈 | D_fake_avg: 😎 -0.7976 ± +2.0880 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6484 ± +1.6484 📈 | D_fake_avg: 😵 +0.4567 ± +2.5672 📉
+# [64x64][Epoch 19/40] DLoss(Avg): -1.1090 | GLoss(Avg): 0.0121 | IS: 2.6828 ± 0.0564) | FID: 72.66 | GP[avg]: 0.02
+# [64x64][Epoch 20/40 | Iter: 1272/2544] Disc Loss: -1.1262 | Gen Loss: 1.3220
+#  -- 😀 Batch-1272:  D_real_avg: 😟 +0.7735 ± +1.3282 📈| D_fake_avg: 😎 -0.3828 ± +1.5260 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.9808 ± +1.8234 📈 | D_fake_avg: 😵 +2.9636 ± +1.3665 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6335 ± +1.6335 📈 | D_fake_avg: 😵 +0.4453 ± +2.3810 📉
+# [64x64][Epoch 20/40] DLoss(Avg): -1.1066 | GLoss(Avg): 0.0295 | IS: 2.6436 ± 0.0534) | FID: 73.87 | GP[avg]: 0.02
+# [64x64][Epoch 21/40 | Iter: 1272/2544] Disc Loss: -1.3338 | Gen Loss: 0.4703
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.4117 ± +1.7538 📈| D_fake_avg: 😵 +0.9858 ± +1.3789 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +5.9494 ± +1.1312 📈 | D_fake_avg: 😵 +4.4915 ± +1.3889 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6310 ± +1.6310 📈 | D_fake_avg: 😵 +0.4436 ± +2.5189 📉
+# [64x64][Epoch 21/40] DLoss(Avg): -1.1059 | GLoss(Avg): 0.0224 | IS: 2.7577 ± 0.0532) | FID: 70.83 | GP[avg]: 0.02
+# [64x64][Epoch 22/40 | Iter: 1272/2544] Disc Loss: -0.8035 | Gen Loss: -3.8237
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.8213 ± +2.3307 📈| D_fake_avg: 😵 +1.9438 ± +1.6167 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 🫤 Last Batch : D_real_avg: 😵 -1.0342 ± +2.0293 📈 | D_fake_avg: 😎 -1.8232 ± +1.1917 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6394 ± +1.6394 📈 | D_fake_avg: 😵 +0.4552 ± +2.5084 📉
+# [64x64][Epoch 22/40] DLoss(Avg): -1.1036 | GLoss(Avg): 0.0111 | IS: 2.8048 ± 0.0733) | FID: 66.42 | GP[avg]: 0.02
+# [64x64][Epoch 23/40 | Iter: 1272/2544] Disc Loss: -1.3526 | Gen Loss: 4.7033
+#  -- 😀 Batch-1272:  D_real_avg: 😵 -0.8260 ± +1.6711 📈| D_fake_avg: 😎 -2.2267 ± +1.6573 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😟 +0.4253 ± +1.9015 📈 | D_fake_avg: 😎 -1.4591 ± +1.4891 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6459 ± +1.6459 📈 | D_fake_avg: 😵 +0.4541 ± +2.3760 📉
+# [64x64][Epoch 23/40] DLoss(Avg): -1.1104 | GLoss(Avg): 0.0020 | IS: 2.7448 ± 0.0476) | FID: 70.90 | GP[avg]: 0.02
+# [64x64][Epoch 24/40 | Iter: 1272/2544] Disc Loss: -0.8441 | Gen Loss: -0.3029
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.4673 ± +1.7338 📈| D_fake_avg: 😵 +1.4926 ± +1.3777 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +5.1134 ± +1.6552 📈 | D_fake_avg: 😵 +3.7855 ± +1.4905 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6478 ± +1.6478 📈 | D_fake_avg: 😵 +0.4569 ± +2.4012 📉
+# [64x64][Epoch 24/40] DLoss(Avg): -1.1097 | GLoss(Avg): -0.0026 | IS: 2.7690 ± 0.0637) | FID: 70.81 | GP[avg]: 0.02
+# [64x64][Epoch 25/40 | Iter: 1272/2544] Disc Loss: -1.1616 | Gen Loss: -3.3647
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +4.0747 ± +1.5615 📈| D_fake_avg: 😵 +2.7990 ± +1.3285 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +7.1875 ± +2.3366 📈 | D_fake_avg: 😵 +7.1117 ± +1.7681 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6348 ± +1.6348 📈 | D_fake_avg: 😵 +0.4404 ± +2.4153 📉
+# [64x64][Epoch 25/40] DLoss(Avg): -1.1122 | GLoss(Avg): 0.0043 | IS: 2.8623 ± 0.0500) | FID: 65.48 | GP[avg]: 0.02
+# [64x64][Epoch 26/40 | Iter: 1272/2544] Disc Loss: -0.6399 | Gen Loss: 0.0119
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.5809 ± +2.2635 📈| D_fake_avg: 😵 +2.8199 ± +1.8428 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.2424 ± +1.8967 📈 | D_fake_avg: 😵 +2.8901 ± +2.1480 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6685 ± +1.6685 📈 | D_fake_avg: 😵 +0.4794 ± +2.5140 📉
+# [64x64][Epoch 26/40] DLoss(Avg): -1.1078 | GLoss(Avg): -0.0199 | IS: 2.4825 ± 0.0422) | FID: 62.21 | GP[avg]: 0.02
+# [64x64][Epoch 27/40 | Iter: 1272/2544] Disc Loss: -0.8322 | Gen Loss: 1.3733
+#  -- 🫤 Batch-1272:  D_real_avg: 😵 -1.4148 ± +1.4159 📈| D_fake_avg: 😎 -2.3187 ± +1.7800 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +1.9128 ± +1.2990 📈 | D_fake_avg: 😵 +0.9161 ± +1.1795 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6277 ± +1.6277 📈 | D_fake_avg: 😵 +0.4248 ± +2.4125 📉
+# [64x64][Epoch 27/40] DLoss(Avg): -1.1201 | GLoss(Avg): 0.0129 | IS: 2.7417 ± 0.0342) | FID: 63.10 | GP[avg]: 0.02
+# [64x64][Epoch 28/40 | Iter: 1272/2544] Disc Loss: -1.3597 | Gen Loss: 4.0865
+#  -- 😀 Batch-1272:  D_real_avg: 😟 +0.7780 ± +1.3353 📈| D_fake_avg: 😎 -0.6369 ± +1.3319 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.3351 ± +1.4300 📈 | D_fake_avg: 😎 -3.2884 ± +1.2542 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6634 ± +1.6634 📈 | D_fake_avg: 😵 +0.4516 ± +2.4879 📉
+# [64x64][Epoch 28/40] DLoss(Avg): -1.1280 | GLoss(Avg): -0.0130 | IS: 2.8361 ± 0.0689) | FID: 61.72 | GP[avg]: 0.02
+# [64x64][Epoch 29/40 | Iter: 1272/2544] Disc Loss: -0.5370 | Gen Loss: -1.6042
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +4.1694 ± +1.7309 📈| D_fake_avg: 😵 +3.5315 ± +1.5231 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😟 +0.7688 ± +1.3687 📈 | D_fake_avg: 😎 -0.2932 ± +1.8096 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6611 ± +1.6611 📈 | D_fake_avg: 😵 +0.4470 ± +2.2621 📉
+# [64x64][Epoch 29/40] DLoss(Avg): -1.1306 | GLoss(Avg): -0.0234 | IS: 2.6785 ± 0.0441) | FID: 63.02 | GP[avg]: 0.02
+# [64x64][Epoch 30/40 | Iter: 1272/2544] Disc Loss: -0.8870 | Gen Loss: -1.9219
+#  -- 🫤 Batch-1272:  D_real_avg: 😟 +0.6829 ± +1.6271 📈| D_fake_avg: 😎 -0.2705 ± +1.8295 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +0.9034 ± +1.5272 📈 | D_fake_avg: 😎 -0.5978 ± +1.4874 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6701 ± +1.6701 📈 | D_fake_avg: 😵 +0.4610 ± +2.4661 📉
+# [64x64][Epoch 30/40] DLoss(Avg): -1.1255 | GLoss(Avg): -0.0343 | IS: 2.7626 ± 0.0587) | FID: 67.20 | GP[avg]: 0.02
+# [64x64][Epoch 31/40 | Iter: 1272/2544] Disc Loss: -1.0201 | Gen Loss: -1.0743
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.3069 ± +1.3054 📈| D_fake_avg: 😟 +0.2049 ± +1.1819 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.6120 ± +1.6965 📈 | D_fake_avg: 😵 +1.5320 ± +1.8375 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6643 ± +1.6643 📈 | D_fake_avg: 😵 +0.4471 ± +2.4843 📉
+# [64x64][Epoch 31/40] DLoss(Avg): -1.1326 | GLoss(Avg): -0.0198 | IS: 2.6865 ± 0.0552) | FID: 64.18 | GP[avg]: 0.02
+# [64x64][Epoch 32/40 | Iter: 1272/2544] Disc Loss: -1.4386 | Gen Loss: -1.9351
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +1.9995 ± +1.5577 📈| D_fake_avg: 😵 +0.5028 ± +1.0163 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.8169 ± +1.6093 📈 | D_fake_avg: 😎 -2.9354 ± +1.4647 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6904 ± +1.6904 📈 | D_fake_avg: 😵 +0.4680 ± +2.3313 📉
+# [64x64][Epoch 32/40] DLoss(Avg): -1.1373 | GLoss(Avg): -0.0427 | IS: 2.6816 ± 0.0542) | FID: 65.28 | GP[avg]: 0.02
+# [64x64][Epoch 33/40 | Iter: 1272/2544] Disc Loss: -1.1647 | Gen Loss: -0.2473
+#  -- 😀 Batch-1272:  D_real_avg: 😎 +1.0494 ± +1.6574 📈| D_fake_avg: 😎 -0.1691 ± +1.3020 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +1.0518 ± +2.7385 📈 | D_fake_avg: 😎 -0.7368 ± +1.5590 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6811 ± +1.6811 📈 | D_fake_avg: 😵 +0.4548 ± +2.4107 📉
+# [64x64][Epoch 33/40] DLoss(Avg): -1.1411 | GLoss(Avg): -0.0362 | IS: 2.6672 ± 0.0502) | FID: 66.99 | GP[avg]: 0.02
+# [64x64][Epoch 34/40 | Iter: 1272/2544] Disc Loss: -1.3061 | Gen Loss: 0.5820
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.1261 ± +1.5664 📈| D_fake_avg: 😵 +0.7468 ± +1.5362 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +1.8459 ± +2.3533 📈 | D_fake_avg: 😎 -0.2083 ± +2.0369 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6821 ± +1.6821 📈 | D_fake_avg: 😵 +0.4581 ± +2.3987 📉
+# [64x64][Epoch 34/40] DLoss(Avg): -1.1392 | GLoss(Avg): -0.0451 | IS: 2.8234 ± 0.0751) | FID: 73.28 | GP[avg]: 0.02
+# [64x64][Epoch 35/40 | Iter: 1272/2544] Disc Loss: -1.5757 | Gen Loss: 3.8951
+#  -- 😀 Batch-1272:  D_real_avg: 😵 -0.6295 ± +1.3246 📈| D_fake_avg: 😎 -2.2673 ± +1.1880 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.1509 ± +1.9250 📈 | D_fake_avg: 😵 +3.3511 ± +1.0124 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6876 ± +1.6876 📈 | D_fake_avg: 😵 +0.4619 ± +2.3642 📉
+# [64x64][Epoch 35/40] DLoss(Avg): -1.1407 | GLoss(Avg): -0.0516 | IS: 2.6717 ± 0.0356) | FID: 71.45 | GP[avg]: 0.02
+# [64x64][Epoch 36/40 | Iter: 1272/2544] Disc Loss: -1.4851 | Gen Loss: 0.7726
+#  -- 😀 Batch-1272:  D_real_avg: 😎 +1.1314 ± +1.6542 📈| D_fake_avg: 😎 -0.4439 ± +1.7364 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.0320 ± +1.9193 📈 | D_fake_avg: 😵 +3.1639 ± +1.4059 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6580 ± +1.6580 📈 | D_fake_avg: 😵 +0.4295 ± +2.4211 📉
+# [64x64][Epoch 36/40] DLoss(Avg): -1.1431 | GLoss(Avg): -0.0113 | IS: 2.9291 ± 0.0692) | FID: 68.56 | GP[avg]: 0.02
+# [64x64][Epoch 37/40 | Iter: 1272/2544] Disc Loss: -1.0914 | Gen Loss: -1.8732
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.9382 ± +1.5822 📈| D_fake_avg: 😵 +2.7625 ± +1.5888 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -2.4442 ± +1.5921 📈 | D_fake_avg: 😎 -3.7682 ± +1.6987 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6939 ± +1.6939 📈 | D_fake_avg: 😵 +0.4621 ± +2.3620 📉
+# [64x64][Epoch 37/40] DLoss(Avg): -1.1465 | GLoss(Avg): -0.0418 | IS: 2.6212 ± 0.0328) | FID: 63.46 | GP[avg]: 0.02
+# [64x64][Epoch 38/40 | Iter: 1272/2544] Disc Loss: -1.2898 | Gen Loss: -0.5412
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +3.6361 ± +1.6790 📈| D_fake_avg: 😵 +2.2847 ± +1.5175 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +2.9484 ± +1.1174 📈 | D_fake_avg: 😵 +1.4045 ± +0.9940 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.6563 ± +1.6563 📈 | D_fake_avg: 😵 +0.4193 ± +2.5003 📉
+# [64x64][Epoch 38/40] DLoss(Avg): -1.1517 | GLoss(Avg): -0.0200 | IS: 2.6789 ± 0.0568) | FID: 64.99 | GP[avg]: 0.02
+# [64x64][Epoch 39/40 | Iter: 1272/2544] Disc Loss: -1.7353 | Gen Loss: 0.8213
+#  -- 😱 Batch-1272:  D_real_avg: 😎 +2.7084 ± +1.9584 📈| D_fake_avg: 😵 +0.8666 ± +1.6017 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- ‼️ Last Batch : D_real_avg: 😎 +4.8756 ± +1.5475 📈 | D_fake_avg: 😵 +5.0822 ± +1.8732 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +1.7018 ± +1.7018 📈 | D_fake_avg: 😵 +0.4629 ± +2.2425 📉
+# [64x64][Epoch 39/40] DLoss(Avg): -1.1527 | GLoss(Avg): -0.0608 | IS: 2.7978 ± 0.0363) | FID: 74.90 | GP[avg]: 0.02
+# Files already downloaded and verified
+#  Step: 5/7 -> Training on [128x128]
+#   --Epochs:                      40 
+#   --BatchSize:                   32 
+#   --Number of Batches:           5087 
+#   --Interval:                    2544 
+#   --Fade-in Steps:               101740 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+# [128x128][Epoch 0/40 | Iter: 2543/5087] Disc Loss: -3.6623 | Gen Loss: -13.6196
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +9.3962 ± +5.2220 📈| D_fake_avg: 😵 +5.4109 ± +2.1279 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +10.9558 ± +4.4700 📈 | D_fake_avg: 😵 +6.5109 ± +2.5163 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +5.6352 ± +5.6352 📈 | D_fake_avg: 😵 +2.3892 ± +7.6095 📉
+# [128x128][Epoch 0/40] DLoss(Avg): -2.8983 | GLoss(Avg): -1.3319 | IS: 2.6605 ± 0.0547) | FID: 75.32 | GP[avg]: 0.07
+# [128x128][Epoch 1/40 | Iter: 2543/5087] Disc Loss: -3.4595 | Gen Loss: -10.3281
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.3306 ± +2.9100 📈| D_fake_avg: 😵 +1.3468 ± +2.2137 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +18.1006 ± +4.7497 📈 | D_fake_avg: 😵 +15.6530 ± +3.8944 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +7.1562 ± +7.1562 📈 | D_fake_avg: 😵 +3.2913 ± +7.7395 📉
+# [128x128][Epoch 1/40] DLoss(Avg): -3.3117 | GLoss(Avg): -2.3767 | IS: 2.9790 ± 0.0566) | FID: 96.23 | GP[avg]: 0.11
+# [128x128][Epoch 2/40 | Iter: 2543/5087] Disc Loss: -3.6503 | Gen Loss: -13.1799
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +13.2722 ± +5.6368 📈| D_fake_avg: 😵 +9.0895 ± +3.5566 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -3.6726 ± +3.1654 📈 | D_fake_avg: 😎 -8.0478 ± +3.5224 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +5.9970 ± +5.9970 📈 | D_fake_avg: 😵 +2.7421 ± +7.0842 📉
+# [128x128][Epoch 2/40] DLoss(Avg): -2.8353 | GLoss(Avg): -1.8405 | IS: 2.8663 ± 0.0644) | FID: 103.55 | GP[avg]: 0.08
+# [128x128][Epoch 3/40 | Iter: 2543/5087] Disc Loss: -2.5269 | Gen Loss: 15.5859
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -6.7520 ± +4.9024 📈| D_fake_avg: 😎 -9.6355 ± +5.2051 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.0505 ± +4.2614 📈 | D_fake_avg: 😵 +1.0004 ± +3.0838 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.9127 ± +4.9127 📈 | D_fake_avg: 😵 +1.7451 ± +7.0426 📉
+# [128x128][Epoch 3/40] DLoss(Avg): -2.7800 | GLoss(Avg): -0.8432 | IS: 2.8136 ± 0.0353) | FID: 115.48 | GP[avg]: 0.08
+# [128x128][Epoch 4/40 | Iter: 2543/5087] Disc Loss: -3.1733 | Gen Loss: -6.0760
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +8.1544 ± +5.5077 📈| D_fake_avg: 😵 +4.5455 ± +3.9312 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +15.5785 ± +4.4691 📈 | D_fake_avg: 😵 +12.7505 ± +5.6919 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.3047 ± +4.3047 📈 | D_fake_avg: 😵 +1.2544 ± +6.4945 📉
+# [128x128][Epoch 4/40] DLoss(Avg): -2.6902 | GLoss(Avg): -0.3743 | IS: 2.8781 ± 0.0877) | FID: 121.63 | GP[avg]: 0.07
+# [128x128][Epoch 5/40 | Iter: 2543/5087] Disc Loss: -4.0735 | Gen Loss: 12.6269
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -1.9196 ± +5.4732 📈| D_fake_avg: 😎 -6.3278 ± +4.1829 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -6.7113 ± +4.6847 📈 | D_fake_avg: 😎 -10.9621 ± +4.9942 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.1813 ± +4.1813 📈 | D_fake_avg: 😵 +1.1837 ± +6.4514 📉
+# [128x128][Epoch 5/40] DLoss(Avg): -2.6504 | GLoss(Avg): -0.2928 | IS: 2.7739 ± 0.0622) | FID: 115.36 | GP[avg]: 0.07
+# [128x128][Epoch 6/40 | Iter: 2543/5087] Disc Loss: -3.8139 | Gen Loss: -3.3123
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +4.2449 ± +4.9179 📈| D_fake_avg: 😟 +0.0687 ± +4.0927 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +3.2889 ± +3.2488 📈 | D_fake_avg: 😎 -1.4138 ± +2.6062 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.1653 ± +4.1653 📈 | D_fake_avg: 😵 +1.1639 ± +6.3639 📉
+# [128x128][Epoch 6/40] DLoss(Avg): -2.6565 | GLoss(Avg): -0.2927 | IS: 3.0194 ± 0.0507) | FID: 120.42 | GP[avg]: 0.07
+# [128x128][Epoch 7/40 | Iter: 2543/5087] Disc Loss: -2.9172 | Gen Loss: -6.6332
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.2605 ± +3.1757 📈| D_fake_avg: 😵 +2.0555 ± +2.5172 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +5.7253 ± +2.3663 📈 | D_fake_avg: 😵 +3.5811 ± +3.6588 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.1400 ± +4.1400 📈 | D_fake_avg: 😵 +1.1336 ± +6.3453 📉
+# [128x128][Epoch 7/40] DLoss(Avg): -2.6620 | GLoss(Avg): -0.2659 | IS: 2.9958 ± 0.0524) | FID: 122.16 | GP[avg]: 0.07
+# [128x128][Epoch 8/40 | Iter: 2543/5087] Disc Loss: -0.8883 | Gen Loss: -4.4606
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +6.4813 ± +3.6347 📈| D_fake_avg: 😵 +5.2158 ± +4.2558 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.1576 ± +2.6307 📈 | D_fake_avg: 😎 -3.3454 ± +3.0013 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.1129 ± +4.1129 📈 | D_fake_avg: 😵 +1.1533 ± +6.4465 📉
+# [128x128][Epoch 8/40] DLoss(Avg): -2.6242 | GLoss(Avg): -0.2843 | IS: 2.8897 ± 0.0386) | FID: 116.15 | GP[avg]: 0.07
+# [128x128][Epoch 9/40 | Iter: 2543/5087] Disc Loss: -4.1808 | Gen Loss: 12.0230
+#  -- 😀 Batch-2543:  D_real_avg: 😎 +0.8834 ± +4.5494 📈| D_fake_avg: 😎 -3.6988 ± +4.6390 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -4.7443 ± +3.5597 📈 | D_fake_avg: 😎 -7.2245 ± +3.7767 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0204 ± +4.0204 📈 | D_fake_avg: 😵 +1.0538 ± +6.2646 📉
+# [128x128][Epoch 9/40] DLoss(Avg): -2.6323 | GLoss(Avg): -0.1977 | IS: 2.9071 ± 0.0385) | FID: 115.59 | GP[avg]: 0.07
+# [128x128][Epoch 10/40 | Iter: 2543/5087] Disc Loss: -3.4377 | Gen Loss: 3.4703
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -0.3324 ± +3.2622 📈| D_fake_avg: 😎 -4.0988 ± +3.8194 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +3.2430 ± +4.7138 📈 | D_fake_avg: 😎 -0.2335 ± +5.5938 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0372 ± +4.0372 📈 | D_fake_avg: 😵 +1.0575 ± +6.3287 📉
+# [128x128][Epoch 10/40] DLoss(Avg): -2.6443 | GLoss(Avg): -0.2131 | IS: 2.6315 ± 0.0637) | FID: 121.86 | GP[avg]: 0.07
+# [128x128][Epoch 11/40 | Iter: 2543/5087] Disc Loss: -2.8691 | Gen Loss: 0.2289
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +8.2346 ± +2.8506 📈| D_fake_avg: 😵 +4.9681 ± +4.2211 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- ‼️ Last Batch : D_real_avg: 😎 +5.9909 ± +3.9288 📈 | D_fake_avg: 😵 +6.4053 ± +5.7140 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0063 ± +4.0063 📈 | D_fake_avg: 😵 +1.0243 ± +6.0501 📉
+# [128x128][Epoch 11/40] DLoss(Avg): -2.6467 | GLoss(Avg): -0.1964 | IS: 2.7597 ± 0.0600) | FID: 118.19 | GP[avg]: 0.07
+# [128x128][Epoch 12/40 | Iter: 2543/5087] Disc Loss: -3.9330 | Gen Loss: 2.1010
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -2.6460 ± +2.9215 📈| D_fake_avg: 😎 -6.8104 ± +5.4011 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +10.1640 ± +3.0329 📈 | D_fake_avg: 😵 +5.3806 ± +3.3514 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9215 ± +3.9215 📈 | D_fake_avg: 😵 +0.9106 ± +6.1020 📉
+# [128x128][Epoch 12/40] DLoss(Avg): -2.6732 | GLoss(Avg): -0.1075 | IS: 2.7729 ± 0.0334) | FID: 120.86 | GP[avg]: 0.07
+# [128x128][Epoch 13/40 | Iter: 2543/5087] Disc Loss: -3.2112 | Gen Loss: -4.3590
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.0430 ± +5.2885 📈| D_fake_avg: 😵 +1.3084 ± +3.1120 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +9.1091 ± +5.1502 📈 | D_fake_avg: 😵 +5.8672 ± +4.8443 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9793 ± +3.9793 📈 | D_fake_avg: 😵 +0.9614 ± +6.0594 📉
+# [128x128][Epoch 13/40] DLoss(Avg): -2.6794 | GLoss(Avg): -0.1567 | IS: 2.8800 ± 0.0699) | FID: 125.72 | GP[avg]: 0.07
+# [128x128][Epoch 14/40 | Iter: 2543/5087] Disc Loss: -2.1034 | Gen Loss: 0.8310
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +8.4638 ± +2.6837 📈| D_fake_avg: 😵 +5.9544 ± +3.2493 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +2.9446 ± +4.2682 📈 | D_fake_avg: 😎 -0.2689 ± +3.3653 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0210 ± +4.0210 📈 | D_fake_avg: 😵 +1.0216 ± +5.9901 📉
+# [128x128][Epoch 14/40] DLoss(Avg): -2.6648 | GLoss(Avg): -0.2143 | IS: 2.7318 ± 0.0354) | FID: 120.37 | GP[avg]: 0.07
+# [128x128][Epoch 15/40 | Iter: 2543/5087] Disc Loss: -3.8334 | Gen Loss: -3.9069
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +6.4906 ± +4.3235 📈| D_fake_avg: 😵 +2.3719 ± +2.9386 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +6.6116 ± +3.5445 📈 | D_fake_avg: 😵 +2.0624 ± +3.4311 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0307 ± +4.0307 📈 | D_fake_avg: 😵 +1.0008 ± +5.4763 📉
+# [128x128][Epoch 15/40] DLoss(Avg): -2.6912 | GLoss(Avg): -0.2137 | IS: 2.9563 ± 0.0519) | FID: 122.89 | GP[avg]: 0.07
+# [128x128][Epoch 16/40 | Iter: 2543/5087] Disc Loss: -1.5929 | Gen Loss: 5.7114
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -3.7380 ± +3.8466 📈| D_fake_avg: 😎 -5.5356 ± +3.8074 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +8.2828 ± +4.3467 📈 | D_fake_avg: 😵 +5.5052 ± +4.7894 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0216 ± +4.0216 📈 | D_fake_avg: 😵 +0.9783 ± +5.9762 📉
+# [128x128][Epoch 16/40] DLoss(Avg): -2.7031 | GLoss(Avg): -0.1704 | IS: 2.9255 ± 0.0771) | FID: 117.45 | GP[avg]: 0.07
+# [128x128][Epoch 17/40 | Iter: 2543/5087] Disc Loss: -4.0397 | Gen Loss: 6.4271
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -1.3896 ± +5.2689 📈| D_fake_avg: 😎 -5.7682 ± +3.0744 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +6.7212 ± +2.6733 📈 | D_fake_avg: 😵 +3.5877 ± +2.3812 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.8895 ± +3.8895 📈 | D_fake_avg: 😵 +0.8370 ± +5.9780 📉
+# [128x128][Epoch 17/40] DLoss(Avg): -2.7141 | GLoss(Avg): -0.0819 | IS: 2.9992 ± 0.0678) | FID: 123.45 | GP[avg]: 0.07
+# [128x128][Epoch 18/40 | Iter: 2543/5087] Disc Loss: -1.0116 | Gen Loss: 1.0766
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.6020 ± +3.7023 📈| D_fake_avg: 😵 +4.2588 ± +3.4826 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -0.2922 ± +3.8711 📈 | D_fake_avg: 😎 -3.0014 ± +2.0987 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9259 ± +3.9259 📈 | D_fake_avg: 😵 +0.8646 ± +5.7461 📉
+# [128x128][Epoch 18/40] DLoss(Avg): -2.7241 | GLoss(Avg): -0.0897 | IS: 2.8871 ± 0.0677) | FID: 117.72 | GP[avg]: 0.07
+# [128x128][Epoch 19/40 | Iter: 2543/5087] Disc Loss: -2.4476 | Gen Loss: 2.5083
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +4.1571 ± +3.5606 📈| D_fake_avg: 😵 +1.4771 ± +3.0439 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +5.9212 ± +3.9744 📈 | D_fake_avg: 😵 +2.7760 ± +3.4972 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.8830 ± +3.8830 📈 | D_fake_avg: 😵 +0.8438 ± +5.8593 📉
+# [128x128][Epoch 19/40] DLoss(Avg): -2.7011 | GLoss(Avg): -0.0473 | IS: 2.8862 ± 0.0682) | FID: 124.77 | GP[avg]: 0.07
+# [128x128][Epoch 20/40 | Iter: 2543/5087] Disc Loss: -3.6148 | Gen Loss: -9.9046
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +12.1721 ± +4.7174 📈| D_fake_avg: 😵 +8.2988 ± +3.6505 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😟 +0.6579 ± +2.5957 📈 | D_fake_avg: 😎 -2.4760 ± +2.7168 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.8727 ± +3.8727 📈 | D_fake_avg: 😵 +0.8236 ± +5.7697 📉
+# [128x128][Epoch 20/40] DLoss(Avg): -2.7054 | GLoss(Avg): -0.0592 | IS: 2.7446 ± 0.0899) | FID: 117.31 | GP[avg]: 0.07
+# [128x128][Epoch 21/40 | Iter: 2543/5087] Disc Loss: -2.7524 | Gen Loss: 11.1109
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -0.9532 ± +2.4933 📈| D_fake_avg: 😎 -3.9435 ± +4.4649 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +11.0629 ± +6.0542 📈 | D_fake_avg: 😵 +5.6241 ± +3.3537 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9204 ± +3.9204 📈 | D_fake_avg: 😵 +0.8497 ± +5.4859 📉
+# [128x128][Epoch 21/40] DLoss(Avg): -2.7235 | GLoss(Avg): -0.0828 | IS: 2.7281 ± 0.0420) | FID: 125.72 | GP[avg]: 0.07
+# [128x128][Epoch 22/40 | Iter: 2543/5087] Disc Loss: -3.0803 | Gen Loss: -1.8272
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +6.3588 ± +5.7723 📈| D_fake_avg: 😵 +2.9853 ± +2.8228 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +7.3246 ± +2.8110 📈 | D_fake_avg: 😵 +5.1916 ± +3.0450 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9530 ± +3.9530 📈 | D_fake_avg: 😵 +0.8831 ± +5.5138 📉
+# [128x128][Epoch 22/40] DLoss(Avg): -2.7221 | GLoss(Avg): -0.1331 | IS: 2.7190 ± 0.0732) | FID: 128.88 | GP[avg]: 0.07
+# [128x128][Epoch 23/40 | Iter: 2543/5087] Disc Loss: -2.9533 | Gen Loss: 1.8466
+#  -- 😀 Batch-2543:  D_real_avg: 😎 +2.2108 ± +2.2627 📈| D_fake_avg: 😎 -0.9476 ± +2.7863 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.2684 ± +6.5055 📈 | D_fake_avg: 😎 -3.4393 ± +4.3539 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9451 ± +3.9451 📈 | D_fake_avg: 😵 +0.8694 ± +5.4191 📉
+# [128x128][Epoch 23/40] DLoss(Avg): -2.7284 | GLoss(Avg): -0.1210 | IS: 2.8747 ± 0.0722) | FID: 126.05 | GP[avg]: 0.07
+# [128x128][Epoch 24/40 | Iter: 2543/5087] Disc Loss: -2.8412 | Gen Loss: 4.4408
+#  -- 😀 Batch-2543:  D_real_avg: 😰 +0.2728 ± +4.0992 📈| D_fake_avg: 😎 -2.8013 ± +3.8053 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +1.9038 ± +5.7948 📈 | D_fake_avg: 😎 -0.5312 ± +3.5215 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9521 ± +3.9521 📈 | D_fake_avg: 😵 +0.8638 ± +5.4361 📉
+# [128x128][Epoch 24/40] DLoss(Avg): -2.7391 | GLoss(Avg): -0.1180 | IS: 2.7205 ± 0.0636) | FID: 110.63 | GP[avg]: 0.07
+# [128x128][Epoch 25/40 | Iter: 2543/5087] Disc Loss: -2.2267 | Gen Loss: -6.6081
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +12.5836 ± +4.3913 📈| D_fake_avg: 😵 +9.8933 ± +4.2538 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -3.7671 ± +3.2930 📈 | D_fake_avg: 😎 -9.9924 ± +4.3833 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.8964 ± +3.8964 📈 | D_fake_avg: 😵 +0.8228 ± +5.8011 📉
+# [128x128][Epoch 25/40] DLoss(Avg): -2.7269 | GLoss(Avg): -0.0676 | IS: 2.8337 ± 0.0646) | FID: 110.79 | GP[avg]: 0.07
+# [128x128][Epoch 26/40 | Iter: 2543/5087] Disc Loss: -1.6448 | Gen Loss: 1.6342
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -2.0032 ± +3.5273 📈| D_fake_avg: 😎 -3.9701 ± +2.8513 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +8.2374 ± +4.5530 📈 | D_fake_avg: 😵 +6.1964 ± +3.9273 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.8230 ± +3.8230 📈 | D_fake_avg: 😵 +0.7484 ± +5.6307 📉
+# [128x128][Epoch 26/40] DLoss(Avg): -2.7269 | GLoss(Avg): -0.0257 | IS: 2.9005 ± 0.1094) | FID: 123.26 | GP[avg]: 0.07
+# [128x128][Epoch 27/40 | Iter: 2543/5087] Disc Loss: -1.4830 | Gen Loss: -11.1008
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +28.0224 ± +11.7509 📈| D_fake_avg: 😵 +25.9262 ± +8.6641 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +2.2418 ± +2.9054 📈 | D_fake_avg: 😎 -1.4668 ± +3.3335 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9504 ± +3.9504 📈 | D_fake_avg: 😵 +0.8478 ± +5.6885 📉
+# [128x128][Epoch 27/40] DLoss(Avg): -2.7534 | GLoss(Avg): -0.1196 | IS: 2.7332 ± 0.0457) | FID: 125.22 | GP[avg]: 0.07
+# [128x128][Epoch 28/40 | Iter: 2543/5087] Disc Loss: -4.1584 | Gen Loss: 1.1575
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.3082 ± +4.9732 📈| D_fake_avg: 😵 +0.8128 ± +3.8049 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +7.5551 ± +4.9080 📈 | D_fake_avg: 😵 +2.3310 ± +4.5039 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +3.9363 ± +3.9363 📈 | D_fake_avg: 😵 +0.8210 ± +5.4625 📉
+# [128x128][Epoch 28/40] DLoss(Avg): -2.7633 | GLoss(Avg): -0.1154 | IS: 2.8380 ± 0.0742) | FID: 117.33 | GP[avg]: 0.07
+# [128x128][Epoch 29/40 | Iter: 2543/5087] Disc Loss: -1.6728 | Gen Loss: -2.3600
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -1.9460 ± +4.5955 📈| D_fake_avg: 😎 -3.9038 ± +3.0960 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.3679 ± +4.8526 📈 | D_fake_avg: 😎 -5.6232 ± +5.6918 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0107 ± +4.0107 📈 | D_fake_avg: 😵 +0.8988 ± +5.4643 📉
+# [128x128][Epoch 29/40] DLoss(Avg): -2.7609 | GLoss(Avg): -0.1790 | IS: 2.7662 ± 0.0694) | FID: 119.43 | GP[avg]: 0.07
+# [128x128][Epoch 30/40 | Iter: 2543/5087] Disc Loss: -5.0278 | Gen Loss: 15.3333
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -4.5254 ± +4.8401 📈| D_fake_avg: 😎 -9.8075 ± +6.1109 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.1270 ± +4.6156 📈 | D_fake_avg: 😟 +0.2314 ± +1.8921 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0362 ± +4.0362 📈 | D_fake_avg: 😵 +0.8894 ± +5.4733 📉
+# [128x128][Epoch 30/40] DLoss(Avg): -2.7897 | GLoss(Avg): -0.1893 | IS: 2.9480 ± 0.0658) | FID: 109.34 | GP[avg]: 0.07
+# [128x128][Epoch 31/40 | Iter: 2543/5087] Disc Loss: -2.4112 | Gen Loss: 2.7771
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +6.0828 ± +4.7530 📈| D_fake_avg: 😵 +3.3677 ± +5.5942 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +3.4503 ± +2.5071 📈 | D_fake_avg: 😵 +0.4274 ± +4.1579 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.0863 ± +4.0863 📈 | D_fake_avg: 😵 +0.9405 ± +5.3881 📉
+# [128x128][Epoch 31/40] DLoss(Avg): -2.7873 | GLoss(Avg): -0.2366 | IS: 2.7932 ± 0.0628) | FID: 119.84 | GP[avg]: 0.07
+# [128x128][Epoch 32/40 | Iter: 2543/5087] Disc Loss: -1.6677 | Gen Loss: 9.4166
+#  -- 😀 Batch-2543:  D_real_avg: 😎 +1.2541 ± +3.9665 📈| D_fake_avg: 😎 -0.7563 ± +3.6081 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +12.2794 ± +5.1852 📈 | D_fake_avg: 😵 +9.5969 ± +5.7240 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.1613 ± +4.1613 📈 | D_fake_avg: 😵 +1.0002 ± +5.7857 📉
+# [128x128][Epoch 32/40] DLoss(Avg): -2.8017 | GLoss(Avg): -0.3208 | IS: 2.8081 ± 0.0421) | FID: 124.01 | GP[avg]: 0.07
+# [128x128][Epoch 33/40 | Iter: 2543/5087] Disc Loss: -3.0821 | Gen Loss: -4.8644
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +8.1394 ± +3.1508 📈| D_fake_avg: 😵 +4.7019 ± +3.0339 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +8.1370 ± +4.7789 📈 | D_fake_avg: 😵 +6.6281 ± +4.1563 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.2458 ± +4.2458 📈 | D_fake_avg: 😵 +1.0730 ± +5.4149 📉
+# [128x128][Epoch 33/40] DLoss(Avg): -2.8102 | GLoss(Avg): -0.3933 | IS: 2.8083 ± 0.0647) | FID: 117.48 | GP[avg]: 0.07
+# [128x128][Epoch 34/40 | Iter: 2543/5087] Disc Loss: -1.4611 | Gen Loss: 1.9477
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +4.3782 ± +5.4579 📈| D_fake_avg: 😵 +2.3972 ± +5.5922 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +4.4003 ± +4.4851 📈 | D_fake_avg: 😵 +1.6388 ± +4.4123 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.3633 ± +4.3633 📈 | D_fake_avg: 😵 +1.2118 ± +5.3674 📉
+# [128x128][Epoch 34/40] DLoss(Avg): -2.7929 | GLoss(Avg): -0.4969 | IS: 2.7895 ± 0.0603) | FID: 120.64 | GP[avg]: 0.07
+# [128x128][Epoch 35/40 | Iter: 2543/5087] Disc Loss: -3.5766 | Gen Loss: -3.4147
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +5.8128 ± +4.3729 📈| D_fake_avg: 😵 +1.6266 ± +4.2631 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +7.6714 ± +3.3716 📈 | D_fake_avg: 😵 +5.1147 ± +2.9043 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.3407 ± +4.3407 📈 | D_fake_avg: 😵 +1.1714 ± +5.2483 📉
+# [128x128][Epoch 35/40] DLoss(Avg): -2.8066 | GLoss(Avg): -0.4731 | IS: 3.0997 ± 0.0579) | FID: 114.40 | GP[avg]: 0.07
+# [128x128][Epoch 36/40 | Iter: 2543/5087] Disc Loss: -0.9440 | Gen Loss: 0.5591
+#  -- 😀 Batch-2543:  D_real_avg: 😵 -0.0762 ± +4.1351 📈| D_fake_avg: 😎 -1.4109 ± +3.2882 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -8.1008 ± +2.9726 📈 | D_fake_avg: 😎 -11.9384 ± +3.1537 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.3803 ± +4.3803 📈 | D_fake_avg: 😵 +1.2148 ± +5.4842 📉
+# [128x128][Epoch 36/40] DLoss(Avg): -2.8031 | GLoss(Avg): -0.5266 | IS: 2.7153 ± 0.0499) | FID: 115.62 | GP[avg]: 0.07
+# [128x128][Epoch 37/40 | Iter: 2543/5087] Disc Loss: -3.9054 | Gen Loss: -1.3970
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +4.6845 ± +3.7527 📈| D_fake_avg: 😵 +0.4726 ± +3.5772 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😵 -1.4074 ± +3.4660 📈 | D_fake_avg: 😎 -5.1017 ± +5.1334 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.4133 ± +4.4133 📈 | D_fake_avg: 😵 +1.2356 ± +5.1814 📉
+# [128x128][Epoch 37/40] DLoss(Avg): -2.8145 | GLoss(Avg): -0.5629 | IS: 2.8299 ± 0.0650) | FID: 120.05 | GP[avg]: 0.07
+# [128x128][Epoch 38/40 | Iter: 2543/5087] Disc Loss: -5.2086 | Gen Loss: -1.5967
+#  -- 😱 Batch-2543:  D_real_avg: 😎 +6.3489 ± +2.8745 📈| D_fake_avg: 😵 +0.7870 ± +2.4554 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😱 Last Batch : D_real_avg: 😎 +12.1366 ± +4.1341 📈 | D_fake_avg: 😵 +8.1835 ± +2.7635 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.4379 ± +4.4379 📈 | D_fake_avg: 😵 +1.2347 ± +5.4123 📉
+# [128x128][Epoch 38/40] DLoss(Avg): -2.8344 | GLoss(Avg): -0.5694 | IS: 2.7458 ± 0.0426) | FID: 116.01 | GP[avg]: 0.07
+# [128x128][Epoch 39/40 | Iter: 2543/5087] Disc Loss: -4.1290 | Gen Loss: 3.0675
+#  -- 😀 Batch-2543:  D_real_avg: 😎 +4.0782 ± +3.1308 📈| D_fake_avg: 😎 -0.3996 ± +3.9610 📉
+# Using FID stats for celeba-train_10K from cache...
+#  -- 😀 Last Batch : D_real_avg: 😎 +2.4379 ± +3.7642 📈 | D_fake_avg: 😎 -0.0778 ± +3.5729 📉
+#  -- 😱 Epoch's Avg: D_real_avg: 😎 +4.3907 ± +4.3907 📈 | D_fake_avg: 😵 +1.2159 ± +5.3316 📉
+# [128x128][Epoch 39/40] DLoss(Avg): -2.8113 | GLoss(Avg): -0.5210 | IS: 2.8186 ± 0.0480) | FID: 117.65 | GP[avg]: 0.07
+# Files already downloaded and verified
+#  Step: 6/7 -> Training on [256x256]
+#   --Epochs:                      40 
+#   --BatchSize:                   16 
+#   --Number of Batches:           10174 
+#   --Interval:                    5088 
+#   --Fade-in Steps:               203480 
+#   --Last training Step taken:    0 
+#   --Current Discriminator LR:    0.001
+#   --Current Generator LR:        0.001
+#   --Current Discriminator Betas: [0, 0.99]
+#   --Current Generator Betas:     [0, 0.99]
+
 #%%
 # now lets load the last experiment and see the result
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
 # good models using high lr
-# 32x32
+# 64x64
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt'
-#64x64
+#128x128
 checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_5_20250930091608.ckpt'
 
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
