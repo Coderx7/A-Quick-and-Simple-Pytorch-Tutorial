@@ -5763,9 +5763,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                     gen_optimizer.zero_grad()
                     gen_real_loss.backward()
                     gen_optimizer.step()
-
-                # update the ema version
-                update_ema_generator(generator, ema_generator)
+                    # only update the ema when the main is also updated
+                    update_ema_generator(generator, ema_generator)
                 
                 # we want high positive score/average number for real_mean and
                 # lower positive or <real for fake mean (its basically 
