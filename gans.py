@@ -2842,9 +2842,12 @@ print(f'{goutput.shape=}')
 
 from scipy import linalg
 class IS_FID_Calculator():
-    def __init__(self, device='cpu'):
+    def __init__(self, device='cpu', cache_dir='./weights/'):
         
         self.device = device
+        # to save/cache the score for real images so we dont 
+        # compute them over and over 
+        self.cache_dir = cache_dir
         
         weights=models.Inception_V3_Weights.IMAGENET1K_V1
         self.model = models.inception_v3(weights=weights).to(device)
@@ -2991,10 +2994,12 @@ class IS_FID_Calculator():
     def _get_fname(self, dataset_name, split):
         # create a filename to save/load fid stats to/from disk
         parts = ['fid_stats']
-        if dataset_name: parts.append(dataset_name);
-        if split: parts.append(split);
+        if dataset_name: parts.append(dataset_name)
+        if split: parts.append(split)
         fname = "_".join(parts)+".pt"
-        return fname
+        dir_path = os.path.join(self.cache_dir, "IS_FID_cache")
+        os.makedirs(dir_path, exist_ok=True)
+        return os.path.join(dir_path, fname)
     
     def _stats_exists(self, dataset_name, split):
         fname = self._get_fname(dataset_name, split)
@@ -6120,7 +6125,9 @@ else:#wgangp
     # after implementing equalized leanring rate layer, we 
     # can use large lrs like 0.001 for both and not decay at all
     # we will get very decent images! see debug logs ahead!
-    lr_d, lr_g = 0.001, 0.001#0.0003, 0.0002 
+    # update:
+    # for cifar10 0.001 is too much
+    lr_d, lr_g = 0.0001, 0.0001#0.0003, 0.0002 
 
 # no need to decay now!
 decay_step = 7#5
@@ -6165,8 +6172,9 @@ training_loop_progan(discriminator_progan,
                      # must only be enabled for fresh training 
                      # not resumes!
                      use_ema_inference=use_ema_inference,
-                    #  ema_warmup_images_threshold=1000_000,
-                    #  checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
+                    # ema_warmup_images_threshold=1000_000,
+                    # keep_raw_generations=True,
+                    # checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
 #%%
