@@ -2663,20 +2663,22 @@ def lsgan_generator_loss(preds_fake):
 # optimizer step.
 # 
 # sidenote:
-# looking at this loss function, it looks weird! simply because 
+# unlike typical losses we see this one is not positive, 
 # usually the loss is a positive number where we try to minize it
 # but here, it goes toward negative range (we want real average score/preds_real.mean()
 # to be positive and larger than preds_fake), and we can see the 
-# same in generator loss as well! the thing is in wgan its reallly
+# same in generator loss as well! the reason is in wgan its reallly
 # much better to think of the critic/discriminator's function
-# not as a loss but as an objective function that needs to be maximized!
-# the way we define the loss here is simple way to allow us use a 
-# normal pytorch optimizer(which can only minimize) to do that maximization!
+# as an objective function needs to be maximized and not as a 
+# loss/cost function that needs to be minimized.
+# thats why we define the loss here this way, so it becomes a minimization
+# which in effect maximizes what we want. our optimizers can only minimize
+# so flipping the sign makes it a maximization)
 # 
 # as we said the discriminator/critics's job is to make the score of 
 # real images go up toward +infity, and the score of fake images the other way, 
 # i.e. down towards -infinity! basically we(the discriminator) want 
-# to maximize this value objective = preds_real.mean() - preds_fake.mean()
+# to maximize this value objective which is preds_real.mean() - preds_fake.mean()
 # now imagine for example preds_real is around 50 and preds_fake is around -50!
 # the objective would then be 50-(-50)=100. we (the discriminator) want
 # to make this number as large as possible. the optimizers we use implement 
@@ -2704,7 +2706,7 @@ def gradient_penalty(discriminator, imgs_real, imgs_fake):
     # than 1 which means the output cant change faster than the input moves which
     # in turn means 1-lipschitz critic = the critic's output changes at most 1
     # unit for each unit change in its input image or it doesnt change faster than input
-    # or as we said at the begining dont change sharply for small changes in input!)
+    # or as we said at the begining dont change sharply for small changes in the input!)
     # so how do we do that?
     # we can see/imagine real image and fake image distributions as two separate islands
     # and then bridge the gap between them with smooth values.
@@ -5402,7 +5404,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=1_500_000,
-                         device='cuda', resume=False, decay_step=3, 
+                         keep_raw_generations=True, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     
@@ -5978,14 +5980,16 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg',
                         figsize=(16,8))
                 
-                # save the original images anyway?
-                # generated_images = generator(fixed_z, alpha, step)
-                # display_images(generated_images, 
-                #         cols=gen_num_samples//8,
-                #         title=f'RAW',
-                #         unnormalize=True,
-                #         save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
-                #         figsize=(16,8))
+                # save the original images only when ema is enable, 
+                # otherwise its already being saved/displayed
+                if keep_raw_generations and use_ema_inference:
+                    generated_images = generator(fixed_z, alpha, step)
+                    display_images(generated_images, 
+                        cols=gen_num_samples//8,
+                        title=f'Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
+                        unnormalize=True,
+                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
+                        figsize=(16,8))
     
     print("ProGAN training is complete!")
 
