@@ -4882,17 +4882,19 @@ class GenBlockProGAN(nn.Module):
 # low res to higher res, otherwise it wont learn properly and
 # trainingw ill be very unstable).
 class DiscriminatorProGAN(nn.Module):
-    def __init__(self, max_steps=6):
+    def __init__(self, max_steps=6, starting_base=2):
         super().__init__()
         
         # in order to be able to properly resume checkpoints
         # we need to build the model properly at resume aswell
         # so lets move all the logic into setup layers so we 
         # can call it easily whenever we like to reinitialze the network
-        self.setup_layers(max_steps)
+        self.setup_layers(max_steps, starting_base)
     
-    def setup_layers(self, max_steps):
+    def setup_layers(self, max_steps, starting_base):
         self.max_steps = max_steps
+        # this is to control the channel size
+        self.starting_base = starting_base
         # create some channels for our layers
         # we can choose any number for our channels
         # we like, but to keep things simple and like
@@ -4913,7 +4915,7 @@ class DiscriminatorProGAN(nn.Module):
         # but it proved to be extremeley taxing on my vram!(rtx3080)
         # and it also took a lot of time(with max_steps=7)
         # so lets use smaller channels!
-        channels = [ 2**(i+2) for i in range(max_steps,0,-1)]
+        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         # we have to build 3 blocks, one is used for input images
         # and the other for the rest of the processing and a final one
@@ -5073,15 +5075,16 @@ class EqualizedConvTrans(nn.Module):
                                   output_padding=self.conv_trans.output_padding)
 
 class GeneratorProGAN(nn.Module):
-    def __init__(self, z_size, max_steps=6):
+    def __init__(self, z_size, max_steps=6, starting_base=2):
         super().__init__()  
            
         # lets do the same thing for generator
-        self.setup_layers(z_size, max_steps)
+        self.setup_layers(z_size, max_steps,starting_base)
         
-    def setup_layers(self, z_size, max_steps):
+    def setup_layers(self, z_size, max_steps,starting_base):
         self.z_size = z_size
         self.max_steps = max_steps
+        self.starting_base = starting_base
         # generators like the discriminator but the oppiste!
         # [512,256,128,64,32,16] we go from low res with high 
         # channel count(i.e 512) to high res with low channel count(i.e. 16)
@@ -5089,7 +5092,7 @@ class GeneratorProGAN(nn.Module):
         # rtx3080! it took me more than 5 hours and 9.84Gb vram 
         # to get to 32x32, so im halving the channels to make it more managebale!
         # so instead of i+3, we go with i+2
-        channels = [ 2**(i+2) for i in range(max_steps,0,-1)]
+        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         # this is the first layer we use to get latent vector and build a 4x4 initial output which
         # is then processed by the blocks and the rest.
@@ -5166,8 +5169,8 @@ class GeneratorProGAN(nn.Module):
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
 max_steps = 7
-disc = DiscriminatorProGAN(max_steps=max_steps)
-gen = GeneratorProGAN(100,max_steps=max_steps)
+disc = DiscriminatorProGAN(max_steps=max_steps, starting_base=2)
+gen = GeneratorProGAN(100,max_steps=max_steps, starting_base=2)
 # test all the stages/steps
 for i in range(max_steps):
     H= W = 2**i*4
@@ -6008,7 +6011,7 @@ loss_type = 'wgangp'
 # so im using a smaller value for now!
 # update: that wasnt the issue 10 is ok, 5 is ok as well!
 lambda_factor=5
-dataset_name = 'celeba'
+dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -6126,8 +6129,19 @@ else:#wgangp
     # can use large lrs like 0.001 for both and not decay at all
     # we will get very decent images! see debug logs ahead!
     # update:
-    # for cifar10 0.001 is too much
-    lr_d, lr_g = 0.0001, 0.0001#0.0003, 0.0002 
+    # for cifar10 0.001 is too much lr_d, lr_g = 0.0005, 0.00052
+    # seems to be stable (close but gen is a bit larger this makes 
+    # them roughly equale with a bit of leeway for generator to be
+    # able to catchup when it gets hard in highe res. 
+    # this is by the way for default 7m size for cifar10 we probably
+    # need to use a much smaller network cuz the data is much less
+    # compared to celeba (60k vs 160k)) we could also use more epochs
+    # cuz there are fewer images in cifar10 and it could lead to instablity
+    # in later epochs becasue previous ones arent trained enough!
+    # todo:
+    # 1.use smaller channels + larger lr + more epochs
+    # 2.
+    lr_d, lr_g = 0.0005, 0.00052#0.0003, 0.0002 
 
 # no need to decay now!
 decay_step = 7#5
@@ -6135,7 +6149,7 @@ decay_step = 7#5
 # use ema of generator weights for inference/ mid traiing visualization
 # note this is only for visualization/reporting, we calculate ema and 
 # save it in the checkpoints anyway!
-use_ema_inference = False
+use_ema_inference = True
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -6173,7 +6187,7 @@ training_loop_progan(discriminator_progan,
                      # not resumes!
                      use_ema_inference=use_ema_inference,
                     # ema_warmup_images_threshold=1000_000,
-                    # keep_raw_generations=True,
+                    keep_raw_generations=True,
                     # checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
