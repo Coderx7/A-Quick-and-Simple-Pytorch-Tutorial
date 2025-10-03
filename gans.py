@@ -5412,7 +5412,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, loss_type='wgangp', lambda_factor=10, gen_num_samples = 64, wgan_range=(-0.01, 0.01),
                          noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=1_500_000,
-                         keep_raw_generations=True, device='cuda', resume=False, decay_step=3, 
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     
@@ -5910,10 +5910,17 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             average_score_fake_std = np.std(np.array(epoch_scores)[:,1])
             
             # calculate is/fid scores
-            # IS_score = metric.compute_IS(imgs_fake)
-            # FID_score = metric.compute_FID(imgs_real, imgs_fake)
-            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader,
-                                                  dataset_name, split, alpha, step)
+            # this is only for debugging/
+            # it gives us a very noisy estimate of is/fid and I dont use it normally
+            # I added it for cifar10 experiments, because the full acuurate version
+            # took more time than the whole epoch, and I wanted to do quick hyperparameter
+            # tuning, I added it to have a somewhat noisy fid/is score so loging goes as usually
+            # whenever I need acurate is/fid I use the full version
+            if quick_and_noisy_IS_FID:
+                IS_score = metric.compute_IS(imgs_fake)
+                FID_score = metric.compute_FID(imgs_real, imgs_fake)
+            else:
+                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
@@ -5978,26 +5985,32 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             # generate some images mid training to evaluate our model's performance 
             with torch.no_grad():
                 gen = ema_generator.eval() if use_ema_inference else generator.eval()
-                # reshape images back to default shape (hxwxc)
-                generated_images = gen(fixed_z, alpha, step).view(-1,*imgs_real.shape[1:])
+                
+                generated_images = gen(fixed_z, alpha, step)
+                
                 ema_marker_str = "[EMA]_" if use_ema_inference else ""
+                loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
+                lrs_str = f"{current_lr_d:.0e},{current_lr_g:.0e}"
+                title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
+                save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
+                
                 display_images(generated_images, 
-                        cols=gen_num_samples//8,
-                        title=f'{ema_marker_str}Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
-                        unnormalize=True,
-                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg',
-                        figsize=(16,8))
+                               cols=gen_num_samples//8,
+                               title=f"{ema_marker_str}{title_str}",
+                               unnormalize=True,
+                               save_path=save_path,
+                               figsize=(16,8))
                 
                 # save the original images only when ema is enable, 
                 # otherwise its already being saved/displayed
                 if keep_raw_generations and use_ema_inference:
                     generated_images = generator(fixed_z, alpha, step)
                     display_images(generated_images, 
-                        cols=gen_num_samples//8,
-                        title=f'Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} (dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f})',
-                        unnormalize=True,
-                        save_path=f'{images_save_dir}/progan_{loss_type}/{dataset_name}_{experiment_date}/step_{step}_{res}x{res}_epoch_{epoch}.jpg',
-                        figsize=(16,8))
+                                   cols=gen_num_samples//8,
+                                   title=title_str,
+                                   unnormalize=True,
+                                   save_path=save_path.replace(ema_marker_str,""),
+                                   figsize=(16,8))
     
     print("ProGAN training is complete!")
 
@@ -6011,7 +6024,9 @@ loss_type = 'wgangp'
 # so im using a smaller value for now!
 # update: that wasnt the issue 10 is ok, 5 is ok as well!
 lambda_factor=5
-dataset_name = 'cifar10'
+# cifar10 is a lot harder than celeba. try celeba first
+# and then cifar10 if you like
+dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -6035,6 +6050,19 @@ BATCH_SIZES = [128,128,128,128,64,32,16]
 # the more epochs the better result we get, despite the FID 
 # that may flucturate but the image quality 100% gets better
 # with more epochs.
+# cifar10 is way harder than celeba, so more epochs for each 
+# step is required. I used EPOCHS = [10,20,50,100,50,70,100]
+# and got somewhat decent results. I didnt use more epochs for
+# 64x64 and larger res because I thought image quality wouldnt be good
+# but in 64x64 the quality actually improved (images became more welformed
+# and detailed, despite the fact that the original cifar10 is 32x32 and
+# when upsampled the output will be very blurry. but when you zoomout 
+# the results you'll notice the differen. use more epochs for
+# 5th and other steps as well to possibly get even better results,
+# though I myself would allocate more epochs to 32x32 and then 64x64
+# 
+# for celeba this is what I used, use more to get better
+# EPOCHS = [10,10,10,20,40,40,40]
 EPOCHS = [10,10,10,20,40,40,40]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
@@ -6080,7 +6108,8 @@ generator_progan = generator_progan.to(device)
 # and works great. see debug log at the end.
 # I have not tested the lsgan/wgan though so their numbers
 # are from previous tests, in paper, the lsgan used the same
-# betas as wgangp, plus noise addition. see debug log for information
+# betas as wgangp, plus noise addition. 
+# see debug log for information
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.99]
 
 if loss_type=='lsgan':
@@ -6128,7 +6157,8 @@ else:#wgangp
     # after implementing equalized leanring rate layer, we 
     # can use large lrs like 0.001 for both and not decay at all
     # we will get very decent images! see debug logs ahead!
-    # update:
+    # 
+    # update for cifar10:
     # for cifar10 0.001 is too much lr_d, lr_g = 0.0005, 0.00052
     # seems to be stable (close but gen is a bit larger this makes 
     # them roughly equale with a bit of leeway for generator to be
@@ -6138,18 +6168,78 @@ else:#wgangp
     # compared to celeba (60k vs 160k)) we could also use more epochs
     # cuz there are fewer images in cifar10 and it could lead to instablity
     # in later epochs becasue previous ones arent trained enough!
-    # todo:
-    # 1.use smaller channels + larger lr + more epochs
-    # 2.
-    lr_d, lr_g = 0.0005, 0.00052#0.0003, 0.0002 
+    # update: 
+    # cifar10 is a lot harder than celeba and I mean a lot alot harder
+    # not only the images are small themselves, they are only afew tens
+    # of thousands of images.
+    # using a smaller network can be ok, because too complex of an architecture
+    # can make things harder, (make discriminator much powerful, overfitting issues, etc
+    # so a moderate size/ is ok. usually discriminator can be made simpler
+    # and generator might need a bit more help but you need to find that out 
+    # by trial and error, first use the same arch for both and establish a baseline
+    # like what I did, and then try different hyper parameter. I noticed the 7m
+    # gives better faster convergence than the 400k version (but I could be wrong
+    # cause I didnt test the 400k with more epochs, so I guess I should do that later!)) 
+    # so to get a somewhat decent output for cifar 10 the rule I found is
+    # 1.try as many epochs for each step as possible, higher res require more
+    # if you dont train the previous step properly, the next step will face issues!
+    # 2.use large lr as long as its possible. it makes convergence much faster
+    # only if you see mode collapse or no improvements for an extended period 
+    # of time decay the lr. starting with lower lrs makes things much much harder
+    # It might seem its the right choice, but then you quickly need to deal with
+    # one overpowering the other, or if not tolerate the slow convergence. 
+    # what I found is that the generator needs to be a tiny bit larger than discrimnaor
+    # (for example like my previous test lr_d, lr_g = 0.0005, 0.00052, this creates 
+    # a healthy feedback between them and always allows the generator to have leewayto
+    # improve so if it came down to choose alower lr, follow this unless you see it needs otherwise
+    # which is rare in our case with cifar or any hard dataset where generator may be struggling more)
+    # 3. you must get 16x16 to a decent level, things should be formed at that
+    # level. if you look at my example experiments you see that, of course they
+    # are extrelemly low res, but if you zoom out in matplot lib, you should easily
+    # see the objects patterns are there but very low res. 
+    # sidenote:
+    # during training even at 16x16 you will see weird patterns and may thnk we have mode collapse
+    # dont end the trainng, let it train fo rmore, the network is trying its best to
+    # add more details around the low res objects it found. if you look closely youll see
+    # initially I thought i was hitting mode collpase and would end until one time I said
+    # left and when I cameback I noticed things had improved drastically, there I found about ths
+    # tip!)
+    # 
+    # from 16x16 to higher res may take a lot of time. that is 32x32 maynot give us the crisper version.
+    # at least for my experiments I didnt get it. I got more detailed versions in 64x64
+    # (i.e. when you zoome out you can clearly see a clearer detailed objects, 
+    # but up close they are blurry cuz the original images are 32x32 themselevs
+    # and their upsampled versions cant be that great!) for me, horses, dogs
+    # ships and sometimes trucks/cars were visible if zoomed out, birds werent
+    # always well formed or detailed, (im writting this and watching epoch 27/50 in 64x64
+    # so given more epochs we should get more detailed and better formed images.(at 37/50 things
+    # got indeed better and I can see birds and cars, frogs much better!)
+    # for cifar10 my lrs are lr_d, lr_g = 0.001, 0.001 and I decay_step=4 (initially I
+    # also tested with decay_step=2, but 4 seems ok. the experiment I wrote about here
+    # is 20251003124237 
+    # sidenote2:
+    # the fake_mean can be better, but given the quality im ok! we can definitely spend 
+    # more time on cifar and get more decent /welformed images, but im satisfied with
+    # the current result! also I almost forgot! always let the model trainng, dont just
+    # stop the training the moment you see some 1 digit positive fake scores,
+    # let it train! if you dont see mode collapse, ugly artifacts, let it train and you'll
+    # see it improves if not you know up until where it was ok with what lr, and you can
+    # decide what to do accordingly.(also look at the std aswell see debug logs ahead for
+    # more ifnormation read and then comeback here))
+    lr_d, lr_g = 0.001, 0.001 #0.0003, 0.0002
 
 # no need to decay now!
-decay_step = 7#5
+# for celeba we dont decay, so we use decay_step=7
+# but for cifar10 I used decay_step=4
+decay_step = 7#4#3#2
 
 # use ema of generator weights for inference/ mid traiing visualization
 # note this is only for visualization/reporting, we calculate ema and 
-# save it in the checkpoints anyway!
-use_ema_inference = True
+# save it in the checkpoints anyway! note choosing ema_warmup_images_threshold
+# is crucial to get a working ema! otherwise it will become solid grays!
+# warmup is different dataset to dataset! I explained this in trainig loop
+# read that if you missed! 
+use_ema_inference = False
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -6186,8 +6276,9 @@ training_loop_progan(discriminator_progan,
                      # must only be enabled for fresh training 
                      # not resumes!
                      use_ema_inference=use_ema_inference,
-                    # ema_warmup_images_threshold=1000_000,
+                    # ema_warmup_images_threshold=3000_000, for cifar10, celeba may need adifferent value
                     keep_raw_generations=True,
+                    # quick_and_noisy_IS_FID=False,
                     # checkpoint_path="./weights/gan/progan_celeba_wgangp_20250930091608/checkpoint_step_4_20250930091608.ckpt",
                      decay_step=decay_step)
 
