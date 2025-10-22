@@ -8188,8 +8188,8 @@ with torch.no_grad():
 # The first StyleGAN paper was introduced to address one of the biggest issues of PROGAN architecture.
 # the main issues of the progan architecture is that as long as we want unconditional images, it 
 # works very good. however, when we try to go conditional and control the features/styles, it becomes
-# very hard. PROGAN doesnt do a good job in feature entanglement so we cant have finegrained control
-# in this regard. 
+# very hard. PROGAN doesnt do a good job in feature disentanglement (it has high feature entanglment!)
+# so we cant have finegrained control in this regard.
 # StyleGAN came to address this issue by doing a much better job at feature disentanglement!
 # previously we would simply start our generator by an input latent vector(z) and then gradually upsample
 # it to get the final image. the latent vector z had to use the simple/fixed gaussian distribution, 
@@ -8197,19 +8197,71 @@ with torch.no_grad():
 # input latent vector and then feed the resulting vector that to the generator.
 # that is, we make our input latent vector z go thtough a nonlinear mapping (i.e. feed it to an MLP) 
 # to get a new representation and use this new latent vector w instead in our generator.
-# by doing this, our input latents dont need to follow the simple/fixed gaussian distribution anymore,
-# and now they can follow a nonlinear distribution that much better resembles the training data and
-# each element in our new latent vector (w) can represent a different feature/pose/style therefore we have 
-# more fine grained control over the fine details of the images.
-#! rephrase?:
-#(our new latent vector w is not constrained like z, so it can learn the true nonlinear distribution
-# of real world image features. this new latent space (W) therefore will be much more disentangled than
-# the z latent space(guassian) which means its elements/components will corrospond more cleanly to
-# different attributes e.g. one part of w controls pose, another controls hair texture, another color,
-# etc)
 # 
+# by doing this our new latent vector w will be no longer constarined like z, so it can learn the actual 
+# complex/nonlinear distribution of image features. the new latent space(W) therefore will
+# be much more disentangled than the latent space Z(gaussian). 
+# this means its elements/components will represent different distinct features/attributes much better
+# and corospond more cleanly to different attributes (i.e. e.g. one part controls pose, the other
+# controls the hair textures, the next one color, etc)
 # 
+# sidenote:
+# the reason we do this is not that w learns the actual distribution of training image features really,
+# rather, when we apply the nonlinear mapping, the mlp can choose a distribution for w that aligns well
+# with what we want, i.e. making generating data easier and more disenangled!
+# in otherwords, this allows the network to learn a mapping (from Z) to a new space (W) thats unwarped
+# so to speak (compared to our initial fixed gaussian distribution) and is therefore much better for 
+# representing different factors or elements of variantions in our training data)
 # 
+# with this chagne, the authors now decided to call the generator, the synthethis network, because it 
+# now starts with a learned constant tensor instead of a random latent vector. 
+# all the information about an image is injected at each layer and the latent vector w will be transformed
+# into styles basically two separate components, scale and bias(basically std and mean!) with which we 
+# direct the generation process towards the styles we want.
+# That is we use them by the AdaIN(adaptive instance normalization) module to add them to each featuremap
+# at each level. AdaIN normalizes each featuremap to have zero mean and unit variance(σ=1) (basically it 
+# removes the current style in the image) so we can then use the new scale(std)/bias(mean) from w to 
+# modulate/style the normalized featuremap (i.e direct the generation process by enforcing our specific
+# scale/bias. I used std/mean, because effectively we are applying them instead of the previous std/mean
+# if you recall our autoencoder chapter, we did similar thing back then to get specific styles as well!).
+# 
+# sidenote2:
+# in literature people use modulate/style when applying scale/bias, I initially used normalize, but since
+# it might give an incorrect meaning, I chose to use module/style as well. normalize or normalization is
+# usually used to convey transforming or forcing the data into a standard state like mean=0/std=1, but here
+# we arent doing that, so calling it normalizing may not be correct thats why I guess people tend to call 
+# this kind of normalization, modulation/styling instead!
+# (quicknote: it seems people in electronics/signal processing refer to the expressions such as
+# "scale*input + bias" as modulation! so thats why they decided to call this modulation!)
+#
+# this way we apply a global style in a scale specific manner, so for example at lower resolutions (i.e. 4-8)
+# it controls the high level features like face shapes and pose, basically corase features, while at 
+# mid resolutions (i.e. 16-32) it controls the mid level features like facial shape and style and 
+# at high resolutions like 64 to 1024, it controls the fine details in the image like colors(hair/eye,lighting),
+# and other microstructures (i.e. skin textures,etc).
+# 
+# in addition to that, to introduce random variations in the image like hair placement, freckles, skin pores,
+# etc, the authors decided to inject guassion noise to each featuremap. this was done to prevent the 
+# network from generating psuedorandom patterns from determinstic inputs and therefore reduce artifacts
+# like repition that is seen in other GAN architectures.(instead of leting the network try to insert
+# such minor variations into the w aswell, and hence waste its capacity! they decided to do this so 
+# the network has an easier time doing its job)
+# 
+# another notable trick the authors used in the paper was to use a technique called style mixing or 
+# mixing regularization, in which during training they mix two latent vectors w1,w2 with a probablity (50%-90%) 
+# so two styles are swapped/switched at a random point! this was done so the localized style effects 
+# are encouraged more and also it decorolates adjacent scales and improves the model(that is if
+# there are certain images with a certain shapes in corase stage, and certain hair placement is finer stage
+# swithicng like that, forces the network to comeup with new styles! and not just those coupled from
+# the same w. (one w has black hair, while the other has another color e.g. pink this makes the network
+# to create more diverse combinations of features found in the training data))
+# 
+# another trick they used was that they found out if they sample w closer to the average population
+# they get higher quality, more typical images, at the cost of decreased variety! this is called truncation trick!
+# 
+# these were all the changes the stylegan paper had compared to progan. so all other progan related
+# novelities are still valid, we can safely say stylegan 1 is an improved version of progan!
+# having said all of this, lets now implemenet it and see how it works!
 
 #%%
 
