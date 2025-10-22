@@ -6213,14 +6213,15 @@ else:#wgangp
     # ships and sometimes trucks/cars were visible if zoomed out, birds werent
     # always well formed or detailed, (im writting this and watching epoch 27/50 in 64x64
     # so given more epochs we should get more detailed and better formed images.(at 37/50 things
-    # got indeed better and I can see birds and cars, frogs much better!)
+    # got indeed better and I can see birds and cars, frogs much better! even at 128x128 we
+    # are improving! more well formed/defined objects are clear now)
     # for cifar10 my lrs are lr_d, lr_g = 0.001, 0.001 and I decay_step=4 (initially I
     # also tested with decay_step=2, but 4 seems ok. the experiment I wrote about here
     # is 20251003124237 
     # sidenote2:
     # the fake_mean can be better, but given the quality im ok! we can definitely spend 
     # more time on cifar and get more decent /welformed images, but im satisfied with
-    # the current result! also I almost forgot! always let the model trainng, dont just
+    # the current result! also I almost forgot! always let the model train, dont just
     # stop the training the moment you see some 1 digit positive fake scores,
     # let it train! if you dont see mode collapse, ugly artifacts, let it train and you'll
     # see it improves if not you know up until where it was ok with what lr, and you can
@@ -6883,10 +6884,6 @@ training_loop_progan(discriminator_progan,
 # 
 # 
 #%%
-
-
-
-
 # full log 1 - the initial log when we started (with bugs in our implemenation)
 # ProGAN Training on celeba with loss=wgangp in 20250919075830
 # --Discriminator channels:      [1024, 512, 256, 128, 64, 32, 16]
@@ -8132,9 +8129,13 @@ training_loop_progan(discriminator_progan,
 #   --Current Generator LR:        0.001
 #   --Current Discriminator Betas: [0, 0.99]
 #   --Current Generator Betas:     [0, 0.99]
-
+ 
 #%%
 # now lets load the last experiment and see the result
+device = "cuda" if torch.cuda.is_available() else "cpu"
+# cifar10(the fid/is is garbage you need to calculate it again if you like)
+# checkpoint_path ='./weights/gan/progan_cifar10_wgangp_20251003124237/checkpoint_step_5_20251003124237.ckpt'
+# celeba
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250927174948/checkpoint_step_3_20250927174948.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929080324/checkpoint_step_3_20250929080324.ckpt'
 # checkpoint_path ='./weights/gan/progan_celeba_wgangp_20250929131133/checkpoint_step_4_20250929131133.ckpt'
@@ -8176,30 +8177,39 @@ with torch.no_grad():
                    figsize=(16,8))
 
 #%%
-#
+# good now lets implement stylegan architectures.
+# the authors of progan introduced stylegan in 2019 and followed it up with the second and third
+# versions in the following years each improving upon the previous one and becoming the sota of
+# image geenration using GANs (until diffusion models were introduced later in 2021/2022)
+# we start off with stylegan 1 and see what the changes/novelities were and then go to implement
+# it
+
+# StyleGan1:
+# The first StyleGAN paper was introduced to address one of the biggest issues of PROGAN architecture.
+# the main issues of the progan architecture is that as long as we want unconditional images, it 
+# works very good. however, when we try to go conditional and control the features/styles, it becomes
+# very hard. PROGAN doesnt do a good job in feature entanglement so we cant have finegrained control
+# in this regard. 
+# StyleGAN came to address this issue by doing a much better job at feature disentanglement!
+# previously we would simply start our generator by an input latent vector(z) and then gradually upsample
+# it to get the final image. the latent vector z had to use the simple/fixed gaussian distribution, 
+# this all changes in stylegan! in stylegan, we now first create a middle representation from the 
+# input latent vector and then feed the resulting vector that to the generator.
+# that is, we make our input latent vector z go thtough a nonlinear mapping (i.e. feed it to an MLP) 
+# to get a new representation and use this new latent vector w instead in our generator.
+# by doing this, our input latents dont need to follow the simple/fixed gaussian distribution anymore,
+# and now they can follow a nonlinear distribution that much better resembles the training data and
+# each element in our new latent vector (w) can represent a different feature/pose/style therefore we have 
+# more fine grained control over the fine details of the images.
+#! rephrase?:
+#(our new latent vector w is not constrained like z, so it can learn the true nonlinear distribution
+# of real world image features. this new latent space (W) therefore will be much more disentangled than
+# the z latent space(guassian) which means its elements/components will corrospond more cleanly to
+# different attributes e.g. one part of w controls pose, another controls hair texture, another color,
+# etc)
 # 
 # 
 # 
-# 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #%%
 
