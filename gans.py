@@ -8232,7 +8232,14 @@ with torch.no_grad():
 # we arent doing that, so calling it normalizing may not be correct thats why I guess people tend to call 
 # this kind of normalization, modulation/styling instead!
 # (quicknote: it seems people in electronics/signal processing refer to the expressions such as
-# "scale*input + bias" as modulation! so thats why they decided to call this modulation!)
+# "scale*input + bias" as modulation! so thats why they decided to call this modulation! also if
+# we imagine the input as a canvas that the network is trying to draw something on, in thatcase
+# normalizing it wouldnt make sense, rather styling it would make sense hence why some people called
+# it style!(honestly its a personal thing, cuz if you plan on using analogies, normalizing the
+# first time shouldnt be called normalizing but reseting canvas! so I guess modulate is a better
+# technical term and style is a better analogy, and normilize would be mathimatically correct because
+# thats what we are doing essentially, but its confusing nonetheless because of what we said! so
+# modulate it is!))
 #
 # this way we apply a global style in a scale specific manner, so for example at lower resolutions (i.e. 4-8)
 # it controls the high level features like face shapes and pose, basically corase features, while at 
