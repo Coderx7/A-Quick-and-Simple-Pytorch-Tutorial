@@ -5414,8 +5414,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                          noise_addition=False, use_ema_inference=False, ema_warmup_images_threshold=1_500_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False, decay_step=3, 
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
-    
-    
+        
     # lr_d = [p['lr'] for p in disc_optimizer.param_groups][0]
     # lr_g = [p['lr'] for p in gen_optimizer.param_groups][0]
     # since we want the default lr/betas we set when we created optimizers 
@@ -5428,7 +5427,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     # to be sure we catch this if later on we used more lrs for optimizers
     # heres an assert!
     assert len(disc_optimizer.param_groups)==1 and\
-           len(gen_optimizer.param_groups)==1, 'We expect to have only one param_groups only!'
+           len(gen_optimizer.param_groups)==1, 'We expect to have only one param_groups!'
     
     lr_d = disc_optimizer.param_groups[0]["lr"]
     lr_g = gen_optimizer.param_groups[0]["lr"]
@@ -8214,10 +8213,11 @@ with torch.no_grad():
 # representing different factors or elements of variantions in our training data)
 # 
 # with this chagne, the authors now decided to call the generator, the synthethis network, because it 
-# now starts with a learned constant tensor instead of a random latent vector. 
-# all the information about an image is injected at each layer and the latent vector w will be transformed
-# into styles basically two separate components, scale and bias(basically std and mean!) with which we 
-# direct the generation process towards the styles we want.
+# now starts with a learned constant tensor(as if its a blank canvas! a tensor of 1s e.g.!) instead of
+# a random latent vector. (note we dont feed the w as input to generator) all the information about 
+# an image is injected at each layer and the latent vector w will be used to extract the styles from 
+# basically we feed w to two linear layer to get two separate components, scale and bias(basically std and mean!)
+# with which we direct the generation process towards the styles we want.
 # That is we use them by the AdaIN(adaptive instance normalization) module to add them to each featuremap
 # at each level. AdaIN normalizes each featuremap to have zero mean and unit variance(σ=1) (basically it 
 # removes the current style in the image) so we can then use the new scale(std)/bias(mean) from w to 
@@ -8269,6 +8269,195 @@ with torch.no_grad():
 # these were all the changes the stylegan paper had compared to progan. so all other progan related
 # novelities are still valid, we can safely say stylegan 1 is an improved version of progan!
 # having said all of this, lets now implemenet it and see how it works!
+
+# the discriminator from progan stays the same so we can use that as before, 
+# I just rename it to STyleGAN1
+#
+class DiscriminatorStyleGAN1(nn.Module):
+    def __init__(self, max_steps=6, starting_base=2):
+        super().__init__()
+        self.setup_layers(max_steps, starting_base)
+    
+    def setup_layers(self, max_steps, starting_base):
+        self.max_steps = max_steps
+        self.starting_base = starting_base
+        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        print(f'{channels=}')
+
+        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, channels[i], kernel_size=1),
+                                                     nn.LeakyReLU(0.2)) for i in range(max_steps)])
+        self.blocks = nn.ModuleList([DiscBlockProGAN(channels[i],channels[i-1]) for i in range(1,max_steps)])
+
+        self.remaining_blocks = nn.ModuleList()
+        for step in range(self.max_steps):
+            remaining = []
+            for i in range(step-2,-1,-1):
+                remaining.append( self.blocks[i])
+            self.remaining_blocks.append(nn.Sequential(*remaining) if remaining else nn.Identity())
+         
+        self.final = nn.Sequential(AddBatchStdDev(),
+                                   # we can use (equalized)linear layer aswell but for now lets keep it that way!
+                                   EqualizedConv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedConv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
+    
+    def forward(self, x, alpha, step):
+        if step == 0:
+            out = self.fromImgs[0](x)
+            out = self.final(out)
+            return out.view(-1,1)
+
+        new_input_out = self.fromImgs[step](x)
+        new_input_out = self.blocks[step-1](new_input_out)
+        
+        x_downsampled = F.avg_pool2d(x, 2)
+        previous_input_out = self.fromImgs[step-1](x_downsampled)
+        out = alpha * new_input_out + (1-alpha)*previous_input_out
+        out = self.remaining_blocks[step](out)
+
+        out = self.final(out)
+        return out.view(-1,1)
+ 
+# The generator however as we discussed is different. we now need a mapping network, AdaIN, and
+# noise injection. lets implement them
+ 
+# Mapping Network is a 8 layer mlp. but since its linear layer, like conv layers before
+# we need to use the equalized version
+
+# sidenote:
+# I initially tried sqrt(2/fan-in) for equalizedlinear, and bias was optional as well
+# but I found out other implementations dont use the vanilla version like us, they
+# do it a bit differently, they instead do (1/sqrt(fan_in))*lr_mult. the lr_mult is 
+# there to be able to tune the lr dynamically during training and they usually set it
+# to 0.01. its both used in the scaler itself and is also applied on the bias! to make
+# training more stable (so both weights and bias are scaled by lr_mult)
+class EqualizedLinear(nn.Linear):
+    def __init__(self, in_features, out_features, lr_mult=0.01, device=None, dtype=None):
+        super().__init__(in_features, out_features, bias=True, device=device, dtype=dtype) 
+        self.lr_mult = lr_mult
+        # initalize the weight
+        self.weight.data.normal_(0,1)
+        self.scaler = (1/math.sqrt(self.in_features))*self.lr_mult
+        
+    def forward(self, x):
+        # note we are scaling the bias as well
+        return F.linear(x, self.weight*self.scaler, self.bias*self.lr_mult)
+ 
+# Mappingnetwork is an 8 layer mlp wtih leakyrelu as nonlinearity
+# it accepts the latent vector z and gives us the latent vector w
+class MappingNetwork(nn.Module):
+    def __init__(self, z_dim, w_dim, num_layers=8):
+        super().__init__()
+        layers = [] 
+        for i in range(num_layers):
+            layers.append(EqualizedLinear(z_dim if i==0 else w_dim, w_dim))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, z):
+        return self.net(z)
+
+
+# AdaIN is also a simple module that normalizes the input to have mean=0,std=1
+# and then adds the scaler/beta we learn from w!
+class AdaIN(nn.Module):
+    def __init__(self, channels, w_dim, eps=1e-8):
+        super().__init__()
+        # nor normalization numerical stability
+        self.eps = eps
+        # instead of creating two separate linear layer to get scale and beta
+        # separately, we use one linear layer and then split it to get the two
+        self.fc_style = EqualizedLinear(w_dim, channels*2)
+                
+    def forward(self, x, w):
+        # normalize the input x to have zero mean/unit variance
+        # we can  x = (x-x.mean())/x.std() or simply 
+        # use F.isnatnce_norm()
+        x_norm = F.instance_norm(x, eps=self.eps)
+        # now get the scale and beta from w
+        style = self.fc_style(w).unsqueeze(2).unsqueeze(3)
+        scale, bias = style.chunk(2,dim=1)
+        # add 1 for inital identity like behavior!
+        return (1+scale) * x_norm + bias
+
+# noise injection
+# for noise injection, we want to apply noise to each pixels in each featuremap
+# so the shape should be 4d, 1,channels,1,1, we also dont want to randomly
+# inject noise, after all this is supposed to add random attributes like freckles
+# etc, so the network needs to be able to control this, so we add a weight paramter
+# to make this a learned operation rather than a completelyy random operation
+class NoiseInjection(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.weight = nn.Parameter(torch.zeros(1,channels,1,1))
+
+    def forward(self, x, noise=None):
+        if noise is None:
+            noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
+        return x+(self.weight*noise)
+    
+    
+class GeneratorProGAN(nn.Module):
+    def __init__(self, z_size, max_steps=6, starting_base=2):
+        super().__init__()  
+           
+        # lets do the same thing for generator
+        self.setup_layers(z_size, max_steps,starting_base)
+        
+    def setup_layers(self, z_size, max_steps,starting_base):
+        self.z_size = z_size
+        self.max_steps = max_steps
+        self.starting_base = starting_base
+        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        print(f'{channels=}')
+        # this is the first layer we use to get latent vector and build a 4x4 initial output which
+        # is then processed by the blocks and the rest.
+        self.initial = nn.Sequential(EqualizedConvTrans(z_size, channels[0], 4, 1, 0),
+                                     nn.LeakyReLU(0.2),
+                                     PixelNorm(),
+                                     EqualizedConv2d(channels[0], channels[0], kernel_size=3,padding=1),
+                                     nn.LeakyReLU(0.2),
+                                     PixelNorm(),)
+        
+        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
+        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
+   
+    
+    def forward(self, z, alpha, step):
+        if z.dim()==2:
+            z = z.view(z.size(0),-1,1,1)
+
+        out = self.initial(z) #4x4
+
+        if step==0:
+            return self.toImgs[step](out)
+
+        previous_output = None
+        for i in range(step):
+            previous_output = out
+            out = self.blocks[i](out)
+        
+        out_img_new = self.toImgs[step](out)
+        out_img_old = self.toImgs[step-1](previous_output)
+        out_img_old = F.interpolate(out_img_old, scale_factor=2,mode='bilinear')
+        final_img = alpha * out_img_new + (1-alpha)* out_img_old
+        return final_img
+
+
+# x = torch.randn(size=(5,3,256,256))
+# z = torch.randn(size=(5,100))
+max_steps = 7
+disc = DiscriminatorProGAN(max_steps=max_steps, starting_base=2)
+gen = GeneratorProGAN(100,max_steps=max_steps, starting_base=2)
+# test all the stages/steps
+for i in range(max_steps):
+    H= W = 2**i*4
+    x = torch.randn(size=(5,3,H,W))
+    z = torch.randn(size=(5,100))
+    disc_out = disc(x, alpha=1, step=i)
+    print(f'disc_out.shape: {tuple(disc_out.shape)}')
+    gen_out = gen(z, alpha=1, step=i)
+    print(f'gen_out.shape : {tuple(gen_out.shape)}')
 
 #%%
 
