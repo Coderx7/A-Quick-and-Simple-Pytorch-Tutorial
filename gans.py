@@ -5195,7 +5195,16 @@ for i in range(max_steps):
 # so the network doesnt quit that res prematurely and learns porperly.
 # I guess I said it all lets write the training loop, if anything is left out I explain it 
 # in code
-
+#
+# TODO talk about the Sliced Wasserstein Distance (SWD) that the authors used for evaluating
+# the images at different resolutions. (section 4.2)
+# (its used to measure the similarity between the real and generated image patches at different
+# resulotions/scales. its very efficient and an approximation of the full wasserstein. as
+# its an efficient way to check adn see how well the generator is doing and whether it captures
+# the image statistics (i.e. textures, structures, etc) accuractely.
+# I completely missed this and sice we used FID/IS in previous experiments, went with that!
+# so add this as well!
+#
 # minor change in our wgangp loss, because ourt discriminator/critic needs alpha and step
 # we need to add these as well. we could go back and add an additional args to the original
 # implementation so the discriminator that needs additinal arguments can use that but I 
@@ -8270,8 +8279,8 @@ with torch.no_grad():
 # novelities are still valid, we can safely say stylegan 1 is an improved version of progan!
 # having said all of this, lets now implemenet it and see how it works!
 
-# the discriminator from progan stays the same so we can use that as before, 
-# I just rename it to STyleGAN1
+# the discriminator from progan stays nearly the same except for the final layer
+# that uses two fc layers instead of 1 conv layer. ist practically the same!
 #
 class DiscriminatorStyleGAN1(nn.Module):
     def __init__(self, max_steps=6, starting_base=2):
@@ -8294,12 +8303,18 @@ class DiscriminatorStyleGAN1(nn.Module):
             for i in range(step-2,-1,-1):
                 remaining.append( self.blocks[i])
             self.remaining_blocks.append(nn.Sequential(*remaining) if remaining else nn.Identity())
-         
+        
+        
+        # StyleGAN Discriminator has 2 Linear layer at the end
         self.final = nn.Sequential(AddBatchStdDev(),
-                                   # we can use (equalized)linear layer aswell but for now lets keep it that way!
                                    EqualizedConv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
                                    nn.LeakyReLU(0.2),
-                                   EqualizedConv2d(channels[0], 1, kernel_size=4, stride=1, padding=0))
+                                   #2 FC layers ?(FC-LReLU-FC)?
+                                   nn.Flatten(),
+                                   EqualizedLinear(channels[0]*4*4, channels[0]),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedLinear(channels[0],1))
+                               
     
     def forward(self, x, alpha, step):
         if step == 0:
@@ -8378,6 +8393,11 @@ class AdaIN(nn.Module):
         style = self.fc_style(w).unsqueeze(2).unsqueeze(3)
         scale, bias = style.chunk(2,dim=1)
         # add 1 for inital identity like behavior!
+        # this trick is from the official nvidia implementation, 
+        # since at the start, the initial weights of fc_style produce scales close to zero
+        # we do this so the adain layer start closer to an identity function and 
+        # it results in more stability(we dont start off with std ~0! things are 
+        # kept in a normal range!)
         return (1+scale) * x_norm + bias
 
 # noise injection
@@ -8394,61 +8414,84 @@ class NoiseInjection(nn.Module):
     def forward(self, x, noise=None):
         if noise is None:
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
+
         return x+(self.weight*noise)
     
-    
-class GeneratorProGAN(nn.Module):
-    def __init__(self, z_size, max_steps=6, starting_base=2):
+
+# StyleBlock
+# unlike progan, since we have new operations, we need to make a new block
+# we need AdaIN, EqualizedConv, and NoiseInjection with leakyrelu 
+class StyleConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False,
+                 w_size=512, upsample=False, eps=1e-8):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.bias = bias
+        self.w_size = w_size
+        self.upsample = upsample
+        self.eps = eps
+        
+        self.conv = EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias)
+        self.noise_inject = NoiseInjection(out_channels)
+        self.adain = AdaIN(out_channels, w_size, eps)
+
+    def forward(self, x, w, noise=None):
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False )
+        
+        out = self.conv(x)
+        # inject noise into the output featuremaps
+        out = self.noise_inject(out, noise)
+        # now run through nonlinearity
+        out = F.leaky_relu(out, negative_slope=0.2)
+        # and finally apply the styles from w on the output
+        out = self.adain(out, w)
+        return out
+        
+class GeneratorStyleGAN1(nn.Module):
+    def __init__(self, z_size, w_size, max_steps=6, starting_base=2):
         super().__init__()  
            
         # lets do the same thing for generator
-        self.setup_layers(z_size, max_steps,starting_base)
+        self.setup_layers(z_size, w_size, max_steps,starting_base)
         
-    def setup_layers(self, z_size, max_steps,starting_base):
+    def setup_layers(self, z_size, w_size, max_steps, starting_base):
         self.z_size = z_size
+        self.w_size = w_size
         self.max_steps = max_steps
         self.starting_base = starting_base
         channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
-        # this is the first layer we use to get latent vector and build a 4x4 initial output which
-        # is then processed by the blocks and the rest.
-        self.initial = nn.Sequential(EqualizedConvTrans(z_size, channels[0], 4, 1, 0),
-                                     nn.LeakyReLU(0.2),
-                                     PixelNorm(),
-                                     EqualizedConv2d(channels[0], channels[0], kernel_size=3,padding=1),
-                                     nn.LeakyReLU(0.2),
-                                     PixelNorm(),)
         
+        # unlike progan, we start with a learned constant tensor, as if its a blank canvas
+        # and little by little draw on it! we start with a 1x512x4x4 block
+        self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
+        
+        self.mapping_network = MappingNetwork(z_size, w_size)
+                
         self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
-        self.blocks = nn.ModuleList([GenBlockProGAN(channels[i-1],channels[i]) for i in range(1,max_steps)])
-   
-    
-    def forward(self, z, alpha, step):
-        if z.dim()==2:
-            z = z.view(z.size(0),-1,1,1)
-
-        out = self.initial(z) #4x4
-
-        if step==0:
-            return self.toImgs[step](out)
-
-        previous_output = None
-        for i in range(step):
-            previous_output = out
-            out = self.blocks[i](out)
         
-        out_img_new = self.toImgs[step](out)
-        out_img_old = self.toImgs[step-1](previous_output)
-        out_img_old = F.interpolate(out_img_old, scale_factor=2,mode='bilinear')
-        final_img = alpha * out_img_new + (1-alpha)* out_img_old
-        return final_img
-
-
+        # unlike the progan version, the stylegan paper uses two layers for each res
+        # except the first one
+        self.blocks = nn.ModuleList()
+        #4x4
+        self.blocks.append(StyleConvBlock(channels[0], channels[0], w_size=w_size, upsample=False))
+        for i in range(1, max_steps):
+            self.blocks.append(StyleConvBlock(channels[i-1], channels[i], w_size=w_size, upsample=True))
+            self.blocks.append(StyleConvBlock(channels[i], channels[i], w_size=w_size, upsample=False))
+       
+    def forward(self, z, alpha, step):
+        pass
+    
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
 max_steps = 7
-disc = DiscriminatorProGAN(max_steps=max_steps, starting_base=2)
-gen = GeneratorProGAN(100,max_steps=max_steps, starting_base=2)
+disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
+gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
 # test all the stages/steps
 for i in range(max_steps):
     H= W = 2**i*4
