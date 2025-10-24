@@ -8469,23 +8469,74 @@ class GeneratorStyleGAN1(nn.Module):
         
         # unlike progan, we start with a learned constant tensor, as if its a blank canvas
         # and little by little draw on it! we start with a 1x512x4x4 block
-        self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
+        # I initally used torch.ones and it aligns better with my initial analogy
+        # but since paper used randn (for better starting variance I guess) I go with that
+        # as well!
+        # self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
+        self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
         
         self.mapping_network = MappingNetwork(z_size, w_size)
                 
         self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
         
         # unlike the progan version, the stylegan paper uses two layers for each res
-        # except the first one
         self.blocks = nn.ModuleList()
         #4x4
+        # I initially used one ctyleconvblock for 4x4 res, but the paper used two. 
+        # using one layer, means the network cant stylize the input strongly, so the base
+        # would lacks refienments therefore we would face low convergence because 
+        # the network has less ability in injecting diverse styles early on!
+        self.blocks.append(StyleConvBlock(channels[0], channels[0], w_size=w_size, upsample=False))
         self.blocks.append(StyleConvBlock(channels[0], channels[0], w_size=w_size, upsample=False))
         for i in range(1, max_steps):
             self.blocks.append(StyleConvBlock(channels[i-1], channels[i], w_size=w_size, upsample=True))
             self.blocks.append(StyleConvBlock(channels[i], channels[i], w_size=w_size, upsample=False))
        
     def forward(self, z, alpha, step):
-        pass
+        #convert the latent z into latent w
+        w = self.mapping_network(z)
+        # set the batchsize forr const_input/canvas
+        x = self.const_input.repeat(z.size(0), 1,1,1)
+        # the process goes like this:
+        # process the inputs from lowest res to the current res
+        # if its the first step, no fadein required, convert to
+        # image and return. 
+        # otherwise, process the input from the lowest res to the
+        # current res and go for fadein at the end.
+        
+        if step == 0: #4x4
+            x = self.blocks[0](x,w)
+            x = self.blocks[1](x,w)
+            return self.toImgs[step](x)
+        
+        # now feed the inputs x and w to blocks
+        # for each step, we start off from the very begining
+        # and go all the way to the current step.
+        # since we want the previous_output as well we keep
+        # one copy like before
+        previous_image = None
+        for i in range(2*step+2): # since we have 2 layers per res
+            # first process the input through 
+            # if we do this after the following if block, previous_image
+            # would be the raw const_input that has not been stylized by adain
+            # and noiseinjection is not applied!
+            x = self.blocks[i](x, w)
+            # save a copy of previous step output
+            if i == (2*step-1) and alpha<1:
+                # the current x is the output for previous res so 
+                # convert it to image and upsample it so it matches
+                # the next res
+                previous_image = self.toImgs[step-1](x)
+                previous_image = F.interpolate(previous_image, scale_factor=2, mode='bilinear', align_corners=False)
+                
+        # now x is the final output, i.e. the highest res
+        # so convert to image
+        new_image = self.toImgs[step](x)
+        if previous_image is not None:
+            final_image = alpha * new_image + (1-alpha)*previous_image
+        else:
+            final_image = new_image
+        return final_image
     
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
@@ -8503,6 +8554,7 @@ for i in range(max_steps):
     print(f'gen_out.shape : {tuple(gen_out.shape)}')
 
 #%%
+# now for training the loop stays the same with minor changes
 
 #%%
 # Stylegan2/3?
