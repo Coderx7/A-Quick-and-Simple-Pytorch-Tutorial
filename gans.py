@@ -8500,8 +8500,9 @@ class GeneratorStyleGAN1(nn.Module):
         # instead (for better starting variance I guess, im not sure) so I added that aswell.
         # 
         self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
-        # from stylegan2 (page 11 section B implementation details, generator redesign)
+        # this is from stylegan2 (page 11 section B implementation details, generator redesign)
         # might be a good idea to test it later! for now stick to the torch.ones version!
+        # until we get a fully working implementation then we can test!
         # self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
         
         self.mapping_network = MappingNetwork(z_size, w_size)
@@ -8514,8 +8515,7 @@ class GeneratorStyleGAN1(nn.Module):
         # it can handle it just fine (sidenote: if tanh gets saturated, we see washed out
         # colors or even mode collapse!) so I remove the tanh here. (now that I think about it
         # I guess progan also didnt use tanh! but I did! need to remove that aswell!)
-        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1),
-                                                   ) for i in range(max_steps)])
+        self.toImgs = nn.ModuleList([EqualizedConv2d(channels[i], 3, kernel_size=1) for i in range(max_steps)])
         
         # unlike the progan version, the stylegan paper uses two layers for each res
         self.blocks = nn.ModuleList()
