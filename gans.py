@@ -8321,7 +8321,10 @@ class DiscriminatorStyleGAN1(nn.Module):
                                    nn.LeakyReLU(0.2),
                                    #2 FC layers ?(FC-LReLU-FC)?
                                    nn.Flatten(),
-                                   EqualizedLinear(channels[0]*8*8, channels[0]),
+                                   # update: while the paper says they use 8x8! 
+                                   # the official code I checked used 4x4! so we
+                                   # use 4x4 to be safe (explained more in generator section below)
+                                   EqualizedLinear(channels[0]*4*4, channels[0]),
                                    nn.LeakyReLU(0.2),
                                    EqualizedLinear(channels[0],1))
                                
@@ -8373,6 +8376,10 @@ class EqualizedLinear(nn.Linear):
  
 # Mappingnetwork is an 8 layer mlp wtih leakyrelu as nonlinearity
 # it accepts the latent vector z and gives us the latent vector w
+# sidenote: the paper says that increasing the depth of the 
+# mapping network tends to make the training unstable with 
+# high learning rates so they use a much lower lr(λ= 0.01)
+# specifically for mapping network optimization
 class MappingNetwork(nn.Module):
     def __init__(self, z_dim, w_dim, num_layers=8):
         super().__init__()
@@ -8482,13 +8489,20 @@ class GeneratorStyleGAN1(nn.Module):
         print(f'{channels=}')
         
         # unlike progan, we start with a learned constant tensor, as if its a blank canvas
-        # and little by little draw on it! we start with a 1x512x8x8 block(the paper does this!
-        # so do we!)
-        # I initally used torch.ones and it aligns better with my initial analogy
-        # but since official impl used randn (for better starting variance I guess) I go with that
-        # as well!
-        # self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 8, 8)))
-        self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 8, 8)))
+        # and little by little draw on it! we start with a 1x512x8x8 block(the paper says so
+        # in page 9 Hyperparameters and training details! however the the official code uses
+        # 4x4! https://github.com/NVlabs/stylegan/blob/master/training/networks_stylegan.py#L504)
+        #
+        # so I'll go with the official implementation and use 4x4 instead to be on the safe side!
+        # sidenote:
+        # I use torch.ones as its what the paper says in training details section
+        # and it aligns better with my initial analogy. however in stylegan2 they used randn
+        # instead (for better starting variance I guess, im not sure) so I added that aswell.
+        # 
+        self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
+        # from stylegan2 (page 11 section B implementation details, generator redesign)
+        # might be a good idea to test it later! for now stick to the torch.ones version!
+        # self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
         
         self.mapping_network = MappingNetwork(z_size, w_size)
         # unlike progan, the official tensorflow implementation doesnt use tanh, and
@@ -8528,7 +8542,7 @@ class GeneratorStyleGAN1(nn.Module):
         # otherwise, process the input from the lowest res to the
         # current res and go for fadein at the end.
         
-        if step == 0: #8x8
+        if step == 0: #4x4
             x = self.blocks[0](x,w)
             x = self.blocks[1](x,w)
             return self.toImgs[step](x)
@@ -8564,13 +8578,13 @@ class GeneratorStyleGAN1(nn.Module):
     
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
-max_steps = 6
+max_steps = 7
 disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
 # test all the stages/steps
 for i in range(0,max_steps):
-    # start off with 8x8 this time
-    H = W = 2**i*8
+    # start off with 4x4 this time
+    H = W = 2**i*4
     x = torch.randn(size=(5,3,H,W))
     z = torch.randn(size=(5,100))
     disc_out = disc(x, alpha=1, step=i)
@@ -8580,7 +8594,8 @@ for i in range(0,max_steps):
 
 #%%
 # now for training the loop stays the same with minor changes
-
+# before we go for training we need a few more things to implement.
+# the mixing regularization and 
 #%%
 # Stylegan2/3?
 #%%
