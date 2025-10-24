@@ -5204,7 +5204,9 @@ for i in range(max_steps):
 # so the network doesnt quit that res prematurely and learns porperly.
 # I guess I said it all lets write the training loop, if anything is left out I explain it 
 # in code
-#
+# todo: see page 13 for training details : https://research.nvidia.com/sites/default/files/pubs/2017-10_Progressive-Growing-of/karras2018iclr-paper.pdf
+# also at the last page shows different results for different setups (like how each addition
+# (pixelnorm,minibatchstddev, etc)improves the training )
 # TODO talk about the Sliced Wasserstein Distance (SWD) that the authors used for evaluating
 # the images at different resolutions. (section 4.2)
 # (its used to measure the similarity between the real and generated image patches at different
@@ -6063,6 +6065,9 @@ max_steps = 7
 # [512,256,128,64,32,16,8] 
  
 # up to 64x64 it takes around 6.4~7GB, 128 aroud 7.4 basically its below 10G
+# batchsize is extremely important, small batchsizes directly mess up the result
+# see page 26 in the paper for a few examples.(also I faced this first hand!)
+# so to get the best results always use the largest batch we can!
 BATCH_SIZES = [128,128,128,128,64,32,16]
 # the more epochs the better result we get, despite the FID 
 # that may flucturate but the image quality 100% gets better
@@ -8284,8 +8289,66 @@ with torch.no_grad():
 # another trick they used was that they found out if they sample w closer to the average population
 # they get higher quality, more typical images, at the cost of decreased variety! this is called truncation trick!
 # 
-# these were all the changes the stylegan paper had compared to progan. so all other progan related
-# novelities are still valid, we can safely say stylegan 1 is an improved version of progan!
+# aside from the tricks, loss also changes in StyleGAN1. the authors did use WGAN-GP loss in one
+# of the experiments (CelebA dataset, configuration A in table1), but for the rest of the experiments
+# that provide the best results, they used a different loss. they used non-saturating logistic loss which
+# is a variation of the original GAN loss, a long with a new R1 regularizer that replaces WGAN-GP.
+# that is for the discriminator maximize the D(real) and minimize the D(G(z)) and for the generator 
+# maximize the D(G(z)). in practice this is implemented using the sofplus function which is a 
+# smooth approximation of relu (i.e. log(1+exp(x)))
+# so the discriminator loss becomes: D_loss = E[softplus(-D(real)) + softplus(D(G(z)))] 
+# (the first term(softplus(-D(real))) gets smaller as D(real) becomes more positive(i.e. accuratly identifies real images)
+# and the second term becomes smaller as D(G(z)) becomes more negative (i.e. correctly identifies fake images)
+# and the generator: G_loss = E[softplus(-D(G(z)))] it becomes smaller as D(G(z)) becomes more possitive
+# (i.e. the generator fools the discriminator well)
+# 
+# quicknote: E is Expectation here(i.e. average over the batch)
+#
+# now for the regularizer part, since WGAN-GP calculates gradients on many random points
+# between the real and fake image distributionsthe its computationally expeisnve and
+# it can also be unstable sometimes therefore the authors tried something simpler. 
+# they decided, instead of calculating the gradients on many random points like before,
+# only calculate and penalize the discriminators gradients with respect to its inputs (real images!)
+# the intuition behind it is the same as wgangp/1lipshitz condition, i.e. the discriminator
+# shouldnt be too sensitve to small changes in input. if the gradient of the discriminators
+# output with respect to its input is very large, then it means the discriminator's
+# decision surface is very spiky/sharp(lots of high peaks/deep valleys). this is not good
+# because it provides unstable/unhelpful gradients to the generator. we want a smooth surface
+# so the trainig is more stable. this method helps us achieve that.
+# 
+# the R1 formula therefore is :
+# L_R1 = (gamma/2) * E[ || ∇D(x_real) ||² ]
+# where lambda (or (gamma/2)) is the multiplier for specifying the penalty strength
+# the || ∇D(x_real) ||² is squared L2 norm(sum of squares) of the gradients of discriminator's
+# output with respect to the inputs(real images). we add this penalty term to the discriminator's loss.
+# so the discriminators loss becomes: 
+# D_loss = E[softplus(-D(real)) + softplus(D(G(z)))] + (γ/2 * E[||∇D(x_real)||²])
+# 
+# sidenote:
+# why do we write γ/2(gamma/2) and not just gamma or lambda without the fraction?
+# a multiplier(we can call it lambda(λ))) would just work as well!
+# yes thats right, the reason is when calculating the gradients, this 1/2 will 
+# cancel out the squared gradient norm( g² or ||∇D(x_real)||²) power(the 2) and
+# make the gradinet calculation clean and simple (mathimatically!) 
+# that is, when we take the gradient it'd become
+# d/dg => 1/2*g² => 1/2*2*g = g!
+# thats it! so as a multiplier, a scaler, we can call it lambda, and assign any 
+# number to specify the strength of the actual penalty term(|| ∇D(x_real) ||²), 
+# but for clear gradient calculation (mathimatic/formula wise), calling it gamma/2,
+# makes it clear that the 1/2 is there for cleaner gradient calculation, and the 
+# gamma value of 10 e.g. as reported by many is infact means the strength of penalty is
+# the same as lambda=5! (so I use lambda simple as a scaler for penalty term, like
+# l*penalty, whereas gamma here is accompanied by 1/2 so yeah! to be align with the paper
+# and other implementations I also use gamma/2 and therefore use the value of 10! in training)
+#
+# sidenote:
+# as the paper states in table1, the FID score they report is the lowest score they could
+# achieve during the whole training!(involving 50K of training images) it doesnt mean, the
+# images they got at ihghest resolution were in fact the lowest
+#
+# these were all the changes the stylegan paper had compared to progan. 
+# so all other progan related novelities are still valid, we can safely say stylegan1
+# is an improved version of progan!
 # having said all of this, lets now implemenet it and see how it works!
 
 # the discriminator from progan stays nearly the same except for the first res
@@ -8389,9 +8452,13 @@ class MappingNetwork(nn.Module):
             layers.append(EqualizedLinear(z_dim if i==0 else w_dim, w_dim,lr_mult=0.01))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
         self.net = nn.Sequential(*layers)
+        self.pixel_norm = PixelNorm()
 
     def forward(self, z):
-        return self.net(z)
+        # normalize the latent vector before feeding
+        # it to mapping network
+        z_normalized = self.pixel_norm(z)
+        return self.net(z_normalized)
 
 
 # AdaIN is also a simple module that normalizes the input to have mean=0,std=1
@@ -8433,6 +8500,9 @@ class NoiseInjection(nn.Module):
         self.weight = nn.Parameter(torch.zeros(1,channels,1,1))
 
     def forward(self, x, noise=None):
+        # for debugging purposes we send in a fixed noise
+        # thats why I included a noise argument here.otherwise
+        # we dont need that
         if noise is None:
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
 
@@ -8596,6 +8666,9 @@ for i in range(0,max_steps):
 # now for training the loop stays the same with minor changes
 # before we go for training we need a few more things to implement.
 # the mixing regularization and 
+
+
+
 #%%
 # Stylegan2/3?
 #%%
