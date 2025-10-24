@@ -8381,7 +8381,7 @@ class EqualizedLinear(nn.Linear):
 # high learning rates so they use a much lower lr(λ= 0.01)
 # specifically for mapping network optimization
 class MappingNetwork(nn.Module):
-    def __init__(self, z_dim, w_dim, num_layers=8):
+    def __init__(self, z_dim=512, w_dim=512, num_layers=8):
         super().__init__()
         layers = [] 
         for i in range(num_layers):
@@ -8397,7 +8397,7 @@ class MappingNetwork(nn.Module):
 # AdaIN is also a simple module that normalizes the input to have mean=0,std=1
 # and then adds the scaler/beta we learn from w!
 class AdaIN(nn.Module):
-    def __init__(self, channels, w_dim, eps=1e-8):
+    def __init__(self, channels, w_dim=512, eps=1e-8):
         super().__init__()
         # nor normalization numerical stability
         self.eps = eps
@@ -8474,7 +8474,7 @@ class StyleConvBlock(nn.Module):
         return out
         
 class GeneratorStyleGAN1(nn.Module):
-    def __init__(self, z_size, w_size, max_steps=6, starting_base=2):
+    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2):
         super().__init__()  
            
         # lets do the same thing for generator
@@ -8583,7 +8583,7 @@ disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
 # test all the stages/steps
 for i in range(0,max_steps):
-    # start off with 4x4 this time
+    # start off with 4x4
     H = W = 2**i*4
     x = torch.randn(size=(5,3,H,W))
     z = torch.randn(size=(5,100))
