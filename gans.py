@@ -8476,8 +8476,14 @@ class GeneratorStyleGAN1(nn.Module):
         self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
         
         self.mapping_network = MappingNetwork(z_size, w_size)
-                
-        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
+        # unlike progan, the paper doesnt use tanh, and outputs are unbounded.
+        # the idea is, tanh might help initially, but since its saturating, it can
+        # lead to slow convergence/limit the expressiveness of the network. without
+        # it the network should(and will) be able to learn the proper range itself
+        # so its not an issue if the dataset images are normalized to -1,1, it can handle it
+        # (sidenote: if tanh gets saturated, we see washedout colors or even mode collapse!)
+        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1),
+                                                   ) for i in range(max_steps)])
         
         # unlike the progan version, the stylegan paper uses two layers for each res
         self.blocks = nn.ModuleList()
