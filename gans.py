@@ -5115,11 +5115,20 @@ class GeneratorProGAN(nn.Module):
         
         # we use this block to get image output(final layer)
         # update: forgot tanh!
-        # update2: like discriminator only a single 1x1 conv layer should be enough my version
+        # update2: like discriminator only a single 1x1 conv layer should be enough my version(paper uses only 1)
         # seems to be too complex and this might be one of the reasons why Im having so much
         # difficulty post 32x32 resolution. see debug log at the end for more information!
         # self.toImgs = nn.ModuleList([nn.Sequential(GenBlockProGAN(channels[i], 3), nn.Tanh()) for i in range(max_steps)])
-        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1), nn.Tanh()) for i in range(max_steps)])
+        # 
+        # sidenote from future: 
+        # while implementing the stylegan1, I noticed neither progan nor styleganv1 which follows
+        # progan, use tanh in toImgs layer (they call it toRGB). the reason being it can
+        # slow down the convergence as its saturating function and can cause mode collapse or washedout colors
+        # if it saturates! so I leave it be , but test without it as well
+        # TODO: test the implementation without Tanh()
+        self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1),
+                                                   nn.Tanh()
+                                                   )for i in range(max_steps)])
         # print(f'{self.img_output=}')
         
         # and this to do the rest of processing. like before we only do chanel configs here and the
@@ -8192,7 +8201,7 @@ with torch.no_grad():
 # we start off with stylegan 1 and see what the changes/novelities were and then go to implement
 # it
 
-# StyleGan1:
+# StyleGan1: https://arxiv.org/pdf/1812.04948
 # The first StyleGAN paper was introduced to address one of the biggest issues of PROGAN architecture.
 # the main issues of the progan architecture is that as long as we want unconditional images, it 
 # works very good. however, when we try to go conditional and control the features/styles, it becomes
@@ -8261,7 +8270,7 @@ with torch.no_grad():
 # network from generating psuedorandom patterns from determinstic inputs and therefore reduce artifacts
 # like repition that is seen in other GAN architectures.(instead of leting the network try to insert
 # such minor variations into the w aswell, and hence waste its capacity! they decided to do this so 
-# the network has an easier time doing its job)
+# the network has an easier time doing its job. read the paper now, this is beautifully shown in page 5 fig5.) 
 # 
 # another notable trick the authors used in the paper was to use a technique called style mixing or 
 # mixing regularization, in which during training they mix two latent vectors w1,w2 with a probablity (50%-90%) 
@@ -8279,8 +8288,9 @@ with torch.no_grad():
 # novelities are still valid, we can safely say stylegan 1 is an improved version of progan!
 # having said all of this, lets now implemenet it and see how it works!
 
-# the discriminator from progan stays nearly the same except for the final layer
-# that uses two fc layers instead of 1 conv layer. ist practically the same!
+# the discriminator from progan stays nearly the same except for the first res
+# that starts at 8x8 instead of 4x4 and the final layer that uses two fc layers
+# instead of 1 conv layer. ist practically the same!
 #
 class DiscriminatorStyleGAN1(nn.Module):
     def __init__(self, max_steps=6, starting_base=2):
@@ -8311,7 +8321,7 @@ class DiscriminatorStyleGAN1(nn.Module):
                                    nn.LeakyReLU(0.2),
                                    #2 FC layers ?(FC-LReLU-FC)?
                                    nn.Flatten(),
-                                   EqualizedLinear(channels[0]*4*4, channels[0]),
+                                   EqualizedLinear(channels[0]*8*8, channels[0]),
                                    nn.LeakyReLU(0.2),
                                    EqualizedLinear(channels[0],1))
                                
@@ -8346,8 +8356,11 @@ class DiscriminatorStyleGAN1(nn.Module):
 # there to be able to tune the lr dynamically during training and they usually set it
 # to 0.01. its both used in the scaler itself and is also applied on the bias! to make
 # training more stable (so both weights and bias are scaled by lr_mult)
+# todo: check and set proper lr_mult in the architecture, we need to use 0.01 in mapping 
+# only and the rest should use lr_mult=1
+# )
 class EqualizedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, lr_mult=0.01, device=None, dtype=None):
+    def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
         super().__init__(in_features, out_features, bias=True, device=device, dtype=dtype) 
         self.lr_mult = lr_mult
         # initalize the weight
@@ -8365,7 +8378,8 @@ class MappingNetwork(nn.Module):
         super().__init__()
         layers = [] 
         for i in range(num_layers):
-            layers.append(EqualizedLinear(z_dim if i==0 else w_dim, w_dim))
+            # to encourage slower/smoother updates in the latent space mapping we use a much smaller lr_mult
+            layers.append(EqualizedLinear(z_dim if i==0 else w_dim, w_dim,lr_mult=0.01))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
         self.net = nn.Sequential(*layers)
 
@@ -8468,20 +8482,24 @@ class GeneratorStyleGAN1(nn.Module):
         print(f'{channels=}')
         
         # unlike progan, we start with a learned constant tensor, as if its a blank canvas
-        # and little by little draw on it! we start with a 1x512x4x4 block
+        # and little by little draw on it! we start with a 1x512x8x8 block(the paper does this!
+        # so do we!)
         # I initally used torch.ones and it aligns better with my initial analogy
-        # but since paper used randn (for better starting variance I guess) I go with that
+        # but since official impl used randn (for better starting variance I guess) I go with that
         # as well!
-        # self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
-        self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
+        # self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 8, 8)))
+        self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 8, 8)))
         
         self.mapping_network = MappingNetwork(z_size, w_size)
-        # unlike progan, the paper doesnt use tanh, and outputs are unbounded.
-        # the idea is, tanh might help initially, but since its saturating, it can
+        # unlike progan, the official tensorflow implementation doesnt use tanh, and
+        # outputs are unbounded.(see https://github.com/NVlabs/stylegan/blob/master/training/networks_stylegan.py#L524)
+        # the idea is, we know tanh might help initially, but since its saturating, it can
         # lead to slow convergence/limit the expressiveness of the network. without
         # it the network should(and will) be able to learn the proper range itself
-        # so its not an issue if the dataset images are normalized to -1,1, it can handle it
-        # (sidenote: if tanh gets saturated, we see washedout colors or even mode collapse!)
+        # so theres no issue if we normalize the dataset images to -1,1 during training,
+        # it can handle it just fine (sidenote: if tanh gets saturated, we see washed out
+        # colors or even mode collapse!) so I remove the tanh here. (now that I think about it
+        # I guess progan also didnt use tanh! but I did! need to remove that aswell!)
         self.toImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(channels[i], 3, kernel_size=1),
                                                    ) for i in range(max_steps)])
         
@@ -8510,7 +8528,7 @@ class GeneratorStyleGAN1(nn.Module):
         # otherwise, process the input from the lowest res to the
         # current res and go for fadein at the end.
         
-        if step == 0: #4x4
+        if step == 0: #8x8
             x = self.blocks[0](x,w)
             x = self.blocks[1](x,w)
             return self.toImgs[step](x)
@@ -8546,12 +8564,13 @@ class GeneratorStyleGAN1(nn.Module):
     
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
-max_steps = 7
+max_steps = 6
 disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
 # test all the stages/steps
-for i in range(max_steps):
-    H= W = 2**i*4
+for i in range(0,max_steps):
+    # start off with 8x8 this time
+    H = W = 2**i*8
     x = torch.randn(size=(5,3,H,W))
     z = torch.randn(size=(5,100))
     disc_out = disc(x, alpha=1, step=i)
