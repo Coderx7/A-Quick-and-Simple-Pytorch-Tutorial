@@ -8207,7 +8207,8 @@ with torch.no_grad():
 # it
 
 # StyleGan1: https://arxiv.org/pdf/1812.04948
-# The first StyleGAN paper was introduced to address one of the biggest issues of PROGAN architecture.
+# The first StyleGAN paper(A Style-Based Generator Architecture for Generative Adversarial Networks)
+# was introduced to address one of the biggest issues of PROGAN architecture.
 # the main issues of the progan architecture is that as long as we want unconditional images, it 
 # works very good. however, when we try to go conditional and control the features/styles, it becomes
 # very hard. PROGAN doesnt do a good job in feature disentanglement (it has high feature entanglment!)
@@ -8235,48 +8236,73 @@ with torch.no_grad():
 # so to speak (compared to our initial fixed gaussian distribution) and is therefore much better for 
 # representing different factors or elements of variantions in our training data)
 # 
-# with this chagne, the authors now decided to call the generator, the synthethis network, because it 
+# because of these changes, the authors decided to call the generator, the synthesis network, because it 
 # now starts with a learned constant tensor(as if its a blank canvas! a tensor of 1s e.g.!) instead of
 # a random latent vector. (note we dont feed the w as input to generator) all the information about 
-# an image is injected at each layer and the latent vector w will be used to extract the styles from 
-# basically we feed w to two linear layer to get two separate components, scale and bias(basically std and mean!)
-# with which we direct the generation process towards the styles we want.
-# That is we use them by the AdaIN(adaptive instance normalization) module to add them to each featuremap
-# at each level. AdaIN normalizes each featuremap to have zero mean and unit variance(σ=1) (basically it 
+# an image is injected at each layer,(that is these operations occure in each block) and the 
+# latent vector w will also be used to extract the styles from.
+# basically we feed w to two linear layers to get two separate components, the scale and bias(basically std and mean!)
+# with which we direct the generation process towards the style we want.
+# This happens in the AdaIN(adaptive instance normalization) layer, we get the scale/bias and add them 
+# to each featuremap at each level. AdaIN normalizes each featuremap to have zero mean and unit variance(σ=1) (basically it 
 # removes the current style in the image) so we can then use the new scale(std)/bias(mean) from w to 
 # modulate/style the normalized featuremap (i.e direct the generation process by enforcing our specific
 # scale/bias. I used std/mean, because effectively we are applying them instead of the previous std/mean
-# if you recall our autoencoder chapter, we did similar thing back then to get specific styles as well!).
+# if you recall our autoencoder chapter, we did a similar thing back then to get specific styles as well!).
 # 
 # sidenote2:
 # in literature people use modulate/style when applying scale/bias, I initially used normalize, but since
 # it might give an incorrect meaning, I chose to use module/style as well. normalize or normalization is
-# usually used to convey transforming or forcing the data into a standard state like mean=0/std=1, but here
+# usually used to convey we're transforming or forcing the data into a standard state like mean=0/std=1, but here
 # we arent doing that, so calling it normalizing may not be correct thats why I guess people tend to call 
-# this kind of normalization, modulation/styling instead!
+# this kind of normalization, modulation/styling instead!(the paper itself calls it "style" in section 2
+# where it details the process, and says they called it so because previous works used similar networks to 
+# do style transfer. in official tf implementation though they call it modulation (style modulation))
+#
 # (quicknote: it seems people in electronics/signal processing refer to the expressions such as
 # "scale*input + bias" as modulation! so thats why they decided to call this modulation! also if
 # we imagine the input as a canvas that the network is trying to draw something on, in thatcase
-# normalizing it wouldnt make sense, rather styling it would make sense hence why some people called
-# it style!(honestly its a personal thing, cuz if you plan on using analogies, normalizing the
+# normalizing it wouldnt make sense, rather styling it would make much more sense hence why some
+# called it style!(honestly its a personal thing, cuz if you plan on using analogies, normalizing the
 # first time shouldnt be called normalizing but reseting canvas! so I guess modulate is a better
-# technical term and style is a better analogy, and normilize would be mathimatically correct because
-# thats what we are doing essentially, but its confusing nonetheless because of what we said! so
-# modulate it is!))
+# technical term and style is a better analogy, and normalize would be mathimatically correct because
+# thats what we are doing essentially, but it'd be confusing nonetheless because of what we just
+# discussed! so modulate it is!))
 #
-# this way we apply a global style in a scale specific manner, so for example at lower resolutions (i.e. 4-8)
-# it controls the high level features like face shapes and pose, basically corase features, while at 
-# mid resolutions (i.e. 16-32) it controls the mid level features like facial shape and style and 
-# at high resolutions like 64 to 1024, it controls the fine details in the image like colors(hair/eye,lighting),
-# and other microstructures (i.e. skin textures,etc).
+# this way we apply a global style in a scale specific manner, so for example at lower resolutions 
+# (i.e. 4-8) it controls the high level features like face shapes and pose, basically corase features,
+# while at mid resolutions (i.e. 16-32) it controls the mid level features like facial shape and style
+# and at high resolutions like 64 to 1024, it controls the fine details in the image like colors(hair/eye,lighting),
+# and other microstructures (i.e. skin textures,etc). I used facial features because prgan was mainly
+# trained on celeba, and its more intuitive (it was trained on other datasets as well like lsun/cifar10
+# but with celeba its much easier for analogies and examples)
 # 
-# in addition to that, to introduce random variations in the image like hair placement, freckles, skin pores,
-# etc, the authors decided to inject guassion noise to each featuremap. this was done to prevent the 
-# network from generating psuedorandom patterns from determinstic inputs and therefore reduce artifacts
-# like repition that is seen in other GAN architectures.(instead of leting the network try to insert
-# such minor variations into the w aswell, and hence waste its capacity! they decided to do this so 
-# the network has an easier time doing its job. read the paper now, this is beautifully shown in page 5 fig5.) 
-# 
+# in addition to that, to introduce random variations(Stochastic variation as the paper calls it),
+# in the image like hair placement, freckles, skin pores, etc, the authors decided to inject guassion
+# noise to each featuremap aswell. 
+# this was done to prevent the network from generating psuedorandom patterns from determinstic 
+# inputs and therefore reduce artifacts like repition that is seen in other GAN architectures.
+# (instead of leting the network try to insert such small variations into the w as well, and 
+# hence waste its capacity on learning them and make all of this process harder than it is! 
+# they decided to do this so the network has an easier time doing its job! and it immediatly shows! 
+# the paper explains it better than me, 
+# from section 3.2. Stochastic variation: 
+# "...Let us consider how a traditional generator implements stochastic variation. 
+# Given that the only input to the network is through the input layer, the network needs to
+# invent a way to generate spatially-varying pseudorandom numbers from earlier activations 
+# whenever they are needed. This consumes network capacity and hiding the periodicity of
+# generated signal is difficult — and not always successful, as evidenced by commonly seen
+# repetitive patterns in generated images. Our architecture sidesteps these issues altogether
+# by adding per-pixel noise after each convolution."
+# from Figure 5:
+# "Figure 5. Effect of noise inputs at different layers of our generator. 
+# (a) Noise is applied to all layers. (b) No noise. (c) Noise infine layers only (64² – 1024²)
+# (d) Noise in coarse layers only(4² – 32²)
+# We can see that the artificial omission of noise leads to featureless “painterly” look.
+# Coarse noise causes large-scale curling of hair and appearance of larger background features,
+# while the fine noise brings out the finer curls of hair, finer background detail, and
+# skin pores." read the paper now, this is beautifully shown in page 5) 
+#
 # another notable trick the authors used in the paper was to use a technique called style mixing or 
 # mixing regularization, in which during training they mix two latent vectors w1,w2 with a probablity (50%-90%) 
 # so two styles are swapped/switched at a random point! this was done so the localized style effects 
@@ -8318,33 +8344,46 @@ with torch.no_grad():
 # 
 # the R1 formula therefore is :
 # L_R1 = (gamma/2) * E[ || ∇D(x_real) ||² ]
-# where lambda (or (gamma/2)) is the multiplier for specifying the penalty strength
+# where (gamma/2) is the multiplier for specifying the penalty strength.
 # the || ∇D(x_real) ||² is squared L2 norm(sum of squares) of the gradients of discriminator's
 # output with respect to the inputs(real images). we add this penalty term to the discriminator's loss.
 # so the discriminators loss becomes: 
 # D_loss = E[softplus(-D(real)) + softplus(D(G(z)))] + (γ/2 * E[||∇D(x_real)||²])
 # 
+#quicknote: the gradient operator ∇, is called del
+#
 # sidenote:
 # why do we write γ/2(gamma/2) and not just gamma or lambda without the fraction?
-# a multiplier(we can call it lambda(λ))) would just work as well!
-# yes thats right, the reason is when calculating the gradients, this 1/2 will 
-# cancel out the squared gradient norm( g² or ||∇D(x_real)||²) power(the 2) and
-# make the gradinet calculation clean and simple (mathimatically!) 
-# that is, when we take the gradient it'd become
-# d/dg => 1/2*g² => 1/2*2*g = g!
-# thats it! so as a multiplier, a scaler, we can call it lambda, and assign any 
+# its a multiplier after all and we can call it lambda(λ) or gamma(γ) or anything else and it'd just work as well!
+# yes thats right, however the reason for using a different name like gamma and using 1/2 factor
+# instead of just lambda alone like we did back in wgan loss section, is because having 1/2 makes 
+# gradient calculation much easier and simpler. I used gamma because the paper calls it gamma and
+# the distinction is important as well.
+# when we calculate the gradients, this 1/2 will cancel out the squared gradient norm power(the 2)
+# (2 in g² or ||∇D(x_real)||²) and make the gradient calculation clean and simple (mathimatically!) 
+# that is, it'd become d/dg => 1/2*g² => 1/2*2g = g!
+# thats it! so as a multiplier/scaler, we can call it lambda or any other name, and assign any 
 # number to specify the strength of the actual penalty term(|| ∇D(x_real) ||²), 
-# but for clear gradient calculation (mathimatic/formula wise), calling it gamma/2,
+# however for clearer gradient calculation (mathimatics/formula wise), calling it gamma/2,
 # makes it clear that the 1/2 is there for cleaner gradient calculation, and the 
-# gamma value of 10 e.g. as reported by many is infact means the strength of penalty is
-# the same as lambda=5! (so I use lambda simple as a scaler for penalty term, like
-# l*penalty, whereas gamma here is accompanied by 1/2 so yeah! to be align with the paper
-# and other implementations I also use gamma/2 and therefore use the value of 10! in training)
+# when the value of gamma is reported as e.g. 10 in the paper, as the strength of penalty used in training, 
+# everyone knows the actual effective strength is infact 5! 
+# so those who simplify the formula and directly go for lambda*penalty term e.g. will be using
+# twice the actual amount if they follow the paper details on training hyperpameters and not realize it!
+# this is actually what I fell for in the progan section. so I thought I added this note here!
+# (so we can use lambda simply as a scaler for penalty term, like l*penalty, like before, 
+# to distinuish it from the gamma/2 and thus use different number accordinly, but it makes it 
+# more confusing and made us make mistake before, so to be aligned with the paper and other 
+# implementations I also use gamma/2 and dont simplify the formula so we dnt make any mistakes
+# and can easily follow the paper and other implementations hyperparameter choices!)
 #
 # sidenote:
 # as the paper states in table1, the FID score they report is the lowest score they could
-# achieve during the whole training!(involving 50K of training images) it doesnt mean, the
-# images they got at ihghest resolution were in fact the lowest
+# achieve during the whole training!(involving 50K of training images by the way) so this
+# doesnt mean, the images they got at ihghest resolution were giivng in fact the lowest FID!
+# we saw that in progan ourselevs that we could get to around 8 or 11 in 32x32 res, but not
+# in the higher resolutions(because its more complex and takes time to get good) so yeah! just
+# be aware of that
 #
 # these were all the changes the stylegan paper had compared to progan. 
 # so all other progan related novelities are still valid, we can safely say stylegan1
@@ -8507,7 +8546,6 @@ class NoiseInjection(nn.Module):
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
 
         return x+(self.weight*noise)
-    
 
 # StyleBlock
 # unlike progan, since we have new operations, we need to make a new block
