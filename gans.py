@@ -8372,6 +8372,8 @@ with torch.no_grad():
 # D_loss = E[softplus(-D(real)) + softplus(D(G(z)))] + (γ/2 * E[||∇D(x_real)||²])
 # 
 #quicknote: the gradient operator ∇, is called del
+#quicknote2: ||.|| is l2norm! dont mistake it with ||.||² which is l2norm suqared!(obviously!)
+# 
 #
 # sidenote:
 # why do we write γ/2(gamma/2) and not just gamma or lambda without the fraction?
@@ -8730,8 +8732,52 @@ for i in range(0,max_steps):
 #%%
 # now for training the loop stays the same with minor changes
 # before we go for training we need a few more things to implement.
-# the mixing regularization and 
+# the mixing regularization and the loss function
+def r1_penalty(d_preds, x_real:torch.Tensor, gamma=10):
+    
+    assert x_real.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
+    
+    grads = torch.autograd.grad(outputs=d_preds,
+                                inputs=x_real,
+                                grad_outputs=torch.ones_like(d_preds),
+                                create_graph=True,
+                                retain_graph=False,
+                                only_inputs=True)[0]
+    # take squared l2norm 
+    # we coluld do
+    # grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
+    # but this is a bit faster cuz we dont do norm which uses sqrt!(which is then pow(2)
+    # so they cancel eachother out!)
+    grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
+    penalty = gamma/2 * grads_l2norm_squared
+    return penalty
 
+def discriminator_loss(disc:DiscriminatorStyleGAN1, x_real, x_fake, gamma, i, interval, *args):
+    # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
+    # softplus is log(1+exp(x)) but since pytorch offers a numerically
+    # stable version, we use the builtin one
+    
+    # we can do this in the actual trainig loop, so we dont do this twice!
+    # todo think about it, the only worry is vram usage because of x_real.requires_grad_(True)
+    preds_fake = disc(x_fake.detach(), *args)
+    # our inputs are detached leaf nodes that dont have gradients by default
+    # they dont track gradients, so to get gradients, we 
+    # must enable it by setting requires_grad property t true
+    x_real.requires_grad_(True)
+    preds_real = disc(x_real, *args)
+    
+    loss = (F.softplus(-preds_real) + F.softplus(preds_fake)).mean()
+    
+    # since r1_penalty is computationally expensive 
+    # the authors only applied it every few steps 
+    if (i%interval)==0:
+        loss += r1_penalty(preds_real, x_real, gamma)
+    
+    return loss
+
+def generator_loss(d_preds_fake):
+    # G_loss = E[softplus(-D(G(z)))]
+    return F.softplus(-d_preds_fake).mean()
 
 
 #%%
