@@ -8733,51 +8733,65 @@ for i in range(0,max_steps):
 # now for training the loop stays the same with minor changes
 # before we go for training we need a few more things to implement.
 # the mixing regularization and the loss function
-def r1_penalty(d_preds, x_real:torch.Tensor, gamma=10):
+def r1_penalty(d_preds, x_real, gamma=10):
     
     assert x_real.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
-    
+    #sidenote:
+    # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
+    # .sum() aggregates the discriminators outputs into a scaler 
+    # and tells the grad() what to differntiate. sum as you recall distributes
+    # the gradients to every single element equally, so its the same as starting
+    # the gradient calculation process by providing all ones for every d_preds elements
+    # (i.e. torch.ones_like(d_preds)). so its basically a simple trick
+    # that saves us from typing a few characters more! 
+    # I prefer our version better because its clear what and why im doing this(sum is
+    # aswell, but ours is straightforward)
     grads = torch.autograd.grad(outputs=d_preds,
                                 inputs=x_real,
                                 grad_outputs=torch.ones_like(d_preds),
-                                create_graph=True,
-                                retain_graph=False,
-                                only_inputs=True)[0]
-    # take squared l2norm 
-    # we coluld do
-    # grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
-    # but this is a bit faster cuz we dont do norm which uses sqrt!(which is then pow(2)
-    # so they cancel eachother out!)
+                                create_graph=True)[0]
+    
+    # take squared l2norm (l2norm is sqrt(sum(x²)) so squaring it becomes: sqrt(sum(x²))²
+    # we coluld do: grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
+    # but our second version is a bit faster becaue sqrt and pow operations are not 
+    # used (they cancel eachother out anyway so theres no need to calculate them)
     grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
     penalty = gamma/2 * grads_l2norm_squared
     return penalty
 
-def discriminator_loss(disc:DiscriminatorStyleGAN1, x_real, x_fake, gamma, i, interval, *args):
+def discriminator_loss(d_preds_real, x_real, d_preds_fake, gamma, i, interval=16,):
     # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
     # softplus is log(1+exp(x)) but since pytorch offers a numerically
     # stable version, we use the builtin one
     
     # we can do this in the actual trainig loop, so we dont do this twice!
-    # todo think about it, the only worry is vram usage because of x_real.requires_grad_(True)
-    preds_fake = disc(x_fake.detach(), *args)
-    # our inputs are detached leaf nodes that dont have gradients by default
-    # they dont track gradients, so to get gradients, we 
-    # must enable it by setting requires_grad property t true
-    x_real.requires_grad_(True)
-    preds_real = disc(x_real, *args)
+    # think about it, the only worry is vram usage because of x_real.requires_grad_(True)
+    # I guess having this done only once is less headcahe and much clearer
+    # so we enable x_real.requires_grad(True) in the actual training loop itself!
+    # ultimately we may endup going fp16 if vram usage becomes too much for us
     
-    loss = (F.softplus(-preds_real) + F.softplus(preds_fake)).mean()
+    # our inputs are detached leaf nodes that dont have gradients by default
+    # the autograd system doesnt track gradients for them, so to get gradients,
+    # we need to enable their gradients 
+    # x_real.requires_grad_(True)
+    
+    loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
     
     # since r1_penalty is computationally expensive 
     # the authors only applied it every few steps 
     if (i%interval)==0:
-        loss += r1_penalty(preds_real, x_real, gamma)
-    
+        penalty = r1_penalty(d_preds_real, x_real, gamma)
+        # since we are doing this only every few intervals, 
+        # we should also scale the loss by interval to acount
+        # for this intermittent appliance and ultimately the average
+        # checks out at the end. this is called lazy r1_penalty!
+        loss = loss + (interval * penalty)
     return loss
 
 def generator_loss(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
     return F.softplus(-d_preds_fake).mean()
+#%%
 
 
 #%%
