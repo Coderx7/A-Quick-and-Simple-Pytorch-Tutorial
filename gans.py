@@ -8304,6 +8304,27 @@ with torch.no_grad():
 # while the fine noise brings out the finer curls of hair, finer background detail, and
 # skin pores." read the paper now, this is beautifully shown in page 5) 
 #
+# also relevant read
+# from paper - section 3.3 Separation of global effects from stochasticity:
+# "... while changes to the style have global effects
+# (changing pose, identity, etc.), the noise affects only
+# inconsequential stochastic variation (differently combed
+# hair, beard, etc.). This observation is in line with style transfer 
+# literature, where it has been established that spatially
+# invariant statistics (Gram matrix, channel-wise mean, variance, etc.)
+# reliably encode the style of an image [20, 39]
+# while spatially varying features encode a specific instance.
+# In our style-based generator, the style affects the entire
+# image because complete feature maps are scaled and biased with the same values. 
+# Therefore, global effects such as pose, lighting, or background style 
+# can be controlled coherently. Meanwhile, the noise is added independently to
+# each pixel and is thus ideally suited for controlling stochastic variation. 
+# If the network tried to control, e.g., pose using
+# the noise, that would lead to spatially inconsistent decisions
+# that would then be penalized by the discriminator. Thus the
+# network learns to use the global and local channels appropriately,
+# without explicit guidance."
+#
 # another notable trick the authors used in the paper was to use a technique called style mixing or 
 # mixing regularization, in which during training they mix two latent vectors w1,w2 with a probablity (50%-90%) 
 # so two styles are swapped/switched at a random point! this was done so the localized style effects 
@@ -8486,25 +8507,71 @@ class DiscriminatorStyleGAN1(nn.Module):
 # but I found out other implementations dont use the vanilla version like us, they
 # do it a bit differently, they instead do (1/sqrt(fan_in))*lr_mult. the lr_mult is 
 # there to be able to tune the lr dynamically during training and they usually set it
-# to 0.01. its both used in the scaler itself and is also applied on the bias! to make
+# to 0.01 for mapping_network layer(other times its set to 1).
+# its both used in the scaler itself and is also applied on the bias! to make
 # training more stable (so both weights and bias are scaled by lr_mult)
 # todo: check and set proper lr_mult in the architecture, we need to use 0.01 in mapping 
-# only and the rest should use lr_mult=1
-# )
+# only and the rest should use lr_mult=1)
+
+# todo: should we just switch to nn.module instead of linear and make it clearer
+# or its fine and make the otherone inherit from conv like this?
 class EqualizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
         super().__init__(in_features, out_features, bias=True, device=device, dtype=dtype) 
         self.lr_mult = lr_mult
         # initalize the weight
         self.weight.data.normal_(0,1)
-        # the implementations use sqrt(1/fanin), they do this simplification
-        # because the original formula was for relu, since we dont use that
-        # its safe to use 1/fanin instead
+        # some implementations use 1/sqrt(fanin), since we dont use relu
+        # √2 overcompensates and makes activations larger than they should
+        # and can lead to training instability so the official impl used 1/sqrt(fanin)
         self.scaler = (1/math.sqrt(self.in_features))*self.lr_mult
         
     def forward(self, x):
         # note we are scaling the bias as well
         return F.linear(x, self.weight*self.scaler, self.bias*self.lr_mult)
+
+# implemented based on official tf impl
+class EqualizedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, lr_mult=1.0, bias=True):
+        super().__init__()
+
+        self.bias = bias
+        self.stride = stride
+        self.padding = padding
+        self.lr_mult = lr_mult
+
+        # initialize the weights 
+        self.weight = nn.Parameter(torch.randn(size=(out_channels, in_channels, kernel_size, kernel_size)))
+        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+        
+        # the official impl uses 1/sqrt(fan_in) because the √2 is there to 
+        # compensate for the variance drop when we use relu
+        # which zeros half of the activations! 
+        # therefore when we use the leakyrelu which doesnt zero out 
+        # as much, the activation variance also wont drop by half
+        # so if we use √2 with leakyrelu, it will overcompensate and
+        # and make activations too large, and lead to training instability
+        # it could be one of the reasons why I faced so much issues in training
+        # past some resolutions.(but ultimately we managed to get good results
+        # so I'm not sue how much of an impact this is gonna have on us
+        # to be on the safe side, I do as the official tf impl does this time!)
+        # also the whole thing is further scaled it by lr_mult,though
+        # for conv layer its 1! but I added it anyway!
+        # 
+        fan_in = in_channels * kernel_size * kernel_size
+        self.scaler = (1/math.sqrt(fan_in)) * lr_mult
+        
+    def forward(self, x):
+        # scale the conv weights, note that in backprop, the gradients are calculated
+        # with respect to self.conv.weight normally, and our scaler here, a python scaler
+        # mind you!, just acts as a scaler (obviously) and scales the gradients so they stay
+        # uniformly scaled!!
+        scaled_weights = self.weight * self.scaler
+        # in the official code bias is also scaled
+        scaled_bias = self.bias * self.lr_mult if self.bias is not None else None
+        return F.conv2d(x, scaled_weights, scaled_bias, stride=self.stride, padding=self.padding)
+
+
  
 # Mappingnetwork is an 8 layer mlp wtih leakyrelu as nonlinearity
 # it accepts the latent vector z and gives us the latent vector w
@@ -8580,8 +8647,12 @@ class NoiseInjection(nn.Module):
 # StyleBlock
 # unlike progan, since we have new operations, we need to make a new block
 # we need AdaIN, EqualizedConv, and NoiseInjection with leakyrelu 
+# the description of each block is given in figure1 page 2 of the paper
+# but the official tf implementation differs from it! in official code
+# the order is conv>bias>lrelu>noise>adain but paper says conv>noise>lrelu>adain!
+#! if things doesnt work out comeback and use the official tf code order
 class StyleConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False,
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
                  w_size=512, upsample=False, eps=1e-8):
         super().__init__()
         self.in_channels = in_channels
@@ -8589,6 +8660,8 @@ class StyleConvBlock(nn.Module):
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        # the official tf implementations applies bias separately after conv
+        # so I include bias instead!
         self.bias = bias
         self.w_size = w_size
         self.upsample = upsample
@@ -8611,14 +8684,12 @@ class StyleConvBlock(nn.Module):
         out = self.adain(out, w)
         return out
 
-# update:
-# its easier for us to implement style mixing here inside generator
+# its much easier for us to implement style mixing here inside generator
 # than implement it as a standalone function and use it during training!
 # doing it here is much more straightforward and easier
 # basically with a probablity e.g 90% chance we use two latent vector z
 # instead of just 1, and combine their ws together and feed that to our
 # generator. we only do that in training as we explained before
- 
 class GeneratorStyleGAN1(nn.Module):
     def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2, style_mixing_prob=0.9):
         super().__init__()  
@@ -8725,7 +8796,7 @@ class GeneratorStyleGAN1(nn.Module):
         # current res and go for fadein at the end.
         
         if step == 0: #4x4
-            # we need to pass w for each layer accordingly
+            # we need to pass a separate w for each layer accordingly
             x = self.blocks[0](x, w[:,0,:])
             x = self.blocks[1](x, w[:,1,:])
             return self.toImgs[step](x)
