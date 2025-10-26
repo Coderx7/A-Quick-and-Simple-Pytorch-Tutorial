@@ -8695,17 +8695,14 @@ class GeneratorStyleGAN1(nn.Module):
             # this is done so the images that get generated have their
             # coarse features (early layers) come from from one style 
             # and their fine details(later layers) from another.
-            # to make this work, since we have one w (for each sample)
-            # cuz we get one w for each z and z is batchsize!), 
-            # we need to repeat it for as many layers as we have, 
-            # that way we can then easily grab some from the first w
-            # and the rest from the second w and form our final w!
-            # so the corssover point is calculated based on number 
-            # of layers here
+            # but we have 1 w for each sample! after all mapping network
+            # produces one w for eac z! i.e. we have 1 w for each sample
+            # to make this work, we simply repeat it for as many layers
+            # as we have, now we have a w for each layer and the corssover
+            # point is calculated based on number of layers here
             crossover_point = random.randint(1, num_styles-1)
-            # now to get this to work with our current ws, we need to repeat them
-            # along the channels dim so we get (b,num_styles,w_dim)
-            # one w for each layer.
+            # repeat along the channels dim so we get (b,num_styles,w_dim)
+            # one w for each layer!
             # to avoid an extra concat, we assign the first part to w
             # and change the other half with w2 so we dont do 
             # something like (w = torch.cat([w1[:,:crossover_point], w2[:,crossover_point:]],dim=1))
