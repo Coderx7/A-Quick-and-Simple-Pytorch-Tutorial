@@ -8419,7 +8419,7 @@ with torch.no_grad():
 
 # the discriminator from progan stays nearly the same except for the first res
 # that starts at 8x8 instead of 4x4 and the final layer that uses two fc layers
-# instead of 1 conv layer. ist practically the same!
+# instead of 1 conv layer. its almost the same!
 #
 class DiscriminatorStyleGAN1(nn.Module):
     def __init__(self, max_steps=6, starting_base=2):
@@ -8679,18 +8679,44 @@ class GeneratorStyleGAN1(nn.Module):
     
     def forward(self, z, alpha, step):
         # stylemixing during training
+        # initially I used a single w for all layers, but as the paper
+        # says, the w must be per layer. that is duing the mixing process
+        # we need to provide a different w for each AdaIN layer in each block
+        # so we need to calculate the number of styles (number of styleconvblocks)
+        # since we have 2 layers per resolution for each step we will have:
+        num_styles = 2*(step+1)
         if self.training and random.random() <self.style_mixing_prob:
             w1 = self.mapping_network(z)
             # grab a second z, calculate the w
             z2 = torch.randn(size=z.size(), device=z.device)
             w2 = self.mapping_network(z2)
             # now we need to pick a crossover point to stich half of
-            # each w with the other one and form a new w! and use that
-            crossover_point = random.randint(1,w2.size(1))
-            w = torch.cat([w1[:,:crossover_point],w2[:,crossover_point:]],dim=1)
+            # each w with the other one and form a new w!
+            # this is done so the images that get generated have their
+            # coarse features (early layers) come from from one style 
+            # and their fine details(later layers) from another.
+            # to make this work, since we have one w (for each sample)
+            # cuz we get one w for each z and z is batchsize!), 
+            # we need to repeat it for as many layers as we have, 
+            # that way we can then easily grab some from the first w
+            # and the rest from the second w and form our final w!
+            # so the corssover point is calculated based on number 
+            # of layers here
+            crossover_point = random.randint(1, num_styles-1)
+            # now to get this to work with our current ws, we need to repeat them
+            # along the channels dim so we get (b,num_styles,w_dim)
+            # one w for each layer.
+            # to avoid an extra concat, we assign the first part to w
+            # and change the other half with w2 so we dont do 
+            # something like (w = torch.cat([w1[:,:crossover_point], w2[:,crossover_point:]],dim=1))
+            w = w1.unsqueeze(1).repeat(1,num_styles,1)# (b,num_styles,w_dim)
+            w[:, crossover_point:,:] = w2.unsqueeze(1).repeat(1,num_styles-crossover_point,1)
+            # print(f'{crossover_point=}')
         else:
             #convert the latent z into latent w
             w = self.mapping_network(z)
+            # make w per layer like before so each adaIN gets 
+            w = w.unsqueeze(1).repeat(1,num_styles,1)
             
         # set the batchsize forr const_input/canvas
         x = self.const_input.repeat(z.size(0), 1,1,1)
@@ -8702,8 +8728,9 @@ class GeneratorStyleGAN1(nn.Module):
         # current res and go for fadein at the end.
         
         if step == 0: #4x4
-            x = self.blocks[0](x,w)
-            x = self.blocks[1](x,w)
+            # we need to pass w for each layer accordingly
+            x = self.blocks[0](x, w[:,0,:])
+            x = self.blocks[1](x, w[:,1,:])
             return self.toImgs[step](x)
         
         # now feed the inputs x and w to blocks
@@ -8717,7 +8744,7 @@ class GeneratorStyleGAN1(nn.Module):
             # if we do this after the following if block, previous_image
             # would be the raw const_input that has not been stylized by adain
             # and noiseinjection is not applied!
-            x = self.blocks[i](x, w)
+            x = self.blocks[i](x, w[:,i,:])
             # save a copy of previous step output
             if i == (2*step-1) and alpha<1:
                 # the current x is the output for previous res so 
@@ -8740,6 +8767,7 @@ class GeneratorStyleGAN1(nn.Module):
 max_steps = 7
 disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
+
 # test all the stages/steps
 for i in range(0,max_steps):
     # start off with 4x4
