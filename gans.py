@@ -22,6 +22,7 @@
 import os
 import math
 import time
+import random
 import copy
 from datetime import datetime
 from pathlib import Path
@@ -8609,11 +8610,20 @@ class StyleConvBlock(nn.Module):
         # and finally apply the styles from w on the output
         out = self.adain(out, w)
         return out
-        
+
+# update:
+# its easier for us to implement style mixing here inside generator
+# than implement it as a standalone function and use it during training!
+# doing it here is much more straightforward and easier
+# basically with a probablity e.g 90% chance we use two latent vector z
+# instead of just 1, and combine their ws together and feed that to our
+# generator. we only do that in training as we explained before
+ 
 class GeneratorStyleGAN1(nn.Module):
-    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2):
+    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2, style_mixing_prob=0.9):
         super().__init__()  
-           
+        
+        self.style_mixing_prob = style_mixing_prob   
         # lets do the same thing for generator
         self.setup_layers(z_size, w_size, max_steps,starting_base)
         
@@ -8666,10 +8676,22 @@ class GeneratorStyleGAN1(nn.Module):
         for i in range(1, max_steps):
             self.blocks.append(StyleConvBlock(channels[i-1], channels[i], w_size=w_size, upsample=True))
             self.blocks.append(StyleConvBlock(channels[i], channels[i], w_size=w_size, upsample=False))
-       
+    
     def forward(self, z, alpha, step):
-        #convert the latent z into latent w
-        w = self.mapping_network(z)
+        # stylemixing during training
+        if self.training and random.random() <self.style_mixing_prob:
+            w1 = self.mapping_network(z)
+            # grab a second z, calculate the w
+            z2 = torch.randn(size=z.size(), device=z.device)
+            w2 = self.mapping_network(z2)
+            # now we need to pick a crossover point to stich half of
+            # each w with the other one and form a new w! and use that
+            crossover_point = random.randint(1,w2.size(1))
+            w = torch.cat([w1[:,:crossover_point],w2[:,crossover_point:]],dim=1)
+        else:
+            #convert the latent z into latent w
+            w = self.mapping_network(z)
+            
         # set the batchsize forr const_input/canvas
         x = self.const_input.repeat(z.size(0), 1,1,1)
         # the process goes like this:
