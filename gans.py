@@ -8450,12 +8450,12 @@ class DiscriminatorStyleGAN1(nn.Module):
     def setup_layers(self, max_steps, starting_base):
         self.max_steps = max_steps
         self.starting_base = starting_base
-        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
-        print(f'{channels=}')
+        self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        # print(f'{channels=}')
 
-        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, channels[i], kernel_size=1),
+        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, self.channels[i], kernel_size=1),
                                                      nn.LeakyReLU(0.2)) for i in range(max_steps)])
-        self.blocks = nn.ModuleList([DiscBlockProGAN(channels[i],channels[i-1]) for i in range(1,max_steps)])
+        self.blocks = nn.ModuleList([DiscBlockProGAN(self.channels[i],self.channels[i-1]) for i in range(1,max_steps)])
 
         self.remaining_blocks = nn.ModuleList()
         for step in range(self.max_steps):
@@ -8467,16 +8467,16 @@ class DiscriminatorStyleGAN1(nn.Module):
         
         # StyleGAN Discriminator has 2 Linear layer at the end
         self.final = nn.Sequential(AddBatchStdDev(),
-                                   EqualizedConv2d(channels[0]+1, channels[0], kernel_size=3, padding=1),
+                                   EqualizedConv2d(self.channels[0]+1, self.channels[0], kernel_size=3, padding=1),
                                    nn.LeakyReLU(0.2),
                                    #2 FC layers ?(FC-LReLU-FC)?
                                    nn.Flatten(),
                                    # update: while the paper says they use 8x8! 
                                    # the official code I checked used 4x4! so we
                                    # use 4x4 to be safe (explained more in generator section below)
-                                   EqualizedLinear(channels[0]*4*4, channels[0]),
+                                   EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
                                    nn.LeakyReLU(0.2),
-                                   EqualizedLinear(channels[0],1))
+                                   EqualizedLinear(self.channels[0],1))
                                
     
     def forward(self, x, alpha, step):
@@ -8694,7 +8694,7 @@ class GeneratorStyleGAN1(nn.Module):
     def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2, style_mixing_prob=0.9):
         super().__init__()  
         
-        self.style_mixing_prob = style_mixing_prob   
+        self.style_mixing_prob = style_mixing_prob
         # lets do the same thing for generator
         self.setup_layers(z_size, w_size, max_steps,starting_base)
         
@@ -8706,8 +8706,8 @@ class GeneratorStyleGAN1(nn.Module):
         # for our simple tests this is ok, but if we wanted to go for higher res
         # we can repeat some channels for adjacent res to get better result
         # i.e. instead of doubling each time we can have e.g. [512,512,512,256,128,64...]
-        channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
-        print(f'{channels=}')
+        self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        # print(f'{channels=}')
         
         # unlike progan, we start with a learned constant tensor, as if its a blank canvas
         # and little by little draw on it! we start with a 1x512x8x8 block(the paper says so
@@ -8720,7 +8720,7 @@ class GeneratorStyleGAN1(nn.Module):
         # and it aligns better with my initial analogy. however in stylegan2 they used randn
         # instead (for better starting variance I guess, im not sure) so I added that aswell.
         # 
-        self.const_input = nn.Parameter(torch.ones(size=(1, channels[0], 4, 4)))
+        self.const_input = nn.Parameter(torch.ones(size=(1, self.channels[0], 4, 4)))
         # this is from stylegan2 (page 11 section B implementation details, generator redesign)
         # might be a good idea to test it later! for now stick to the torch.ones version!
         # until we get a fully working implementation then we can test!
@@ -8736,7 +8736,7 @@ class GeneratorStyleGAN1(nn.Module):
         # it can handle it just fine (sidenote: if tanh gets saturated, we see washed out
         # colors or even mode collapse!) so I remove the tanh here. (now that I think about it
         # I guess progan also didnt use tanh! but I did! need to remove that aswell!)
-        self.toImgs = nn.ModuleList([EqualizedConv2d(channels[i], 3, kernel_size=1) for i in range(max_steps)])
+        self.toImgs = nn.ModuleList([EqualizedConv2d(self.channels[i], 3, kernel_size=1) for i in range(max_steps)])
         
         # unlike the progan version, the stylegan paper uses two layers for each res
         self.blocks = nn.ModuleList()
@@ -8745,11 +8745,11 @@ class GeneratorStyleGAN1(nn.Module):
         # using one layer, means the network cant stylize the input strongly, so the base
         # would lacks refienments therefore we would face low convergence because 
         # the network has less ability in injecting diverse styles early on!
-        self.blocks.append(StyleConvBlock(channels[0], channels[0], w_size=w_size, upsample=False))
-        self.blocks.append(StyleConvBlock(channels[0], channels[0], w_size=w_size, upsample=False))
+        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
+        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
         for i in range(1, max_steps):
-            self.blocks.append(StyleConvBlock(channels[i-1], channels[i], w_size=w_size, upsample=True))
-            self.blocks.append(StyleConvBlock(channels[i], channels[i], w_size=w_size, upsample=False))
+            self.blocks.append(StyleConvBlock(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
+            self.blocks.append(StyleConvBlock(self.channels[i], self.channels[i], w_size=w_size, upsample=False))
     
     def forward(self, z, alpha, step):
         # stylemixing during training
@@ -8787,7 +8787,12 @@ class GeneratorStyleGAN1(nn.Module):
             # affect the style by changing or playing with each layers specific
             # w (the underlying storgae is the same, but final gradient sum is also
             # the same, but this way we take a different route of optimization and
-            # and using the mixing here get a whole different path!)
+            # and using the mixing here get a whole different path! put in 
+            # otherwords this is our attempt to make W more disentangled usinf this
+            # trick(it enforces better dientanglement and locality in the
+            # learned representations. we can still generate images without doing this
+            # (remember progan!) however, the whole issue was the enganglement! so this 
+            # helps with that! I guess its now too obvious!)
             #
             # sidenote:repeat uses view underthe hood, so it doesnt actually copy
             # anything, just points to the underlying data, so we could have
@@ -8859,6 +8864,9 @@ max_steps = 7
 disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
 
+for m in [disc, gen]:
+    print(f'channels: {m.channels}')
+    
 # test all the stages/steps
 for i in range(0,max_steps):
     # start off with 4x4
@@ -8900,7 +8908,7 @@ def r1_penalty(d_preds, x_real, gamma=10):
     penalty = gamma/2 * grads_l2norm_squared
     return penalty
 
-def discriminator_loss(d_preds_real, x_real, d_preds_fake, gamma, i, interval=16,):
+def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma, i, interval=16,):
     # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
     # softplus is log(1+exp(x)) but since pytorch offers a numerically
     # stable version, we use the builtin one
@@ -8929,10 +8937,446 @@ def discriminator_loss(d_preds_real, x_real, d_preds_fake, gamma, i, interval=16
         loss = loss + (interval * penalty)
     return loss
 
-def generator_loss(d_preds_fake):
+def generator_loss_stylegan1(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
     return F.softplus(-d_preds_fake).mean()
 #%%
+# we have implemented the disc/gen
+# we have implemented the losses
+# so lets do the training loop
+# no trunk approx
+
+@torch.no_grad()
+def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, warmup_images_seen, decay_rate=0.999):
+    # sidenote, we only update the parameters we dont touch buffers (we dont have
+    # any, but if we had like batchnorm, we wouldnt touch them as it would have
+    # destroyed their stats!)
+    decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
+    for ema_p,p in zip(g_ema.parameters(),g.parameters()):
+        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+
+def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
+                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
+                         split, r1_penalty_interval=16, gamma=10, gen_num_samples = 64, noise_addition=False, 
+                         use_ema_inference=False, ema_warmup_images_threshold=3_000_000,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
+                         decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
+        
+        
+    lr_d = disc_optimizer.param_groups[0]["lr"]
+    # generator has two lr one for mapping network
+    # and another for the rest of the network
+    lr_g = gen_optimizer.param_groups["lr"]
+    
+    betas_d = disc_optimizer.defaults["betas"]
+    betas_g = gen_optimizer.defaults["betas"]
+    
+    ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
+    
+    # real images seen so far during training
+    ema_warmup_images_seen = 0
+    
+    assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
+    
+    metric = IS_FID_Calculator(device)
+
+    fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
+
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+
+    starting_step = 0
+    starting_epoch = 0
+    last_training_step_counter = 0
+    max_steps = discriminator.max_steps
+    z_size = generator.z_size
+    
+    # check for resuming from a checkpoint
+    if resume:
+        if checkpoint_path:
+            checkpoint_filename = os.path.split(checkpoint_path)[-1]
+        else:
+            checkpoints_dirs = sorted([subdir for subdir in os.listdir(weights_save_dir)\
+                                       if os.path.isdir(os.path.join(weights_save_dir, subdir))])
+            #grab the last checkpoint/most recent one
+            checkpoint_dirpath = os.path.join(weights_save_dir, checkpoints_dirs[-1])
+            # grab the latest checkpoint 
+            checkpoint_files = sorted([f for f in os.listdir(checkpoint_dirpath) if f.endswith(".ckpt")])
+            checkpoint_filename = checkpoint_files[-1]
+            checkpoint_path = os.path.join(checkpoint_dirpath, checkpoint_filename)
+        
+        if not os.path.exists(checkpoint_path):
+            raise ValueError("The Path is not valid")
+        
+        # load the stuff
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        max_steps = checkpoint["max_steps"]
+        discriminator.setup_layers(max_steps)
+        discriminator.load_state_dict(checkpoint["disc_state_dict"])
+        discriminator = discriminator.to(device)
+        
+        z_size = checkpoint["z_size"]
+        w_size = checkpoint["w_size"]
+        generator.setup_layers(z_size, max_steps)
+        generator.load_state_dict(checkpoint["gen_state_dict"])
+        generator = generator.to(device)
+        
+        # load the ema version, dont forget to also load the images seen so far!
+        ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
+        ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
+        ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
+        ema_generator = ema_generator.to(device)
+        
+        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+
+        # grab the initial lrs
+        lr_d = checkpoint["lr_d"]
+        lr_g = checkpoint["lr_g"]
+        betas_d = disc_optimizer.defaults["betas"]
+        betas_g = gen_optimizer.defaults["betas"]
+
+        starting_step = checkpoint["step"]
+        last_training_step_counter = checkpoint["training_step_counter"]
+        decay_step = checkpoint.get("decay_step", decay_step)
+        epoch_list = checkpoint["epoch_list"]
+        starting_epoch = checkpoint["epoch"]+1
+        batch_size_list = checkpoint["batch_size_list"]
+        gen_update_interval = checkpoint["gen_update_interval"]
+        r1_penalty_interval = checkpoint["r1_penalty_interval"]
+        gamma = checkpoint["gamma"]
+        noise_addition = checkpoint["noise_addition"]
+        
+        if starting_epoch == epoch_list[starting_step]:
+            starting_step += 1
+            # also reset the initial epoch for the new step
+            starting_epoch = 0
+                    
+    # store training log for each step  
+    all_training_losses = [[] for _ in range(max_steps)]
+    all_gradient_penalties = [[] for _ in range(max_steps)]
+  
+    print(f'StyleGAN1 Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+    if resume:
+        print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
+            f'\n  --From Step:             {starting_step}'
+            f'\n  --From Epoch:            {starting_epoch}'
+            f'\n  --Checkpoint Path:       {checkpoint_path}'
+            f'\n  --Last FID:              {checkpoint["FID"]}'
+            f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
+          
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
+    print(f'--Dataset:                   {dataset_name}-{split}')
+    print(f'--Loss type:                 {loss_type}')
+    print(f'--Discriminator LR:          {lr_d}')
+    print(f'--Generator LR:              {lr_g}')
+    print(f'--Max Step:                  {discriminator.max_steps}')
+    print(f'--Decay Step:                {decay_step}')
+    print(f'--Epochs:                    {epoch_list} ')
+    print(f'--Batch-Sizes:               {batch_size_list} ')
+    print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
+    print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
+    print(f'--Generator update interval: {gen_update_interval}')
+    print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
+    print(f'--Noise addition to input:   {noise_addition}')
+    print(f'--Gama factor:               {gamma}')
+    print(f'--gen_num_samples:           {gen_num_samples}')
+    print(f'--Checkpoint Directory:      {weights_save_dir}')
+    print(f'--Images Directory:          {images_save_dir}')
+    
+    for step in range(starting_step, max_steps):
+        
+        if starting_epoch == 0:
+            disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
+            
+            
+            mapping_params = list(generator.mapping_network.parameters())
+            gen_other_params = [p for p in generator.parameters() if p not in mapping_params]
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':current_lr_g[0]*0.01},
+                                              {'params':gen_other_params,'lr':current_lr_g[-1]}
+                                             ], betas=betas_g)
+
+        if step>starting_step:
+            starting_epoch = 0
+                
+        batch_size = batch_size_list[step]
+        epochs = epoch_list[step]
+        # 4 is the lowest res so we want 8,16 etc
+        res = 2**step*4
+        train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res), batch_size=batch_size)
+        num_batches = len(train_loader)
+        interval = num_batches//2+1
+        total_number_of_steps = epochs*num_batches
+        fadein_steps = int(total_number_of_steps*0.5)
+        training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
+        alpha=0
+        
+        #4,8,16,32,64,128,256
+        if step>=decay_step:
+            
+            # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
+            decay = 0.5**(step-2)
+ 
+            disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
+            
+            mapping_params = list(generator.mapping_network.parameters())
+            gen_other_params = [p for p in generator.parameters() if p not in mapping_params]
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':current_lr_g[0]*0.01},
+                                              {'params':gen_other_params,'lr':current_lr_g[-1]}
+                                             ], betas=betas_g)
+            
+
+        current_lr_d = [p['lr'] for p in disc_optimizer.param_groups]
+        current_lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+
+        print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
+        print(f'  --Epochs:                      {epochs} ')
+        print(f'  --BatchSize:                   {batch_size} ')
+        print(f'  --Number of Batches:           {num_batches} ')
+        print(f'  --Interval:                    {interval} ')
+        print(f'  --R1-Interval:                 {r1_penalty_interval} ')
+        print(f'  --Fade-in Steps:               {fadein_steps} ')
+        print(f'  --Last training Step taken:    {training_step_counter} ')
+        print(f'  --Current Discriminator LRs:   {current_lr_d}')
+        print(f'  --Current Generator LRs:       {current_lr_g}')
+        print(f'  --Current Discriminator Betas: {betas_d}')
+        print(f'  --Current Generator Betas:     {betas_g}')
+
+        
+        for epoch in range(starting_epoch, epochs):
+            discriminator.train()
+            generator.train()
+
+            losses = []
+            # step_all_gps = []
+            epoch_scores = []
+            for i, (imgs_real, _) in enumerate(train_loader):
+                
+                # enable gradients for the images
+                imgs_real.requires_grad_(True)
+                
+                #scale input to [-1,1]
+                imgs_real = (2*imgs_real-1).to(device)
+                
+                # track how many real images the network has seen
+                ema_warmup_images_seen += imgs_real.size(0)
+                
+                # if adding noise makes trainig more stable and we get
+                # better looking images it means our discriminator is
+                # too powerful that messing the signal up and making it
+                # harder for it, improves our result! it acts as a regularizer
+                # (in terms of distribution impact, adding noise increases the variance
+                # for both real/fake images so the discriminator cant prefectly memorize
+                # the training data or latch onto a single fake mode!)
+                if noise_addition:
+                    imgs_real += 0.05 * torch.randn_like(imgs_real)
+                
+                # train discriminator/critic! 
+                # real image predictions
+                preds_real = discriminator(imgs_real,alpha,step)
+                # generate an image using generator 
+                z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                # we detach the imgs_fake so the discriminator cant use the gradients
+                # from the generator and quickly learn!
+                imgs_fake = generator(z_vector, alpha, step).detach()
+            
+                # add noise to fake images as well(not needed for dcgan)
+                if noise_addition:
+                    imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+            
+                preds_fake = discriminator(imgs_fake, alpha, step)
+                # calculate discrimiator loss out of real and fake losses
+                disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma,i,r1_penalty_interval)
+                # for debugging purposes
+                # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
+                # then it means our discriminator is strong but if both are near the same
+                # value and the loss is low then it means our discriminator is confused
+                # or is over-regularized.
+                disc_real_mean = preds_real.mean().item()
+                disc_fake_mean = preds_fake.mean().item()
+                
+                # note:
+                # first we need to detach the preds so our mean()/std() operations
+                # are not recorded in computational graph. its not
+                # part of training and we dont want to optimize anything
+                # we just want to get some stats.
+                preds_detached = preds_fake.detach()
+                # we have the mean already so we just get std
+                disc_fake_std = preds_detached.std()
+                # now that we calculated the std for fakes, lets do that for real
+                # we can now better compare them!
+                disc_real_std = preds_real.detach().std()
+
+                # store average scores for real and fake images
+                epoch_scores.append((disc_real_mean, disc_fake_mean))
+                
+                # and optimize discrimnator 
+                disc_optimizer.zero_grad()
+                disc_loss.backward()
+                disc_optimizer.step()
+            
+                # now train genertor to create images that look real
+                # todo put this in gen_update_interval check so we only run this
+                # when we want to optimize, but since currently im doing wgangp
+                # and its 1:1 that check is really not needed. also I check preds_fake
+                # in loss, so lets leave it be for now, until we get this working!
+                z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+                fake_imgs = generator(z_vector, alpha, step)
+                preds_fake = discriminator(fake_imgs, alpha, step)
+
+                # generator loss
+                # swap loss! treat fake images as real images
+                gen_real_loss = generator_loss_stylegan1(preds_fake)
+
+                # optimize generator
+                # update generator with a delay, usually update per 5 critic update
+                # seems to make convergence faster
+                if (i+1)%gen_update_interval == 0:
+                    gen_optimizer.zero_grad()
+                    gen_real_loss.backward()
+                    gen_optimizer.step()
+
+                    if ema_warmup_images_seen < ema_warmup_images_threshold:
+                        ema_generator.load_state_dict(generator.state_dict())
+                    else:
+                        update_ema_generator(generator, ema_generator,
+                                             warmup_images_seen=(i+1)*batch_size,
+                                             decay_rate=0.99)
+                
+                status_r = get_status(disc_real_mean, higher_is_better=True)
+                status_f = get_status(disc_fake_mean, higher_is_better=False)
+                status_o = get_overall_status(disc_real_mean, disc_fake_mean)
+                # included the std for real and fake so it makes it much clearer 
+                # to compare and see where we are standing   
+                d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+                d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
+
+                if (i+1)%interval==0:
+                    print(f'[{res}x{res}][Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f}')
+                    print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
+                    
+                losses.append((disc_loss.item(), gen_real_loss.item()))
+                
+                if training_step_counter<fadein_steps:
+                    alpha = training_step_counter/fadein_steps
+                else:
+                    alpha = 1
+                # update the training steps
+                training_step_counter += 1
+        
+            d_loss_mean = np.mean(np.array(losses)[:,0])
+            g_loss_mean = np.mean(np.array(losses)[:,1])
+
+            # always update the last step per epoch 
+            all_training_losses[step].append((d_loss_mean, g_loss_mean))
+            # gp_mean_epoch = float(np.mean(step_all_gps))
+            # all_gradient_penalties[step].append(gp_mean_epoch)
+            
+            # real
+            average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
+            average_score_real_std = np.mean(np.array(epoch_scores)[:,0])
+            # fake
+            average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
+            average_score_fake_std = np.std(np.array(epoch_scores)[:,1])
+            
+            if quick_and_noisy_IS_FID:
+                IS_score = metric.compute_IS(imgs_fake)
+                FID_score = metric.compute_FID(imgs_real, imgs_fake)
+            else:
+                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
+
+            status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
+            status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
+            status_avg_o = get_overall_status(average_score_real_mean,
+                                              average_score_fake_mean,
+                                              IS_score=IS_score,
+                                              min_mu=1.2)
+           
+            real_stats_avg_str = f"D_real_avg: {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<+.4f} 📈"
+            fake_stats_avg_str = f"D_fake_avg: {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<+.4f} 📉"
+
+            dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.4f}"
+            gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.4f}"
+
+            is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
+            fid_score_str = f"FID: {FID_score:.2f}"
+
+            # gp_str = f"GP[avg]: {gp_mean_epoch:.2f}"
+            
+            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str}"
+            
+            print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
+            print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
+            print(f'[{res}x{res}][Epoch {epoch}/{epochs}] {summary}')
+            
+            #save model weights at each epoch
+            checkpoint_dir = f"{weights_save_dir}/stylegan1_{dataset_name}_{loss_type}_{experiment_date}"
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            
+            torch.save({"disc_state_dict":discriminator.state_dict(),
+                        "gen_state_dict":generator.state_dict(),
+                        "gen_ema_state_dict":ema_generator.state_dict(),
+                        "disc_optimizer":disc_optimizer.state_dict(),
+                        "gen_optimizer":gen_optimizer.state_dict(),
+                        "z_size":generator.z_size,
+                        "w_size":generator.w_size,
+                        "lr_d":lr_d,
+                        "lr_g":lr_g,
+                        "max_steps":discriminator.max_steps,
+                        "decay_step":decay_step,
+                        "noise_addition":noise_addition,
+                        "step":step,
+                        "training_step_counter":training_step_counter,
+                        "ema_warmup_images_threshold":ema_warmup_images_threshold,
+                        "ema_warmup_images_seen":ema_warmup_images_seen,
+                        "epoch":epoch,
+                        "epoch_list":epoch_list,
+                        "batch_size_list":batch_size_list,
+                        "gamma":gamma,
+                        "gen_update_interval":gen_update_interval,
+                        "r1_penalty_interval":r1_penalty_interval,
+                        "FID":FID_score,
+                        "IS":IS_score,
+                        "d_loss_mean":d_loss_mean,
+                        "g_loss_mean":g_loss_mean,
+                        "all_training_losses":all_training_losses,
+                        "all_gradient_penalties":all_gradient_penalties,
+                        "dataset_name":dataset_name,
+                        "split":split,
+                    }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
+        
+            # generate some images mid training to evaluate our model's performance 
+            with torch.no_grad():
+                gen = ema_generator.eval() if use_ema_inference else generator.eval()
+                
+                generated_images = gen(fixed_z, alpha, step)
+                
+                ema_marker_str = "[EMA]_" if use_ema_inference else ""
+                loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
+                lrs_str = f"{current_lr_d:.0e},{current_lr_g[0]:.0e},{current_lr_g[-1]:.0e}"
+                title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
+                save_path=f'{images_save_dir}/stylegan1_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
+                
+                display_images(generated_images, 
+                               cols=gen_num_samples//8,
+                               title=f"{ema_marker_str}{title_str}",
+                               unnormalize=True,
+                               save_path=save_path,
+                               figsize=(16,8))
+                
+                # save the original images only when ema is enable, 
+                # otherwise its already being saved/displayed
+                if keep_raw_generations and use_ema_inference:
+                    generated_images = generator(fixed_z, alpha, step)
+                    display_images(generated_images, 
+                                   cols=gen_num_samples//8,
+                                   title=title_str,
+                                   unnormalize=True,
+                                   save_path=save_path.replace(ema_marker_str,""),
+                                   figsize=(16,8))
+    
+    print("SttyleGAN1 training is complete!")
 
 
 #%%
