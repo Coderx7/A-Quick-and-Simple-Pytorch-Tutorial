@@ -4727,7 +4727,7 @@ class EqualizedConv2d(nn.Module):
         self.conv.weight.data.normal_(0,1)
         
         self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
-                
+
         # scaler is sqrt(2/fan-in)
         # instead of math.sqrt we could also do 
         # self.scaler = (2/(in_channels * kernel_size* kernel_size))**0.5
@@ -8703,6 +8703,9 @@ class GeneratorStyleGAN1(nn.Module):
         self.w_size = w_size
         self.max_steps = max_steps
         self.starting_base = starting_base
+        # for our simple tests this is ok, but if we wanted to go for higher res
+        # we can repeat some channels for adjacent res to get better result
+        # i.e. instead of doubling each time we can have e.g. [512,512,512,256,128,64...]
         channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
         print(f'{channels=}')
         
@@ -8771,6 +8774,26 @@ class GeneratorStyleGAN1(nn.Module):
             # to make this work, we simply repeat it for as many layers
             # as we have, now we have a w for each layer and the corssover
             # point is calculated based on number of layers here
+            # sidenote:
+            # if we are repeating the same w for all layers, then why not
+            # sharing the single w with all of them like before? the reason is
+            # this way, each layer gets to independently participate and have
+            # a say, and we get a separate gradient path for each layer now,
+            # its as if we have several outlets throughout the house that share
+            # the same electricity cable(or facets that use the
+            # same main water pipe) with this every room has access to it and
+            # can use flow as it needs. using this each layer can now contribute
+            # differently to the final style/image, and we also get to control
+            # affect the style by changing or playing with each layers specific
+            # w (the underlying storgae is the same, but final gradient sum is also
+            # the same, but this way we take a different route of optimization and
+            # and using the mixing here get a whole different path!)
+            #
+            # sidenote:repeat uses view underthe hood, so it doesnt actually copy
+            # anything, just points to the underlying data, so we could have
+            # repeated for the whole layers by default and later here only grab
+            # up to the current step layers! that would have worked as well
+            # todo do this instead!
             crossover_point = random.randint(1, num_styles-1)
             # repeat along the channels dim so we get (b,num_styles,w_dim)
             # one w for each layer!
