@@ -4540,7 +4540,7 @@ gen_update_interval = 5 if loss_type == "wgan" else 1
 # lsgan keeps failing with mode collapse (repeative images)! 
 no_spec_list = [0,5]#[]# list(range(5)) #[] #[1,2]
 #discriminator
-discriminator_progan = DiscriminatorImproved64(hidden_size=disc_hidden_size,
+discriminator_stylegan1 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            no_spec_norm_list=no_spec_list,
                                            # we face mode collapse toward the end when using wgangp
                                            # so I had to set a higher dropout and compensate with 
@@ -4548,10 +4548,10 @@ discriminator_progan = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            # mode collapse early on or later on(both form of mode collapses
                                            # occur if either overpower the other)
                                            dropout_rate=0.25 if loss_type=='wgangp' else 0.2)
-discriminator_progan = discriminator_progan.to(device)
+discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
-generator_progan = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
-generator_progan = generator_progan.to(device)
+generator_stylegan1 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
+generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
@@ -4566,11 +4566,11 @@ else:#wgangp
     lr_d, lr_g = 0.002, 0.001#0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr_g, betas=betas)
 
-training_loop(discriminator_progan, 
-              generator_progan, 
+training_loop(discriminator_stylegan1, 
+              generator_stylegan1, 
               train_loader=train_loader,
               disc_optimizer=disc_optimizer,
               gen_optimizer=gen_optimizer, 
@@ -4598,9 +4598,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 # losses = np.array(checkpoint.pop("losses"))
 
-generator_progan = GeneratorImproved64(z_size,hidden_size)
-generator_progan.load_state_dict(checkpoint.pop("state_dict"))
-generator_progan.eval()
+generator_stylegan1 = GeneratorImproved64(z_size,hidden_size)
+generator_stylegan1.load_state_dict(checkpoint.pop("state_dict"))
+generator_stylegan1.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -4608,7 +4608,7 @@ for k,v in checkpoint.items():
 # print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
-                      generator=generator_progan, 
+                      generator=generator_stylegan1, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4622,7 +4622,7 @@ run_latent_arithmatic(attr_name='Male',
 
 #%%
 run_latent_arithmatic(attr_name='Smiling', 
-                      generator=generator_progan, 
+                      generator=generator_stylegan1, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4635,7 +4635,7 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 #%%
 run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generator_progan, 
+                      generator=generator_stylegan1, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -5621,8 +5621,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             f'\n  --Last FID:              {checkpoint["FID"]}'
             f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
           
-    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
-    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -6090,11 +6090,11 @@ EPOCHS = [10,10,10,20,40,40,40]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
-discriminator_progan = DiscriminatorProGAN(max_steps)
-discriminator_progan = discriminator_progan.to(device)
+discriminator_stylegan1 = DiscriminatorProGAN(max_steps)
+discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
-generator_progan = GeneratorProGAN(z_size, max_steps)
-generator_progan = generator_progan.to(device)
+generator_stylegan1 = GeneratorProGAN(z_size, max_steps)
+generator_stylegan1 = generator_stylegan1.to(device)
 
 #sidenote:
 # in Adam optimizer beta1(the first value for betas) controls the momentum,
@@ -6266,8 +6266,8 @@ decay_step = 7#4#3#2
 use_ema_inference = False
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr_g, betas=betas)
 
 #compile the models for faster training!
 # update: it doesnt work for models that have double backwardpass!
@@ -6281,8 +6281,8 @@ gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=beta
 # while ours is 7m!
 # ok everything went fine adn got great results! 
 #
-training_loop_progan(discriminator_progan,
-                     generator_progan, 
+training_loop_progan(discriminator_stylegan1,
+                     generator_stylegan1, 
                      disc_optimizer=disc_optimizer,
                      gen_optimizer=gen_optimizer, 
                      epoch_list=EPOCHS, 
@@ -8691,13 +8691,23 @@ class StyleConvBlock(nn.Module):
 # instead of just 1, and combine their ws together and feed that to our
 # generator. we only do that in training as we explained before
 class GeneratorStyleGAN1(nn.Module):
-    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2, style_mixing_prob=0.9):
-        super().__init__()  
-        
+    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2,
+                 style_mixing_prob=0.9, ema_w_beta=0.995):
+        super().__init__()
         self.style_mixing_prob = style_mixing_prob
+        # truncation trick! in order to get higher quality generations
+        # like the paper says, we need to use trunkation trick 
+        # to do that we need a moving average of our w 
+        # without doing this we get more varied images but also with
+        # more artifacts, the average w, increases the quality at
+        # the expense of lower diversity
+        self.ema_w_beta = ema_w_beta
+        self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
+        
         # lets do the same thing for generator
         self.setup_layers(z_size, w_size, max_steps,starting_base)
-        
+
+                
     def setup_layers(self, z_size, w_size, max_steps, starting_base):
         self.z_size = z_size
         self.w_size = w_size
@@ -8750,8 +8760,27 @@ class GeneratorStyleGAN1(nn.Module):
         for i in range(1, max_steps):
             self.blocks.append(StyleConvBlock(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
             self.blocks.append(StyleConvBlock(self.channels[i], self.channels[i], w_size=w_size, upsample=False))
+
+    @torch.no_grad()
+    def _update_ema_w(self, w_batch):
+         if self.training:
+             # beta*old_avg + (1-beta)*new_avg
+             # note we use the whole batch of w so we need to avergae
+             # it. doing this will include the information from
+             # multiple smaples in each update round.(its smoother
+             # than per sample verion).
+             # the idea behind this is that by calculating the mean
+             # of w in the W space (i.e. the center of mass)
+             # we can access typical/orinary styles as apposed to 
+             # more different/varied ones that are farther from the
+             # normal (i.e. mean).therefore these have higher chances
+             # of being much better developed than the more rare/less 
+             # frequent ones.averaging over the batches approximates 
+             # this for us without needing to storing the whole past!
+             self.ema_w.mul_(self.ema_w_beta).add_(w_batch.mean(0), alpha=1-self.ema_w_beta)
     
-    def forward(self, z, alpha, step):
+   
+    def forward(self, z, alpha, step, psi=None):
         # stylemixing during training
         # initially I used a single w for all layers, but as the paper
         # says, the w must be per layer. that is duing the mixing process
@@ -8759,11 +8788,28 @@ class GeneratorStyleGAN1(nn.Module):
         # so we need to calculate the number of styles (number of styleconvblocks)
         # since we have 2 layers per resolution for each step we will have:
         num_styles = 2*(step+1)
+        #convert the latent z into latent w
+        w = self.mapping_network(z)
+        
+        # update the ema_w for truncation trick
+        if self.training:
+            self._update_ema_w(w)
+
+        # we use truncation trick during inference only 
+        if not self.training and psi:
+            ema_w_batch = self.ema_w.repeat(w.size(0),1)
+            w = ema_w_batch + psi * (w - ema_w_batch)
+        
         if self.training and random.random() <self.style_mixing_prob:
-            w1 = self.mapping_network(z)
             # grab a second z, calculate the w
             z2 = torch.randn(size=z.size(), device=z.device)
             w2 = self.mapping_network(z2)
+            # I specifically dont update ema_w with w2 because first
+            # the paper only uses w1, and second if we do use w2, it
+            # actually goes more toward diverse outputs which we dont
+            # want here 
+            # self._update_ema_w(w2)
+            # 
             # now we need to pick a crossover point to stich half of
             # each w with the other one and form a new w!
             # this is done so the images that get generated have their
@@ -8805,15 +8851,14 @@ class GeneratorStyleGAN1(nn.Module):
             # to avoid an extra concat, we assign the first part to w
             # and change the other half with w2 so we dont do 
             # something like (w = torch.cat([w1[:,:crossover_point], w2[:,crossover_point:]],dim=1))
-            w = w1.unsqueeze(1).repeat(1,num_styles,1)# (b,num_styles,w_dim)
+            w = w.unsqueeze(1).repeat(1,num_styles,1)# (b,num_styles,w_dim)
             w[:, crossover_point:,:] = w2.unsqueeze(1).repeat(1,num_styles-crossover_point,1)
             # print(f'{crossover_point=}')
         else:
-            #convert the latent z into latent w
-            w = self.mapping_network(z)
-            # make w per layer like before so each adaIN gets 
+            # if no style mixing or training
+            # make w per layer like before so each adaIN gets
             w = w.unsqueeze(1).repeat(1,num_styles,1)
-            
+
         # set the batchsize forr const_input/canvas
         x = self.const_input.repeat(z.size(0), 1,1,1)
         # the process goes like this:
@@ -8940,33 +8985,35 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma, i, i
 def generator_loss_stylegan1(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
     return F.softplus(-d_preds_fake).mean()
-#%%
+
 # we have implemented the disc/gen
 # we have implemented the losses
 # so lets do the training loop
-# no trunk approx
 
 @torch.no_grad()
 def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, warmup_images_seen, decay_rate=0.999):
-    # sidenote, we only update the parameters we dont touch buffers (we dont have
-    # any, but if we had like batchnorm, we wouldnt touch them as it would have
-    # destroyed their stats!)
+    # sidenote, we only update the parameters we dont touch buffers 
+    # as it would have destroyed their stats!)
+    # this dynamic decay is from stylegan2 if I dont get any better 
+    # results will go back to the old version!
     decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
-    for ema_p,p in zip(g_ema.parameters(),g.parameters()):
+    for ema_p,p in zip(g_ema.parameters(), g.parameters()):
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+    # copy the ema_w over
+    g_ema.ema_w.copy_(g.ema_w)
+    
 
-def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
+def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         split, r1_penalty_interval=16, gamma=10, gen_num_samples = 64, noise_addition=False, 
-                         use_ema_inference=False, ema_warmup_images_threshold=3_000_000,
+                         split, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
+                         use_ema_inference=False, ema_warmup_images_threshold=100_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
-        
         
     lr_d = disc_optimizer.param_groups[0]["lr"]
     # generator has two lr one for mapping network
     # and another for the rest of the network
-    lr_g = gen_optimizer.param_groups["lr"]
+    lr_g = [g["lr"] for g in gen_optimizer.param_groups]
     
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
@@ -9056,7 +9103,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
     all_training_losses = [[] for _ in range(max_steps)]
     all_gradient_penalties = [[] for _ in range(max_steps)]
   
-    print(f'StyleGAN1 Training on {dataset_name} with loss={loss_type} in {experiment_date}')
+    print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
             f'\n  --From Step:             {starting_step}'
@@ -9065,10 +9112,9 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
             f'\n  --Last FID:              {checkpoint["FID"]}'
             f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
           
-    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
-    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_progan.parameters()]):,}')
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}-{split}')
-    print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
     print(f'--Max Step:                  {discriminator.max_steps}')
@@ -9081,6 +9127,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
     print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
     print(f'--Noise addition to input:   {noise_addition}')
     print(f'--Gama factor:               {gamma}')
+    print(f'--PSI:                       {psi}')
     print(f'--gen_num_samples:           {gen_num_samples}')
     print(f'--Checkpoint Directory:      {weights_save_dir}')
     print(f'--Images Directory:          {images_save_dir}')
@@ -9092,9 +9139,9 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
             
             
             mapping_params = list(generator.mapping_network.parameters())
-            gen_other_params = [p for p in generator.parameters() if p not in mapping_params]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':current_lr_g[0]*0.01},
-                                              {'params':gen_other_params,'lr':current_lr_g[-1]}
+            gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+                                              {'params':gen_other_params,'lr':lr_g[-1]}
                                              ], betas=betas_g)
 
         if step>starting_step:
@@ -9121,14 +9168,14 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
             
             mapping_params = list(generator.mapping_network.parameters())
-            gen_other_params = [p for p in generator.parameters() if p not in mapping_params]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':current_lr_g[0]*0.01},
-                                              {'params':gen_other_params,'lr':current_lr_g[-1]}
+            gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+                                              {'params':gen_other_params,'lr':lr_g[-1]}
                                              ], betas=betas_g)
             
 
-        current_lr_d = [p['lr'] for p in disc_optimizer.param_groups]
-        current_lr_g = [p['lr'] for p in gen_optimizer.param_groups]
+        current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
+        current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
 
         print(f' Step: {step}/{max_steps} -> Training on [{res}x{res}]')
         print(f'  --Epochs:                      {epochs} ')
@@ -9241,7 +9288,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
                         ema_generator.load_state_dict(generator.state_dict())
                     else:
                         update_ema_generator(generator, ema_generator,
-                                             warmup_images_seen=(i+1)*batch_size,
+                                             ema_warmup_images_seen,
                                              decay_rate=0.99)
                 
                 status_r = get_status(disc_real_mean, higher_is_better=True)
@@ -9311,7 +9358,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] {summary}')
             
             #save model weights at each epoch
-            checkpoint_dir = f"{weights_save_dir}/stylegan1_{dataset_name}_{loss_type}_{experiment_date}"
+            checkpoint_dir = f"{weights_save_dir}/stylegan1_{dataset_name}_{experiment_date}"
             os.makedirs(checkpoint_dir, exist_ok=True)
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
@@ -9321,6 +9368,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
                         "gen_optimizer":gen_optimizer.state_dict(),
                         "z_size":generator.z_size,
                         "w_size":generator.w_size,
+                        "style_mixing_prob":generator.style_mixing_prob,
                         "lr_d":lr_d,
                         "lr_g":lr_g,
                         "max_steps":discriminator.max_steps,
@@ -9334,6 +9382,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
                         "epoch_list":epoch_list,
                         "batch_size_list":batch_size_list,
                         "gamma":gamma,
+                        "psi":0.7,
                         "gen_update_interval":gen_update_interval,
                         "r1_penalty_interval":r1_penalty_interval,
                         "FID":FID_score,
@@ -9350,13 +9399,13 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
             with torch.no_grad():
                 gen = ema_generator.eval() if use_ema_inference else generator.eval()
                 
-                generated_images = gen(fixed_z, alpha, step)
+                generated_images = gen(fixed_z, alpha, step, psi=psi)
                 
                 ema_marker_str = "[EMA]_" if use_ema_inference else ""
                 loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
-                lrs_str = f"{current_lr_d:.0e},{current_lr_g[0]:.0e},{current_lr_g[-1]:.0e}"
-                title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] with {loss_type.upper()} @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
-                save_path=f'{images_save_dir}/stylegan1_{loss_type}/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
+                lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e},{current_lr_g[-1]:.0e}"
+                title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
+                save_path=f'{images_save_dir}/stylegan1/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
                 
                 display_images(generated_images, 
                                cols=gen_num_samples//8,
@@ -9368,7 +9417,7 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
                 # save the original images only when ema is enable, 
                 # otherwise its already being saved/displayed
                 if keep_raw_generations and use_ema_inference:
-                    generated_images = generator(fixed_z, alpha, step)
+                    generated_images = generator(fixed_z, alpha, step, psi=psi)
                     display_images(generated_images, 
                                    cols=gen_num_samples//8,
                                    title=title_str,
@@ -9377,7 +9426,73 @@ def training_loop_progan(discriminator:DiscriminatorStyleGAN1, generator:Generat
                                    figsize=(16,8))
     
     print("SttyleGAN1 training is complete!")
+#%%
+print(f'Training StyleGAN1')
+gamma=10
+# cifar10 is a lot harder than celeba. try celeba first
+# and then cifar10 if you like
+dataset_name = 'celeba'
+split = 'train'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# original paper uses 512
+z_size = 512
+w_size = 512
+# 7 means 4x4 up to 256x256
+max_steps = 7
+
+BATCH_SIZES = [128,128,128,128,64,32,16]
+# for celeba this is what I used, use more to get better
+# EPOCHS = [10,10,10,20,40,40,40]
+EPOCHS = [10,10,10,20,40,40,40]
+
+gen_update_interval = 1
+r1_penalty_interval = 16
+style_mixing_prob = 0.9
+psi = 0.7
+
+#discriminator
+discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps)
+discriminator_stylegan1 = discriminator_stylegan1.to(device)
+#generator
+generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps,style_mixing_prob=style_mixing_prob)
+generator_stylegan1 = generator_stylegan1.to(device)
+
+betas = [0, 0.99]
+lr_d = 0.0015
+# first for mapping_network and the second one for the rest of generator
+lr_g = [0.0015, 0.0015]
+
+# no need to decay now!
+decay_step = 7#4#3#2
+use_ema_inference = False
+
+disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
+
+mapping_params = list(generator_stylegan1.mapping_network.parameters())
+gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
+gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+                                  {'params':gen_other_params,'lr':lr_g[-1]}
+                                 ], betas=betas)
+
+training_loop_stylegan(discriminator_stylegan1,
+                     generator_stylegan1, 
+                     disc_optimizer=disc_optimizer,
+                     gen_optimizer=gen_optimizer, 
+                     epoch_list=EPOCHS, 
+                     batch_size_list=BATCH_SIZES,
+                     gen_update_interval=gen_update_interval,
+                     r1_penalty_interval=r1_penalty_interval,
+                     dataset_name=dataset_name,
+                     split=split,
+                     gamma=gamma,
+                     noise_addition=False,
+                     device=device,
+                     resume=False,
+                     use_ema_inference=use_ema_inference,
+                     keep_raw_generations=True,
+                     quick_and_noisy_IS_FID=False,
+                     decay_step=decay_step)
 
 #%%
 # Stylegan2/3?
