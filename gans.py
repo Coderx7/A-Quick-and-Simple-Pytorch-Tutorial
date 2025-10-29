@@ -8694,6 +8694,18 @@ class GeneratorStyleGAN1(nn.Module):
     def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2,
                  style_mixing_prob=0.9, ema_w_beta=0.995):
         super().__init__()
+        # lets do the same thing for generator
+        self.setup_layers(z_size, w_size, max_steps, starting_base, style_mixing_prob, ema_w_beta)
+
+                
+    def setup_layers(self, z_size, w_size, max_steps, 
+                     starting_base, style_mixing_prob, ema_w_beta):
+        
+        self.z_size = z_size
+        self.w_size = w_size
+        self.max_steps = max_steps
+        self.starting_base = starting_base
+        
         self.style_mixing_prob = style_mixing_prob
         # truncation trick! in order to get higher quality generations
         # like the paper says, we need to use trunkation trick 
@@ -8704,15 +8716,6 @@ class GeneratorStyleGAN1(nn.Module):
         self.ema_w_beta = ema_w_beta
         self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
         
-        # lets do the same thing for generator
-        self.setup_layers(z_size, w_size, max_steps,starting_base)
-
-                
-    def setup_layers(self, z_size, w_size, max_steps, starting_base):
-        self.z_size = z_size
-        self.w_size = w_size
-        self.max_steps = max_steps
-        self.starting_base = starting_base
         # for our simple tests this is ok, but if we wanted to go for higher res
         # we can repeat some channels for adjacent res to get better result
         # i.e. instead of doubling each time we can have e.g. [512,512,512,256,128,64...]
@@ -9005,8 +9008,8 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, warmup_images
 
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         split, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
-                         use_ema_inference=False, ema_warmup_images_threshold=100_000,
+                         split, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
+                         use_ema_inference=False, ema_warmup_images_threshold=2000_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
         
@@ -9037,6 +9040,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     max_steps = discriminator.max_steps
     z_size = generator.z_size
     
+    scaler = torch.amp.grad_scaler.GradScaler(device)
+    
     # check for resuming from a checkpoint
     if resume:
         if checkpoint_path:
@@ -9064,9 +9069,16 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         
         z_size = checkpoint["z_size"]
         w_size = checkpoint["w_size"]
-        generator.setup_layers(z_size, max_steps)
+        style_mixing_prob = checkpoint["style_mixing_prob"]
+        ema_w_beta = checkpoint["ema_w_beta"]
+        
+        generator.setup_layers(z_size, w_size, max_steps,
+                               style_mixing_prob=style_mixing_prob,
+                               ema_w_beta=ema_w_beta)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
+        
+        scaler.load_state_dict(checkpoint.get("scaler_state_dict", scaler.state_dict()))
         
         # load the ema version, dont forget to also load the images seen so far!
         ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
@@ -9083,6 +9095,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         betas_d = disc_optimizer.defaults["betas"]
         betas_g = gen_optimizer.defaults["betas"]
 
+        use_fp16 = checkpoint["use_fp16"]
         starting_step = checkpoint["step"]
         last_training_step_counter = checkpoint["training_step_counter"]
         decay_step = checkpoint.get("decay_step", decay_step)
@@ -9115,6 +9128,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}-{split}')
+    print(f'--Use Half-Precision:        {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
     print(f'--Max Step:                  {discriminator.max_steps}')
@@ -9218,23 +9232,25 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # the training data or latch onto a single fake mode!)
                 if noise_addition:
                     imgs_real += 0.05 * torch.randn_like(imgs_real)
+                    
+                with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                    # train discriminator/critic! 
+                    # real image predictions
+                    preds_real = discriminator(imgs_real, alpha, step)
+                    # generate an image using generator 
+                    z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                    # we detach the imgs_fake so the discriminator cant use the gradients
+                    # from the generator and quickly learn!
+                    imgs_fake = generator(z_vector, alpha, step).detach()
                 
-                # train discriminator/critic! 
-                # real image predictions
-                preds_real = discriminator(imgs_real,alpha,step)
-                # generate an image using generator 
-                z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
-                # we detach the imgs_fake so the discriminator cant use the gradients
-                # from the generator and quickly learn!
-                imgs_fake = generator(z_vector, alpha, step).detach()
-            
-                # add noise to fake images as well(not needed for dcgan)
-                if noise_addition:
-                    imgs_fake += 0.05 * torch.randn_like(imgs_fake)
-            
-                preds_fake = discriminator(imgs_fake, alpha, step)
-                # calculate discrimiator loss out of real and fake losses
-                disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma,i,r1_penalty_interval)
+                    # add noise to fake images as well(not needed for dcgan)
+                    if noise_addition:
+                        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+                
+                    preds_fake = discriminator(imgs_fake, alpha, step)
+                    # calculate discrimiator loss out of real and fake losses
+                    disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma,i,r1_penalty_interval)
+                
                 # for debugging purposes
                 # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
                 # then it means our discriminator is strong but if both are near the same
@@ -9260,8 +9276,11 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                 # and optimize discrimnator 
                 disc_optimizer.zero_grad()
-                disc_loss.backward()
-                disc_optimizer.step()
+                # disc_loss.backward()
+                # disc_optimizer.step()
+                scaler.scale(disc_loss).backward()
+                scaler_out_d = scaler.step(disc_optimizer)
+                scaler.update()
             
                 # now train genertor to create images that look real
                 # todo put this in gen_update_interval check so we only run this
@@ -9272,25 +9291,29 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 fake_imgs = generator(z_vector, alpha, step)
                 preds_fake = discriminator(fake_imgs, alpha, step)
 
-                # generator loss
-                # swap loss! treat fake images as real images
-                gen_real_loss = generator_loss_stylegan1(preds_fake)
+                with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                    # generator loss
+                    # swap loss! treat fake images as real images
+                    gen_real_loss = generator_loss_stylegan1(preds_fake)
 
-                # optimize generator
-                # update generator with a delay, usually update per 5 critic update
-                # seems to make convergence faster
-                if (i+1)%gen_update_interval == 0:
-                    gen_optimizer.zero_grad()
-                    gen_real_loss.backward()
-                    gen_optimizer.step()
+                    # optimize generator
+                    # update generator with a delay, usually update per 5 critic update
+                    # seems to make convergence faster
+                    if (i+1)%gen_update_interval == 0:
+                        gen_optimizer.zero_grad()
+                        # gen_real_loss.backward()
+                        # gen_optimizer.step()
+                        scaler.scale(gen_real_loss).backward()
+                        scaler_out_g = scaler.step(gen_optimizer)
+                        scaler.update()
 
-                    if ema_warmup_images_seen < ema_warmup_images_threshold:
-                        ema_generator.load_state_dict(generator.state_dict())
-                    else:
-                        update_ema_generator(generator, ema_generator,
-                                             ema_warmup_images_seen,
-                                             decay_rate=0.99)
-                
+                        if ema_warmup_images_seen < ema_warmup_images_threshold:
+                            ema_generator.load_state_dict(generator.state_dict())
+                        else:
+                            update_ema_generator(generator, ema_generator,
+                                                ema_warmup_images_seen,
+                                                decay_rate=0.99)
+                    
                 status_r = get_status(disc_real_mean, higher_is_better=True)
                 status_f = get_status(disc_fake_mean, higher_is_better=False)
                 status_o = get_overall_status(disc_real_mean, disc_fake_mean)
@@ -9366,9 +9389,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "gen_ema_state_dict":ema_generator.state_dict(),
                         "disc_optimizer":disc_optimizer.state_dict(),
                         "gen_optimizer":gen_optimizer.state_dict(),
+                        "scaler_state_dict":scaler.state_dict(),
                         "z_size":generator.z_size,
                         "w_size":generator.w_size,
+                        "use_fp16":use_fp16,
                         "style_mixing_prob":generator.style_mixing_prob,
+                        "ema_w_beta":generator.ema_w_beta,
                         "lr_d":lr_d,
                         "lr_g":lr_g,
                         "max_steps":discriminator.max_steps,
@@ -9435,16 +9461,22 @@ dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+use_fp16=True
+
 # original paper uses 512
 z_size = 512
 w_size = 512
 # 7 means 4x4 up to 256x256
 max_steps = 7
 
-BATCH_SIZES = [128,128,128,128,64,32,16]
+if use_fp16:      #4², 8², 16²,32²,64²,128²,256² 
+    BATCH_SIZES = [128,128,128,128,128,64,32]
+else:
+    BATCH_SIZES = [128,128,128,128,64,32,16]
+
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
-EPOCHS = [10,10,10,20,40,40,40]
+EPOCHS = [10,10,20,30,50,60,70]
 
 gen_update_interval = 1
 r1_penalty_interval = 16
@@ -9465,6 +9497,10 @@ lr_g = [0.0015, 0.0015]
 
 # no need to decay now!
 decay_step = 7#4#3#2
+# log:
+# at epoch 2 of 8x8 it suddenly goes all solid grays
+# up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
+# so update ema needs some work!
 use_ema_inference = False
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
@@ -9486,6 +9522,7 @@ training_loop_stylegan(discriminator_stylegan1,
                      dataset_name=dataset_name,
                      split=split,
                      gamma=gamma,
+                     use_fp16=use_fp16,
                      noise_addition=False,
                      device=device,
                      resume=False,
