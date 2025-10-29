@@ -9017,7 +9017,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     # generator has two lr one for mapping network
     # and another for the rest of the network
     lr_g = [g["lr"] for g in gen_optimizer.param_groups]
-    
+    # print(f'{lr_g=}')
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
     
@@ -9154,7 +9154,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             
             mapping_params = list(generator.mapping_network.parameters())
             gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
                                               {'params':gen_other_params,'lr':lr_g[-1]}
                                              ], betas=betas_g)
 
@@ -9183,7 +9183,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             
             mapping_params = list(generator.mapping_network.parameters())
             gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
                                               {'params':gen_other_params,'lr':lr_g[-1]}
                                              ], betas=betas_g)
             
@@ -9471,6 +9471,9 @@ w_size = 512
 # 7 means 4x4 up to 256x256
 max_steps = 7
 
+# log-vram usage
+# up to 32² 2829MB
+# up to 64² 4125MB 
 if use_fp16:      #4², 8², 16²,32²,64²,128²,256² 
     BATCH_SIZES = [128,128,128,128,128,64,32]
 else:
@@ -9481,7 +9484,8 @@ else:
 EPOCHS = [10,10,20,30,50,60,70]
 
 gen_update_interval = 1
-r1_penalty_interval = 16
+# next use 1 and see how it goes
+r1_penalty_interval = 16#1#16
 style_mixing_prob = 0.9
 psi = 0.7
 
@@ -9495,7 +9499,11 @@ generator_stylegan1 = generator_stylegan1.to(device)
 betas = [0, 0.99]
 lr_d = 0.0015
 # first for mapping_network and the second one for the rest of generator
-lr_g = [0.0015, 0.0015]
+# log:
+# faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
+# around 10000 times smaller than the rest of the synthesisnetwork parameters
+# due to a bug in my code!
+lr_g = [0.000015, 0.0015]
 
 # no need to decay now!
 decay_step = 7#4#3#2
@@ -9509,7 +9517,7 @@ disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, be
 
 mapping_params = list(generator_stylegan1.mapping_network.parameters())
 gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
-gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*0.01},
+gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
                                   {'params':gen_other_params,'lr':lr_g[-1]}
                                  ], betas=betas)
 
