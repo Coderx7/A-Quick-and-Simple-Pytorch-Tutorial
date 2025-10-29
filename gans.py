@@ -27,6 +27,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 import gc
+import logging
 
 import numpy as np 
 
@@ -9005,6 +9006,13 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, warmup_images
     # copy the ema_w over
     g_ema.ema_w.copy_(g.ema_w)
     
+# a custom function to replace all prints with logging.info
+# so we can save all the logs to file as well without having
+# to change a single like of our code
+def custom_print(*args, sep=' ', end='\n'):
+    msg = sep.join(str(arg) for arg in args) + end
+    logging.info(msg)
+
 
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
@@ -9012,6 +9020,24 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
+    
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+    # the vscode interactive pane is ok but it really becomes hard
+    # to have a quick look at logs since we also display images in
+    # between, so to have the logs saved next to the weights would
+    # be a good addition for later. 
+    # setup logging so we can also easily save
+    # them into a logfile for future references
+    current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
+    log_path=f'{weights_save_dir}/{current_experiment_name}/training_{experiment_date}.log'
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - %(message)s ',
+                        handlers=[logging.FileHandler(filename=log_path),
+                                  logging.StreamHandler()]
+                        )
+    # backup print(we could also use builtin module but this is easier!)
+    org_print = print
+    print = custom_print
         
     lr_d = disc_optimizer.param_groups[0]["lr"]
     # generator has two lr one for mapping network
@@ -9031,8 +9057,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     metric = IS_FID_Calculator(device)
 
     fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
-
-    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 
     starting_step = 0
     starting_epoch = 0
@@ -9279,6 +9303,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # disc_loss.backward()
                 # disc_optimizer.step()
                 scaler.scale(disc_loss).backward()
+                # clip gradients >1 so we dont hit nans because of possible overflows!
+                # we souldnt be needing this for discriminator, but to be same lets have it
+                # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
                 scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
             
@@ -9304,9 +9331,18 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # gen_real_loss.backward()
                         # gen_optimizer.step()
                         scaler.scale(gen_real_loss).backward()
+                        # update: when setting mapping_network lr, during fp16 we face nans!
+                        # to see if we are hitting norm>100-1000 which means overflowing!
+                        # we monitor its norm (one of the params is enough)
+                        mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                        # clip gradients >1 so we dont hit nans because of possible overflows!
+                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
+                        
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
-
+                        if mn_grad_norm>100:
+                            print(f'Warning! Overflow teritory!: {mn_grad_norm=}')
+                        
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
                         else:
@@ -9383,7 +9419,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             print(f'[{res}x{res}][Epoch {epoch}/{epochs}] {summary}')
             
             #save model weights at each epoch
-            checkpoint_dir = f"{weights_save_dir}/stylegan1_{dataset_name}_{experiment_date}"
+            checkpoint_dir = f"{weights_save_dir}/{current_experiment_name}"
             os.makedirs(checkpoint_dir, exist_ok=True)
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
@@ -9453,7 +9489,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                                    save_path=save_path.replace(ema_marker_str,""),
                                    figsize=(16,8))
     
+    # restore print to point to builtin.print!
+    print = org_print
     print("SttyleGAN1 training is complete!")
+        
 #%%
 print(f'Training StyleGAN1')
 gamma=10
@@ -9500,11 +9539,22 @@ betas = [0, 0.99]
 lr_d = 0.0015
 # first for mapping_network and the second one for the rest of generator
 # log:
-# faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
+# I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
 # around 10000 times smaller than the rest of the synthesisnetwork parameters
 # due to a bug in my code!
+# in fp16 using 1.5e-5 resulted in nans! its apparently too large! to fix this
+# we can either use a larger eps for adam optimizer and or also use gradient 
+# clipping to prevent this (this is also very commen when training in fp16! 
+# so lets do both of these and see if this fixes our issue!)
+# first I try the eps and if it didnt work I also clip gradienst
+# update: larger eps so far did the trick! and we are getting much better images
+# so far in 16x16 res (used to be very bad, but now they look much better though
+# they are still extremly low res (16x16))
 lr_g = [0.000015, 0.0015]
-
+# make this 1000x larger than the normal case
+# this was the first thing I did when I got 
+# nans during fp16 training with lr 1.5e-5 for mapping network
+eps = 1e-5 if use_fp16 else 1e-8 
 # no need to decay now!
 decay_step = 7#4#3#2
 # log:
@@ -9519,7 +9569,7 @@ mapping_params = list(generator_stylegan1.mapping_network.parameters())
 gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
 gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
                                   {'params':gen_other_params,'lr':lr_g[-1]}
-                                 ], betas=betas)
+                                 ], betas=betas, eps=eps)
 
 training_loop_stylegan(discriminator_stylegan1,
                      generator_stylegan1, 
