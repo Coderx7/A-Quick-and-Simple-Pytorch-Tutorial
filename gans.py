@@ -9280,7 +9280,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # disc_optimizer.step()
                 scaler.scale(disc_loss).backward()
                 scaler_out_d = scaler.step(disc_optimizer)
-                scaler.update()
+                # scaler.update()
             
                 # now train genertor to create images that look real
                 # todo put this in gen_update_interval check so we only run this
@@ -9305,7 +9305,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # gen_optimizer.step()
                         scaler.scale(gen_real_loss).backward()
                         scaler_out_g = scaler.step(gen_optimizer)
-                        scaler.update()
+                        # scaler.update()
 
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
@@ -9313,6 +9313,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                             update_ema_generator(generator, ema_generator,
                                                 ema_warmup_images_seen,
                                                 decay_rate=0.99)
+                # update only once
+                scaler.update()
                     
                 status_r = get_status(disc_real_mean, higher_is_better=True)
                 status_f = get_status(disc_fake_mean, higher_is_better=False)
