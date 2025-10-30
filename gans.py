@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 import gc
 import logging
+import builtins
 
 import numpy as np 
 
@@ -8995,24 +8996,17 @@ def generator_loss_stylegan1(d_preds_fake):
 # so lets do the training loop
 
 @torch.no_grad()
-def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, warmup_images_seen, decay_rate=0.999):
+def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
     # results will go back to the old version!
-    decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
+    # decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
     for ema_p,p in zip(g_ema.parameters(), g.parameters()):
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
     # copy the ema_w over
     g_ema.ema_w.copy_(g.ema_w)
     
-# a custom function to replace all prints with logging.info
-# so we can save all the logs to file as well without having
-# to change a single like of our code
-def custom_print(*args, sep=' ', end='\n'):
-    msg = sep.join(str(arg) for arg in args) + end
-    logging.info(msg)
-
 
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
@@ -9022,23 +9016,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-    # the vscode interactive pane is ok but it really becomes hard
-    # to have a quick look at logs since we also display images in
-    # between, so to have the logs saved next to the weights would
-    # be a good addition for later. 
-    # setup logging so we can also easily save
-    # them into a logfile for future references
     current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
-    log_path=f'{weights_save_dir}/{current_experiment_name}/training_{experiment_date}.log'
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - %(message)s ',
-                        handlers=[logging.FileHandler(filename=log_path),
-                                  logging.StreamHandler()]
-                        )
-    # backup print(we could also use builtin module but this is easier!)
-    org_print = print
-    print = custom_print
-        
+
     lr_d = disc_optimizer.param_groups[0]["lr"]
     # generator has two lr one for mapping network
     # and another for the rest of the network
@@ -9306,6 +9285,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # clip gradients >1 so we dont hit nans because of possible overflows!
                 # we souldnt be needing this for discriminator, but to be same lets have it
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
+                # to fight nans, we use lower adam eps. it works much better 
                 scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
             
@@ -9336,6 +9316,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # we monitor its norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # clip gradients >1 so we dont hit nans because of possible overflows!
+                        # to fight nans, we use lower adam eps. it works much better 
                         # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
                         
                         scaler_out_g = scaler.step(gen_optimizer)
@@ -9346,9 +9327,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
                         else:
-                            update_ema_generator(generator, ema_generator,
-                                                ema_warmup_images_seen,
-                                                decay_rate=0.99)
+                            update_ema_generator(generator, ema_generator)
                 # update only once
                 scaler.update()
                     
@@ -9489,8 +9468,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                                    save_path=save_path.replace(ema_marker_str,""),
                                    figsize=(16,8))
     
-    # restore print to point to builtin.print!
-    print = org_print
     print("SttyleGAN1 training is complete!")
         
 #%%
@@ -9502,7 +9479,7 @@ dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=True
+use_fp16=False
 
 # original paper uses 512
 z_size = 512
@@ -9511,8 +9488,11 @@ w_size = 512
 max_steps = 7
 
 # log-vram usage
-# up to 32² 2829MB
-# up to 64² 4125MB 
+# fp32:
+#     up to 32² 3553MB
+# fp16:
+#     up to 32² 2829MB
+#     up to 64² 4125MB 
 if use_fp16:      #4², 8², 16²,32²,64²,128²,256² 
     BATCH_SIZES = [128,128,128,128,128,64,32]
 else:
@@ -9547,13 +9527,18 @@ lr_d = 0.0015
 # clipping to prevent this (this is also very commen when training in fp16! 
 # so lets do both of these and see if this fixes our issue!)
 # first I try the eps and if it didnt work I also clip gradienst
-# update: larger eps so far did the trick! and we are getting much better images
-# so far in 16x16 res (used to be very bad, but now they look much better though
-# they are still extremly low res (16x16))
-lr_g = [0.000015, 0.0015]
+# update: larger eps so far did the trick! and we are getting better images
+# so far in 16x16 res (used to be very bad, but now they look better though
+# they are still extremly low res (16x16)) but at 64x64 we faced mode collpase#
+# disc had much lower loss(0.4) vs gen(3).
+lr_g = [0.00015, 0.0015]
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
+# note:with gradient clipping nan issue will be gone. but
+# by using larger eps(1e-5) the loss decreases twice as much
+# compared to the default eps(1e-8). the result is much better
+# with no gradient clipping with eps=1e-5
 eps = 1e-5 if use_fp16 else 1e-8 
 # no need to decay now!
 decay_step = 7#4#3#2
@@ -9591,6 +9576,47 @@ training_loop_stylegan(discriminator_stylegan1,
                      quick_and_noisy_IS_FID=False,
                      decay_step=decay_step)
 
+# debug logs:
+# starting the training with fp32 we had a bug
+# which made our mapping network to have lr=1.5e-7
+# this lead to mode collapse in 64x64 as the generator
+# was far behind(slow compared to) dicriminator.
+# switched to fp16 so we can use larger batches.
+# using fp16 and lr=1.5e-5 lead to nans early on
+# to solve the issue we used larger eps for adams
+# it worked very well and we no more got any nans
+# the 16x16 res looked specially good. both of the
+# discriminator and generator losses were balanced
+# both were around 1. but switching to 32x32, the
+# discriminator got the lead (down to .7 vs 1.8 gen)
+# the 32x32 didnt become as good as I expected, it 
+# was blury I didnt like it. when it got to 64x64
+# the discriminator loss became 0.4 and generator
+# became 3. the images had clear artifacts and malformed
+# so next we are going to apply gradient clipping
+# before that though I'd like to train in fp32 to
+# see much of this comes from fp16 and how much from
+# the actual traiing!
+# update: faced mode collapse 0.4 vs 3.26! discriminaror
+# massivly does better than generator
+# update:
+# usef fp32 this time, and the loss didnt change, upto16²
+# everything is very good, but starting with 32² it becomes
+# bad and in 64² it becomes worse, the loss is like fp16
+# so the fp16 wasnt the issue.
+# update(stylegan1_celeba_20251030125518): 
+# reverted back the adam eps=1e-8 and instead used gradient clipping
+# as expected we no more get nans in 8x8 res like before, however
+# I noticed the loss for both discriminator and generator
+# is much larger (5.88 va 10.10 vs 0.7 vs 1.2 in 32²) the quality
+# of generation is also much worse! we also faced partial model collapse
+# as early as e16@32²!
+# update:(20251030161059)
+# trying with fp32 and mn_lr=1e-4:‌ up to 16x16 it went great
+# d_loss and g_loss both around 1 and overall images look good
+# however starting 32x32, d_loss=0.7 but g_loss=1.6 we wait!
+# 
+# 
 #%%
 # Stylegan2/3?
 #%%
