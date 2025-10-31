@@ -8977,22 +8977,6 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
     penalty = r1_penalty(d_preds_real, x_real, gamma)
     return loss + penalty
-    # update: 
-    # I was wrong, that 16! was the mini batchsize for 
-    # distributed training, the official tf implementation
-    # doesnt do this in steps! it just computes the r1_penalty
-    # and adds it to loss for everysingle iteration!
-    # !TODO remove this
-    # since r1_penalty is computationally expensive 
-    # the authors only applied it every few steps 
-    # if (i%interval)==0:
-    #     penalty = r1_penalty(d_preds_real, x_real, gamma)
-    #     # since we are doing this only every few intervals, 
-    #     # we should also scale the loss by interval to acount
-    #     # for this intermittent appliance and ultimately the average
-    #     # checks out at the end. this is called lazy r1_penalty!
-    #     # loss = loss + (interval * penalty)
-    # return loss
 
 def generator_loss_stylegan1(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
@@ -9003,7 +8987,7 @@ def generator_loss_stylegan1(d_preds_fake):
 # so lets do the training loop
 
 @torch.no_grad()
-def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
+def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
@@ -9291,7 +9275,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 scaler.scale(disc_loss).backward()
                 # clip gradients >1 so we dont hit nans because of possible overflows!
                 # we souldnt be needing this for discriminator, but to be same lets have it
-                # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
+                #update: 
+                # noticed clipping at 1 causes issues down the road and some implementations
+                # used 10 so I use that as well
+                # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=10)
                 # to fight nans, we use lower adam eps. it works much better 
                 scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
@@ -9323,8 +9310,11 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # we monitor its norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # clip gradients >1 so we dont hit nans because of possible overflows!
-                        # to fight nans, we use lower adam eps. it works much better 
-                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
+                        # to fight nans, we use lower adam eps. it works much better
+                        # update:
+                        # clipping at 1 causes issues down the road and loss explodes!
+                        # I found some pytorch implementations used 10! 
+                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
@@ -9479,10 +9469,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         
 #%%
 print(f'Training StyleGAN1')
-gamma=10
+gamma=20#10
 # cifar10 is a lot harder than celeba. try celeba first
 # and then cifar10 if you like
-dataset_name = 'celeba'
+dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -9657,6 +9647,18 @@ training_loop_stylegan(discriminator_stylegan1,
 # update(20251031082850):
 # did nothing! my understanding seems wrong! need to read the whole official imp
 # and see what im doing wrong!
+# update:
+# im trying different parts now. siwtched to cifar10 for quicker experiments
+# (20251031164619):
+# I swapped the EqualizedConv2d with the old one we had for progan, and trained
+# the results were very bad, many grayish images, especially at 32², the losses
+# however were pretty close , like 0.89/1.4 but the outcome was very noisy.
+# (20251031185610):
+# swapped back to our stylegan specific version and so far its much more colorful
+# clearer (even at 16²) the losses are close (1.15 vs 0.989 @16²)
+# but when it comes to 32² it becomes blurry and discriminator gets the lower loss(0.8vs1.59)
+# ():
+# use larger gamma to ake d_loss larger in 32x32?
 #%%
 # Stylegan2/3?
 #%%
