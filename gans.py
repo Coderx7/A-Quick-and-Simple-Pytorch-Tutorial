@@ -9322,7 +9322,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
-                            print(f'Warning! Overflow teritory!: {mn_grad_norm=}')
+                            print(f'Warning! Overflow teritory!: mapping_network_grad_norm={mn_grad_norm.item()}')
                         
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
@@ -9531,7 +9531,7 @@ lr_d = 0.0015
 # so far in 16x16 res (used to be very bad, but now they look better though
 # they are still extremly low res (16x16)) but at 64x64 we faced mode collpase#
 # disc had much lower loss(0.4) vs gen(3).
-lr_g = [0.00015, 0.0015]
+lr_g = [0.0015, 0.0015]
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -9614,8 +9614,18 @@ training_loop_stylegan(discriminator_stylegan1,
 # update:(20251030161059)
 # trying with fp32 and mn_lr=1e-4:‌ up to 16x16 it went great
 # d_loss and g_loss both around 1 and overall images look good
-# however starting 32x32, d_loss=0.7 but g_loss=1.6 we wait!
-# 
+# however starting 32x32, d_loss=0.7 but g_loss=1.6, as expected
+# this didnt turn out any better either!
+# update:
+# trying with fp32 and mn_lr=1e-3: absolutely no difference! 32x32 disc
+# gets lower loss(0.76) and gloss goes 1.76! at e3 of 64x64 we faced
+# abnormally large gradients in mapping network (started as 114,125~164
+# in the next few epochs went up in thousands, by epoch12 it was in hunderds
+# of thousands (406k!) and by e16 it was in in millions(7m!) it became so bad
+# in epoch31 the gradient norm was 8.8239e+12! ) so the mn_lr=1e-3 is just 
+# too much.we need to dial it back to 1e-5 and see whats giving generator a
+# hard time here!
+# next train gen like normal, dont use separate mapping network from teh rest
 # 
 #%%
 # Stylegan2/3?
