@@ -8958,7 +8958,7 @@ def r1_penalty(d_preds, x_real, gamma=10):
     penalty = gamma/2 * grads_l2norm_squared
     return penalty
 
-def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma, i, interval=16,):
+def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
     # softplus is log(1+exp(x)) but since pytorch offers a numerically
     # stable version, we use the builtin one
@@ -8975,17 +8975,24 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma, i, i
     # x_real.requires_grad_(True)
     
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
-    
+    penalty = r1_penalty(d_preds_real, x_real, gamma)
+    return loss + penalty
+    # update: 
+    # I was wrong, that 16! was the mini batchsize for 
+    # distributed training, the official tf implementation
+    # doesnt do this in steps! it just computes the r1_penalty
+    # and adds it to loss for everysingle iteration!
+    # !TODO remove this
     # since r1_penalty is computationally expensive 
     # the authors only applied it every few steps 
-    if (i%interval)==0:
-        penalty = r1_penalty(d_preds_real, x_real, gamma)
-        # since we are doing this only every few intervals, 
-        # we should also scale the loss by interval to acount
-        # for this intermittent appliance and ultimately the average
-        # checks out at the end. this is called lazy r1_penalty!
-        loss = loss + (interval * penalty)
-    return loss
+    # if (i%interval)==0:
+    #     penalty = r1_penalty(d_preds_real, x_real, gamma)
+    #     # since we are doing this only every few intervals, 
+    #     # we should also scale the loss by interval to acount
+    #     # for this intermittent appliance and ultimately the average
+    #     # checks out at the end. this is called lazy r1_penalty!
+    #     # loss = loss + (interval * penalty)
+    # return loss
 
 def generator_loss_stylegan1(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
@@ -9252,7 +9259,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                     preds_fake = discriminator(imgs_fake, alpha, step)
                     # calculate discrimiator loss out of real and fake losses
-                    disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma,i,r1_penalty_interval)
+                    disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma)
                 
                 # for debugging purposes
                 # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
@@ -9500,12 +9507,16 @@ else:
 
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
+# EPOCHS = [10,10,20,30,50,60,70]
 EPOCHS = [10,10,20,30,50,60,70]
 
 gen_update_interval = 1
-# next use 1 and see how it goes
-r1_penalty_interval = 16#1#16
+# no where in the paper or official code they apply
+# r1_penalty after 16 iterations each time! so I 
+# instead use 1 here to match the official impl
+r1_penalty_interval = 1#1#16
 style_mixing_prob = 0.9
+# truncation rate
 psi = 0.7
 
 #discriminator
@@ -9516,7 +9527,7 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps,style_mixing_
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.0015
+lr_d = 0.001#0.0015
 # first for mapping_network and the second one for the rest of generator
 # log:
 # I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
@@ -9531,7 +9542,9 @@ lr_d = 0.0015
 # so far in 16x16 res (used to be very bad, but now they look better though
 # they are still extremly low res (16x16)) but at 64x64 we faced mode collpase#
 # disc had much lower loss(0.4) vs gen(3).
-lr_g = [0.0015, 0.0015]
+# paper uses 100x smaller lr for mapping network because it has 8 layers!
+# and the more layers the more unstability! so they multiply it by 0.01!
+lr_g = 0.001#0.0015
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -9552,8 +9565,8 @@ disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, be
 
 mapping_params = list(generator_stylegan1.mapping_network.parameters())
 gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
-gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
-                                  {'params':gen_other_params,'lr':lr_g[-1]}
+gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g*0.01},
+                                  {'params':gen_other_params,'lr':lr_g}
                                  ], betas=betas, eps=eps)
 
 training_loop_stylegan(discriminator_stylegan1,
@@ -9616,7 +9629,7 @@ training_loop_stylegan(discriminator_stylegan1,
 # d_loss and g_loss both around 1 and overall images look good
 # however starting 32x32, d_loss=0.7 but g_loss=1.6, as expected
 # this didnt turn out any better either!
-# update:
+# update(20251030201508):
 # trying with fp32 and mn_lr=1e-3: absolutely no difference! 32x32 disc
 # gets lower loss(0.76) and gloss goes 1.76! at e3 of 64x64 we faced
 # abnormally large gradients in mapping network (started as 114,125~164
@@ -9625,7 +9638,23 @@ training_loop_stylegan(discriminator_stylegan1,
 # in epoch31 the gradient norm was 8.8239e+12! ) so the mn_lr=1e-3 is just 
 # too much.we need to dial it back to 1e-5 and see whats giving generator a
 # hard time here!
-# next train gen like normal, dont use separate mapping network from teh rest
+# update(20251031065944):
+# I reread the paper and had another look at the official tf impl
+# there was no sign of scaling the r1_penalty, infact there was
+# not any intermittent appliance of r1_penalty! they applied it
+# normally! to test the effect however, I disabled the scaling by
+# iteration count, to see the effect on the training. 
+# in 8x8 the discriminator loss that used to be larger than generator
+# is now lower! in 16x16 epoch 0, many white dots artifact are vsibile
+# now that dont happen when we scale! also the d_loss is also much lower
+# than the generator, and g_loss went up(2.5)!(it used to be the same for both around 1.1!)
+# and obviously the image quality goes down hill!
+# so not applying the r1_penalty makes discriminator do better! 
+# and make gens work harder and hence do worse!
+# in other words, applying it less frequently even with scaling
+# can only keep up to 16x16, after than the discriminator overpwoers
+# the generator. so next we will apply r1_penalty all the time!
+# update(20251031082850):
 # 
 #%%
 # Stylegan2/3?
