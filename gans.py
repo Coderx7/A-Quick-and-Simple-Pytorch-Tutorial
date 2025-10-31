@@ -9655,7 +9655,8 @@ training_loop_stylegan(discriminator_stylegan1,
 # can only keep up to 16x16, after than the discriminator overpwoers
 # the generator. so next we will apply r1_penalty all the time!
 # update(20251031082850):
-# 
+# did nothing! my understanding seems wrong! need to read the whole official imp
+# and see what im doing wrong!
 #%%
 # Stylegan2/3?
 #%%
