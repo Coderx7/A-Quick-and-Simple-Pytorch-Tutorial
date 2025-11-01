@@ -19,6 +19,7 @@
 # belong to and simply sampling from it can result in 
 # real looking images. 
 # so lets see how we can do this
+import sys
 import os
 import math
 import time
@@ -8445,15 +8446,20 @@ with torch.no_grad():
 # instead of 1 conv layer. its almost the same!
 #
 class DiscriminatorStyleGAN1(nn.Module):
-    def __init__(self, max_steps=6, starting_base=2):
+    def __init__(self, max_steps=7, channels=[512,512,512,256,128,64,32]):
         super().__init__()
-        self.setup_layers(max_steps, starting_base)
+        assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
+        self.setup_layers(max_steps, channels)
     
-    def setup_layers(self, max_steps, starting_base):
+    def setup_layers(self, max_steps, channels):
         self.max_steps = max_steps
-        self.starting_base = starting_base
-        self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
-        # print(f'{channels=}')
+        # self.starting_base = starting_base
+        # update:
+        # see my note in generator. this loop is too simplistic 
+        # self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        # [512,256,128,64,32,16,8]
+        self.channels = channels
+        # print(f'{self.channels=}')
 
         self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, self.channels[i], kernel_size=1),
                                                      nn.LeakyReLU(0.2)) for i in range(max_steps)])
@@ -8693,21 +8699,23 @@ class StyleConvBlock(nn.Module):
 # instead of just 1, and combine their ws together and feed that to our
 # generator. we only do that in training as we explained before
 class GeneratorStyleGAN1(nn.Module):
-    def __init__(self, z_size=512, w_size=512, max_steps=6, starting_base=2,
+    def __init__(self, z_size=512, w_size=512, max_steps=7, 
+                 channels=[512,512,512,256,128,64,32],
                  style_mixing_prob=0.9, ema_w_beta=0.995):
         super().__init__()
+        
+        assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
         # lets do the same thing for generator
-        self.setup_layers(z_size, w_size, max_steps, starting_base, style_mixing_prob, ema_w_beta)
+        self.setup_layers(z_size, w_size, max_steps, style_mixing_prob, ema_w_beta)
 
                 
-    def setup_layers(self, z_size, w_size, max_steps, 
-                     starting_base, style_mixing_prob, ema_w_beta):
+    def setup_layers(self, z_size, w_size, max_steps, channels,
+                     style_mixing_prob, ema_w_beta):
         
         self.z_size = z_size
         self.w_size = w_size
         self.max_steps = max_steps
-        self.starting_base = starting_base
-        
+                
         self.style_mixing_prob = style_mixing_prob
         # truncation trick! in order to get higher quality generations
         # like the paper says, we need to use trunkation trick 
@@ -8721,8 +8729,15 @@ class GeneratorStyleGAN1(nn.Module):
         # for our simple tests this is ok, but if we wanted to go for higher res
         # we can repeat some channels for adjacent res to get better result
         # i.e. instead of doubling each time we can have e.g. [512,512,512,256,128,64...]
-        self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
-        # print(f'{channels=}')
+        # update:
+        # this was a bad idea, this way of specifying channels isnt efficient
+        # its too simplistic and we can get carried away and forget that we set up a stupid
+        # channel count later on and waste too much time figuring out what is missing or
+        # implemented incorrectly and we cant get good results! 
+        # the original used much larger channels so here we go!
+        # self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        self.channels = channels
+        # print(f'{self.channels=}')
         
         # unlike progan, we start with a learned constant tensor, as if its a blank canvas
         # and little by little draw on it! we start with a 1x512x8x8 block(the paper says so
@@ -8911,8 +8926,9 @@ class GeneratorStyleGAN1(nn.Module):
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
 max_steps = 7
-disc = DiscriminatorStyleGAN1(max_steps=max_steps, starting_base=2)
-gen = GeneratorStyleGAN1(100,100,max_steps=max_steps, starting_base=2)
+channels=[256,128,64,32,16,8,4]
+disc = DiscriminatorStyleGAN1(max_steps=max_steps,channels=channels)
+gen = GeneratorStyleGAN1(100,100,max_steps=max_steps,channels=channels)
 
 for m in [disc, gen]:
     print(f'channels: {m.channels}')
@@ -9141,7 +9157,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     print(f'--Images Directory:          {images_save_dir}')
     
     for step in range(starting_step, max_steps):
-        
         if starting_epoch == 0:
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
             
@@ -9469,7 +9484,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         
 #%%
 print(f'Training StyleGAN1')
-gamma=20#10
+gamma=10#10
 # cifar10 is a lot harder than celeba. try celeba first
 # and then cifar10 if you like
 dataset_name = 'cifar10'
@@ -9482,7 +9497,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # 7 means 4x4 up to 256x256
-max_steps = 7
+max_steps = 3 if dataset_name=="cifar10" else 7
 
 # log-vram usage
 # fp32:
@@ -9657,8 +9672,13 @@ training_loop_stylegan(discriminator_stylegan1,
 # swapped back to our stylegan specific version and so far its much more colorful
 # clearer (even at 16²) the losses are close (1.15 vs 0.989 @16²)
 # but when it comes to 32² it becomes blurry and discriminator gets the lower loss(0.8vs1.59)
-# ():
-# use larger gamma to ake d_loss larger in 32x32?
+# (20251031220917, 20251101072321):
+# use larger gamma to make disc struggle abit more so generator can breathe abit!
+# at larger res like 32x32: ok this didnt help at all we still face the same issue
+# this might be due to model capacity itself. that is we may have used too few channels
+# for later resolutions that requrie more processings! 
+# update(20251101094159):
+# so lets increase channel counts like the original paper:
 #%%
 # Stylegan2/3?
 #%%
