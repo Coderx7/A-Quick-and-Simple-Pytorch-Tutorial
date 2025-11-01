@@ -4543,7 +4543,7 @@ gen_update_interval = 5 if loss_type == "wgan" else 1
 # lsgan keeps failing with mode collapse (repeative images)! 
 no_spec_list = [0,5]#[]# list(range(5)) #[] #[1,2]
 #discriminator
-discriminator_stylegan1 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
+discriminator_I64 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            no_spec_norm_list=no_spec_list,
                                            # we face mode collapse toward the end when using wgangp
                                            # so I had to set a higher dropout and compensate with 
@@ -4551,10 +4551,10 @@ discriminator_stylegan1 = DiscriminatorImproved64(hidden_size=disc_hidden_size,
                                            # mode collapse early on or later on(both form of mode collapses
                                            # occur if either overpower the other)
                                            dropout_rate=0.25 if loss_type=='wgangp' else 0.2)
-discriminator_stylegan1 = discriminator_stylegan1.to(device)
+discriminator_I64 = discriminator_I64.to(device)
 #generator
-generator_stylegan1 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
-generator_stylegan1 = generator_stylegan1.to(device)
+generator_I64 = GeneratorImproved64(z_size, hidden_size=gen_hidden_size)
+generator_I64 = generator_I64.to(device)
 
 betas = [0.5, 0.999] if loss_type=='lsgan' else [0, 0.9]
 
@@ -4569,11 +4569,11 @@ else:#wgangp
     lr_d, lr_g = 0.002, 0.001#0.001, 0.002
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_I64.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_I64.parameters(), lr_g, betas=betas)
 
-training_loop(discriminator_stylegan1, 
-              generator_stylegan1, 
+training_loop(discriminator_I64, 
+              generator_I64, 
               train_loader=train_loader,
               disc_optimizer=disc_optimizer,
               gen_optimizer=gen_optimizer, 
@@ -4601,9 +4601,9 @@ dataset_name = checkpoint["dataset_name"]
 loss_type = checkpoint["loss_type"]
 # losses = np.array(checkpoint.pop("losses"))
 
-generator_stylegan1 = GeneratorImproved64(z_size,hidden_size)
-generator_stylegan1.load_state_dict(checkpoint.pop("state_dict"))
-generator_stylegan1.eval()
+generator_I64 = GeneratorImproved64(z_size,hidden_size)
+generator_I64.load_state_dict(checkpoint.pop("state_dict"))
+generator_I64.eval()
 
 for k,v in checkpoint.items():
     print(f'{k}: {v}')
@@ -4611,7 +4611,7 @@ for k,v in checkpoint.items():
 # print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 run_latent_arithmatic(attr_name='Male', 
-                      generator=generator_stylegan1, 
+                      generator=generator_I64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4625,7 +4625,7 @@ run_latent_arithmatic(attr_name='Male',
 
 #%%
 run_latent_arithmatic(attr_name='Smiling', 
-                      generator=generator_stylegan1, 
+                      generator=generator_I64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -4638,7 +4638,7 @@ run_latent_arithmatic(attr_name='Smiling',
                       device='cpu')
 #%%
 run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generator_stylegan1, 
+                      generator=generator_I64, 
                       classifier=celeba_classifier, 
                       word2idx=celeba_attr_word2idx,
                       random_gen=random_gen,
@@ -5624,8 +5624,8 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
             f'\n  --Last FID:              {checkpoint["FID"]}'
             f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
           
-    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
-    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--Loss type:                 {loss_type}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -6093,11 +6093,11 @@ EPOCHS = [10,10,10,20,40,40,40]
 gen_update_interval = 5 if loss_type == "wgan" else 1
 
 #discriminator
-discriminator_stylegan1 = DiscriminatorProGAN(max_steps)
-discriminator_stylegan1 = discriminator_stylegan1.to(device)
+discriminator_progan = DiscriminatorProGAN(max_steps)
+discriminator_progan = discriminator_progan.to(device)
 #generator
-generator_stylegan1 = GeneratorProGAN(z_size, max_steps)
-generator_stylegan1 = generator_stylegan1.to(device)
+generator_progan = GeneratorProGAN(z_size, max_steps)
+generator_progan = generator_progan.to(device)
 
 #sidenote:
 # in Adam optimizer beta1(the first value for betas) controls the momentum,
@@ -6269,8 +6269,8 @@ decay_step = 7#4#3#2
 use_ema_inference = False
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
-disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr_g, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_progan.parameters(), lr_g, betas=betas)
 
 #compile the models for faster training!
 # update: it doesnt work for models that have double backwardpass!
@@ -6284,8 +6284,8 @@ gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr_g, betas=b
 # while ours is 7m!
 # ok everything went fine adn got great results! 
 #
-training_loop_progan(discriminator_stylegan1,
-                     generator_stylegan1, 
+training_loop_progan(discriminator_progan,
+                     generator_progan, 
                      disc_optimizer=disc_optimizer,
                      gen_optimizer=gen_optimizer, 
                      epoch_list=EPOCHS, 
@@ -8706,7 +8706,7 @@ class GeneratorStyleGAN1(nn.Module):
         
         assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
         # lets do the same thing for generator
-        self.setup_layers(z_size, w_size, max_steps, style_mixing_prob, ema_w_beta)
+        self.setup_layers(z_size, w_size, max_steps, channels, style_mixing_prob, ema_w_beta)
 
                 
     def setup_layers(self, z_size, w_size, max_steps, channels,
@@ -8926,7 +8926,7 @@ class GeneratorStyleGAN1(nn.Module):
 # x = torch.randn(size=(5,3,256,256))
 # z = torch.randn(size=(5,100))
 max_steps = 7
-channels=[256,128,64,32,16,8,4]
+channels=[512,256,128,64,32,16,8]
 disc = DiscriminatorStyleGAN1(max_steps=max_steps,channels=channels)
 gen = GeneratorStyleGAN1(100,100,max_steps=max_steps,channels=channels)
 
@@ -9135,8 +9135,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             f'\n  --Last FID:              {checkpoint["FID"]}'
             f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
           
-    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
-    print(f'--Genr Param Count:          {sum([p.numel() for p in discriminator_stylegan1.parameters()]):,}')
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--Use Half-Precision:        {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -9487,7 +9487,7 @@ print(f'Training StyleGAN1')
 gamma=10#10
 # cifar10 is a lot harder than celeba. try celeba first
 # and then cifar10 if you like
-dataset_name = 'cifar10'
+dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -9497,7 +9497,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # 7 means 4x4 up to 256x256
-max_steps = 3 if dataset_name=="cifar10" else 7
+max_steps = 7#3 if dataset_name=="cifar10" else 7
 
 # log-vram usage
 # fp32:
@@ -9513,7 +9513,7 @@ else:
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
-EPOCHS = [10,10,20,30,50,60,70]
+EPOCHS = [10,15,30,100,50,60,70]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9523,12 +9523,15 @@ r1_penalty_interval = 1#1#16
 style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
-
+#              4   8   16 32 
+channels = [512,512,512,512,32,16,16]
+# channels_g = [512,512,512,512,32,16,16]
 #discriminator
-discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps)
+discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels)
 discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
-generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps,style_mixing_prob=style_mixing_prob)
+generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, channels,
+                                         style_mixing_prob=style_mixing_prob)
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
