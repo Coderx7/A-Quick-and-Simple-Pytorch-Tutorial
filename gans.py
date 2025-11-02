@@ -8441,74 +8441,40 @@ with torch.no_grad():
 # is an improved version of progan!
 # having said all of this, lets now implemenet it and see how it works!
 
-# the discriminator from progan stays nearly the same except for the first res
-# that starts at 8x8 instead of 4x4 and the final layer that uses two fc layers
-# instead of 1 conv layer. its almost the same!
-#
-class DiscriminatorStyleGAN1(nn.Module):
-    def __init__(self, max_steps=7, channels=[512,512,512,256,128,64,32]):
+# add blur so discriminator doesnt quickly win!
+class Blur(nn.Module):
+    def __init__(self):
         super().__init__()
-        assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
-        self.setup_layers(max_steps, channels)
-    
-    def setup_layers(self, max_steps, channels):
-        self.max_steps = max_steps
-        # self.starting_base = starting_base
+        # simple blur kernel
+        kernel = torch.tensor([1,2,1])
+        kernel = kernel.view(1,-1) * kernel.view(-1,1)
+        kernel = kernel/kernel.sum()
+        self.register_buffer("kernel", kernel.view(1,1,3,3))
+            
+    def forward(self, x):
+        in_channels = x.size(1)
+        kernel = self.kernel.repeat(in_channels, 1,1,1)
+        x = F.pad(x,[1,1,1,1],mode='reflect')
+        return F.conv2d(x, kernel, groups=in_channels)
+
+class DiscBlockStyleGAN1(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.blur = Blur()
         # update:
-        # see my note in generator. this loop is too simplistic 
-        # self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
-        # [512,256,128,64,32,16,8]
-        self.channels = channels
-        # print(f'{self.channels=}')
-
-        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, self.channels[i], kernel_size=1),
-                                                     nn.LeakyReLU(0.2)) for i in range(max_steps)])
-        self.blocks = nn.ModuleList([DiscBlockProGAN(self.channels[i],self.channels[i-1]) for i in range(1,max_steps)])
-
-        self.remaining_blocks = nn.ModuleList()
-        for step in range(self.max_steps):
-            remaining = []
-            for i in range(step-2,-1,-1):
-                remaining.append( self.blocks[i])
-            self.remaining_blocks.append(nn.Sequential(*remaining) if remaining else nn.Identity())
-        
-        
-        # StyleGAN Discriminator has 2 Linear layer at the end
-        self.final = nn.Sequential(AddBatchStdDev(),
-                                   EqualizedConv2d(self.channels[0]+1, self.channels[0], kernel_size=3, padding=1),
+        # the original paper disabled bias (I trained with bias=True just fine)
+        # update2: we use EqualizedConv2d instead of conv2d in all layers
+        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
-                                   #2 FC layers ?(FC-LReLU-FC)?
-                                   nn.Flatten(),
-                                   # update: while the paper says they use 8x8! 
-                                   # the official code I checked used 4x4! so we
-                                   # use 4x4 to be safe (explained more in generator section below)
-                                   EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
+                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
-                                   EqualizedLinear(self.channels[0],1))
-                               
-    
-    def forward(self, x, alpha, step):
-        if step == 0:
-            out = self.fromImgs[0](x)
-            out = self.final(out)
-            return out.view(-1,1)
-
-        new_input_out = self.fromImgs[step](x)
-        new_input_out = self.blocks[step-1](new_input_out)
+                                   # before we downsample, we blur the input
+                                   Blur(),
+                                   nn.AvgPool2d(2),
+                                  )
         
-        x_downsampled = F.avg_pool2d(x, 2)
-        previous_input_out = self.fromImgs[step-1](x_downsampled)
-        out = alpha * new_input_out + (1-alpha)*previous_input_out
-        out = self.remaining_blocks[step](out)
-
-        out = self.final(out)
-        return out.view(-1,1)
- 
-# The generator however as we discussed is different. we now need a mapping network, AdaIN, and
-# noise injection. lets implement them
- 
-# Mapping Network is a 8 layer mlp. but since its linear layer, like conv layers before
-# we need to use the equalized version
+    def forward(self, x):
+        return self.block(x)
 
 # sidenote:
 # I initially tried sqrt(2/fan-in) for equalizedlinear, and bias was optional as well
@@ -8580,7 +8546,75 @@ class EqualizedConv2d(nn.Module):
         return F.conv2d(x, scaled_weights, scaled_bias, stride=self.stride, padding=self.padding)
 
 
+# the discriminator from progan stays nearly the same except for the first res
+# that starts at 8x8 instead of 4x4 and the final layer that uses two fc layers
+# instead of 1 conv layer. its almost the same!
+#
+class DiscriminatorStyleGAN1(nn.Module):
+    def __init__(self, max_steps=7, channels=[512,512,512,256,128,64,32]):
+        super().__init__()
+        assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
+        self.setup_layers(max_steps, channels)
+    
+    def setup_layers(self, max_steps, channels):
+        self.max_steps = max_steps
+        # self.starting_base = starting_base
+        # update:
+        # see my note in generator. this loop is too simplistic 
+        # self.channels = [ 2**(i+starting_base) for i in range(max_steps,0,-1)]
+        # [512,256,128,64,32,16,8]
+        self.channels = channels
+        # print(f'{self.channels=}')
+
+        self.fromImgs = nn.ModuleList([nn.Sequential(EqualizedConv2d(3, self.channels[i], kernel_size=1),
+                                                     nn.LeakyReLU(0.2)) for i in range(max_steps)])
+        self.blocks = nn.ModuleList([DiscBlockStyleGAN1(self.channels[i],self.channels[i-1]) for i in range(1,max_steps)])
+
+        self.remaining_blocks = nn.ModuleList()
+        for step in range(self.max_steps):
+            remaining = []
+            for i in range(step-2,-1,-1):
+                remaining.append( self.blocks[i])
+            self.remaining_blocks.append(nn.Sequential(*remaining) if remaining else nn.Identity())
+        
+        
+        # StyleGAN Discriminator has 2 Linear layer at the end
+        self.final = nn.Sequential(AddBatchStdDev(),
+                                   EqualizedConv2d(self.channels[0]+1, self.channels[0], kernel_size=3, padding=1),
+                                   nn.LeakyReLU(0.2),
+                                   #2 FC layers ?(FC-LReLU-FC)?
+                                   nn.Flatten(),
+                                   # update: while the paper says they use 8x8! 
+                                   # the official code I checked used 4x4! so we
+                                   # use 4x4 to be safe (explained more in generator section below)
+                                   EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedLinear(self.channels[0],1))
+                               
+    
+    def forward(self, x, alpha, step):
+        if step == 0:
+            out = self.fromImgs[0](x)
+            out = self.final(out)
+            return out.view(-1,1)
+
+        new_input_out = self.fromImgs[step](x)
+        new_input_out = self.blocks[step-1](new_input_out)
+        
+        x_downsampled = F.avg_pool2d(x, 2)
+        previous_input_out = self.fromImgs[step-1](x_downsampled)
+        out = alpha * new_input_out + (1-alpha)*previous_input_out
+        out = self.remaining_blocks[step](out)
+
+        out = self.final(out)
+        return out.view(-1,1)
  
+# The generator however as we discussed is different. we now need a mapping network, AdaIN, and
+# noise injection. lets implement them
+ 
+# Mapping Network is a 8 layer mlp. but since its linear layer, like conv layers before
+# we need to use the equalized version
+
 # Mappingnetwork is an 8 layer mlp wtih leakyrelu as nonlinearity
 # it accepts the latent vector z and gives us the latent vector w
 # sidenote: the paper says that increasing the depth of the 
@@ -8658,7 +8692,22 @@ class NoiseInjection(nn.Module):
 # the description of each block is given in figure1 page 2 of the paper
 # but the official tf implementation differs from it! in official code
 # the order is conv>bias>lrelu>noise>adain but paper says conv>noise>lrelu>adain!
-#! if things doesnt work out comeback and use the official tf code order
+# 
+# update:
+# I swapped the order so adain is first applied and then we do lrelu! 
+# if we apply the nonlinearity(leakyrelu) before adain
+# we warp the distribution of the featuremaps in a nonlinear way!
+# adaIN then tries to normalize this already rectified distribution
+# which is not what we want and also it wasnt designed for this! doing this
+# will severely weaken its ability to control the style. 
+# to fix this obviously we need to apply adain after the convolution 
+# and noise injection but before the activation!
+# before doing this no matter what I did at 32x32 res, the disc would get much
+# lower loss (e.g. 0.7vs1.2) and image quality would not improve! 
+# this would be compunded in later res. when I swapped the order and 
+# applyed adain before lrelu the issue was fixed and dLoss became 
+# 1.35 vs 0.72 of g_loss. basically the roles
+# are reversed and gen is now doing better than disc!
 class StyleConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
                  w_size=512, upsample=False, eps=1e-8):
@@ -8678,18 +8727,34 @@ class StyleConvBlock(nn.Module):
         self.conv = EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias)
         self.noise_inject = NoiseInjection(out_channels)
         self.adain = AdaIN(out_channels, w_size, eps)
+        self.blur = Blur()
 
     def forward(self, x, w, noise=None):
         if self.upsample:
             x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False )
-        
+            # blur the output to hide checker marks effects this is especially important
+            # for 32x32 and higher res so the discriminator doesnt win too quickly!
+            x = self.blur(x)
+
         out = self.conv(x)
         # inject noise into the output featuremaps
         out = self.noise_inject(out, noise)
+        # apply the styles from w on the output
+        # update: 
+        # do adain before lrelu !
+        # applying it after activation results in disc overpowering gen!
+        # at higher res (starting from 32x32!)
+        # so the order must be conv>adain>activation since adain normalizes
+        # the featuremap and it must happen before nonlinear activation warps
+        # the statisics of the featuremap!
+        # the official code uses the original order i.e. conv-noise-act-adain
+        # but for me this swapped oreder works otherwise I couldnt get good
+        # images starting 32x32 res! after I swapped it the convergence became
+        # very fast!
+        # todo understand why !
+        out = self.adain(out, w)
         # now run through nonlinearity
         out = F.leaky_relu(out, negative_slope=0.2)
-        # and finally apply the styles from w on the output
-        out = self.adain(out, w)
         return out
 
 # its much easier for us to implement style mixing here inside generator
@@ -9073,16 +9138,18 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         max_steps = checkpoint["max_steps"]
-        discriminator.setup_layers(max_steps)
+        channels_d = checkpoint["channels_d"]
+        discriminator.setup_layers(max_steps,channels_d)
         discriminator.load_state_dict(checkpoint["disc_state_dict"])
         discriminator = discriminator.to(device)
         
         z_size = checkpoint["z_size"]
         w_size = checkpoint["w_size"]
+        channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
         ema_w_beta = checkpoint["ema_w_beta"]
         
-        generator.setup_layers(z_size, w_size, max_steps,
+        generator.setup_layers(z_size, w_size, max_steps,channels_g,
                                style_mixing_prob=style_mixing_prob,
                                ema_w_beta=ema_w_beta)
         generator.load_state_dict(checkpoint["gen_state_dict"])
@@ -9421,6 +9488,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "scaler_state_dict":scaler.state_dict(),
                         "z_size":generator.z_size,
                         "w_size":generator.w_size,
+                        "channels_d":discriminator.channels,
+                        "channels_g":generator.channels,
                         "use_fp16":use_fp16,
                         "style_mixing_prob":generator.style_mixing_prob,
                         "ema_w_beta":generator.ema_w_beta,
@@ -9513,7 +9582,7 @@ else:
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
-EPOCHS = [10,15,30,100,50,60,70]
+EPOCHS = [10,10,20,30,50,60,70]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9524,7 +9593,7 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 #              4   8   16 32 
-channels = [512,512,512,512,32,16,16]
+channels = [512,256,128,128,64,64,32]
 # channels_g = [512,512,512,512,32,16,16]
 #discriminator
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels)
@@ -9595,8 +9664,39 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_ema_inference=use_ema_inference,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
+                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251101163926/checkpoint_step_2_20251101163926.ckpt",
                      decay_step=decay_step)
+#%%
+#%%
+# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
+checkpoint_path ='./weights/gan/stylegan1_celeba_20251101163926/checkpoint_step_2_20251101163926.ckpt'
+checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
 
+checkpoint["decay_step"] = 2
+checkpoint["channels_d"] = [512,512,512,512,32,16,16]
+checkpoint["channels_g"] = [512,512,512,512,32,16,16]
+# checkpoint["lr_g"] = 0.000042
+# checkpoint["lambda_factor"] = 10
+# # since we changed the epochs, lr_d/lr_g wont take effect and instead
+# # we need to change the optimizers lr!
+checkpoint["epoch_list"]=[10, 15, 30, 30, 30, 30, 70]
+# checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
+# checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
+# #%%
+torch.save(checkpoint,checkpoint_path)
+print(f'-'*30)
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+
+#%%
 # debug logs:
 # starting the training with fp32 we had a bug
 # which made our mapping network to have lr=1.5e-7
@@ -9681,7 +9781,24 @@ training_loop_stylegan(discriminator_stylegan1,
 # this might be due to model capacity itself. that is we may have used too few channels
 # for later resolutions that requrie more processings! 
 # update(20251101094159):
-# so lets increase channel counts like the original paper:
+# so lets increase channel counts like the original paper: the problem still exists
+# I trained with more channels, with less channels and the problem still exists, starting
+# with 32x32 the disc just overwhelms the generator, its loss quickly (i.e. epoch0!) gets
+# down(0.7 vs 1.2). trained with cifar10, celeba didnt make any difference, they show the
+# same exact symtopm! 
+# update(stylegan1_celeba_20251102091252):
+# I noticed some implementations include a blur module (anti-aliasing) while the official imp
+# has it implemented but didnt use it if I recall correctly. this was meant to fix the checkerboard
+# issues that happens when we go into higher res where its prominent and disc can easily find it
+# and flag the images as fake! I used that but the still didnt change anything!
+# update(stylegan1_celeba_20251102123140):
+# I went back to the begining and changed the order of adaIn and lrelu in StyleConvBlock.
+# I swapped the ordr and im currently training again hope this fixes the issue!(blur is also active in this experiement)
+# update: it actually did work! now in 32x32, the d_loss is 1.35 vs g_loss=0.728!
+# so it was the damn order all this time!! the convergence is much faster now! given this
+# I guess we can only use way fewer epochs (e.g. 4)for 32x32 layers and previous ones as well!
+#
+
 #%%
 # Stylegan2/3?
 #%%
