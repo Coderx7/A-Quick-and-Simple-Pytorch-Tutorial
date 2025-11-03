@@ -9360,6 +9360,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #update: 
                 # noticed clipping at 1 causes issues down the road and some implementations
                 # used 10 so I use that as well
+                # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=10)
                 # to fight nans, we use lower adam eps. it works much better 
                 scaler_out_d = scaler.step(disc_optimizer)
@@ -9396,7 +9397,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # update:
                         # clipping at 1 causes issues down the road and loss explodes!
                         # I found some pytorch implementations used 10! 
-                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+                        # if this caused issues, only clip mapping_network gradients
+                        scaler.unscale_(gen_optimizer)
+                        nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
@@ -9636,7 +9639,7 @@ decay_step = 7#4#3#2
 # at epoch 2 of 8x8 it suddenly goes all solid grays
 # up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
 # so update ema needs some work!
-use_ema_inference = False
+use_ema_inference = True
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
 
@@ -9660,11 +9663,11 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_fp16=use_fp16,
                      noise_addition=False,
                      device=device,
-                     resume=False,
+                     resume=True,
                      use_ema_inference=use_ema_inference,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251101163926/checkpoint_step_2_20251101163926.ckpt",
+                     checkpoint_path="./weights/gan/stylegan1_celeba_20251102123140/checkpoint_step_3_20251102123140.ckpt",
                      decay_step=decay_step)
 #%%
 #%%
@@ -9795,9 +9798,16 @@ for k,v in checkpoint.items():
 # I went back to the begining and changed the order of adaIn and lrelu in StyleConvBlock.
 # I swapped the ordr and im currently training again hope this fixes the issue!(blur is also active in this experiement)
 # update: it actually did work! now in 32x32, the d_loss is 1.35 vs g_loss=0.728!
-# so it was the damn order all this time!! the convergence is much faster now! given this
-# I guess we can only use way fewer epochs (e.g. 4)for 32x32 layers and previous ones as well!
+# so it was the damn order all this time!! the convergence is much much faster now! and
+# we achieve very low FID as well (29.54 in epoch7@32²!)given this I guess we can only
+# use way fewer epochs! starting with epoch 4 @64x64 we got warnings for grad_norms exceedingly
+# getting larger for mapping network! the loss was still not affected, but I ended the 
+# training at epoch 6 so I can address it properly. I previously had gradient_clipping
+# for fp16 trainig but commented it out because I used larger eps for adams to make it
+# stable. now I will uncommented it and enable it as default as fp32 also seems to require it
 #
+#next: now that we've got this working 
+# save settings/ use smaller channels and test with cifar10 and also fp16 
 
 #%%
 # Stylegan2/3?
