@@ -8695,19 +8695,22 @@ class NoiseInjection(nn.Module):
 # 
 # update:
 # I swapped the order so adain is first applied and then we do lrelu! 
-# if we apply the nonlinearity(leakyrelu) before adain
-# we warp the distribution of the featuremaps in a nonlinear way!
-# adaIN then tries to normalize this already rectified distribution
-# which is not what we want and also it wasnt designed for this! doing this
-# will severely weaken its ability to control the style. 
-# to fix this obviously we need to apply adain after the convolution 
+# I guess the reason behind this improvement is that when we apply the
+# nonlinearity(leakyrelu) before adain we are warping the distribution
+# of the featuremaps in a nonlinear way! which then when adaIN tries to
+# normalize this already rectified distribution, it gets weird! its now 
+# skewed in a sense! we dont want that! as doing this weakens the adain's
+# ability to control the style properly! (come back to our intial intution,
+# we wanted to normalize the input directly not after going through a 
+# nonlinearity that changes the whole landscape some what drastically!)
+# to fix this obviously we need to apply adain right after the convolution 
 # and noise injection but before the activation!
 # before doing this no matter what I did at 32x32 res, the disc would get much
 # lower loss (e.g. 0.7vs1.2) and image quality would not improve! 
 # this would be compunded in later res. when I swapped the order and 
 # applyed adain before lrelu the issue was fixed and dLoss became 
-# 1.35 vs 0.72 of g_loss. basically the roles
-# are reversed and gen is now doing better than disc!
+# 1.35 vs 0.72 of g_loss. basically the roles are reversed and gen
+# is now doing much better than disc!
 class StyleConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
                  w_size=512, upsample=False, eps=1e-8):
@@ -8751,7 +8754,17 @@ class StyleConvBlock(nn.Module):
         # but for me this swapped oreder works otherwise I couldnt get good
         # images starting 32x32 res! after I swapped it the convergence became
         # very fast!
-        # todo understand why !
+        # todo understand why!
+        # update:
+        # I digged deeper and tested more configurations, I noticed nearly every
+        # implmenetation I saw online had incorporated stylegan2 tricks into the paper
+        # to varying extend.
+        # also the original order (i.e. lrelu>adain) should work on FFHQ with proper
+        # channel capacity(channel capacity and epoch directly affect the result but
+        # since it takes a huge amount of time to test I gave up on it and used smaller
+        # channels in early tests.later on with fp16(now thatI know our implementation works
+        # I tried and got good results(see the test section)))
+        # anyway just wanted to add that here
         out = self.adain(out, w)
         # now run through nonlinearity
         out = F.leaky_relu(out, negative_slope=0.2)
@@ -9188,7 +9201,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             starting_step += 1
             # also reset the initial epoch for the new step
             starting_epoch = 0
-                    
+
     # store training log for each step  
     all_training_losses = [[] for _ in range(max_steps)]
     all_gradient_penalties = [[] for _ in range(max_steps)]
@@ -9557,13 +9570,21 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 #%%
 print(f'Training StyleGAN1')
 gamma=10#10
-# cifar10 is a lot harder than celeba. try celeba first
-# and then cifar10 if you like
-dataset_name = 'celeba'
+# cifar10 is a lot harder than celeba. 
+# simply becasue its a small multiclass dataset
+# that has only 50k training samples. basically
+# 10k for every class which is very low to get decent
+# result. on  the other hand celeba and FFHQ datasets 
+# are simply human faces and this makes it extremely easy
+# to get it right compared to cifar10! they also have much 
+# larger number of samples!
+# so to test and evalualte we always try celeba first
+# and then cifar10 if we like
+dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=False
+use_fp16=True
 
 # original paper uses 512
 z_size = 512
@@ -9571,6 +9592,12 @@ w_size = 512
 # 7 means 4x4 up to 256x256
 max_steps = 7#3 if dataset_name=="cifar10" else 7
 
+# batchsize extremely matters, the larger the batchsize the
+# better the performance. 
+# see https://github.com/NVlabs/stylegan2-ada-pytorch?tab=readme-ov-file#expected-training-time
+# it gives a pretty good insight into the importantce of batchsize 
+# (also sidenote: see the the lowest FID is achieved in smaller res
+# the larger the res, the larger the FID score gets)
 # log-vram usage
 # fp32:
 #     up to 32² 3553MB
@@ -9585,7 +9612,17 @@ else:
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
-EPOCHS = [10,10,20,30,50,60,70]
+# for cifar10, since our max res is 32x32, we need to allocate 
+# more epochs especially to the 32x32 res. even after doing that
+# the FID maynot change, but the image quality 100% improves, however
+# the images may be malformed but sharp.there are some classes that
+# are better than others like horses, some cars, fish, but cars, or
+# more complex things are malformed usually(at least based on my experiments
+# with limited epochs) and this is directly related to small number of images
+# for each class and how many epochs the model is trained onviously!
+# also the droplet effect is (water smudge effects in images) are expected
+# this is the stylegan1 issue which will be fixed in stylegan2!
+EPOCHS = [10,10,20,50,30,60,70]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9595,8 +9632,9 @@ r1_penalty_interval = 1#1#16
 style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
-#              4   8   16 32 
-channels = [512,256,128,128,64,64,32]
+# [512,256,128,128,64,64,32] trains well but it takes a lot of time
+# this is faster but less quality obviously
+channels = [512,512,512,512,64,32,16]
 # channels_g = [512,512,512,512,32,16,16]
 #discriminator
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels)
@@ -9639,7 +9677,7 @@ decay_step = 7#4#3#2
 # at epoch 2 of 8x8 it suddenly goes all solid grays
 # up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
 # so update ema needs some work!
-use_ema_inference = True
+use_ema_inference = False
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
 
@@ -9663,11 +9701,11 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_fp16=use_fp16,
                      noise_addition=False,
                      device=device,
-                     resume=True,
+                     resume=False,
                      use_ema_inference=use_ema_inference,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                     checkpoint_path="./weights/gan/stylegan1_celeba_20251102123140/checkpoint_step_3_20251102123140.ckpt",
+                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251102123140/checkpoint_step_3_20251102123140.ckpt",
                      decay_step=decay_step)
 #%%
 #%%
@@ -9805,6 +9843,21 @@ for k,v in checkpoint.items():
 # training at epoch 6 so I can address it properly. I previously had gradient_clipping
 # for fp16 trainig but commented it out because I used larger eps for adams to make it
 # stable. now I will uncommented it and enable it as default as fp32 also seems to require it
+# update:(cifar10_20251103154849):
+# training cfar10 with small number of epochs and channels. the model fails to properly
+# form images at higher resolutions.insufficient training at lower res(only 10 epochs for
+# early resolutions (4²,8²,16²) with insufficient channels made 32x32 completely fail although
+# the loss seems okayish! but its completely random blobs! if you look closer we can see
+# early res were developing good siluhetts, low res versions of images, but before they converge
+# we started the next resolution/fade in process which ruined everything.
+# update:(cifar10_20251103185721)
+# with more epochs and more channels for each res, we get a better result. early in 32x32 we
+# can see the same issue as before, temporarily the images turn into bloby mess, but given more
+# epochs, they get more formed into actual images. horses, cars, are more clearly formed.but
+# overall the quality isnot good. using larger batchisze, more data helps. also the discriminator
+# is struggling and this is why the quality is getting worse! the generator is overpowering
+# the discriminator. need to fix that to get decent images. however im really tired! and it
+# is taking too much time to train! 
 #
 #next: now that we've got this working 
 # save settings/ use smaller channels and test with cifar10 and also fp16 
