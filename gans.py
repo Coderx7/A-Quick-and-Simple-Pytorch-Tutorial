@@ -3196,6 +3196,13 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     
+    elif dataset_name == 'ffhq':
+        transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
+        # the path looks like ./data/ffhq_128/thumbnails128x128/[images are here]
+        # but we give ./data/ffhq_128/ so thumbnail128x128 is treated as a single class
+        # since we dont need labels, so we can treat all images as one class to use iwth Imagefolder
+        dataset = datasets.ImageFolder(root=store_path,transform=transform)
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     else:
         raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
 
@@ -9858,7 +9865,10 @@ for k,v in checkpoint.items():
 # is struggling and this is why the quality is getting worse! the generator is overpowering
 # the discriminator. need to fix that to get decent images. however im really tired! and it
 # is taking too much time to train! 
-#
+#update:
+# test last experiment with lrelu>adain (original order)
+# 
+# 
 #next: now that we've got this working 
 # save settings/ use smaller channels and test with cifar10 and also fp16 
 
