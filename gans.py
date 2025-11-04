@@ -8772,9 +8772,10 @@ class StyleConvBlock(nn.Module):
         # channels in early tests.later on with fp16(now thatI know our implementation works
         # I tried and got good results(see the test section)))
         # anyway just wanted to add that here
-        out = self.adain(out, w)
+        # out = self.adain(out, w)
         # now run through nonlinearity
         out = F.leaky_relu(out, negative_slope=0.2)
+        out = self.adain(out, w)
         return out
 
 # its much easier for us to implement style mixing here inside generator
@@ -9505,7 +9506,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             
             torch.save({"disc_state_dict":discriminator.state_dict(),
                         "gen_state_dict":generator.state_dict(),
-                        "gen_ema_state_dict":ema_generator.state_dict(),
+                        "gen_ema_state_dict":ema_generator.state_dict() if use_ema_inference else None,
                         "disc_optimizer":disc_optimizer.state_dict(),
                         "gen_optimizer":gen_optimizer.state_dict(),
                         "scaler_state_dict":scaler.state_dict(),
@@ -9587,7 +9588,7 @@ gamma=10#10
 # larger number of samples!
 # so to test and evalualte we always try celeba first
 # and then cifar10 if we like
-dataset_name = 'cifar10'
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -9641,7 +9642,7 @@ style_mixing_prob = 0.9
 psi = 0.7
 # [512,256,128,128,64,64,32] trains well but it takes a lot of time
 # this is faster but less quality obviously
-channels = [512,512,512,512,64,32,16]
+channels = [512,512,512,512,256,128,16]
 # channels_g = [512,512,512,512,32,16,16]
 #discriminator
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels)
