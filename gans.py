@@ -8464,25 +8464,6 @@ class Blur(nn.Module):
         x = F.pad(x,[1,1,1,1],mode='reflect')
         return F.conv2d(x, kernel, groups=in_channels)
 
-class DiscBlockStyleGAN1(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
-        super().__init__()
-        self.blur = Blur()
-        # update:
-        # the original paper disabled bias (I trained with bias=True just fine)
-        # update2: we use EqualizedConv2d instead of conv2d in all layers
-        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
-                                   nn.LeakyReLU(0.2),
-                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
-                                   nn.LeakyReLU(0.2),
-                                   # before we downsample, we blur the input
-                                   Blur(),
-                                   nn.AvgPool2d(2),
-                                  )
-        
-    def forward(self, x):
-        return self.block(x)
-
 # sidenote:
 # I initially tried sqrt(2/fan-in) for equalizedlinear, and bias was optional as well
 # but I found out other implementations dont use the vanilla version like us, they
@@ -8552,7 +8533,24 @@ class EqualizedConv2d(nn.Module):
         scaled_bias = self.bias * self.lr_mult if self.bias is not None else None
         return F.conv2d(x, scaled_weights, scaled_bias, stride=self.stride, padding=self.padding)
 
-
+class DiscBlockStyleGAN1(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.blur = Blur()
+        # update:
+        # the original paper disabled bias (I trained with bias=True just fine)
+        # update2: we use EqualizedConv2d instead of conv2d in all layers
+        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   # before we downsample, we blur the input
+                                   Blur(),
+                                   nn.AvgPool2d(2),
+                                  )
+        
+    def forward(self, x):
+        return self.block(x)
 # the discriminator from progan stays nearly the same except for the first res
 # that starts at 8x8 instead of 4x4 and the final layer that uses two fc layers
 # instead of 1 conv layer. its almost the same!
@@ -9181,8 +9179,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         # load the ema version, dont forget to also load the images seen so far!
         ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
         ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
-        ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
-        ema_generator = ema_generator.to(device)
+        if use_ema_inference:
+            ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
+            ema_generator = ema_generator.to(device)
         
         disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
         gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
@@ -9381,8 +9380,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #update: 
                 # noticed clipping at 1 causes issues down the road and some implementations
                 # used 10 so I use that as well
-                # scaler.unscale_(disc_optimizer)
-                # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=10)
+                scaler.unscale_(disc_optimizer)
+                nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=10)
                 # to fight nans, we use lower adam eps. it works much better 
                 scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
@@ -9425,7 +9424,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
-                            print(f'Warning! Overflow teritory!: mapping_network_grad_norm={mn_grad_norm.item()}')
+                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item()}')
                         
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
@@ -9574,7 +9573,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                                    figsize=(16,8))
     
     print("SttyleGAN1 training is complete!")
-        
+
+def get_dataset_size(name,split='train'):
+    dl = get_dataloader(name,split,batch_size=1)
+    return len(dl)
+
+# print(get_dataset_size('cifar10','train'))
 #%%
 print(f'Training StyleGAN1')
 gamma=10#10
@@ -9592,7 +9596,7 @@ dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=True
+use_fp16=False
 
 # original paper uses 512
 z_size = 512
@@ -9613,10 +9617,32 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #     up to 32² 2829MB
 #     up to 64² 4125MB 
 if use_fp16:      #4², 8², 16²,32²,64²,128²,256² 
-    BATCH_SIZES = [128,128,128,128,128,64,32]
-else:
     BATCH_SIZES = [128,128,128,128,64,32,16]
+else:
+    BATCH_SIZES = [32,32,32,32,32,32,16]
 
+# sidenote: in gans usually kimage is used as the metric for
+# how long the training should go on. since epoch means one
+# round of full dataset consumption during training, but since
+# this can mean different number of images for different datasets
+# and using data-augmentations this can get nuisansed for everydataset
+# the authors talk about k real images (thousand images) the discriminator
+# has seen. its a much better metric to keep track of. they mentioned
+# they used 1600k images per resolution. 800kimages for fadein phase
+# and 800kimages for stabilization (i.e. in total 1.6million images 
+# per resolution which if we use batchsize=128 its 12500 iterations
+# or for cifar10 it would be 32 epochs for each res! for stylegan1
+# this number is 12000kimage to 25000kimage or 12m to 25m images
+# which is 240 epochs in total so they get the best results. 
+# (some other datasets like lsun seems to have been trained with
+# 40000kimage to 70000kimages in total,e.g. subsets e.g. bedrooms 
+# at 256x256 70m images, but for cars at 512x384 46m images were used)
+# and we switch to the next res when FID plateues! and we calculate
+# FID after some kimages not every single epoch. we havent done this
+# so far, but im writing this for future references. todo for later! 
+# sidenote: 
+# if we use my modification (adain before lrelu) we need much less epochs!
+#
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
@@ -9630,7 +9656,10 @@ else:
 # for each class and how many epochs the model is trained onviously!
 # also the droplet effect is (water smudge effects in images) are expected
 # this is the stylegan1 issue which will be fixed in stylegan2!
-EPOCHS = [10,10,20,50,30,60,70]
+# EPOCHS = [10,10,20,50,30,60,70]
+kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
+print(f'{kimages=:,}')
+EPOCHS = [kimages*2]*max_steps
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9713,7 +9742,7 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_ema_inference=use_ema_inference,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251102123140/checkpoint_step_3_20251102123140.ckpt",
+                     checkpoint_path="./weights/gan/stylegan1_ffhq_20251105081743/checkpoint_step_1_20251105081743.ckpt",
                      decay_step=decay_step)
 #%%
 #%%
@@ -9866,8 +9895,19 @@ for k,v in checkpoint.items():
 # is struggling and this is why the quality is getting worse! the generator is overpowering
 # the discriminator. need to fix that to get decent images. however im really tired! and it
 # is taking too much time to train! 
-#update:
-# test last experiment with lrelu>adain (original order)
+#update:(stylegan1_ffhq_20251104101011)
+# test last experiment with lrelu>adain (original order) with ffhq:didnt change, still at
+# 32x32 we faced eventual mode collpase because discrimnators loss was lower than generators
+# now at this point i guess its because of batchsize we are using, because the paper uses
+# small batches per gpu (16 x8gpus) the gradients get accumulated as if its batchsize=128
+# but layer wise its not the same. note we have minibatchstddev when we use smaller batchsize
+# the stats will be much noisier than we use batchsize=128. I guess the paper authors relied
+# on this and specifically chose smaller batchsizes for this exact reason.unlike previous gans
+# progressive gans are relient on these kind of noise for stabliziation I guess. 
+# lets check this again with smaller batch size(for now lets just use smaller batchsize
+# we dont accumulate gradients to mimic the x8 for now!)
+# update:(20251105054505)
+# use smaller batchsizes, drastically longer trainig epochs per res:
 # 
 # 
 #next: now that we've got this working 
