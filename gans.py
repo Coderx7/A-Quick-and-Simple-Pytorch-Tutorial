@@ -30,6 +30,7 @@ from pathlib import Path
 import gc
 import logging
 import builtins
+import yaml
 
 import numpy as np 
 
@@ -9301,6 +9302,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
           
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
+    print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
+    print(f'--swap_adaIN_order:          {generator.swap_adaIN_order}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--Use Half-Precision:        {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -9582,19 +9585,22 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             checkpoint_dir = f"{weights_save_dir}/{current_experiment_name}"
             os.makedirs(checkpoint_dir, exist_ok=True)
             
-            torch.save({"disc_state_dict":discriminator.state_dict(),
-                        "gen_state_dict":generator.state_dict(),
-                        "gen_ema_state_dict":ema_generator.state_dict() if use_ema_inference else None,
-                        "disc_optimizer":disc_optimizer.state_dict(),
-                        "gen_optimizer":gen_optimizer.state_dict(),
-                        "scaler_state_dict":scaler.state_dict(),
+            state_dicts = {"disc_state_dict":discriminator.state_dict(),
+                           "gen_state_dict":generator.state_dict(),
+                           "gen_ema_state_dict":ema_generator.state_dict() if use_ema_inference else None,
+                           "disc_optimizer":disc_optimizer.state_dict(),
+                           "gen_optimizer":gen_optimizer.state_dict(),
+                           "scaler_state_dict":scaler.state_dict()
+                           }
+            settings = {
                         "z_size":generator.z_size,
                         "w_size":generator.w_size,
                         "channels_d":discriminator.channels,
                         "channels_g":generator.channels,
-                        "use_fp16":use_fp16,
                         "style_mixing_prob":generator.style_mixing_prob,
+                        "swap_adaIN_order":generator.swap_adaIN_order,
                         "ema_w_beta":generator.ema_w_beta,
+                        "use_fp16":use_fp16,
                         "lr_d":lr_d,
                         "lr_g":lr_g,
                         "max_steps":discriminator.max_steps,
@@ -9613,14 +9619,19 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "r1_penalty_interval":r1_penalty_interval,
                         "FID":FID_score,
                         "IS":IS_score,
-                        "d_loss_mean":d_loss_mean,
-                        "g_loss_mean":g_loss_mean,
-                        "all_training_losses":all_training_losses,
-                        # "all_gradient_penalties":all_gradient_penalties,
                         "dataset_name":dataset_name,
                         "split":split,
-                    }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
-        
+                    }
+            loss_dicts = {"d_loss_mean":d_loss_mean,
+                        "g_loss_mean":g_loss_mean,
+                        "all_training_losses":all_training_losses
+                         # "all_gradient_penalties":all_gradient_penalties,
+                         }
+            
+            # all_settings = {**state_dicts,**settings}
+            all_settings = state_dicts | settings | loss_dicts
+            torch.save(all_settings, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
+            
             # generate some images mid training to evaluate our model's performance 
             with torch.no_grad():
                 gen = ema_generator.eval() if use_ema_inference else generator.eval()
@@ -9631,8 +9642,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
                 lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e},{current_lr_g[-1]:.0e}"
                 title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
-                save_path=f'{images_save_dir}/stylegan1/{dataset_name}_{experiment_date}/{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
-                
+                img_store_dir_path = f'{images_save_dir}/stylegan1/{dataset_name}_{experiment_date}'
+                img_filename = f'{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
+                save_path= os.path.join(img_store_dir_path, img_filename)
+                                
                 display_images(generated_images, 
                                cols=gen_num_samples//8,
                                title=f"{ema_marker_str}{title_str}",
@@ -9650,7 +9663,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                                    unnormalize=True,
                                    save_path=save_path.replace(ema_marker_str,""),
                                    figsize=(16,8))
-    
+                    
+                # save the settings that achieved this aswell
+                settings_path = os.path.join(img_store_dir_path,'settings.yaml')
+                with open(settings_path, "w") as f:
+                    yaml.dump(settings,f, sort_keys=False)
+
     print("SttyleGAN1 training is complete!")
 
 def get_dataset_size(name,split='train'):
@@ -9747,7 +9765,7 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 print(f'{kimages=:,}')
-EPOCHS = [kimages*2]*max_steps
+EPOCHS = [kimages*3]*max_steps
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10017,7 +10035,7 @@ for k,v in checkpoint.items():
 # 
 # update: 
 # refactored code a bit trying a few more experiments before calling a day for good!
-# experiment 1(): fp32 - large batches
+# experiment 1(stylegan1_celeba_20251106112002): fp32 - large batches
 # use original order + lower disc_channels + more gen_channels + more epochs per res
 # 
 #%%
