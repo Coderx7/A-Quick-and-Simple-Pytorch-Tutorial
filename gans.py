@@ -9179,7 +9179,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                          split, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
-                         decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,):
+                         decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
+                         decay_func = lambda step:0.5**(step-2)):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
     current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
@@ -9286,7 +9287,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 
     # store training log for each step  
     all_training_losses = [[] for _ in range(max_steps)]
-    all_gradient_penalties = [[] for _ in range(max_steps)]
+    # all_gradient_penalties = [[] for _ in range(max_steps)]
   
     print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
     if resume:
@@ -9348,16 +9349,18 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         if step>=decay_step:
             
             # e.g. 0.5 goes to 0.25 to 0.125 etc each time we halve the previous one
-            decay = 0.5**(step-2)
- 
+            # decay = 0.5**(step-2)
+            # update: using a lambda/callable we can control the decay 
+            # decrease it a certain amount or increase it
+            decay = decay_func(step)
+            
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
             
             mapping_params = list(generator.mapping_network.parameters())
             gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
-                                              {'params':gen_other_params,'lr':lr_g[-1]}
+            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*decay},
+                                              {'params':gen_other_params,'lr':lr_g[-1]*decay}
                                              ], betas=betas_g)
-            
 
         current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
         current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
@@ -9499,7 +9502,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
-                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item()}')
+                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item()} {scaler_out_g=}')
                         
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
@@ -9612,7 +9615,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "d_loss_mean":d_loss_mean,
                         "g_loss_mean":g_loss_mean,
                         "all_training_losses":all_training_losses,
-                        "all_gradient_penalties":all_gradient_penalties,
+                        # "all_gradient_penalties":all_gradient_penalties,
                         "dataset_name":dataset_name,
                         "split":split,
                     }, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
@@ -9753,6 +9756,8 @@ r1_penalty_interval = 1#1#16
 style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
+# whether to use original order or not
+swap_adaIN_order = False
 # [512,256,128,128,64,64,32] trains well but it takes a lot of time
 # I used it for both the discriminator and generator. 
 # I also got good results with [512,512,512,512,256,128,16] 
@@ -9765,7 +9770,9 @@ discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels_d)
 discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
 generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, channels_g,
-                                         style_mixing_prob=style_mixing_prob)
+                                         style_mixing_prob=style_mixing_prob,
+                                         swap_adaIN_order=swap_adaIN_order)
+
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
@@ -9796,7 +9803,17 @@ lr_g = 0.001#0.0015 is used for res>64
 # with no gradient clipping with eps=1e-5
 eps = 1e-5 if use_fp16 else 1e-8 
 # no need to decay now!
-decay_step = 7#4#3#2
+decay_step = 4#7#4#3#2
+# 0:4,1:8,2:16,3:32,4:64,5:128,6:256
+# increase the lr after step3
+def decay_func(step):
+    if step==4:
+        return 1.5
+    elif step>=5:
+        return 2
+    else:
+        return 1
+    
 # log:
 # at epoch 2 of 8x8 it suddenly goes all solid grays
 # up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
@@ -9831,7 +9848,8 @@ training_loop_stylegan(discriminator_stylegan1,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251105081743/checkpoint_step_1_20251105081743.ckpt",
-                     decay_step=decay_step)
+                     decay_step=decay_step,
+                     decay_func=decay_func)
 #%%
 #%%
 # change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
@@ -9854,7 +9872,7 @@ checkpoint["epoch_list"]=[10, 15, 30, 30, 30, 30, 70]
 # checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
 # checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
 # #%%
-torch.save(checkpoint,checkpoint_path)
+# torch.save(checkpoint,checkpoint_path)
 print(f'-'*30)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
@@ -9997,10 +10015,11 @@ for k,v in checkpoint.items():
 # update:(20251105054505)
 # use smaller batchsizes, drastically longer trainig epochs per res:
 # 
+# update: 
+# refactored code a bit trying a few more experiments before calling a day for good!
+# experiment 1(): fp32 - large batches
+# use original order + lower disc_channels + more gen_channels + more epochs per res
 # 
-#next: now that we've got this working 
-# save settings/ use smaller channels and test with cifar10 and also fp16 
-
 #%%
 # Stylegan2/3?
 #%%
