@@ -9506,7 +9506,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
-                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item()} {scaler_out_g=}')
+                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f} {scaler_out_g=}')
                         
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
@@ -10035,7 +10035,7 @@ for k,v in checkpoint.items():
 # 
 # update: 
 # refactored code a bit trying a few more experiments before calling a day for good!
-# experiment 1(stylegan1_celeba_20251106112002): fp32 - large batches
+# experiment 1(stylegan1_celeba_20251106112914): fp32 - large batches
 # use original order + lower disc_channels + more gen_channels + more epochs per res
 # 
 #%%
