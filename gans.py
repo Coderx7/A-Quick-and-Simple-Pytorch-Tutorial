@@ -9244,11 +9244,13 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         w_size = checkpoint["w_size"]
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
+        swap_adaIN_order = checkpoint["swap_adaIN_order"]
         ema_w_beta = checkpoint["ema_w_beta"]
         
         generator.setup_layers(z_size, w_size, max_steps,channels_g,
                                style_mixing_prob=style_mixing_prob,
-                               ema_w_beta=ema_w_beta)
+                               ema_w_beta=ema_w_beta,
+                               swap_adaIN_order=swap_adaIN_order)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
@@ -9765,7 +9767,7 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 print(f'{kimages=:,}')
-EPOCHS = [kimages*3]*max_steps
+EPOCHS = [kimages*2]*max_steps
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9860,14 +9862,23 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_fp16=use_fp16,
                      noise_addition=False,
                      device=device,
-                     resume=False,
+                     resume=True,
                      use_ema_inference=use_ema_inference,
                     #  ema_warmup_images_threshold=1_000_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251105081743/checkpoint_step_1_20251105081743.ckpt",
+                     checkpoint_path="./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
+# quicklog
+# seems d is overpowering g
+# lets remove less epoch so it doesnt overtrain
+# see if this fixes the mn gradient explosion
+# if not we impl lazi penalty
+# if not we increase gamma=20
+# if not we increase lr=0.002 so gen can quickly update
+# 
+
 #%%
 #%%
 # change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
@@ -10037,7 +10048,18 @@ for k,v in checkpoint.items():
 # refactored code a bit trying a few more experiments before calling a day for good!
 # experiment 1(stylegan1_celeba_20251106112914): fp32 - large batches
 # use original order + lower disc_channels + more gen_channels + more epochs per res
-# 
+# interstingly I started getting warnings(mapping_network_grad_norm exceeding 100)
+# at epoch 21 at 16x16 resolution. it got worse so much by epoch 26 we hit 3000+, i.e.
+# gradient explosion. a bit of digging and it seems the problem is not in the code but
+# the hyperparameters I used. this time around I made discrimnator much thinner than the
+# generator (11m vs 23m). it seems the discriminator got good really well at that point
+# and created a massive gradient feedback for the fake images, the gradients ended up at
+# mapping_network which we happen to check for and we see the warning. also starting with
+# this we see the d_loss be a bit lower than g_loss (1.02 vs 1.1945) and images are getting
+# worse, weird artifacts are visible, so this might be the reason I let it train until we 
+# reach 32x32 to see how it ends up! it got worse at 32x32 from iteration 0 epoch 0! its now 
+# in 20ks!
+#
 #%%
 # Stylegan2/3?
 #%%
