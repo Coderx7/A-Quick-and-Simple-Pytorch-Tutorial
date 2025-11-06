@@ -8802,7 +8802,7 @@ class StyleConvBlock(nn.Module):
 
     def forward(self, x, w, noise=None):
         if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode="nearest", align_corners=False )
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
             # blur the output to hide checker marks effects this is especially important
             # for 32x32 and higher res so the discriminator doesnt win too quickly!
             x = self.blur(x)
@@ -8861,7 +8861,8 @@ class GeneratorStyleGAN1(nn.Module):
         
         assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
         # lets do the same thing for generator
-        self.setup_layers(z_size, w_size, max_steps, channels, style_mixing_prob, ema_w_beta, swap_adaIN_order)
+        self.setup_layers(z_size, w_size, max_steps, channels, style_mixing_prob, 
+                          ema_w_beta, swap_adaIN_order)
 
                 
     def setup_layers(self, z_size, w_size, max_steps, channels,
@@ -9071,7 +9072,7 @@ class GeneratorStyleGAN1(nn.Module):
                 # convert it to image and upsample it so it matches
                 # the next res
                 previous_image = self.toImgs[step-1](x)
-                previous_image = F.interpolate(previous_image, scale_factor=2, mode='nearest', align_corners=False)
+                previous_image = F.interpolate(previous_image, scale_factor=2, mode='nearest')
                 
         # now x is the final output, i.e. the highest res
         # so convert to image
@@ -9813,7 +9814,6 @@ def decay_func(step):
         return 2
     else:
         return 1
-    
 # log:
 # at epoch 2 of 8x8 it suddenly goes all solid grays
 # up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
