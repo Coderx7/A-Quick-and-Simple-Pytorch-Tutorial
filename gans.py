@@ -8846,6 +8846,7 @@ class StyleConvBlock(nn.Module):
             out = F.leaky_relu(out, negative_slope=0.2)
             out = self.adain(out, w)
             return out
+        #todo next do conv/lrelu/noise/adain and see how it does!
 
 # its much easier for us to implement style mixing here inside generator
 # than implement it as a standalone function and use it during training!
@@ -9456,9 +9457,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                 # and optimize discrimnator 
                 disc_optimizer.zero_grad()
-                # disc_loss.backward()
-                # disc_optimizer.step()
-                scaler.scale(disc_loss).backward()
+                disc_loss.backward()
+                disc_optimizer.step()
+                # scaler.scale(disc_loss).backward()
                 # clip gradients >1 so we dont hit nans because of possible overflows!
                 # we souldnt be needing this for discriminator, but to be same lets have it
                 #update: 
@@ -9467,7 +9468,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
                 # to fight nans, we use lower adam eps. it works much better 
-                scaler_out_d = scaler.step(disc_optimizer)
+                # scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
             
                 # now train genertor to create images that look real
@@ -9489,13 +9490,14 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     # seems to make convergence faster
                     if (i+1)%gen_update_interval == 0:
                         gen_optimizer.zero_grad()
-                        # gen_real_loss.backward()
-                        # gen_optimizer.step()
-                        scaler.scale(gen_real_loss).backward()
+                        gen_real_loss.backward()
+                        mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                        gen_optimizer.step()
+                        # scaler.scale(gen_real_loss).backward()
                         # update: when setting mapping_network lr, during fp16 we face nans!
                         # to see if we are hitting norm>100-1000 which means overflowing!
                         # we monitor its norm (one of the params is enough)
-                        mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                        # mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # clip gradients >1 so we dont hit nans because of possible overflows!
                         # to fight nans, we use lower adam eps. it works much better
                         # update:
@@ -9505,17 +9507,17 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # scaler.unscale_(gen_optimizer)
                         # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
                         
-                        scaler_out_g = scaler.step(gen_optimizer)
+                        # scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
-                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f} {scaler_out_g=}')
+                            print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
                         
                         if ema_warmup_images_seen < ema_warmup_images_threshold:
                             ema_generator.load_state_dict(generator.state_dict())
                         else:
                             update_ema_generator(generator, ema_generator)
                 # update only once
-                scaler.update()
+                # scaler.update()
                     
                 status_r = get_status(disc_real_mean, higher_is_better=True)
                 status_f = get_status(disc_fake_mean, higher_is_better=False)
@@ -9767,7 +9769,7 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 print(f'{kimages=:,}')
-EPOCHS = [kimages*2]*max_steps
+EPOCHS = [kimages*3]*max_steps
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9797,7 +9799,7 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, channels_g,
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.002 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # first for mapping_network and the second one for the rest of generator
 # log:
 # I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
@@ -9814,7 +9816,7 @@ lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # disc had much lower loss(0.4) vs gen(3).
 # paper uses 100x smaller lr for mapping network because it has 8 layers!
 # and the more layers the more unstability! so they multiply it by 0.01!
-lr_g = 0.001#0.0015 is used for res>64 
+lr_g = 0.002#0.0015 is used for res>64 
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -9862,27 +9864,61 @@ training_loop_stylegan(discriminator_stylegan1,
                      use_fp16=use_fp16,
                      noise_addition=False,
                      device=device,
-                     resume=True,
+                     resume=False,
                      use_ema_inference=use_ema_inference,
                     #  ema_warmup_images_threshold=1_000_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                     checkpoint_path="./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt",
+                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
 # quicklog
 # seems d is overpowering g
 # lets remove less epoch so it doesnt overtrain
 # see if this fixes the mn gradient explosion
+# 
+# 20251106163711:
+#  - cant resume properly from previous experiment that 
+#    had autocast(scaler errors out on resume saying:
+#    ...
+#    --> 363 scaler_out_d = scaler.step(disc_optimizer)
+#    ... 
+#    AssertionError: No inf checks were recorded for this optimizer.)
+#    despite fp_16=False!
+# 
+# 20251106164141:
+#  - so disabled the whole autocast machinery and resumed but the images
+#    are extremely distorted I give up and start fresh!
+# 
+# 20251106165912:
+#  - start fresh with no autocast. 
+#    ok 32x32 and still no gradient explosion
+#    but we are seeing severely artifacted images
+#    the dloss is down to 0.71 at epoch 1 while gloss is 1.98!
+#    the d is clearly overpowering g! and we have partial
+#    mode collapse let it train more and see if we get
+#    any gradient explosion again - ended at epoch 6 
+#    if not train with 30 epochs(kimages*3) to see if this was
+#    really an overtraining issue or simple a pytorch bug because
+#    of autocast because in previous exp, I disabled autocast completely!
+#    not just disable it, I commented out all machinery (scaler.*)
+# 
+# 20251106212921: 
+#  - running the test with kimage*3 to see if we get gradient expo a 16x16
+#    no gradient explosion happedn we are at epoch 20 at 32x32
+# 
+# 20251107070546:
+#  - now lets increase lr=0.002 to see if it fixes anything(doubt it but lets try)
+# 
 # if not we impl lazi penalty
 # if not we increase gamma=20
 # if not we increase lr=0.002 so gen can quickly update
-# 
+# do conv/lrelu/noise/adain and see how it does!
 
 #%%
 #%%
 # change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
-checkpoint_path ='./weights/gan/stylegan1_celeba_20251101163926/checkpoint_step_2_20251101163926.ckpt'
+checkpoint_path ='./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
@@ -9890,14 +9926,14 @@ for k,v in checkpoint.items():
     elif "param_groups" in v.keys():
         print(f'{k:<15} {v["param_groups"]}')
 
-checkpoint["decay_step"] = 2
-checkpoint["channels_d"] = [512,512,512,512,32,16,16]
-checkpoint["channels_g"] = [512,512,512,512,32,16,16]
+# checkpoint["decay_step"] = 2
+# checkpoint["channels_d"] = [512,512,512,512,32,16,16]
+# checkpoint["channels_g"] = [512,512,512,512,32,16,16]
 # checkpoint["lr_g"] = 0.000042
 # checkpoint["lambda_factor"] = 10
 # # since we changed the epochs, lr_d/lr_g wont take effect and instead
 # # we need to change the optimizers lr!
-checkpoint["epoch_list"]=[10, 15, 30, 30, 30, 30, 70]
+checkpoint["epoch_list"]=[kimages*2]*max_steps
 # checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
 # checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
 # #%%
