@@ -3151,63 +3151,79 @@ del metric
 gc.collect()
 #%%
 # lets add a few more datasets 
-def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/"):
-    dataset_name = dataset_name.lower()
-
-    if dataset_name.lower() == 'mnist':
-        if isinstance(split, str):
-            split = 'train' in split.lower()
-        else:
-            split = True if (not split or 'train') else False
-                
-        transform = transforms.Compose([
-        transforms.Resize(resize_dims),
-        # transforms.RandomHorizontalFlip(),
-        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.ToTensor()])
-        dataset = datasets.MNIST(os.path.join(store_path, dataset_name.upper()), train=split, transform=transform, download=True)
-        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+def get_transforms(resize_dims, data_augmentation, normalize):
+    trans_list = []
     
+    if data_augmentation:
+        trans_list.append(transforms.RandomHorizontalFlip())
+        
+    if resize_dims is not None:
+        trans_list.append(transforms.Resize(resize_dims))
+   
+    # always do ToTensor() at the very end
+    trans_list.append(transforms.ToTensor())
+    
+    # normalize to [-1,1]
+    if normalize:
+        trans_list.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3))
+    
+    return transforms.Compose(trans_list)
+    
+def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/", data_augmentation=False, normalize=False):
+    dataset_name = dataset_name.lower()
+    transform = get_transforms(resize_dims, data_augmentation, normalize)
+    dataset=None
+    
+    if isinstance(split, str):
+        split = split.lower()
+    
+    if dataset_name.lower() == 'mnist':
+        is_train = split in [None, True, 'train']
+        dataset = datasets.MNIST(os.path.join(store_path, dataset_name.upper()),
+                                 train=is_train,transform=transform,download=True)
+            
     elif 'cifar' in dataset_name.lower():
-        if isinstance(split, str):
-            split = 'train' in split.lower()
-        else:
-            split = True if (not split or 'train') else False
-        transform = transforms.Compose([
-        transforms.Resize(resize_dims),
-        # transforms.RandomHorizontalFlip(),
-        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.ToTensor()])
-        dataset = datasets.CIFAR10(os.path.join(store_path, dataset_name.upper()), train=split, transform=transform, download=True)
-        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        is_train = split in [None, True, 'train']
+        dataset = datasets.CIFAR10(os.path.join(store_path, dataset_name.upper()),
+                                   train=is_train, transform=transform, download=True)
     
     elif dataset_name == 'svhn':
-        split = 'extra' if not split else split
-        transform = transforms.Compose([
-        transforms.Resize(resize_dims),
-        # transforms.RandomHorizontalFlip(),
-        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.ToTensor()])
-        dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()), split=split, transform=transform, download=True)
-        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        split = split if split else 'extra'
+        dataset = datasets.SVHN(os.path.join(store_path, dataset_name.upper()),
+                                split=split, transform=transform, download=True)
     
     elif dataset_name == 'celeba':
-        split = 'train' if not split else split
-        transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
-        dataset = datasets.CelebA(os.path.join(store_path), split=split, transform=transform, download=True)
-        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-    
+        split = split if split else 'train'
+        dataset = datasets.CelebA(os.path.join(store_path),split=split, 
+                                  transform=transform, download=True)
+
+    elif dataset_name == 'celeba_hq':
+        # 2.7G https://www.kaggle.com/datasets/lamsimon/celebahq
+        split = split if split else 'train'
+        dataset = datasets.ImageFolder(root=f'{store_path}/{dataset_name}/{split}',
+                                       transform=transform)
+
     elif dataset_name == 'ffhq':
-        transform = transforms.Compose([transforms.Resize(resize_dims),transforms.ToTensor()])
         # the path looks like ./data/ffhq_128/thumbnails128x128/[images are here]
         # but we give ./data/ffhq_128/ so thumbnail128x128 is treated as a single class
         # since we dont need labels, so we can treat all images as one class to use iwth Imagefolder
-        dataset = datasets.ImageFolder(root=f'{store_path}/{dataset_name}',transform=transform)
-        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        dataset = datasets.ImageFolder(root=f'{store_path}/{dataset_name}',
+                                       transform=transform)
+
     else:
         raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
-
+    
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                             num_workers=num_workers, pin_memory=True)
+    
     return data_loader
+
+# dataset_name = 'celeba'
+# train_loader = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
+#                               batch_size=16, data_augmentation=True,normalize=False)
+# #visualize 
+# (imgs, labels) = next(iter(train_loader))
+# display_images(imgs, title=f'{dataset_name} samples',cols=4)
 
 #%%
 def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.optim.Adam, gen_optimizer,
@@ -8876,24 +8892,26 @@ class StyleConvBlock(nn.Module):
 # generator. we only do that in training as we explained before
 class GeneratorStyleGAN1(nn.Module):
     def __init__(self, z_size=512, w_size=512, max_steps=7, 
-                 channels=[512,512,512,256,128,64,32],
+                 mn_num_layers=8, channels=[512,512,512,256,128,64,32],
                  style_mixing_prob=0.9, ema_w_beta=0.995,
-                 swap_adaIN_order=False):
+                 swap_adaIN_order=False, ):
         super().__init__()
         
         assert max_steps == len(channels), f'number of channels({len(channels)}) must match max_steps({max_steps})'
         # lets do the same thing for generator
-        self.setup_layers(z_size, w_size, max_steps, channels, style_mixing_prob, 
+        self.setup_layers(z_size, w_size, max_steps, mn_num_layers,
+                          channels, style_mixing_prob, 
                           ema_w_beta, swap_adaIN_order)
 
                 
-    def setup_layers(self, z_size, w_size, max_steps, channels,
-                     style_mixing_prob, ema_w_beta,
+    def setup_layers(self, z_size, w_size, max_steps, mn_num_layers,
+                     channels, style_mixing_prob, ema_w_beta,
                      swap_adaIN_order):
         
         self.z_size = z_size
         self.w_size = w_size
         self.max_steps = max_steps
+        self.mn_num_layers = mn_num_layers
                 
         self.style_mixing_prob = style_mixing_prob
         # truncation trick! in order to get higher quality generations
@@ -8938,7 +8956,7 @@ class GeneratorStyleGAN1(nn.Module):
         # until we get a fully working implementation then we can test!
         # self.const_input = nn.Parameter(torch.randn(size=(1, channels[0], 4, 4)))
         
-        self.mapping_network = MappingNetwork(z_size, w_size)
+        self.mapping_network = MappingNetwork(z_size, w_size, self.mn_num_layers)
         # unlike progan, the official tensorflow implementation doesnt use tanh, and
         # outputs are unbounded.(see https://github.com/NVlabs/stylegan/blob/master/training/networks_stylegan.py#L524)
         # the idea is, we know tanh might help initially, but since its saturating, it can
@@ -9199,7 +9217,7 @@ def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, dec
 
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         split, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
+                         split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
@@ -9263,12 +9281,13 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         
         z_size = checkpoint["z_size"]
         w_size = checkpoint["w_size"]
+        mn_nlayer = checkpoint["mn_nlayer"]
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
         swap_adaIN_order = checkpoint["swap_adaIN_order"]
         ema_w_beta = checkpoint["ema_w_beta"]
         
-        generator.setup_layers(z_size, w_size, max_steps,channels_g,
+        generator.setup_layers(z_size, w_size, max_steps, mn_nlayer, channels_g,
                                style_mixing_prob=style_mixing_prob,
                                ema_w_beta=ema_w_beta,
                                swap_adaIN_order=swap_adaIN_order)
@@ -9293,6 +9312,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         betas_d = disc_optimizer.defaults["betas"]
         betas_g = gen_optimizer.defaults["betas"]
 
+        data_augmentation = checkpoint["data_augmentation"]
+        normalize = checkpoint["normalize"]
+        use_fp16 = checkpoint["use_fp16"]
         use_fp16 = checkpoint["use_fp16"]
         starting_step = checkpoint["step"]
         last_training_step_counter = checkpoint["training_step_counter"]
@@ -9325,9 +9347,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
           
     print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
     print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
+    print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
     print(f'--swap_adaIN_order:          {generator.swap_adaIN_order}')
     print(f'--Dataset:                   {dataset_name}-{split}')
+    print(f'--DataAugmentation:          {data_augmentation}')
+    print(f'--Normalize[-1,1]:           {normalize}')
     print(f'--Use Half-Precision:        {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
@@ -9364,7 +9389,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         epochs = epoch_list[step]
         # 4 is the lowest res so we want 8,16 etc
         res = 2**step*4
-        train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res), batch_size=batch_size)
+        train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res),
+                                      batch_size=batch_size, 
+                                      data_augmentation=data_augmentation,
+                                      normalize=normalize)
         num_batches = len(train_loader)
         interval = num_batches//2+1
         total_number_of_steps = epochs*num_batches
@@ -9419,7 +9447,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 imgs_real.requires_grad_(True)
                 
                 #scale input to [-1,1]
-                imgs_real = (2*imgs_real-1).to(device)
+                #update:
+                # its no more needed, the data are normalized 
+                # to [-1,1] during dataloading process now
+                # imgs_real = (2*imgs_real-1).to(device)
                 
                 # track how many real images the network has seen
                 ema_warmup_images_seen += imgs_real.size(0)
@@ -9619,6 +9650,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             settings = {
                         "z_size":generator.z_size,
                         "w_size":generator.w_size,
+                        "mn_nlayer":generator.mn_num_layers,
                         "channels_d":discriminator.channels,
                         "channels_g":generator.channels,
                         "style_mixing_prob":generator.style_mixing_prob,
@@ -9644,6 +9676,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "FID":FID_score,
                         "IS":IS_score,
                         "dataset_name":dataset_name,
+                        "data_augmentation":data_augmentation,
+                        "normalize":normalize,
                         "split":split,
                     }
             loss_dicts = {"d_loss_mean":d_loss_mean,
@@ -9713,7 +9747,7 @@ gamma=10#10
 # larger number of samples!
 # so to test and evalualte we always try celeba first
 # and then cifar10 if we like
-dataset_name = 'celeba'
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -9723,7 +9757,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # 7 means 4x4 up to 256x256
-max_steps = 7#3 if dataset_name=="cifar10" else 7
+max_steps = 6#3 if dataset_name=="cifar10" else 7
 
 # batchsize extremely matters, the larger the batchsize the
 # better the performance. 
@@ -9744,9 +9778,9 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 # fix the issue. 
 # it could be a bug in my code honestly but for now im not going to bother!
 if use_fp16:      #res 4,  8, 16,32,64,128,256 
-    BATCH_SIZES = [128,128,128,128,64,32,16]
+    BATCH_SIZES = [128,128,128,128,64,32]#,16]
 else:
-    BATCH_SIZES = [128,128,128,128,64,32,16]
+    BATCH_SIZES = [128,128,128,64,32,16]#,8,4,2]
 
 # sidenote: in pro/stylegans usually kimage is used as the metric for
 # how long the training should go on. each epoch means one
@@ -9789,7 +9823,8 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 print(f'{kimages=:,}')
-EPOCHS = [kimages*2]*max_steps
+#ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
+EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9806,20 +9841,21 @@ swap_adaIN_order = False
 # I also got good results with [512,512,512,512,256,128,16] 
 # 
 # this is faster but less quality obviously
-channels_d = [512,256,128,64,32,32,16]
-channels_g = [512,512,512,512,256,128,16]
+channels_d = [512,512,512,512,256,128]#,64]
+channels_g = [512,512,512,512,256,128]#,64]
 #discriminator
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels_d)
 discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
-generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, channels_g,
-                                         style_mixing_prob=style_mixing_prob,
+mn_nlayer = 4#8
+generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, mn_nlayer,
+                                         channels_g, style_mixing_prob,
                                          swap_adaIN_order=swap_adaIN_order)
 
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # first for mapping_network and the second one for the rest of generator
 # log:
 # I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
@@ -9836,7 +9872,7 @@ lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # disc had much lower loss(0.4) vs gen(3).
 # paper uses 100x smaller lr for mapping network because it has 8 layers!
 # and the more layers the more unstability! so they multiply it by 0.01!
-lr_g = 0.001#0.0015 is used for res>64 
+lr_g = 0.003#0.0015 is used for res>64 
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -9846,7 +9882,7 @@ lr_g = 0.001#0.0015 is used for res>64
 # with no gradient clipping with eps=1e-5
 eps = 1e-5 if use_fp16 else 1e-8 
 # no need to decay now!
-decay_step = 4#7#4#3#2
+decay_step = 7#4#3#2
 # 0:4,1:8,2:16,3:32,4:64,5:128,6:256
 # increase the lr after step3
 def decay_func(step):
@@ -9880,6 +9916,7 @@ training_loop_stylegan(discriminator_stylegan1,
                      r1_penalty_interval=r1_penalty_interval,
                      dataset_name=dataset_name,
                      split=split,
+                     data_augmentation=False,
                      gamma=gamma,
                      use_fp16=use_fp16,
                      noise_addition=False,
@@ -9889,7 +9926,7 @@ training_loop_stylegan(discriminator_stylegan1,
                     #  ema_warmup_images_threshold=1_000_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt",
+                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251107134153/checkpoint_step_2_20251107134153.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
 # quicklog
@@ -9897,7 +9934,7 @@ training_loop_stylegan(discriminator_stylegan1,
 # lets remove less epoch so it doesnt overtrain
 # see if this fixes the mn gradient explosion
 # 
-# 20251106163711:
+# stylegan1_celeba_20251106163711:
 #  - cant resume properly from previous experiment that 
 #    had autocast(scaler errors out on resume saying:
 #    ...
@@ -9906,11 +9943,11 @@ training_loop_stylegan(discriminator_stylegan1,
 #    AssertionError: No inf checks were recorded for this optimizer.)
 #    despite fp_16=False!
 # 
-# 20251106164141:
+# stylegan1_celeba_20251106164141:
 #  - so disabled the whole autocast machinery and resumed but the images
 #    are extremely distorted I give up and start fresh!
 # 
-# 20251106165912:
+# stylegan1_celeba_20251106165912:
 #  - start fresh with no autocast. 
 #    ok 32x32 and still no gradient explosion
 #    but we are seeing severely artifacted images
@@ -9923,22 +9960,38 @@ training_loop_stylegan(discriminator_stylegan1,
 #    of autocast because in previous exp, I disabled autocast completely!
 #    not just disable it, I commented out all machinery (scaler.*)
 # 
-# 20251106212921: 
+# stylegan1_celeba_20251106212921: 
 #  - running the test with kimage*3 to see if we get gradient expo a 16x16
 #    no gradient explosion happedn we are at epoch 20 at 32x32
 # 
-# 20251107070546:
+# stylegan1_celeba_20251107070546:
 #  - now lets increase lr=0.002 to see if it fixes anything(doubt it but lets try)
 #    so far no explosions, the loss is dloss=1.00 vs gloss=1.24 at 16x16 e28
 #    at 32x32e0 we have 0.63 vs 2.14 which is very high im going to let it run more
 #    and see how it turns out. ended it at epoch 2 as there are many artifacts poping up!
-#  
+# 
+# stylegan1_celeba_20251107134153: 
 #  - now lets try the conv/noise/bias/lrelu/adain and see how it does! lrs=0.001
 #    fp32, γ=10, kimages*2(i.e. 20 epochs per res), autocast still disabled
 #    lets see how this combo does.the dloss=1.03 vs gloss=1.16 at 16x16 e19
-#    we see the same issue we had starting with 32x32 the dloss=07 vs gloss=1.89
+#    we see the same issue we had starting with 32x32 the dloss=0.7 vs gloss=1.89
+#    the changes I made doesnt seem to affect the outcome much really so my previous
+#    implementation that was conv/noise/lrelu/adin was a good approximation
+#
+# stylegan1_celeba_20251107170458:   
+#  - now resuming with increased gamma(20) to see if its salvagable!
+#    it has a tiny impact. 0.85 vs 1.5 at epoch 1 (32x32). 
+#
+# stylegan1_ffhq_20251107210907:
+# - now lets try one of the pytorch implementations configs and see
+#    how that goes! : https://github.com/huangzh13/StyleGAN.pytorch/
+#    the default configs is at https://github.com/huangzh13/StyleGAN.pytorch/blob/master/config.py
+#    and specific settings for each dataset is https://github.com/huangzh13/StyleGAN.pytorch/tree/master/configs
+#    notable changes are 1. mapping network is 4 layers here.
+#    the lr is also set as 0.003! the depth is 6(up to 128x128) fo ffhq128
+#    lets train with no data-augmentation 
 #    
-#      
+#
 # if not we impl lazi penalty
 # if not we increase gamma=20
 # if not we increase lr=0.002 so gen can quickly update
@@ -9947,7 +10000,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #%%
 #%%
 # change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
-checkpoint_path ='./weights/gan/stylegan1_celeba_20251106113529/checkpoint_step_1_20251106113529.ckpt'
+checkpoint_path ='./weights/gan/stylegan1_celeba_20251107134153/checkpoint_step_2_20251107134153.ckpt'
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
@@ -9962,7 +10015,7 @@ for k,v in checkpoint.items():
 # checkpoint["lambda_factor"] = 10
 # # since we changed the epochs, lr_d/lr_g wont take effect and instead
 # # we need to change the optimizers lr!
-checkpoint["epoch_list"]=[kimages*2]*max_steps
+checkpoint["gamma"]=20
 # checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
 # checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
 # #%%
