@@ -8476,7 +8476,7 @@ class Blur(nn.Module):
         #[1/16, 2/16, 1/16]
         kernel = kernel/kernel.sum()
         self.register_buffer("kernel", kernel.view(1,1,3,3))
-            
+
     def forward(self, x):
         in_channels = x.size(1)
         kernel = self.kernel.repeat(in_channels, 1,1,1)
@@ -8701,6 +8701,12 @@ class MappingNetwork(nn.Module):
 
 # AdaIN is also a simple module that normalizes the input to have mean=0,std=1
 # and then adds the scaler/beta we learn from w!
+# the official tf impl only has the modulation part. the normalization
+# doesnt happen in adaIN, adaIn only recieves the x, w and works on w
+# and applies the styles on x. x is normalized beforehand in styleconv
+# but I did it here
+# todo move instance_normalization out of adain and into styleconv so
+# its more in line with the paper official impl
 class AdaIN(nn.Module):
     def __init__(self, channels, w_dim=512, eps=1e-8):
         super().__init__()
@@ -8756,7 +8762,7 @@ class NoiseInjection(nn.Module):
 # we need AdaIN, EqualizedConv, and NoiseInjection with leakyrelu 
 # the description of each block is given in figure1 page 2 of the paper
 # but the official tf implementation differs from it! in official code
-# the order is conv>bias>lrelu>noise>adain but paper says conv>noise>lrelu>adain!
+# the order is conv>noise>bias>lrelu>adain but paper says conv>noise>lrelu>adain!
 # 
 # update:
 # I swapped the order so adain is first applied and then we do lrelu! 
@@ -8780,7 +8786,7 @@ class NoiseInjection(nn.Module):
 # the same exact channel configurations.
 class StyleConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
-                 w_size=512, upsample=False, eps=1e-8, swap_adaIN_order=False):
+                 w_size=512, upsample=False, eps=1e-8, swap_adaIN_order=False, apply_conv=True):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -8795,9 +8801,15 @@ class StyleConvBlock(nn.Module):
         self.eps = eps
         # see note below
         self.swap_adaIN_order = swap_adaIN_order
+        # for 4x4 input we dont apply conv the first time, only noise, lrelu/adain
+        # but the second time we do the whole thing with conv
+        # not sure how much of a difference it makes initially as conv is a linear
+        # operation
+        self.apply_conv = apply_conv
         
-        self.conv = EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias)
+        self.conv = EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         self.noise_inject = NoiseInjection(out_channels)
+        self.bias = nn.Parameter(torch.zeros(out_channels,))
         self.adain = AdaIN(out_channels, w_size, eps)
         self.blur = Blur()
 
@@ -8808,9 +8820,18 @@ class StyleConvBlock(nn.Module):
             # for 32x32 and higher res so the discriminator doesnt win too quickly!
             x = self.blur(x)
 
-        out = self.conv(x)
+        if self.apply_conv:
+            out = self.conv(x)
+        else:
+            out = x
+            
         # inject noise into the output featuremaps
         out = self.noise_inject(out, noise)
+        # apply bias!
+        if out.ndim==2:
+            out += self.bias
+        else:
+            out += self.bias.view(1,-1,1,1)
         # apply the styles from w on the output
         # update: 
         # do adain before lrelu !
@@ -8846,7 +8867,6 @@ class StyleConvBlock(nn.Module):
             out = F.leaky_relu(out, negative_slope=0.2)
             out = self.adain(out, w)
             return out
-        #todo next do conv/lrelu/noise/adain and see how it does!
 
 # its much easier for us to implement style mixing here inside generator
 # than implement it as a standalone function and use it during training!
@@ -8937,7 +8957,7 @@ class GeneratorStyleGAN1(nn.Module):
         # using one layer, means the network cant stylize the input strongly, so the base
         # would lacks refienments therefore we would face low convergence because 
         # the network has less ability in injecting diverse styles early on!
-        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
+        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False, apply_conv=False))
         self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
         for i in range(1, max_steps):
             self.blocks.append(StyleConvBlock(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
@@ -9769,7 +9789,7 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 print(f'{kimages=:,}')
-EPOCHS = [kimages*3]*max_steps
+EPOCHS = [kimages*2]*max_steps
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -9799,7 +9819,7 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, channels_g,
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.002 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # first for mapping_network and the second one for the rest of generator
 # log:
 # I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
@@ -9816,7 +9836,7 @@ lr_d = 0.002 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # disc had much lower loss(0.4) vs gen(3).
 # paper uses 100x smaller lr for mapping network because it has 8 layers!
 # and the more layers the more unstability! so they multiply it by 0.01!
-lr_g = 0.002#0.0015 is used for res>64 
+lr_g = 0.001#0.0015 is used for res>64 
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -9909,7 +9929,16 @@ training_loop_stylegan(discriminator_stylegan1,
 # 
 # 20251107070546:
 #  - now lets increase lr=0.002 to see if it fixes anything(doubt it but lets try)
-# 
+#    so far no explosions, the loss is dloss=1.00 vs gloss=1.24 at 16x16 e28
+#    at 32x32e0 we have 0.63 vs 2.14 which is very high im going to let it run more
+#    and see how it turns out. ended it at epoch 2 as there are many artifacts poping up!
+#  
+#  - now lets try the conv/noise/bias/lrelu/adain and see how it does! lrs=0.001
+#    fp32, γ=10, kimages*2(i.e. 20 epochs per res), autocast still disabled
+#    lets see how this combo does.the dloss=1.03 vs gloss=1.16 at 16x16 e19
+#    we see the same issue we had starting with 32x32 the dloss=07 vs gloss=1.89
+#    
+#      
 # if not we impl lazi penalty
 # if not we increase gamma=20
 # if not we increase lr=0.002 so gen can quickly update
