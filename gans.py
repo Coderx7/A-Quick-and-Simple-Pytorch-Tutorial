@@ -9443,6 +9443,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             epoch_scores = []
             for i, (imgs_real, _) in enumerate(train_loader):
                 
+                imgs_real = imgs_real.to(device)
                 # enable gradients for the images
                 imgs_real.requires_grad_(True)
                 
@@ -9902,7 +9903,13 @@ disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, be
 
 mapping_params = list(generator_stylegan1.mapping_network.parameters())
 gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
-gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g*0.01},
+# mapping network is already using 100 times smaller learnng rate
+# through EqualizedLinear! 
+# so we are not decreasing it 100x more! by 0.01 again! This damn thing
+# was the reason I faced so many issues in 32x32 res and higher!(generator would 
+# be dominated by the discriminator becasue gmapping was extremely slow to update!
+# especially in higher res that needed more details!)
+gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g},
                                   {'params':gen_other_params,'lr':lr_g}
                                  ], betas=betas, eps=eps)
 
@@ -9916,7 +9923,7 @@ training_loop_stylegan(discriminator_stylegan1,
                      r1_penalty_interval=r1_penalty_interval,
                      dataset_name=dataset_name,
                      split=split,
-                     data_augmentation=False,
+                     data_augmentation=True,
                      gamma=gamma,
                      use_fp16=use_fp16,
                      noise_addition=False,
@@ -9926,7 +9933,7 @@ training_loop_stylegan(discriminator_stylegan1,
                     #  ema_warmup_images_threshold=1_000_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_celeba_20251107134153/checkpoint_step_2_20251107134153.ckpt",
+                    #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
 # quicklog
@@ -9989,8 +9996,28 @@ training_loop_stylegan(discriminator_stylegan1,
 #    and specific settings for each dataset is https://github.com/huangzh13/StyleGAN.pytorch/tree/master/configs
 #    notable changes are 1. mapping network is 4 layers here.
 #    the lr is also set as 0.003! the depth is 6(up to 128x128) fo ffhq128
-#    lets train with no data-augmentation 
+#    lets train with no data-augmentation the loss is the same as our previous
+#    experiments, 0.8 vs 1.68 at e0 32x32. also 0.73 vs 1.74 at e25 32x32
+#    the fid is terrible so I end the training
+#
+# stylegan1_ffhq_20251108072704:    
+# - now apply augmentation and see how that changes anything if at all
+#   we resume from 32x32 e0: epoch 10 0.75 vs 1.80 didnt imporve so I stopped 
+#   the training!
+#
+# stylegan1_ffhq_20251108110259:
+# - next use the samle lr(0.003) for mapping_network as well! first resume
+#   ok no apparent change so far, might be because in previous epoch mapping
+#   network hasnt caught up yet due to slow update rate. lets start fresh
+#
+# stylegan1_ffhq_20251108124531:
+# - start with lr=0.003 for the whole generator (including mapping_network)
 #    
+#
+# todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
+# celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
+# we can test them and hopefully get decent results (after we got the right
+# hyperparameters!)
 #
 # if not we impl lazi penalty
 # if not we increase gamma=20
@@ -10000,7 +10027,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #%%
 #%%
 # change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
-checkpoint_path ='./weights/gan/stylegan1_celeba_20251107134153/checkpoint_step_2_20251107134153.ckpt'
+checkpoint_path ="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt"
 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 for k,v in checkpoint.items():
     if not isinstance(v,dict):
@@ -10011,11 +10038,12 @@ for k,v in checkpoint.items():
 # checkpoint["decay_step"] = 2
 # checkpoint["channels_d"] = [512,512,512,512,32,16,16]
 # checkpoint["channels_g"] = [512,512,512,512,32,16,16]
-# checkpoint["lr_g"] = 0.000042
+checkpoint["lr_g"] = [0.003,0.003]
 # checkpoint["lambda_factor"] = 10
 # # since we changed the epochs, lr_d/lr_g wont take effect and instead
 # # we need to change the optimizers lr!
-checkpoint["gamma"]=20
+# checkpoint["data_augmentation"]=True
+# checkpoint["normalize"]=True
 # checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
 # checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
 # #%%
