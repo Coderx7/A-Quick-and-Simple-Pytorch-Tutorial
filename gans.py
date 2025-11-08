@@ -8520,15 +8520,93 @@ class Blur(nn.Module):
 # training more stable (so both weights and bias are scaled by lr_mult)
 # todo: check and set proper lr_mult in the architecture, we need to use 0.01 in mapping 
 # only and the rest should use lr_mult=1)
+# when we do this we dont need to set a seprate learning rate for mapping network durng
+# training. I did this mistake and this makes the mapping network 10000x slower and to
+# fail in higher resolutions like 32x32 and larger.
 
-# todo: should we just switch to nn.module instead of linear and make it clearer
-# or its fine and make the otherone inherit from conv like this?
 class EqualizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
         super().__init__(in_features, out_features, bias=True, device=device, dtype=dtype) 
         self.lr_mult = lr_mult
+
         # initalize the weight
-        self.weight.data.normal_(0,1)
+        # initially I did normal_(0,1) but this caused the outputs to become too small 
+        # when we used lrmult=0.01 i.e. we effectively scaling the weights twice! once 
+        # by 1/sqrt(fan_in) and a second time by lr_mult.(i.e. weights * 1/√fan_in * lr_mult)
+        # so to preserve the layer's output variance, we need to first scale the weights up 
+        # at initialization by 1/lr_mult, (i.e. normal(0,1/lr_mult) so that after multiplying
+        # the weights by lr_mult at runtime, the effective scale doesnt change anymore.
+        # (i.e. (weights/lr_mult) * (1/√fan_in * lr_mult))
+        # 
+        # sidenote :
+        # linear layer is simply y=Wx. so the output variance is obviously affected by/directly dependant on
+        # the input and weights! that is Var[y]=Var[Wx] which roughly equals fan_in*Var(Wx) or fan_in*Var[Wij]*Var[x]
+        # and since Var[Wij]=1, then Var[y] = fan_in*Var[x]
+        # as you can see this grows linearly with fan_in(i.e. number of input_features)! 
+        # this is obviously very problematic for us since as the network gets deeper, if 
+        # the variance gets larger, then activations get larger(will explode) and if it 
+        # gets smaller, it will shrink the activations and therefore lead to either 
+        # exploding or vanishing gradients! basiclly an unsatble signal propagation which
+        # leads to slow convergence at best or failed training otherwise
+        # 
+        # thats why we scale the weights by 1/√fan_in so we get Var[y]=fan_in*(1/fan_in)*Var[x]=Var[x]
+        # now the output variance equals the input variance. the kaminghe/xavier did this
+        # only at initialization to normalize the variance of activations on all layers and
+        # have a more stable training. later on BatchNorm was introduced to maintain actiation
+        # statistics during training, but since stylegan doesnt use BatchNorm or any other types
+        # of normalization layer here, they had to achieve the same effect so they did the weight scaling
+        # dynamically at every forward pass! instead of just at initialization!
+        #
+        # apart from that, sometimes we want a specific layer train faster or slower, like our case
+        # in mapping_network. in this case, we can use a specific learning rate for that layer 
+        # and multiply it by the main learning rate! but we need to keep/preserve the variance
+        # how do we do that? simple, we only need to scale down the weights before we apply that
+        # learning rate!(i.e. lr_mult.) hence why we do self.weight.normal(0,1/lr_mult)
+        # now we can easily multiply the weights by the lr_mult at runtime which is the effectively
+        # the same as multiplying the main learning rate and our layer specific learning rare(lr_mult)
+        # at runtime without multiplying/affecting the output variance!
+        # 
+        # sidenote2:
+        # note that when we talk about magnitutdes, like scaling the weights, we use std (standard deviation)
+        # which is linear! but when we talk about propagation! we use variance which is std²!(its squared!)
+        # thats why when we scale the weights, we use 1/√fan_in(i.e. 1/sqrt(fan_in)) but when we
+        # talk about variance propagatin (e.g. variance of the layers outputs) i.e. for analysis, we use variance.
+        # and how the 1/sqrt(fan_in) came into being? this is from xavier init paper in 2010. 
+        # the authords(glorot and bengio) said lets pick a variance for w so both the forward and backward passes
+        # keep the same variance! for the forward pass they did:
+        # Var[y] = fan_in*Var[Wij]*Var[x] , for Var[y]=Var[x], Var[Wij]= 1/fan_in so they cancel eachother out 
+        # so forward variance for W is 1/fan_in. for backward pass this is the same we get:
+        # Var[δx] = fan_out*Var[Wij]*Var[δy] for the variance of output with respect to input be the same (Var[δx]=Var[δy])
+        # again Var[Wij] needs to be 1/fan_out ! so the output variance is 1/fan_out. 
+        # and then they wanted to hold both conditions approximtaley so the they average them together
+        # and the variance became 2/(fan_in + fan_out). therefore the std becomes sqrt(2/fan_in+fan_out)
+        # 
+        # since we now only care about the forward pass stability (in convolutinal layers or in generators)
+        # we only take the first part i.e. var=1/fan_in and its std=1/sqrt(fan_in) which we actually use in
+        # multiplication!(as we are dealing with magnitude!)
+        #
+        # quicknote:
+        # He etal later came and extended this reasoning and said since relu drops half of its
+        # activations (i.e. sets them to zero), on average, then the variance should be doubled
+        # i.e. 2/fan_in to account for the lost values! 
+        # (and in stylegan1 the authords instead of applying this at initialization only, applied
+        # it dynamically at each forward pass so we get equalized learing rate throughout training!
+        # and since we didnt use relu, we went with var=1/fan_in)
+        #
+        #quotenote2:
+        # to get an understanding how bad this was, with N(0,1) the std is 1, so at runtime 
+        # when we want to calculate weights*(1/√fan_in)*lr_mult, with lr_mult=0.01 the 
+        # effective std will be 0.01 as well (W_std_effective = std_init*lr_mult = 1*0.01=0.01
+        # so as a result the layer output variance will also be shrunk by lr_mult²:
+        # Var[y]=fan_in*Var[Wij]*Var[x] = fan_in * (lr_mult²)*Var[x]
+        # that is the variance will be 10000x smaller!
+        # reminder:
+        # for a scaler and a random variable x we have: Var[a.X] = a².Var[X] so 
+        # so when we have W_effective = W_init * 1/√fan_in * lr_mult, with N(0,1)
+        # the variance for W_init will be 1 so the effective variance becomes:
+        # Var[W_effective] = (1/√fan_in * lr_mult)² * Var[W_init] = lr_mult²/(1/fan_in)*1 = lr_mult²/fan_in 
+        # the output variance shrinks by 1000x (0.01*0.01=0.0001)!
+        self.weight.data.normal_(0,1/lr_mult)
         # some implementations use 1/sqrt(fanin), since we dont use relu
         # √2 overcompensates and makes activations larger than they should
         # and can lead to training instability so the official impl used 1/sqrt(fanin)
@@ -9841,7 +9919,6 @@ swap_adaIN_order = False
 # I used it for both the discriminator and generator. 
 # I also got good results with [512,512,512,512,256,128,16] 
 # 
-# this is faster but less quality obviously
 channels_d = [512,512,512,512,256,128]#,64]
 channels_g = [512,512,512,512,256,128]#,64]
 #discriminator
@@ -10012,7 +10089,23 @@ training_loop_stylegan(discriminator_stylegan1,
 #
 # stylegan1_ffhq_20251108124531:
 # - start with lr=0.003 for the whole generator (including mapping_network)
-#    
+#   the same issue occured again!e2 0.79 vs 1.69 in 32x32 and I see green/purple
+#   blobs on the images, basically output is artifact riddent .the image quality
+#   however is not abysmal! or I may be halucinating! but the overal image structure
+#   looks ok, however there are discoloration as I said. lets let it train a bit
+#   I also found a tiny bug in EqualizedLinear thats used in mapping network aswell,
+#   it might have had a role in this! I hadnt initialized the weights properly 
+#   (should have done normal(0,1/lrmult) but instead had done(N(0,1) this shrinks 
+#   the variance when we apply the 0.01 lrmult, so it might be why im seen this behavior.
+#   anyway we'll see if this affects us considerably or not)) the discoloration
+#   coulda lso be attributed to number of mapping layers, we used 4! instead of 8!
+#   so the network might not have the necessary capacity to comeup with proper styles
+#   by that res! ok the green blob is gone in epoch 3, so I guess my reasoning 
+#   might have been correct(we'll know for sure when we train the next time with mn_nlayer=8)
+#
+# - test with new EqualizedLinear fix! increase the mapping network layers to 8 again
+#   
+#
 #
 # todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
 # celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
