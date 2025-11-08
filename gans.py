@@ -10094,14 +10094,23 @@ training_loop_stylegan(discriminator_stylegan1,
 #   however is not abysmal! or I may be halucinating! but the overal image structure
 #   looks ok, however there are discoloration as I said. lets let it train a bit
 #   I also found a tiny bug in EqualizedLinear thats used in mapping network aswell,
-#   it might have had a role in this! I hadnt initialized the weights properly 
-#   (should have done normal(0,1/lrmult) but instead had done(N(0,1) this shrinks 
-#   the variance when we apply the 0.01 lrmult, so it might be why im seen this behavior.
-#   anyway we'll see if this affects us considerably or not)) the discoloration
-#   coulda lso be attributed to number of mapping layers, we used 4! instead of 8!
-#   so the network might not have the necessary capacity to comeup with proper styles
-#   by that res! ok the green blob is gone in epoch 3, so I guess my reasoning 
-#   might have been correct(we'll know for sure when we train the next time with mn_nlayer=8)
+#   it had a role in this! I hadnt initialized the weights properly 
+#   (should have done normal(0,1/lrmult) but instead had done(N(0,1) this shrunk 
+#   the variance extremely bad (10000x!) when we apply the 0.01 lrmult, so its why
+#   I was seeing this behavior.
+#   before I check EqualizedLinear (initially I check mapping network to see why we
+#   are not training differenly than before even though Im using way larger lr now, 
+#   then I noticed EqualziedLinear, ok, before that I thought the discoloration could
+#   also be attributed to number of mapping layers, we used 4! instead of 8! so the 
+#   network might not have the necessary capacity to comeup with proper styles
+#   by that res! and the green blob is also gone in epoch 3, so I'd thought my reasoning 
+#   might have had been correct! but fast forwrad and after finding the bug! it completely
+#   makes sense that that EqualizedLinear bug caused extrmeley slow convergence .
+#   now in epoch 18/19 we can cearly see images have improved a lot since alpha=1, but
+#   we can still see different artifacts, especially discolarations that can be attributed
+#   to extremely slow convergence. it can also be attributed to smaller number of mapping layers
+#   but I beleive at this point its a cause of EquzliedLinear bug which is now fixed, but
+#   I'll let this round go and see the final results
 #
 # - test with new EqualizedLinear fix! increase the mapping network layers to 8 again
 #   
