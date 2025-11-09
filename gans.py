@@ -8561,26 +8561,42 @@ class EqualizedLinear(nn.Linear):
         # choose a small enough learning rate thats not too tiny to take ages to train or 
         # face vanishing gradients or be too large to face exploding gradient or just diverge)
         # quicknote:why not use batchnorm?
-        # batchnorm uses batch stats(mean/variance) to normalize all samples, so it throws away
-        # individual mean/variance for each sample! however in generator we want to preserve 
-        # the signal for each sample, we dont want other samples to distort the  statistics
-        # of another sample! we dont want other samples to affect another one in anyway, 
-        # all samples in the batch, in batchnorm, use the same batch mean/varaince! 
-        # if we were to use batchnorm, then the generator's output for one latent code z1
-        # would depend on whats in the rest of the samples in that batch! this destroys the
-        # independece! (thats why in some early works, they said use batches with same class
-        # as apposed to random batch! but it was ultimately abandoned and people stopped using bn!)
-        # aside from that, this introduces noise and instability as well, because gradients become
-        # batch dependant! a larger batch performs differently than a smaller one!
-        # more importantly, and this is exclusive to stylegan1, batchnorm forces the activations
-        # to have zero mean and variance 1 across the batch, but in order to capture the style
-        # of the image, we need to preserve them as they carry the style information! everything
-        # such as colors, textures, brightness, contrast, color balance, etc all come from these
-        # individual features mean/variance. batchnorm distors or destroyss these information and
-        # makes it much harder for the model to control the style accurately and result in 
-        # inconsistent images which depend on the batch!
-        
+        # version 1: 
+        # there are two main reasons for that. first generally speaking, since batchnorm
+        # uses the batch stats(mean/variance) to normalize all samples! this introduces
+        # noise and instability in training and makes the gradients batch dependant. 
+        # a large batch behaves/performs differently than a smaller one. moreover, this
+        # makes them dependenat on each other(each sample depends on the rest of the samples
+        # in that batch!) this is problematic because now, when the generator uses latent
+        # code z1 e.g. to create an image, the output is also depandant on whats in the
+        # rest of the batch! this will result in inconsistent images that depend on the batch
+        # and not just the latent code!
+        # second, in stylegan we need to preserve each samples mean/variance because they
+        # carry the style information, details such as colors, textures, contrast, color balance,
+        # brightness, etc all come from samples mean/variance! batchnorm distorts/destorys 
+        # these information and makes it very hard for the model to accurately control the style!
+        # hence why batchnorm is not used!
         #
+        # version2:
+        # batchnorm uses the batch statistics(mean/variance) to normalize all the samples in batch,
+        # i.e. it throws away individual mean/variance for each sample! this is a problem because
+        # in generator we want to preserve the signal for each sample the best we can, we dont want
+        # other samples to distort the statistics of another sample! we dont want other samples to 
+        # affect another one in any way. all samples in the batch, in batchnorm, use the same mean/varaince!
+        # if we use batchnorm, then the generator's output for one latent code z1 would depend on
+        # whats in the rest of the samples in that batch! it wont be independant
+        # and determinstic anymore!(i.e. depend only on latent code z1 e.g.) this destroys the
+        # independece we need to generate determinstic outputs(with features we want)! 
+        # aside from that, this introduces noise and instability as well, because gradients now
+        # become batch dependant! a larger batch performs differently than a smaller one!
+        # and more importantly, this is exclusive to stylegan1, batchnorm forces the feature activations
+        # to have zero mean and variance 1(unit variance) across the batch, but in order to 
+        # capture the style of the image, we need to preserve them as they carry the style information!
+        # everything such as colors, textures, brightness, contrast, color balance, etc all 
+        # come from these individual mean/variance. batchnorm distorts or destroys these 
+        # information and makes it much harder for the model to control the style accurately 
+        # and result in inconsistent images which depend on the batch!
+        # 
         # apart from that, sometimes we want a specific layer train faster or slower, like our case
         # in mapping_network. in this case, we can use a specific learning rate for that layer 
         # and multiply it by the main learning rate! but we need to keep/preserve the variance
