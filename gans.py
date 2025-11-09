@@ -9925,7 +9925,7 @@ channels_g = [512,512,512,512,256,128]#,64]
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels_d)
 discriminator_stylegan1 = discriminator_stylegan1.to(device)
 #generator
-mn_nlayer = 4#8
+mn_nlayer = 8#8
 generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, mn_nlayer,
                                          channels_g, style_mixing_prob,
                                          swap_adaIN_order=swap_adaIN_order)
@@ -10112,14 +10112,31 @@ training_loop_stylegan(discriminator_stylegan1,
 #   but I beleive at this point its a cause of EquzliedLinear bug which is now fixed, but
 #   I'll let this round go and see the final results
 #
-# - test with new EqualizedLinear fix! increase the mapping network layers to 8 again
+# stylegan1_ffhq_20251109035618:
+# - test with new EqualizedLinear fix! increase the mapping network layers to 8 again:
+#   massively improved at 16x16 e15 1.37 vs 0.71 and images are miles better! also
+#   in 32x32 although we have 1.37 vs 0.74 and image quality are way way better!
+#   yup that was the issue after all! the thing is EqualizedLinear was the last thing
+#   that I could ever think had issues! I was 100% Igot it right! and here we are 3 weeks
+#   in to only find the culprit was the EqualizedLinear all this time!(of course my gaffe
+#   for appling 0.01 on mapping network in optimizer made this evern worse! but we learned
+#   alot and found a whole new way to get more stable training as well! so not bad I guess!)
 #   
+#   
+# - revert back the last changes in stylegan (separate bias, etc) and see with the
+#   newly fixed EqualizedLinear, how our previous implementation works
 #
-#
+# - train with swapped_adaIN_order aswell see if it indeed is better choice than original:
+#   
 # todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
 # celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
 # we can test them and hopefully get decent results (after we got the right
 # hyperparameters!)
+#
+# todo test with cifar10 without augmentation and with augmentation to get a good idea
+# about the dataset size effect (is 10k enough for each class or not)
+#
+# todo: re-enable autocast or completely remove it 
 #
 # if not we impl lazi penalty
 # if not we increase gamma=20
