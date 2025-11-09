@@ -8552,15 +8552,39 @@ class EqualizedLinear(nn.Linear):
         # thats why we scale the weights by 1/√fan_in so we get Var[y]=fan_in*(1/fan_in)*Var[x]=Var[x]
         # now the output variance equals the input variance. the kaminghe/xavier did this
         # only at initialization to normalize the variance of activations on all layers and
-        # have a more stable training. later on BatchNorm was introduced to maintain actiation
-        # statistics during training, but since stylegan doesnt use BatchNorm or any other types
-        # of normalization layer here, they had to achieve the same effect so they did the weight scaling
-        # dynamically at every forward pass! instead of just at initialization!
+        # have a more stable training. later on BatchNorm was introduced to maintain actiations
+        # mean and variance during training especially with larger lrs, but since stylegan doesnt use
+        # BatchNorm or any other types of normalization layers, to achieve the same effect 
+        # they tried the weight scaling dynamically at every forward pass! instead of just at 
+        # initialization this way using different learning rates (especially larger ones) isnt
+        # an issue anymore and everything works out well. (without this we had to maticulously
+        # choose a small enough learning rate thats not too tiny to take ages to train or 
+        # face vanishing gradients or be too large to face exploding gradient or just diverge)
+        # quicknote:why not use batchnorm?
+        # batchnorm uses batch stats(mean/variance) to normalize all samples, so it throws away
+        # individual mean/variance for each sample! however in generator we want to preserve 
+        # the signal for each sample, we dont want other samples to distort the  statistics
+        # of another sample! we dont want other samples to affect another one in anyway, 
+        # all samples in the batch, in batchnorm, use the same batch mean/varaince! 
+        # if we were to use batchnorm, then the generator's output for one latent code z1
+        # would depend on whats in the rest of the samples in that batch! this destroys the
+        # independece! (thats why in some early works, they said use batches with same class
+        # as apposed to random batch! but it was ultimately abandoned and people stopped using bn!)
+        # aside from that, this introduces noise and instability as well, because gradients become
+        # batch dependant! a larger batch performs differently than a smaller one!
+        # more importantly, and this is exclusive to stylegan1, batchnorm forces the activations
+        # to have zero mean and variance 1 across the batch, but in order to capture the style
+        # of the image, we need to preserve them as they carry the style information! everything
+        # such as colors, textures, brightness, contrast, color balance, etc all come from these
+        # individual features mean/variance. batchnorm distors or destroyss these information and
+        # makes it much harder for the model to control the style accurately and result in 
+        # inconsistent images which depend on the batch!
+        
         #
         # apart from that, sometimes we want a specific layer train faster or slower, like our case
         # in mapping_network. in this case, we can use a specific learning rate for that layer 
         # and multiply it by the main learning rate! but we need to keep/preserve the variance
-        # how do we do that? simple, we only need to scale down the weights before we apply that
+        # how do we do that? simple, we only need to scale up the weights before we apply that
         # learning rate!(i.e. lr_mult.) hence why we do self.weight.normal(0,1/lr_mult)
         # now we can easily multiply the weights by the lr_mult at runtime which is the effectively
         # the same as multiplying the main learning rate and our layer specific learning rare(lr_mult)
@@ -8665,7 +8689,7 @@ class EqualizedConv2d(nn.Module):
         # it could be one of the reasons why I faced so much issues in training
         # past some resolutions.(but ultimately we managed to get good results
         # so I'm not sue how much of an impact this is gonna have on us
-        # to be on the safe side, I do as the official tf impl does this time!)
+        # to be on the safe side I do as the official tf impl does this time!)
         # also the whole thing is further scaled it by lr_mult,though
         # for conv layer its 1! but I added it anyway!
         # 
@@ -9534,15 +9558,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # track how many real images the network has seen
                 ema_warmup_images_seen += imgs_real.size(0)
                 
-                # if adding noise makes trainig more stable and we get
-                # better looking images it means our discriminator is
-                # too powerful that messing the signal up and making it
-                # harder for it, improves our result! it acts as a regularizer
-                # (in terms of distribution impact, adding noise increases the variance
-                # for both real/fake images so the discriminator cant prefectly memorize
-                # the training data or latch onto a single fake mode!)
-                if noise_addition:
-                    imgs_real += 0.05 * torch.randn_like(imgs_real)
+                # I specifically dont use noise_addition because the original stylegan1
+                # didnt use and we need to achieve the same result usin the same setup!
+                # if noise_addition:
+                #     imgs_real += 0.05 * torch.randn_like(imgs_real)
                     
                 with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                     # train discriminator/critic! 
@@ -9555,8 +9574,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     imgs_fake = generator(z_vector, alpha, step).detach()
                 
                     # add noise to fake images as well(not needed for dcgan)
-                    if noise_addition:
-                        imgs_fake += 0.05 * torch.randn_like(imgs_fake)
+                    # if noise_addition:
+                    #     imgs_fake += 0.05 * torch.randn_like(imgs_fake)
                 
                     preds_fake = discriminator(imgs_fake, alpha, step)
                     # calculate discrimiator loss out of real and fake losses
@@ -9595,6 +9614,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #update: 
                 # noticed clipping at 1 causes issues down the road and some implementations
                 # used 10 so I use that as well
+                # update2:
+                # see note below in generator section!
                 # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
                 # to fight nans, we use lower adam eps. it works much better 
@@ -9634,6 +9655,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # clipping at 1 causes issues down the road and loss explodes!
                         # I found some pytorch implementations used 10! 
                         # if this caused issues, only clip mapping_network gradients
+                        # update2:
+                        # stylegan1 didnt use any gradient clipping, they only trained in fp32
+                        # other implementations that did use this, either like us used fp16
+                        # or simply did this for stable training (in which case they used a larger
+                        # norm like 10. we dont do that, and after our latest fixes it trains
+                        # just fine without it)
                         # scaler.unscale_(gen_optimizer)
                         # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
                         
@@ -9844,9 +9871,11 @@ max_steps = 6#3 if dataset_name=="cifar10" else 7
 # it gives a pretty good insight into the importantce of batchsize 
 # (also sidenote: see the the lowest FID is achieved in smaller res
 # the larger the res, the larger the FID score gets)
-# log-vram usage
-# fp32:
-#     up to 32² 3553MB
+# log-vram usage 
+# fp32: with Batch_sizes=[128,128,128,64,32,16] and w_size=z_size=512
+#  and channels=[512,512,512,512,256,128] (23vs25m) the vram usage is
+#  up to 6799MB @ 32x32 and up 9637MB @ 64x64. since im using my integrated
+#  GPU for display, I can easily train up to 10236MB! (xorg takes 4MB!)
 # fp16:
 #     up to 32² 2829MB
 #     up to 64² 4125MB 
@@ -10094,34 +10123,57 @@ training_loop_stylegan(discriminator_stylegan1,
 #   however is not abysmal! or I may be halucinating! but the overal image structure
 #   looks ok, however there are discoloration as I said. lets let it train a bit
 #   I also found a tiny bug in EqualizedLinear thats used in mapping network aswell,
-#   it had a role in this! I hadnt initialized the weights properly 
-#   (should have done normal(0,1/lrmult) but instead had done(N(0,1) this shrunk 
-#   the variance extremely bad (10000x!) when we apply the 0.01 lrmult, so its why
-#   I was seeing this behavior.
-#   before I check EqualizedLinear (initially I check mapping network to see why we
-#   are not training differenly than before even though Im using way larger lr now, 
-#   then I noticed EqualziedLinear, ok, before that I thought the discoloration could
-#   also be attributed to number of mapping layers, we used 4! instead of 8! so the 
-#   network might not have the necessary capacity to comeup with proper styles
-#   by that res! and the green blob is also gone in epoch 3, so I'd thought my reasoning 
-#   might have had been correct! but fast forwrad and after finding the bug! it completely
-#   makes sense that that EqualizedLinear bug caused extrmeley slow convergence .
-#   now in epoch 18/19 we can cearly see images have improved a lot since alpha=1, but
-#   we can still see different artifacts, especially discolarations that can be attributed
-#   to extremely slow convergence. it can also be attributed to smaller number of mapping layers
-#   but I beleive at this point its a cause of EquzliedLinear bug which is now fixed, but
-#   I'll let this round go and see the final results
+#   I think the discoloration we see might be attributed to number of mapping layers,
+#   we used 4 instead of 8! so the network might not have the necessary capacity to
+#   comeup with proper styles by the current res! 
+#   ok, but the green blob is gone in epoch 3! so I think my reasoning might have 
+#   been correct!
+#   ok! the training is going on, but I digged deeper and the bug I found is not that tiny
+#   and insignificant as I thoght, infact its huge!! and looking at it I guess this 
+#   is why I couldnt train properly!
+#   in EqualizedLinear, I hadnt initialized the weights properly (I should have done 
+#   normal(0,1/lrmult) but instead had done(N(0,1) and didnt think of it as being problematic at all!
+#   oh I was so wrong! so wrong! looking at the formula, (I explained in detail in EqualizedLinear)
+#   this caused the output variance to shrink extremely bad (10000x!) 
+#   when we apply the 0.01 lrmult, so its why we kept seeing network struggle post
+#   32x32! and ultimately fail!(I looked at official impl and noticed they did that
+#   but ignored it thinking it wasnt needed as the paper didnt say anything about it,
+#   I thought it was one of those simplification/or over enginnering etc, and the 
+#   dynamically scaling we have should work! because the equalizedconv2d was similar
+#   and I had not had any issues with it, only after all of these issues when I 
+#   revisted it again, I found how wrong I initially was!)
+#   now imagine we have been applying 0.01 to mapping network on top of that! 
+#   making the variance 1000,000x times smaller!!! no wonder nothing worked! damn!!)
+#   initially I checked mapping network to see why we are not training differenly 
+#   than before even though I'm using much larger lr now(i.e. 0.003), then I noticed
+#   EqualziedLinear and went to check it again! and what followed!
+#   fast forwrad and after finding the bug! it completely makes sense that that 
+#   EqualizedLinear bug caused extrmeley slow convergence.
+#   even without the fix, with the increased lr (removing the excessive 0.01 from mapping_network
+#   and using 0.003) we can see improvements! in epoch 18/19 we can cearly see images have
+#   improved a lot since alpha=1, but we can still see different artifacts, especially 
+#   discolarations that can be attributed to extremely slow convergence. 
+#   it can also be attributed to smaller number of mapping layers i said earlier but I
+#   beleive at this point its a cause of EquzliedLinear bug which is now fixed, but
+#   since this experiment is ongoing I'll let this round go and see the final 
+#   results.(update I ended this at the end of 32x32 and started a new experiment with the
+#   fix see below)
 #
 # stylegan1_ffhq_20251109035618:
 # - test with new EqualizedLinear fix! increase the mapping network layers to 8 again:
-#   massively improved at 16x16 e15 1.37 vs 0.71 and images are miles better! also
-#   in 32x32 although we have 1.37 vs 0.74 and image quality are way way better!
+#   massively improved at 16x16 e15 1.37 vs 0.71 and images are miles better! way better!
+#   they are very detailed for 16x16! see the results and compare it to previous examples
+#   to understand what I mean also in 32x32 although we have 1.37 vs 0.74 and image quality
+#   are way way better!
 #   yup that was the issue after all! the thing is EqualizedLinear was the last thing
 #   that I could ever think had issues! I was 100% Igot it right! and here we are 3 weeks
 #   in to only find the culprit was the EqualizedLinear all this time!(of course my gaffe
 #   for appling 0.01 on mapping network in optimizer made this evern worse! but we learned
 #   alot and found a whole new way to get more stable training as well! so not bad I guess!)
-#   
+#   the images at epoch 27 are gorgeous! detailed well formed most of the time. its working
+#   prefectly!
+#   (note during training images may get deformed or discolored early on but as training goes
+#    and alpha goes to 1 it gets better and better.)
 #   
 # - revert back the last changes in stylegan (separate bias, etc) and see with the
 #   newly fixed EqualizedLinear, how our previous implementation works
@@ -10305,7 +10357,7 @@ for k,v in checkpoint.items():
 # on this and specifically chose smaller batchsizes for this exact reason.unlike previous gans
 # progressive gans are relient on these kind of noise for stabliziation I guess. 
 # lets check this again with smaller batch size(for now lets just use smaller batchsize
-# we dont accumulate gradients to mimic the x8 for now!)
+# we dont accumulate gradients to mimic the x8 for now!)(update:wrong! the batchsize was ok! the issue is sth else)
 # update:(20251105054505)
 # use smaller batchsizes, drastically longer trainig epochs per res:
 # 
@@ -10323,7 +10375,8 @@ for k,v in checkpoint.items():
 # this we see the d_loss be a bit lower than g_loss (1.02 vs 1.1945) and images are getting
 # worse, weird artifacts are visible, so this might be the reason I let it train until we 
 # reach 32x32 to see how it ends up! it got worse at 32x32 from iteration 0 epoch 0! its now 
-# in 20ks!
+# in 20ks!(wrong see later updates what was the cause there was actually a bug in code that
+# manifested itself with the specific hyperparametrs like that)
 #
 #%%
 # Stylegan2/3?
