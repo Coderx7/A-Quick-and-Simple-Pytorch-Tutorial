@@ -10187,7 +10187,13 @@ training_loop_stylegan(discriminator_stylegan1,
 #   for appling 0.01 on mapping network in optimizer made this evern worse! but we learned
 #   alot and found a whole new way to get more stable training as well! so not bad I guess!)
 #   the images at epoch 27 are gorgeous! detailed well formed most of the time. its working
-#   prefectly!
+#   prefectly! the training in 64x64 is very slow, each epoch takes nearly an hour to complete!
+#   9677MB vram is being used but the image quality is gorgeous! unline the previous res
+#   like 32x32 that the image gets distorted and then gradually as it reaches alpha=1 it becomes
+#   high quality, at 64x64, epoch 0, images become really sharp, but also with artifacts
+#   the artifacts are noticeable when you view the image up close. by epoch 3 its
+#   nearly gone, but there are still some weirdness, like eyes are all black suddenly!
+#   like demonic black!
 #   (note during training images may get deformed or discolored early on but as training goes
 #    and alpha goes to 1 it gets better and better.)
 #   
