@@ -9875,6 +9875,8 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #  and channels=[512,512,512,512,256,128] (23vs25m) the vram usage is
 #  up to 6799MB @ 32x32 and up 9637MB @ 64x64. since im using my integrated
 #  GPU for display, I can easily train up to 10236MB! (xorg takes 4MB!)
+#  With channels=[512,256,128,64,32,16,8] (11mvs11m) the vram usage is
+#  up 3015MB @ 64x64.
 # fp16:
 #     up to 32² 2829MB
 #     up to 64² 4125MB 
@@ -9945,7 +9947,9 @@ psi = 0.7
 swap_adaIN_order = False
 # I've got my best results with [512,512,512,512,256,128,64] for both
 # discriminator and generator(in ffhq128) but it takes ~2 hours to train
-# a single epoch in 64x64. the models become 23m/25m.
+# a single epoch in 64x64.(17min for 32x32) the models become 23m/25m.
+# for the record, using [512,256,128,64,32,16,8] for both models, they become 11m/11m
+# and 32x32 takes only 5 mins! and 64x64 takes 15mins
 channels_d = [512,256,128,64,32,16,8]
 channels_g = [512,256,128,64,32,16,8]
 #discriminator
@@ -10126,13 +10130,13 @@ training_loop_stylegan(discriminator_stylegan1,
 #   ok, but the green blob is gone in epoch 3! so I think my reasoning might have 
 #   been correct!
 #   ok! the training is going on, but I digged deeper and the bug I found is not that tiny
-#   and insignificant as I thoght, infact its huge!! and looking at it I guess this 
+#   and insignificant as I thought, infact its huge!! and looking at it I guess this 
 #   is why I couldnt train properly!
 #   in EqualizedLinear, I hadnt initialized the weights properly (I should have done 
 #   normal(0,1/lrmult) but instead had done(N(0,1) and didnt think of it as being problematic at all!
 #   oh I was so wrong! so wrong! looking at the formula, (I explained in detail in EqualizedLinear)
-#   this caused the output variance to shrink extremely bad (10000x!) 
-#   when we apply the 0.01 lrmult, so its why we kept seeing network struggle post
+#   this seemingly innocent mistake! caused the output variance to shrink extremely bad (10000x!) 
+#   when we applied the 0.01 lrmult, so its why we kept seeing network struggle post
 #   32x32! and ultimately fail!(I looked at official impl and noticed they did that
 #   but ignored it thinking it wasnt needed as the paper didnt say anything about it,
 #   I thought it was one of those simplification/or over enginnering etc, and the 
@@ -10143,7 +10147,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #   making the variance 1000,000x times smaller!!! no wonder nothing worked! damn!!)
 #   initially I checked mapping network to see why we are not training differenly 
 #   than before even though I'm using much larger lr now(i.e. 0.003), then I noticed
-#   EqualziedLinear and went to check it again! and what followed!
+#   EqualziedLinear and went to check it again! and the rest is history!
 #   fast forwrad and after finding the bug! it completely makes sense that that 
 #   EqualizedLinear bug caused extrmeley slow convergence.
 #   even without the fix, with the increased lr (removing the excessive 0.01 from mapping_network
@@ -10185,7 +10189,21 @@ training_loop_stylegan(discriminator_stylegan1,
 # stylegan1_ffhq_20251110095733:
 # - since it takes ages to train especially in 64x64+ lets use a small number of channels
 #   for each resolution so we get a good idea how this impact the results and to what extend.
-#   use [512,256,128,64,32,16,8] for both channels now.
+#   use [512,256,128,64,32,16,8] for both channels now. the convergence rate is lower but
+#   image quality is still very good. however, the previous larger config gave us much better
+#   looking iamges much earlier, for example, images very nearly structurally prefect in 
+#   epoch3@64x64 though there were some noticeable artifacts, but the images from afar looked
+#   completely fine(at epoch 10 they looked way better, afew seemed prefect!)! but here, 
+#   even in epoch 15@64x64, you can still see considerable deformity in a lot of the
+#   images from afar(by that I mean in vscode interactive pane where the sample generation is
+#   scaled down to fit properly, and by up close I mean when I click on Expand image to 
+#   view them in full resolution). but since it runs several times faster, we can wait and 
+#   see ultimately how well the images get at what resolution adn whethere its worth it.
+#   compared to our previous 23m/25m models, this trains much much faster as I just mentioned
+#   for example it takes us only 5 mins to do an epoch at 32x32 res, and only 15mins to do
+#   an epoch at 64x64! whereas before, it took 17mins for32x32 and 1 hour and 45 mins! for
+#   a single epoch in 64x64! at epoch 17, it starts to look decent (like epoch 6 in larger model!)
+#   but at epoch 29(when α is nearly 1) we are getting fabelous images!
 # 
 # - previous experiment now with smaller number of epochs:
 #   
@@ -10247,6 +10265,17 @@ for k,v in checkpoint.items():
 
 #%%
 # debug logs:
+# note I want to get this to work organically, 
+# that is just like the original paper. for that
+# reason we should be able to get a working example
+# with the same hyperparameters and only what is
+# said in the paper, so we are not going to do
+# anything extra, like noise addition that we did
+# in earlier gan experiments. for that reason I 
+# remove those options so we can only focus on 
+# getting to the root of the issues and hopefully
+# implement everything accuractely.
+# 
 # starting the training with fp32 we had a bug
 # which made our mapping network to have lr=1.5e-7
 # this lead to mode collapse in 64x64 as the generator
