@@ -9335,7 +9335,7 @@ def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, dec
 
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, noise_addition=False, 
+                         split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
@@ -9345,9 +9345,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
 
     lr_d = disc_optimizer.param_groups[0]["lr"]
-    # generator has two lr one for mapping network
-    # and another for the rest of the network
-    lr_g = [g["lr"] for g in gen_optimizer.param_groups]
+    lr_g = gen_optimizer.param_groups[0]["lr"]
     # print(f'{lr_g=}')
     betas_d = disc_optimizer.defaults["betas"]
     betas_g = gen_optimizer.defaults["betas"]
@@ -9443,7 +9441,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         gen_update_interval = checkpoint["gen_update_interval"]
         r1_penalty_interval = checkpoint["r1_penalty_interval"]
         gamma = checkpoint["gamma"]
-        noise_addition = checkpoint["noise_addition"]
+        # noise_addition = checkpoint["noise_addition"]
         
         if starting_epoch == epoch_list[starting_step]:
             starting_step += 1
@@ -9482,7 +9480,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
     print(f'--Generator update interval: {gen_update_interval}')
     print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
-    print(f'--Noise addition to input:   {noise_addition}')
     print(f'--Gama factor:               {gamma}')
     print(f'--PSI:                       {psi}')
     print(f'--gen_num_samples:           {gen_num_samples}')
@@ -9492,13 +9489,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     for step in range(starting_step, max_steps):
         if starting_epoch == 0:
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
-            
-            
-            mapping_params = list(generator.mapping_network.parameters())
-            gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]},
-                                              {'params':gen_other_params,'lr':lr_g[-1]}
-                                             ], betas=betas_g)
+            gen_optimizer = torch.optim.Adam(generator.parameters(), lr=lr_g, betas=betas_g)
 
         if step>starting_step:
             starting_epoch = 0
@@ -9528,12 +9519,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             decay = decay_func(step)
             
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d*decay, betas=betas_d)
-            
-            mapping_params = list(generator.mapping_network.parameters())
-            gen_other_params = [p for p in generator.parameters() if p not in set(mapping_params)]
-            gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g[0]*decay},
-                                              {'params':gen_other_params,'lr':lr_g[-1]*decay}
-                                             ], betas=betas_g)
+            gen_optimizer = torch.optim.Adam(generator.parameters(),lr=lr_g*decay, betas=betas_g)
 
         current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
         current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
@@ -9574,8 +9560,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # track how many real images the network has seen
                 ema_warmup_images_seen += imgs_real.size(0)
                 
-                # I specifically dont use noise_addition because the original stylegan1
-                # didnt use and we need to achieve the same result usin the same setup!
+                # I specifically dont use noise_addition here because the original stylegan1
+                # didnt use any and we need to achieve the same result usin the same setup!
+                # and as Im writing this we achieved it! so I comment this out!
                 # if noise_addition:
                 #     imgs_real += 0.05 * torch.randn_like(imgs_real)
                     
@@ -9718,8 +9705,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 
             # always update the last step per epoch 
             all_training_losses[step].append((d_loss_mean, g_loss_mean))
-            # gp_mean_epoch = float(np.mean(step_all_gps))
-            # all_gradient_penalties[step].append(gp_mean_epoch)
             
             # real
             average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
@@ -9783,7 +9768,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "lr_g":lr_g,
                         "max_steps":discriminator.max_steps,
                         "decay_step":decay_step,
-                        "noise_addition":noise_addition,
                         "step":step,
                         "training_step_counter":training_step_counter,
                         "ema_warmup_images_threshold":ema_warmup_images_threshold,
@@ -9805,7 +9789,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             loss_dicts = {"d_loss_mean":d_loss_mean,
                         "g_loss_mean":g_loss_mean,
                         "all_training_losses":all_training_losses
-                         # "all_gradient_penalties":all_gradient_penalties,
                          }
             
             # all_settings = {**state_dicts,**settings}
@@ -9820,7 +9803,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                 ema_marker_str = "[EMA]_" if use_ema_inference else ""
                 loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
-                lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e},{current_lr_g[-1]:.0e}"
+                lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e}"
                 title_str = f"Step {step} [{res}x{res}, α={alpha:.2f}] @ Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
                 img_store_dir_path = f'{images_save_dir}/stylegan1/{dataset_name}_{experiment_date}'
                 img_filename = f'{ema_marker_str}step_{step}_{res}x{res}_epoch_{epoch}.jpg'
@@ -9879,7 +9862,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # 7 means 4x4 up to 256x256
-max_steps = 6#3 if dataset_name=="cifar10" else 7
+max_steps = 7#3 if dataset_name=="cifar10" else 7
 
 # batchsize extremely matters, the larger the batchsize the
 # better the performance. 
@@ -9945,8 +9928,8 @@ else:
 # also the droplet effect is (water smudge effects in images) are expected
 # this is the stylegan1 issue which will be fixed in stylegan2!
 # EPOCHS = [10,10,20,50,30,60,70]
-kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
-print(f'{kimages=:,}')
+# kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
+# print(f'{kimages=:,}')
 #ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
 EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
 
@@ -9960,12 +9943,11 @@ style_mixing_prob = 0.9
 psi = 0.7
 # whether to use original order or not
 swap_adaIN_order = False
-# [512,256,128,128,64,64,32] trains well but it takes a lot of time
-# I used it for both the discriminator and generator. 
-# I also got good results with [512,512,512,512,256,128,16] 
-# 
-channels_d = [512,512,512,512,256,128]#,64]
-channels_g = [512,512,512,512,256,128]#,64]
+# I've got my best results with [512,512,512,512,256,128,64] for both
+# discriminator and generator(in ffhq128) but it takes ~2 hours to train
+# a single epoch in 64x64. the models become 23m/25m.
+channels_d = [512,256,128,64,32,16,8]
+channels_g = [512,256,128,64,32,16,8]
 #discriminator
 discriminator_stylegan1 = DiscriminatorStyleGAN1(max_steps,channels=channels_d)
 discriminator_stylegan1 = discriminator_stylegan1.to(device)
@@ -10022,18 +10004,18 @@ def decay_func(step):
 use_ema_inference = False
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
-
-mapping_params = list(generator_stylegan1.mapping_network.parameters())
-gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
 # mapping network is already using 100 times smaller learnng rate
 # through EqualizedLinear! 
 # so we are not decreasing it 100x more! by 0.01 again! This damn thing
 # was the reason I faced so many issues in 32x32 res and higher!(generator would 
 # be dominated by the discriminator becasue gmapping was extremely slow to update!
 # especially in higher res that needed more details!)
-gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g},
-                                  {'params':gen_other_params,'lr':lr_g}
-                                 ], betas=betas, eps=eps)
+# mapping_params = list(generator_stylegan1.mapping_network.parameters())
+# gen_other_params = [p for p in generator_stylegan1.parameters() if p not in set(mapping_params)]
+# gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g},
+#                                   {'params':gen_other_params,'lr':lr_g}
+#                                  ], betas=betas, eps=eps)
+gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), betas=betas, eps=eps)
 
 training_loop_stylegan(discriminator_stylegan1,
                      generator_stylegan1, 
@@ -10048,7 +10030,6 @@ training_loop_stylegan(discriminator_stylegan1,
                      data_augmentation=True,
                      gamma=gamma,
                      use_fp16=use_fp16,
-                     noise_addition=False,
                      device=device,
                      resume=False,
                      use_ema_inference=use_ema_inference,
@@ -10187,16 +10168,32 @@ training_loop_stylegan(discriminator_stylegan1,
 #   for appling 0.01 on mapping network in optimizer made this evern worse! but we learned
 #   alot and found a whole new way to get more stable training as well! so not bad I guess!)
 #   the images at epoch 27 are gorgeous! detailed well formed most of the time. its working
-#   prefectly! the training in 64x64 is very slow, each epoch takes nearly an hour to complete!
-#   9677MB vram is being used but the image quality is gorgeous! unline the previous res
-#   like 32x32 that the image gets distorted and then gradually as it reaches alpha=1 it becomes
-#   high quality, at 64x64, epoch 0, images become really sharp, but also with artifacts
-#   the artifacts are noticeable when you view the image up close. by epoch 3 its
+#   prefectly! note during training images may get deformed or discolored early on but as training goes
+#   and alpha goes to 1 it gets better and better.
+#   the training in 64x64 is extremely slow, each epoch now takes nearly two hours!! to complete!!
+#   two hours! (i.e.1:40') and I am using an rtx3080! with 12700k! this is insane!
+#   9677MB vram is being used but the image quality is gorgeous! unlike the previous res
+#   like 32x32 that the image gets distorted and then gradually as it reaches alpha=1 it 
+#   becomes high quality, at 64x64, epoch 0, images are really sharp, but also with artifacts
+#   the artifacts are noticeable when you view the image up close. by epoch 2 these are 
 #   nearly gone, but there are still some weirdness, like eyes are all black suddenly!
-#   like demonic black!
-#   (note during training images may get deformed or discolored early on but as training goes
-#    and alpha goes to 1 it gets better and better.)
+#   like demonic black!I'll end the training at epoch 10 so I can start other experiments!
+#   the results are improving epoch after epoch but it takes a lot of time and I cant wait
+#   that long (around 2 days worth of training remains till we finish the 64 epochs of 64x64!
+#   and we are at epoch 9 since yesterday's afternoon (16:15)!)
+#
+# stylegan1_ffhq_20251110095733:
+# - since it takes ages to train especially in 64x64+ lets use a small number of channels
+#   for each resolution so we get a good idea how this impact the results and to what extend.
+#   use [512,256,128,64,32,16,8] for both channels now.
+# 
+# - previous experiment now with smaller number of epochs:
 #   
+#
+# - now use smaller epochs:
+#   ahead and revert back some of our changes and see how much of an impact those changes
+#   had so we can document it and carry on!
+#  
 # - revert back the last changes in stylegan (separate bias, etc) and see with the
 #   newly fixed EqualizedLinear, how our previous implementation works
 #
