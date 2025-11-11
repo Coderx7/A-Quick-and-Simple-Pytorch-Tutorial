@@ -9876,7 +9876,7 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #  up to 6799MB @ 32x32 and up 9637MB @ 64x64. since im using my integrated
 #  GPU for display, I can easily train up to 10236MB! (xorg takes 4MB!)
 #  With channels=[512,256,128,64,32,16,8] (11mvs11m) the vram usage is
-#  up 3015MB @ 64x64.
+#  up 3015MB @ 64x64 @ 128x128 its 3565MB.
 # fp16:
 #     up to 32² 2829MB
 #     up to 64² 4125MB 
@@ -10203,7 +10203,14 @@ training_loop_stylegan(discriminator_stylegan1,
 #   for example it takes us only 5 mins to do an epoch at 32x32 res, and only 15mins to do
 #   an epoch at 64x64! whereas before, it took 17mins for32x32 and 1 hour and 45 mins! for
 #   a single epoch in 64x64! at epoch 17, it starts to look decent (like epoch 6 in larger model!)
-#   but at epoch 29(when α is nearly 1) we are getting fabelous images!
+#   but at epoch 29(when α is nearly 1) we are getting much better images! at e61 finally 
+#   most of the images are artifact free and look decent. so using smaller models,with
+#   more epochs we can get good results. however I guess going larger with less epoch should
+#   take us there faster. when I look at it, the previous model used many epochs, we could
+#   have decreased the epochs so fadin could start faster and get better results quicker!
+#   also at 128x128, it takes 35mins to train a single epoch! still way faster than the
+#   previous large config. I end this experiment at e3@128x128 so I can continue the rest 
+#   of the experiments
 # 
 # - previous experiment now with smaller number of epochs:
 #   
