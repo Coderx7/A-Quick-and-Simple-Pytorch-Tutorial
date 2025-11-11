@@ -8940,7 +8940,16 @@ class StyleConvBlock(nn.Module):
         # not sure how much of a difference it makes initially as conv is a linear
         # operation
         self.apply_conv = apply_conv
-        
+        # sidenote: 
+        # to use my simplified version, set bias=bias,
+        # and comment out self.bias related code in forward(), 
+        # and in generator use apply_conv=True for
+        # the first layer aswell! this way we will have
+        # conv/noise/lrelu/adain order which is
+        # my first implmentation and works just as well.
+        # however by setting bias=False and use a 
+        # seprate bias(self.bias below), we basically follow
+        # the official tf impl. see debug log to know why I did this!
         self.conv = EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         self.noise_inject = NoiseInjection(out_channels)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
@@ -8954,18 +8963,43 @@ class StyleConvBlock(nn.Module):
             # for 32x32 and higher res so the discriminator doesnt win too quickly!
             x = self.blur(x)
 
+        # note from furture:
+        # my initial simplification:
+        # conv/noise/lrelu/adaIn works just fine!
+        # and my only issue was the bug in equalizedlinear layer
+        # but since I've already added the separate bias, and trained
+        # a few models, I'll keep these changes so we can easily load
+        # the checkpoints for later use. 
+        # just know, the separate bias and no conv for the first layer
+        # of 4x4 isnt a hard implenetation choice and we can easily use
+        # the simplified version (which I originally did, i.e. use the
+        # EqualizedConv2d's own bias, and apply conv and then noiseinjection)
+        # works just as good. 
+        # you can always go to the nov 7, commit 6c59bcb2d76ed1cdfd8dc13d0def012d80d16482
+        # and see what I mean (however, note we had several serious bug fixes after it
+        # like equalizedlinear layer bug and separate lr for mapping_network in optimizer)
+                
         if self.apply_conv:
             out = self.conv(x)
         else:
+            # in official tf impl, the first layer of
+            # 4x4 res doesnt use any conv layer!
             out = x
             
         # inject noise into the output featuremaps
         out = self.noise_inject(out, noise)
-        # apply bias!
+        
+        # apply a separate bias!
+        # note: we can omit this completely and use the bias in conv layer
+        # and there would be no issues! 
+        # i.e. doing conv(+bias)>noise_injection>lrelu>adain
+        # works as well, but I leave it as is cuz its how the
+        # official impl did it (see debug log for extensive explanation)
         if out.ndim==2:
             out += self.bias
         else:
             out += self.bias.view(1,-1,1,1)
+        
         # apply the styles from w on the output
         # update: 
         # do adain before lrelu !
@@ -8989,6 +9023,13 @@ class StyleConvBlock(nn.Module):
         # channels in early tests.later on with fp16(now thatI know our implementation works
         # I tried and got good results(see the test section)))
         # anyway just wanted to add that here
+        # update2: 
+        # that was not the case, the reason disc would always dominate gen post 32x32
+        # was becasue of a bug in equalizedlinear, after I fixed that, the original 
+        # order worked flawlessly. however, my findings was still great, it makes training
+        # much more stable and easier! and while the other implementations use stylegan2
+        # tricks, its not why they worked, they still implemented stylegan1 and didnt have
+        # a bug like me! when I fixed mine, we were as good as them, even better!
         if self.swap_adaIN_order:
             # my change: 
             # normalize pre-activation
@@ -9089,10 +9130,14 @@ class GeneratorStyleGAN1(nn.Module):
         # unlike the progan version, the stylegan paper uses two layers for each res
         self.blocks = nn.ModuleList()
         #4x4
-        # I initially used one ctyleconvblock for 4x4 res, but the paper used two. 
+        # I initially used one styleconvblock for 4x4 res, but the paper used two. 
         # using one layer, means the network cant stylize the input strongly, so the base
-        # would lacks refienments therefore we would face low convergence because 
+        # would lack refienments therefore we would face low convergence because 
         # the network has less ability in injecting diverse styles early on!
+        # also the first layer doesnt use conv but directly injects noise and adds bias
+        # followed by lrelu activation and adaIn application! we could simply apply conv
+        # anyway and it works, but to follow the official impl I later decided to 
+        # do the same thing here.
         self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False, apply_conv=False))
         self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
         for i in range(1, max_steps):
@@ -9935,7 +9980,7 @@ else:
 #ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
 # I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
 # see debug logs for more information
-EPOCHS = [4,8,8,8,16,16]# [4,8,16,16,32,48]
+EPOCHS = [8,16,16,16,32,32]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10218,14 +10263,19 @@ training_loop_stylegan(discriminator_stylegan1,
 # 
 # stylegan1_ffhq_20251111075258:
 # - previous experiment now with smaller number of epochs: try with [4,8,8,8,16,16]:
-#   
+#   the epochs are not enough, I guess at least they need to be doubled! this might
+#   work for the large config, but definitely not the 11m config we used in the previous
+#   experiment.
 #
-# - now use smaller epochs:
-#   ahead and revert back some of our changes and see how much of an impact those changes
-#   had so we can document it and carry on!
-#  
+#  stylegan1_ffhq_20251111130402:
 # - revert back the last changes in stylegan (separate bias, etc) and see with the
 #   newly fixed EqualizedLinear, how our previous implementation works
+#   disabled bias in styleconv2d, enabled bias in styleconv2d(equalizedconv2d)
+#   basically the old order but now with this epochs : [8,16,16,16,32,32]
+#   as expected my implementation works just fine. so the separate bias/ plain conv for
+#   fist layer of 4x4 res, specific order conv/noise/bias, none of that matters really!
+#   im going to rever the changes anyway, since our previous experiments were done
+#   using that configuration so we can easily load the checkpoints. 
 #
 # - train with swapped_adaIN_order aswell see if it indeed is better choice than original:
 #   
