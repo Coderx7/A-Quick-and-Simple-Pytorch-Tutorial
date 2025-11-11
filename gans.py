@@ -9933,7 +9933,9 @@ else:
 # kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 # print(f'{kimages=:,}')
 #ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
-EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
+# I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
+# see debug logs for more information
+EPOCHS = [4,8,8,8,16,16]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10043,7 +10045,9 @@ training_loop_stylegan(discriminator_stylegan1,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
-# quicklog
+# 
+# experiments results/weights are stored at https://mega.nz/folder/zRcUHSJR#kjV_qY5LuinhdwugJZYL0A
+# quicklog 
 # seems d is overpowering g
 # lets remove less epoch so it doesnt overtrain
 # see if this fixes the mn gradient explosion
@@ -10209,10 +10213,11 @@ training_loop_stylegan(discriminator_stylegan1,
 #   take us there faster. when I look at it, the previous model used many epochs, we could
 #   have decreased the epochs so fadin could start faster and get better results quicker!
 #   also at 128x128, it takes 35mins to train a single epoch! still way faster than the
-#   previous large config. I end this experiment at e3@128x128 so I can continue the rest 
+#   previous large config. I end this experiment at e2@128x128 so I can continue the rest 
 #   of the experiments
 # 
-# - previous experiment now with smaller number of epochs:
+# stylegan1_ffhq_20251111075258:
+# - previous experiment now with smaller number of epochs: try with [4,8,8,8,16,16]:
 #   
 #
 # - now use smaller epochs:
