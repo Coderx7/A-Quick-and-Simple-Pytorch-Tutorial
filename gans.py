@@ -10276,8 +10276,17 @@ training_loop_stylegan(discriminator_stylegan1,
 #   fist layer of 4x4 res, specific order conv/noise/bias, none of that matters really!
 #   im going to rever the changes anyway, since our previous experiments were done
 #   using that configuration so we can easily load the checkpoints. 
+#   the higher number of epochs made the images look much better than previous experiment
+#   that used fewer channels, however this is not obviously enough, 32x32 needs more
+#   to look decent like the other previous experiments that used [8,16,32,32,64,64]
+#   I guess that might be the sweet spot for the 11m model.anywa we train the 64x64
+#   as well and call it a day and go for the next experiment which is adaIn-lrelu 
+#   order swapping!
 #
 # - train with swapped_adaIN_order aswell see if it indeed is better choice than original:
+#
+#
+#
 #   
 # todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
 # celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
