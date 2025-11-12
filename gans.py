@@ -9991,7 +9991,7 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 # whether to use original order or not
-swap_adaIN_order = False
+swap_adaIN_order = True
 # I've got my best results with [512,512,512,512,256,128,64] for both
 # discriminator and generator(in ffhq128) but it takes ~2 hours to train
 # a single epoch in 64x64.(17min for 32x32) the models become 23m/25m.
@@ -10289,7 +10289,13 @@ training_loop_stylegan(discriminator_stylegan1,
 #   in order to get an accurate comparison, we use the stylegan1_ffhq_20251110095733 settings
 #   and only swap_adaIN_order: the outputs are roughly the same, after I fixed the main bug
 #  it seems the order swap really doesnt do much. before the fix however, it was way different
-#  we could actually train after the order swap! but now they seem the same really!
+#  we could actually train after the order swap! but now they seem the same really! ok
+#  I made a mistake here, the swap_adaIN_order is not applied! we wasted our time! damn it!
+#
+# stylegan1_ffhq_20251112142815:
+# - I just noticed in the generator I forgot to send the swap_adaIn_order argument to
+#   each styleconvblock! basically our previous experiment used the original order!
+#   this is the actual experiment with the adain_order actually swapped!:
 #
 # 
 #
