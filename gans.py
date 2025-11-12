@@ -9138,11 +9138,11 @@ class GeneratorStyleGAN1(nn.Module):
         # followed by lrelu activation and adaIn application! we could simply apply conv
         # anyway and it works, but to follow the official impl I later decided to 
         # do the same thing here.
-        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False, apply_conv=False))
-        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
+        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False, apply_conv=False,swap_adaIN_order=self.swap_adaIN_order))
+        self.blocks.append(StyleConvBlock(self.channels[0], self.channels[0], w_size=w_size, upsample=False, swap_adaIN_order=self.swap_adaIN_order))
         for i in range(1, max_steps):
-            self.blocks.append(StyleConvBlock(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
-            self.blocks.append(StyleConvBlock(self.channels[i], self.channels[i], w_size=w_size, upsample=False))
+            self.blocks.append(StyleConvBlock(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True,swap_adaIN_order=self.swap_adaIN_order))
+            self.blocks.append(StyleConvBlock(self.channels[i], self.channels[i], w_size=w_size, upsample=False,swap_adaIN_order=self.swap_adaIN_order))
 
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
@@ -9980,7 +9980,7 @@ else:
 #ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
 # I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
 # see debug logs for more information
-EPOCHS = [8,16,16,16,32,32]# [4,8,16,16,32,48]
+EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10281,11 +10281,17 @@ training_loop_stylegan(discriminator_stylegan1,
 #   to look decent like the other previous experiments that used [8,16,32,32,64,64]
 #   I guess that might be the sweet spot for the 11m model.anywa we train the 64x64
 #   as well and call it a day and go for the next experiment which is adaIn-lrelu 
-#   order swapping!
+#   order swapping! stopped at epoch 5@64x64. the results were what we expected#
+#   now lets continue with the next experiment!
 #
+# stylegan1_ffhq_20251111182532:
 # - train with swapped_adaIN_order aswell see if it indeed is better choice than original:
+#   in order to get an accurate comparison, we use the stylegan1_ffhq_20251110095733 settings
+#   and only swap_adaIN_order: the outputs are roughly the same, after I fixed the main bug
+#  it seems the order swap really doesnt do much. before the fix however, it was way different
+#  we could actually train after the order swap! but now they seem the same really!
 #
-#
+# 
 #
 #   
 # todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
