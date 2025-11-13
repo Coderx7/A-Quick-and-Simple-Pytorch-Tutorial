@@ -10297,7 +10297,10 @@ training_loop_stylegan(discriminator_stylegan1,
 #   each styleconvblock! basically our previous experiment used the original order!
 #   this is the actual experiment with the adain_order actually swapped!: the quality
 #   seems to be better than the original order. the loss is also slightly lower, the 
-#   FID is also slighyly better than! in higher res, the loss is much lower
+#   FID is also slighyly better than! in higher res, the loss is much lower. ok I just
+#   noticed I had another mistake! when I was refactoring generator optimizer, I forgot
+#   to add lr_g back! thus the generator was using 0.001 instead of 0.003!(disc was using0.003)
+#   even with generator having much slower update, we got great results!
 # 
 #
 # 
