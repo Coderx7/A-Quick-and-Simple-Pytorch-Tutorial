@@ -10054,7 +10054,7 @@ def decay_func(step):
 # so update ema needs some work!
 use_ema_inference = False
 
-disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, betas=betas)
+disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr=lr_d, betas=betas)
 # mapping network is already using 100 times smaller learnng rate
 # through EqualizedLinear! 
 # so we are not decreasing it 100x more! by 0.01 again! This damn thing
@@ -10066,7 +10066,7 @@ disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr_d, be
 # gen_optimizer = torch.optim.Adam([{'params':mapping_params,'lr':lr_g},
 #                                   {'params':gen_other_params,'lr':lr_g}
 #                                  ], betas=betas, eps=eps)
-gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), betas=betas, eps=eps)
+gen_optimizer = torch.optim.Adam(generator_stylegan1.parameters(), lr=lr_g, betas=betas, eps=eps)
 
 training_loop_stylegan(discriminator_stylegan1,
                      generator_stylegan1, 
@@ -10295,7 +10295,10 @@ training_loop_stylegan(discriminator_stylegan1,
 # stylegan1_ffhq_20251112142815:
 # - I just noticed in the generator I forgot to send the swap_adaIn_order argument to
 #   each styleconvblock! basically our previous experiment used the original order!
-#   this is the actual experiment with the adain_order actually swapped!:
+#   this is the actual experiment with the adain_order actually swapped!: the quality
+#   seems to be better than the original order. the loss is also slightly lower, the 
+#   FID is also slighyly better than! in higher res, the loss is much lower
+# 
 #
 # 
 #
