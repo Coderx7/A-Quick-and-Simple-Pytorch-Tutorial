@@ -8899,25 +8899,39 @@ class NoiseInjection(nn.Module):
 # the order is conv>noise>bias>lrelu>adain but paper says conv>noise>lrelu>adain!
 # 
 # update:
-# I swapped the order so adain is first applied and then we do lrelu! 
+# I kept facing a lot of instability during training especially starting
+# with 32x32 resolution. the discriminator kept overpowering the generator
+# so as a last resort, I swapped the order so adain is first applied and 
+# then did lrelu! after this I instantly faced massive improvement!
+# and generator took the lead!
 # I guess the reason behind this improvement is that when we apply the
 # nonlinearity(leakyrelu) before adain we are warping the distribution
 # of the featuremaps in a nonlinear way! which then when adaIN tries to
 # normalize this already rectified distribution, it gets weird! its now 
-# skewed in a sense! we dont want that! as doing this weakens the adain's
-# ability to control the style properly! (come back to our intial intution,
+# skewed in a sense! 
+# we dont want that! as doing this weakens the adain's ability to control
+# the style properly! (come back to our intial intution,
 # we wanted to normalize the input directly not after going through a 
-# nonlinearity that changes the whole landscape some what drastically!)
+# nonlinearity that changes the whole landscape somewhat drastically!)
 # to fix this obviously we need to apply adain right after the convolution 
 # and noise injection but before the activation!
-# before doing this no matter what I did at 32x32 res, the disc would get much
-# lower loss (e.g. 0.7vs1.2) and image quality would not improve! 
+# as I said before doing this no matter what I did at 32x32 res, the disc
+# would get much lower loss (e.g. 0.7vs1.2) and image quality would not improve! 
 # this would be compunded in later res. when I swapped the order and 
-# applyed adain before lrelu the issue was fixed and dLoss became 
+# applied adain before lrelu the issue was fixed and d_loss became 
 # 1.35 vs 0.72 of g_loss. basically the roles are reversed and gen
 # is now doing much better than disc!
 # note that in all of the tests Ive done the discriminator and generator had
 # the same exact channel configurations.
+#update2:
+# I ultimately found the initial bug that made disc overpower generator 32x32 
+# onward! there was a bug in EqualizedLinear implementation. I explained this
+# in detail in debug log and EqualizedLinear layer aswell. but the point is the
+# order swap still applicapble and much better than the original order. In fact
+# I noticed this is in line with the findings in the second version of the paper 
+# (stylegan2) and they did pretty much what we did here as well (plus more obviously)
+# but the part we did here stays valid nonetheless.
+#
 class StyleConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
                  w_size=512, upsample=False, eps=1e-8, swap_adaIN_order=False, apply_conv=True):
@@ -9922,15 +9936,33 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #  GPU for display, I can easily train up to 10236MB! (xorg takes 4MB!)
 #  With channels=[512,256,128,64,32,16,8] (11mvs11m) the vram usage is
 #  up 3015MB @ 64x64 @ 128x128 its 3565MB.
-# fp16:
-#     up to 32² 2829MB
-#     up to 64² 4125MB 
+# 
 # with batchsize like 16/32 we face exploding gradients when we reach 8x8
 # I got this issue for both celeba and ffhq dataset. this shouldnt happen 
 # because we are using equalizedconv/linear so the learning rate is equalized
 # but for some reason this happens. even clipping the gradients to 1/10 doesnt
 # fix the issue. 
 # it could be a bug in my code honestly but for now im not going to bother!
+# update: it was in fact a bug in equalizedlinear. it would incorrectly make
+# the variance extremely low, resuling in very small numbers, which would then
+# be compounded and result in huge gradients in adam optimization and result
+# in gradient explosions and this happens at both fp32 and fp16. (i.e. 
+# that is since adam optimizer sees extremely small gradients, it
+# increases its adaptive learning rate, but when the activations get larger
+# (because of multiple layers in between all affecting the output) this leads
+# to gradient explosion even though our initial numebrs are extremely small
+# now if we use a large enough batch, the gradients will be much smoother 
+# and uniform, and we wouldnt face this issue, we would only suffer from slow convergence
+# (and also unstable training because discriminator trains faster than generator
+# because of this issue). however, when we use a small batchsize, it means we get
+# noisier gradients, and therefore the adam optimzier's adaptive statistics also 
+# become less stable/accurate/useful. therefore whenever the parameters magnitudes 
+# and adam's effective learning rates are mismatched, we can expect hell breaking loose!
+# the instability will be compounded and reveal itslef in the form of gradient explosions.
+#)
+# gradient clipping also didnt help until I fixed the issue. 
+#
+
 if use_fp16:      #res 4,  8, 16,32,64,128,256 
     BATCH_SIZES = [128,128,128,128,64,32]#,16]
 else:
@@ -9960,13 +9992,12 @@ else:
 # Having done all of this, note that I could not get a decent outcome until
 # I swapped adain/lrelu. only then I got good results! so this is where my
 # implementation differs the most.
-# 
 # for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
 # for cifar10, since our max res is 32x32, we need to allocate 
 # more epochs especially to the 32x32 res. even after doing that
-# the FID maynot change, but the image quality 100% improves, however
+# the FID may not change, but the image quality 100% improves, however
 # the images may be malformed but sharp.there are some classes that
 # are better than others like horses, some cars, fish, but cars, or
 # more complex things are malformed usually(at least based on my experiments
@@ -9977,7 +10008,15 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 # kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 # print(f'{kimages=:,}')
-#ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
+# update:
+# I ran a lot of tests, when I fixed my bug, I noticed with much number of 
+# epochs we can achieve pretty good results. so while kimages are a good 
+# measure to have, the good old epochs would do well as well. 
+# also the number of epochs is needless to say directly dependant on the model size
+# the larger the model, the less epochs per res is needed and vice versa. 
+# these are the new configs I came up with (initially used one of the pytorch impls)
+# 
+# ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
 # I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
 # see debug logs for more information
 EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
@@ -9986,6 +10025,7 @@ gen_update_interval = 1
 # no where in the paper or official code they apply
 # r1_penalty after 16 iterations each time! so I 
 # instead use 1 here to match the official impl
+# I completely removed this and everything works great
 r1_penalty_interval = 1#1#16
 style_mixing_prob = 0.9
 # truncation rate
@@ -9994,9 +10034,10 @@ psi = 0.7
 swap_adaIN_order = True
 # I've got my best results with [512,512,512,512,256,128,64] for both
 # discriminator and generator(in ffhq128) but it takes ~2 hours to train
-# a single epoch in 64x64.(17min for 32x32) the models become 23m/25m.
+# a single epoch in 64x64!!(17min for 32x32) the models become 23m/25m.
 # for the record, using [512,256,128,64,32,16,8] for both models, they become 11m/11m
-# and 32x32 takes only 5 mins! and 64x64 takes 15mins
+# and 32x32 takes only 5 mins! and 64x64 takes 15mins! and results are gorgeous as well!
+# at least for ffhq128!
 channels_d = [512,256,128,64,32,16,8]
 channels_g = [512,256,128,64,32,16,8]
 #discriminator
@@ -10028,7 +10069,70 @@ lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # disc had much lower loss(0.4) vs gen(3).
 # paper uses 100x smaller lr for mapping network because it has 8 layers!
 # and the more layers the more unstability! so they multiply it by 0.01!
-lr_g = 0.003#0.0015 is used for res>64 
+# 
+# update: 
+# these were all caused because of equalizedlinear bug and mapping_network using 
+# a second 100x smaller lr! and adam optimizer's adaptive lr getting large as a result(
+# since the denominator sqrt(v)+eps will be dominated by the eps (the adam's 
+# update formula was w = w - lr * m_hat / (sqrt(v_hat)+eps)
+# so obviously if v (and thus sqrt(v)) goes to zero because of the tiny gradients then
+# the denominator practically becomes the eps! thus smaller eps -> smaller denominator
+# and smaller denominator leads to larger updates which in turn can lead to instablity 
+# in training and nans or gradient explosions.
+# 
+# in fp16 this is even worse because the smallest positive denormal/subnormal number that
+# can be represented is 5.96e-8 (or 2^-24) and eps is 1e-8(i.e. 2^-26) which is much smaller
+# than 5.96e-8 (1e-8 < 5.96e-8) so it underflows to 0 and we face divide by zero and thus nans!
+# larger eps therefore doesnt lead to that.
+# for example consider 1e-5 which we used for fp16 to get rid of nans during training, it 
+# can be represented as 2^-17 which is roughly 7.6e-6) and will therefore be safe from 
+# underflow.
+# why do we care about subnormals in fp16 and not normal numbers? 
+# tldr: 
+# because the range of normal number is very limited in fp16, and if we were to use normal
+# numbers, we would lose all numbers smaller than it to 0! denormals are there to prevent
+# that, instead of just setting all smaller numbers to 0, fewer significant bits are used
+# to the precision of the number is decreased, this way we can show/represent much smaller
+# numbers that we normally would be able usin just normal numbers in floating point systems.
+#
+# more explanation:
+# because in practice, during training, if a value like our optimizers eps here,
+# becomes smaller than the smallest denormal/subnormal(e.g. 1e-8 <5.96e-8) it will underflow
+# to zero and result in division by zero and nans!
+# fp32 has different limit its smallest normal is around -1.175e-38 and smallest denormla
+# is 1.4e-45.
+# in floating point systems(like IEEE 754 thats used for fp16/32), normal numbers have a 
+# minimum positive magnitude (e.g. ~6.1x10^-5 in fp16).
+# anything smaller than that cant be represented as normal because then the exponent cant
+# go lower while keeping the implicit leading 1 in mantisa.
+# therefore without denormals, if a calculation produced a result below this threshold 
+# (e.g. sth like 0.001x0.001=10^-6) it would have underflowed directly to zero! 
+# this is called "flush to zero"(FTZ) by the way.
+# this is obviously bad because it creates a huge gap between the smallest normal and zero
+# and if we clamp all numbers in between to zero we lose a huge amount of information. 
+# we have seen this issue first hand in training, that how lack of precision causes all sorts 
+# of issues from complete failure to extremely slow convergence.
+# (also properties like associativiy break (a+b)+c will not be equal to a+(b+c) if small 
+# values get zeroed out unevenly)
+# therefore denormals are there to fill that gap and allow the mantisa to have leading zeros
+# (i.e. no implicit 1 anymore) which essentially, extends the range down to much smaller
+# values (e.g. 5.96x10^-8 as we saw in fp16).
+# this creates a gradual underflow, as numbers get smaller, precision is decreased smoothly
+# (i.e. we use fewer significant bits to represent numbers) but we dont lose the value entirely
+# until we truly hit zero!
+#
+# quicknote:
+# 1e-5 is 10^-5 and to see what 2^x can represent (since floating points are stored
+# as ±(1+m)×2ᵉ where m is the fractional part(i.e.mantisa) and e is exponent obviously
+# therefore powers of 2 are exactly represenable without any rounding if they are in limit
+# our 1e-5 is a decimal number, and not exactly power of 2, the closest number to one is
+# 2^-17 which in decimal form is 7.6e-6. (to calculate that we simply need to take its log₂
+# so log₂(10^-5) is -5*log₂(10). log₂(10) is ~3.321928 so -5*3.321928=-16.60964 or ~-17.
+# so 2^-16.60964 or simply 2^-17 (7.6e-6) is the number that represents 1e-5) 
+
+#! todo verify with 1e-8 for fp16 
+# we can use much larger lr and get a much faster convergence
+lr_g = 0.003#0.0015 is used for res>64
 # make this 1000x larger than the normal case
 # this was the first thing I did when I got 
 # nans during fp16 training with lr 1.5e-5 for mapping network
@@ -10259,13 +10363,14 @@ training_loop_stylegan(discriminator_stylegan1,
 #   have decreased the epochs so fadin could start faster and get better results quicker!
 #   also at 128x128, it takes 35mins to train a single epoch! still way faster than the
 #   previous large config. I end this experiment at e2@128x128 so I can continue the rest 
-#   of the experiments
+#   of the experiments.(note: the generator used 0.001 instead of 0.003! but despite that
+#   we got great results!this was a mistake I found out after 4 experiments!)
 # 
 # stylegan1_ffhq_20251111075258:
 # - previous experiment now with smaller number of epochs: try with [4,8,8,8,16,16]:
 #   the epochs are not enough, I guess at least they need to be doubled! this might
 #   work for the large config, but definitely not the 11m config we used in the previous
-#   experiment.
+#   experiment.(note: the generator used 0.001 instead of 0.003!))
 #
 #  stylegan1_ffhq_20251111130402:
 # - revert back the last changes in stylegan (separate bias, etc) and see with the
@@ -10282,7 +10387,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #   I guess that might be the sweet spot for the 11m model.anywa we train the 64x64
 #   as well and call it a day and go for the next experiment which is adaIn-lrelu 
 #   order swapping! stopped at epoch 5@64x64. the results were what we expected#
-#   now lets continue with the next experiment!
+#   now lets continue with the next experiment!(note: the generator used 0.001 instead of 0.003!))
 #
 # stylegan1_ffhq_20251111182532:
 # - train with swapped_adaIN_order aswell see if it indeed is better choice than original:
@@ -10290,7 +10395,8 @@ training_loop_stylegan(discriminator_stylegan1,
 #   and only swap_adaIN_order: the outputs are roughly the same, after I fixed the main bug
 #  it seems the order swap really doesnt do much. before the fix however, it was way different
 #  we could actually train after the order swap! but now they seem the same really! ok
-#  I made a mistake here, the swap_adaIN_order is not applied! we wasted our time! damn it!
+#  I made a mistake here, the swap_adaIN_order is not applied! we wasted our time! 
+#  damn it!(not only that the generator used 0.001 instead of 0.003!)
 #
 # stylegan1_ffhq_20251112142815:
 # - I just noticed in the generator I forgot to send the swap_adaIn_order argument to
@@ -10302,10 +10408,17 @@ training_loop_stylegan(discriminator_stylegan1,
 #   to add lr_g back! thus the generator was using 0.001 instead of 0.003!(disc was using0.003)
 #   even with generator having much slower update, we got great results!
 # 
-#
+# stylegan1_ffhq_
+#  - train with proper lr for generator to see how it works but this time lets do it 
+#    up to 32x32 so we dont waste too much time: the image quality is much better much
+#    quicker now. at epoch 14@64x64, they look way better. by e19 images are gorgeous!
+#    the losses are dloss=1.370 vs gloss=0.720.
 # 
-#
-#   
+# -  train cifar10
+# - fix autocast or remove it completely
+# - cleanup comments/explanations in styleconvblock/generator/training section
+# - test latent space
+#  
 # todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
 # celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
 # we can test them and hopefully get decent results (after we got the right
