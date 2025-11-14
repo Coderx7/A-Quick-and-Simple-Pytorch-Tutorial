@@ -9916,7 +9916,7 @@ dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=False
+use_fp16=True
 
 # original paper uses 512
 z_size = 512
@@ -9960,9 +9960,10 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 # become less stable/accurate/useful. therefore whenever the parameters magnitudes 
 # and adam's effective learning rates are mismatched, we can expect hell breaking loose!
 # the instability will be compounded and reveal itslef in the form of gradient explosions.
-#)
-# gradient clipping also didnt help until I fixed the issue. 
-# update: after that fix I reran the experiement in fp32 with bs=16
+#)gradient clipping also didnt help until I fixed the issue. 
+#
+# update:
+# after that fix I reran the experiement in fp32 with bs=16
 # autocast machinery was there, and it resulted in gradient explosion!
 # with fp16 I  would get nans! after commeninting the autocast machinery
 # retraining with fp32 and bs=16, the issue was gone. note that I had used
@@ -10069,32 +10070,60 @@ generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
 lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
-# first for mapping_network and the second one for the rest of generator
 # log:
-# I faced mode collapse in 64², the mapping network lr was too low(1.5e-7!)
-# around 10000 times smaller than the rest of the synthesisnetwork parameters
-# due to a bug in my code!
-# in fp16 using 1.5e-5 resulted in nans! its apparently too large! to fix this
-# we can either use a larger eps for adam optimizer and or also use gradient 
-# clipping to prevent this (this is also very commen when training in fp16! 
-# so lets do both of these and see if this fixes our issue!)
-# first I try the eps and if it didnt work I also clip gradienst
-# update: larger eps so far did the trick! and we are getting better images
-# so far in 16x16 res (used to be very bad, but now they look better though
-# they are still extremly low res (16x16)) but at 64x64 we faced mode collpase#
-# disc had much lower loss(0.4) vs gen(3).
-# paper uses 100x smaller lr for mapping network because it has 8 layers!
-# and the more layers the more unstability! so they multiply it by 0.01!
+# -I faced mode collapse in 64x64, then I noticed the mapping network lr 
+# was too low(1.5e-7!). this is around 10,000 times smaller than the rest
+# of the generator parameters. this happened because of a bug in training_loop
+# where at each step I had incorrectly kept decaying the lr by 0.01 when I was
+# creating new optimizers all while the learning rate was already set before
+# training by the initial optimizer).
 # 
-# update: 
-# these were all caused because of equalizedlinear bug and mapping_network using 
-# a second 100x smaller lr! and adam optimizer's adaptive lr getting large as a result(
-# since the denominator sqrt(v)+eps will be dominated by the eps (the adam's 
+# -In fp16 using lr=1.5e-5 resulted in nans! its apparently too large! to fix
+# this we can either use a larger eps for adam optimizer and or also use gradient 
+# clipping to prevent this. I first try the eps and if it doesnt work I also 
+# clip gradienst becasue default eps(1e-8) is too small for fp16 anyway.
+#  --update: larger eps so far did the trick! and we are getting better images
+#    so far in 16x16 res (used to be very bad, but now they look better though
+#    they are still extremly low res (16x16)) 
+#  -- ok at 64x64 we faced mode collpase! disc had much lower loss(0.4) vs gen(3.0).
+#     paper uses 100x smaller lr for mapping network because it has 8 layers!
+#     the more layers the more unstability! so they multiply it by 0.01! I did that
+#     im not sure why disc is overpowering generator!
+# -update: it was a bug in equalizedlinear see debug log
+# 
+# we can use much larger lr and get a much faster convergence
+lr_g = 0.003#0.0015 is used for res>64
+# 
+# made this 1000x larger than the normal case
+# this was the first thing I did when I got 
+# nans during fp16 training with lr 1.5e-5 for
+# mapping network, didnt work!
+# note:with gradient clipping nan issue is also gone but
+# by using larger eps(1e-5) the loss decreases twice as much
+# compared to the default eps(1e-8). the result is much better
+# with no gradient clipping with eps=1e-5
+# 
+# 
+# sidenote: informative but not that relavent really!
+# I faced a bug in fp16/fp32 where I would get nans in fp16 and if I disabled
+# it, I'd face gradient explosion, I couldnt figure out why I was facing this
+# I though my stylegan implementation must have an issue, for the time being
+# I disabled the autocast related code and later found a bug in equalizedlinear
+# after I fixed that, trained successfully, I came back to fp16 weirdness and thought
+# that bug must have caused those nans/explosions and wrote this explanation. 
+# that wasnt right, the issue was entirely something else but the information 
+# about fp16 I wrote here while trying to fix it is too good to be removed, 
+# so I leave it here for a reminder/refresher for myself:
+# 
+# the old explanation:
+# -I think the issue was caused because of equalizedlinear bug and mapping_network using 
+# a second 100x smaller lr! and adam optimizer's adaptive lr getting large as a
+# result(since the denominator sqrt(v)+eps will be dominated by the eps (the adam's 
 # update formula was w = w - lr * m_hat / (sqrt(v_hat)+eps)
 # so obviously if v (and thus sqrt(v)) goes to zero because of the tiny gradients then
 # the denominator practically becomes the eps! thus smaller eps -> smaller denominator
 # and smaller denominator leads to larger updates which in turn can lead to instablity 
-# in training and nans or gradient explosions.
+# in training and nans(in case it goes to zero) or gradient explosions.
 # 
 # in fp16 this is even worse because the smallest positive denormal/subnormal number that
 # can be represented is 5.96e-8 (or 2^-24) and eps is 1e-8(i.e. 2^-26) which is much smaller
@@ -10145,25 +10174,19 @@ lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # 2^-17 which in decimal form is 7.6e-6. (to calculate that we simply need to take its log₂
 # so log₂(10^-5) is -5*log₂(10). log₂(10) is ~3.321928 so -5*3.321928=-16.60964 or ~-17.
 # so 2^-16.60964 or simply 2^-17 (7.6e-6) is the number that represents 1e-5) 
-#! todo verify with 1e-8 for fp16 
-# update: fp16 is broken. even after the fix, enabling fp16 causes nans
-# if I set use_fp16=False, and train with bs=16, I face gradient explosion
+# 
+# update:
+# my fp16 is broken 100%. even after the equalizedlinear fix, enabling fp16 causes nans
+# if I set use_fp16=False, and train with bs=16, I face gradient explosion!
 # lowering the lrs down to 0.0001 doesnt help! after commenting out autocast
 # related code, the gradient explosion stopped even with small batchsize=16
-# it cold be a bug in pytorch or my own!
-#update:
-# found the bug! the scaler was always True by default, so when I disabled the fp16
+# it could be a bug in pytorch or my own!
+# 
+# update:
+# found the bug! I had forgotton to pass the use_fp16 to GradScaler()
+# aswell and the scaler was always enabled, so when I disabled the fp16
 # the scaler would still scale the gradients and lead to explosion!
 # 
-# we can use much larger lr and get a much faster convergence
-lr_g = 0.003#0.0015 is used for res>64
-# make this 1000x larger than the normal case
-# this was the first thing I did when I got 
-# nans during fp16 training with lr 1.5e-5 for mapping network
-# note:with gradient clipping nan issue will be gone. but
-# by using larger eps(1e-5) the loss decreases twice as much
-# compared to the default eps(1e-8). the result is much better
-# with no gradient clipping with eps=1e-5
 eps = 1e-5 if use_fp16 else 1e-8
 # no need to decay now!
 decay_step = 7#4#3#2
