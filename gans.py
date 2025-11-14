@@ -9668,9 +9668,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                 # and optimize discrimnator 
                 disc_optimizer.zero_grad()
-                disc_loss.backward()
-                disc_optimizer.step()
-                # scaler.scale(disc_loss).backward()
+                # disc_loss.backward()
+                # disc_optimizer.step()
+                # fp16
+                scaler.scale(disc_loss).backward()
                 # clip gradients >1 so we dont hit nans because of possible overflows!
                 # we souldnt be needing this for discriminator, but to be same lets have it
                 #update: 
@@ -9681,7 +9682,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
                 # to fight nans, we use lower adam eps. it works much better 
-                # scaler_out_d = scaler.step(disc_optimizer)
+                scaler_out_d = scaler.step(disc_optimizer)
                 # scaler.update()
             
                 # now train genertor to create images that look real
@@ -9703,14 +9704,15 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     # seems to make convergence faster
                     if (i+1)%gen_update_interval == 0:
                         gen_optimizer.zero_grad()
-                        gen_real_loss.backward()
-                        mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
-                        gen_optimizer.step()
-                        # scaler.scale(gen_real_loss).backward()
+                        # gen_real_loss.backward()
+                        # mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                        # gen_optimizer.step()
+                        #fp16
+                        scaler.scale(gen_real_loss).backward()
                         # update: when setting mapping_network lr, during fp16 we face nans!
                         # to see if we are hitting norm>100-1000 which means overflowing!
                         # we monitor its norm (one of the params is enough)
-                        # mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                        mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # clip gradients >1 so we dont hit nans because of possible overflows!
                         # to fight nans, we use lower adam eps. it works much better
                         # update:
@@ -9724,9 +9726,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # norm like 10. we dont do that, and after our latest fixes it trains
                         # just fine without it)
                         # scaler.unscale_(gen_optimizer)
-                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1)
+                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
-                        # scaler_out_g = scaler.step(gen_optimizer)
+                        scaler_out_g = scaler.step(gen_optimizer)
                         # scaler.update()
                         if mn_grad_norm>100:
                             print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
@@ -9736,7 +9738,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         else:
                             update_ema_generator(generator, ema_generator)
                 # update only once
-                # scaler.update()
+                scaler.update()
                     
                 status_r = get_status(disc_real_mean, higher_is_better=True)
                 status_f = get_status(disc_fake_mean, higher_is_better=False)
@@ -9835,7 +9837,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "epoch_list":epoch_list,
                         "batch_size_list":batch_size_list,
                         "gamma":gamma,
-                        "psi":0.7,
+                        "psi":psi,
                         "gen_update_interval":gen_update_interval,
                         "r1_penalty_interval":r1_penalty_interval,
                         "FID":FID_score,
@@ -9846,10 +9848,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         "split":split,
                     }
             loss_dicts = {"d_loss_mean":d_loss_mean,
-                        "g_loss_mean":g_loss_mean,
-                        "all_training_losses":all_training_losses
+                          "g_loss_mean":g_loss_mean,
+                          "all_training_losses":all_training_losses
                          }
-            
             # all_settings = {**state_dicts,**settings}
             all_settings = state_dicts | settings | loss_dicts
             torch.save(all_settings, f"{checkpoint_dir}/checkpoint_step_{step}_{experiment_date}.ckpt")
@@ -9897,7 +9898,6 @@ def get_dataset_size(name,split='train'):
     dl = get_dataloader(name,split,batch_size=1)
     return len(dl)
 
-# print(get_dataset_size('cifar10','train'))
 #%%
 print(f'Training StyleGAN1')
 gamma=10#10
@@ -9915,7 +9915,7 @@ dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=False
+use_fp16=True
 
 # original paper uses 512
 z_size = 512
@@ -9964,7 +9964,7 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #
 
 if use_fp16:      #res 4,  8, 16,32,64,128,256 
-    BATCH_SIZES = [128,128,128,128,64,32]#,16]
+    BATCH_SIZES = [16,16,16,16,16,32]#,16]
 else:
     BATCH_SIZES = [128,128,128,64,32,16]#,8,4,2]
 
@@ -10032,7 +10032,7 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 # whether to use original order or not
-swap_adaIN_order = True
+swap_adaIN_order = False
 # I've got my best results with [512,512,512,512,256,128,64] for both
 # discriminator and generator(in ffhq128) but it takes ~2 hours to train
 # a single epoch in 64x64!!(17min for 32x32) the models become 23m/25m.
@@ -10141,7 +10141,7 @@ lr_g = 0.003#0.0015 is used for res>64
 # by using larger eps(1e-5) the loss decreases twice as much
 # compared to the default eps(1e-8). the result is much better
 # with no gradient clipping with eps=1e-5
-eps = 1e-5 if use_fp16 else 1e-8 
+eps = 1e-5 if use_fp16 else 1e-8
 # no need to decay now!
 decay_step = 7#4#3#2
 # 0:4,1:8,2:16,3:32,4:64,5:128,6:256
@@ -10185,6 +10185,7 @@ training_loop_stylegan(discriminator_stylegan1,
                      split=split,
                      data_augmentation=True,
                      gamma=gamma,
+                     psi=psi,
                      use_fp16=use_fp16,
                      device=device,
                      resume=False,
@@ -10424,10 +10425,16 @@ training_loop_stylegan(discriminator_stylegan1,
 #    others are very malformed, not artifacty, but malformed, either missing parts, or
 #    warped in unnatural way. im not sure yet if training for more would fix that or we just
 #    need more data per class.(looking at earlier epochs that these malformed samples were
-#    much more abundant, and as we trained, especially towards the end, they got way better
-#    I guess training for longer should give us better results but we need to test to be sure)
+#    more abundant, and as we trained, especially towards the end, they got better
+#    I guess training for longer might give us better results but we need to test 
+#   to be sure)
 #
-#
+# stylegan1_cifar10_20251114140050:
+# - train cifar10-fp16-small batches-eps=1e-5:
+#   to see if the autocast implementation is ok and the issues of exploding gradients
+#   were truly due to our EqualizedLinear bug, we train with fp16 and batches=16
+#   I also use the original order. everything else stays the same as our previous cifar10
+#   experiment.
 #
 # - fix autocast or remove it completely
 # - cleanup comments/explanations in styleconvblock/generator/training section
