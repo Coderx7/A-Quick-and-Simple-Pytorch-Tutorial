@@ -9911,7 +9911,7 @@ gamma=10#10
 # larger number of samples!
 # so to test and evalualte we always try celeba first
 # and then cifar10 if we like
-dataset_name = 'ffhq'
+dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -10019,7 +10019,8 @@ else:
 # ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
 # I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
 # see debug logs for more information
-EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
+# for cifar10 we use more epochs for 32x32 [16,24,48,64,64,64]
+EPOCHS = [16,24,48,64,64,64]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10408,15 +10409,19 @@ training_loop_stylegan(discriminator_stylegan1,
 #   to add lr_g back! thus the generator was using 0.001 instead of 0.003!(disc was using0.003)
 #   even with generator having much slower update, we got great results!
 # 
-# stylegan1_ffhq_
+# stylegan1_ffhq_20251113102258
 #  - train with proper lr for generator to see how it works but this time lets do it 
 #    up to 32x32 so we dont waste too much time: the image quality is much better much
 #    quicker now. at epoch 14@64x64, they look way better. by e19 images are gorgeous!
 #    the losses are dloss=1.370 vs gloss=0.720. at 63@64x64 1.36 vs 0.722 and image quality
 #    is the best among all previous experiments. more clear, vibrant and look high res!
 #
-# 
-# -  train cifar10
+# stylegan1_cifar10_20251114082051
+# -  train cifar10 
+#    use larger epochs for early layers because we are going to only train up to 32x32
+#    epochs=[16, 24, 48, 64, 64, 64] 
+#
+#
 # - fix autocast or remove it completely
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
