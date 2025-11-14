@@ -10412,7 +10412,9 @@ training_loop_stylegan(discriminator_stylegan1,
 #  - train with proper lr for generator to see how it works but this time lets do it 
 #    up to 32x32 so we dont waste too much time: the image quality is much better much
 #    quicker now. at epoch 14@64x64, they look way better. by e19 images are gorgeous!
-#    the losses are dloss=1.370 vs gloss=0.720.
+#    the losses are dloss=1.370 vs gloss=0.720. at 63@64x64 1.36 vs 0.722 and image quality
+#    is the best among all previous experiments. more clear, vibrant and look high res!
+#
 # 
 # -  train cifar10
 # - fix autocast or remove it completely
