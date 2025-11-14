@@ -9426,7 +9426,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     max_steps = discriminator.max_steps
     z_size = generator.z_size
     
-    scaler = torch.amp.grad_scaler.GradScaler(device)
+    scaler = torch.amp.grad_scaler.GradScaler(device, enabled=use_fp16)
     
     # check for resuming from a checkpoint
     if resume:
@@ -9707,12 +9707,13 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # gen_real_loss.backward()
                         # mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # gen_optimizer.step()
-                        #fp16
+                        # fp16
                         scaler.scale(gen_real_loss).backward()
                         # update: when setting mapping_network lr, during fp16 we face nans!
                         # to see if we are hitting norm>100-1000 which means overflowing!
                         # we monitor its norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                         
                         # clip gradients >1 so we dont hit nans because of possible overflows!
                         # to fight nans, we use lower adam eps. it works much better
                         # update:
@@ -9915,7 +9916,7 @@ dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=True
+use_fp16=False
 
 # original paper uses 512
 z_size = 512
@@ -9961,12 +9962,26 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 # the instability will be compounded and reveal itslef in the form of gradient explosions.
 #)
 # gradient clipping also didnt help until I fixed the issue. 
+# update: after that fix I reran the experiement in fp32 with bs=16
+# autocast machinery was there, and it resulted in gradient explosion!
+# with fp16 I  would get nans! after commeninting the autocast machinery
+# retraining with fp32 and bs=16, the issue was gone. note that I had used
+# use_fp16=False, yet still I'd face gradient explosion for some reason
+# only after commenting the code relaetd to fp16/half preciison training
+# the issue was gone! so its 100% related to autocast (could be a pytorch bug
+# or my fp16 implementation!)
+# update:
+# found the bug! the scaler was always True by default, so when I disabled the fp16
+# the scaler would still scale the gradients and lead to explosion!
+# the fp16 getting nans is next to solve (probably related to loss/r1penalty)
+# I guess we need to calculate it in fp32 probably but lets see
 #
+# 
 
 if use_fp16:      #res 4,  8, 16,32,64,128,256 
     BATCH_SIZES = [16,16,16,16,16,32]#,16]
 else:
-    BATCH_SIZES = [128,128,128,64,32,16]#,8,4,2]
+    BATCH_SIZES = [16,16,16,16,16,32]#[128,128,128,64,32,16]#,8,4,2]
 
 # sidenote: in pro/stylegans usually kimage is used as the metric for
 # how long the training should go on. each epoch means one
@@ -10130,8 +10145,16 @@ lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # 2^-17 which in decimal form is 7.6e-6. (to calculate that we simply need to take its log₂
 # so log₂(10^-5) is -5*log₂(10). log₂(10) is ~3.321928 so -5*3.321928=-16.60964 or ~-17.
 # so 2^-16.60964 or simply 2^-17 (7.6e-6) is the number that represents 1e-5) 
-
 #! todo verify with 1e-8 for fp16 
+# update: fp16 is broken. even after the fix, enabling fp16 causes nans
+# if I set use_fp16=False, and train with bs=16, I face gradient explosion
+# lowering the lrs down to 0.0001 doesnt help! after commenting out autocast
+# related code, the gradient explosion stopped even with small batchsize=16
+# it cold be a bug in pytorch or my own!
+#update:
+# found the bug! the scaler was always True by default, so when I disabled the fp16
+# the scaler would still scale the gradients and lead to explosion!
+# 
 # we can use much larger lr and get a much faster convergence
 lr_g = 0.003#0.0015 is used for res>64
 # make this 1000x larger than the normal case
@@ -10434,9 +10457,28 @@ training_loop_stylegan(discriminator_stylegan1,
 #   to see if the autocast implementation is ok and the issues of exploding gradients
 #   were truly due to our EqualizedLinear bug, we train with fp16 and batches=16
 #   I also use the original order. everything else stays the same as our previous cifar10
-#   experiment.
+#   experiment: faced the same issue, nans during training this time early on in 4x4 res
+# 
+# stylegan1_cifar10_20251114140050/
+# stylegan1_cifar10_20251114142351/
+# stylegan1_cifar10_20251114144112/
+# stylegan1_cifar10_20251114145725/
+# stylegan1_cifar10_20251114150815
+# -train cifar10-fp32 small batches eps=1e-8:
+#  disabled the fp16, everything else intact from previous experiment. faced gradient
+#  explosion this time.test with smaller lr down to 0.0001 didnt do anything at fp16 
+#  we get nans, if we set use_fp16=False, we get gadient explosion!
+# 
+# stylegan1_cifar10_20251114151527:
+# - commented out all autocast related code, withfp32, now with small bs=16, all is fine!
+#   the fp16/autocast code has some issues! found the issue with autocast.scaler
+#   was always true even with use_fp16=False, that would keep scaling the gradients
+#   and lead to greadient explosion!
 #
-# - fix autocast or remove it completely
+# stylegan1_cifar10_20251114164657:
+# - fix autocast or remove it completely: fixed scaler being True despite use_fp16=False
+#   now we dont get gradient explosion. I cant believe I missed that part!
+#  
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
 #  
