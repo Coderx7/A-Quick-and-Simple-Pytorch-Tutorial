@@ -10418,8 +10418,15 @@ training_loop_stylegan(discriminator_stylegan1,
 #
 # stylegan1_cifar10_20251114082051
 # -  train cifar10 
-#    use larger epochs for early layers because we are going to only train up to 32x32
-#    epochs=[16, 24, 48, 64, 64, 64] 
+#    we use larger epochs for early layers because we are going to only train up to 32x32
+#    epochs=[16, 24, 48, 64, 64, 64] with swapped_adain_order. as we saw in our earlier 
+#    experiments, some classes are well formed better than others, some look prefect while
+#    others are very malformed, not artifacty, but malformed, either missing parts, or
+#    warped in unnatural way. im not sure yet if training for more would fix that or we just
+#    need more data per class.(looking at earlier epochs that these malformed samples were
+#    much more abundant, and as we trained, especially towards the end, they got way better
+#    I guess training for longer should give us better results but we need to test to be sure)
+#
 #
 #
 # - fix autocast or remove it completely
