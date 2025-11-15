@@ -9628,20 +9628,25 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                     # train discriminator/critic! 
                     # real image predictions
-                    preds_real = discriminator(imgs_real, alpha, step)
+                    preds_real = discriminator(imgs_real.float(), alpha, step).float()
                     # generate an image using generator 
-                    z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                    z_vector = torch.randn((imgs_real.size(0), z_size)).to(device).float()
                     # we detach the imgs_fake so the discriminator cant use the gradients
                     # from the generator and quickly learn!
-                    imgs_fake = generator(z_vector, alpha, step).detach()
+                    imgs_fake = generator(z_vector, alpha, step).detach().float()
                 
                     # add noise to fake images as well(not needed for dcgan)
                     # if noise_addition:
                     #     imgs_fake += 0.05 * torch.randn_like(imgs_fake)
                 
-                    preds_fake = discriminator(imgs_fake, alpha, step)
+                    preds_fake = discriminator(imgs_fake.float(), alpha, step).float()
+                
+                with torch.amp.autocast(device_type="cuda", enabled=False):    
                     # calculate discrimiator loss out of real and fake losses
-                    disc_loss = discriminator_loss_stylegan1(preds_real,imgs_real,preds_fake,gamma)
+                    disc_loss = discriminator_loss_stylegan1(preds_real,
+                                                            imgs_real,
+                                                            preds_fake, 
+                                                            gamma).float()
                 
                 # for debugging purposes
                 # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
@@ -9710,18 +9715,19 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 scaler_out_d = scaler.step(disc_optimizer)
                             
                 # now train genertor to create images that look real
-                # todo put this in gen_update_interval check so we only run this
-                # when we want to optimize, but since currently im doing wgangp
-                # and its 1:1 that check is really not needed. also I check preds_fake
-                # in loss, so lets leave it be for now, until we get this working!
-                z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
-                fake_imgs = generator(z_vector, alpha, step)
-                preds_fake = discriminator(fake_imgs, alpha, step)
-
                 with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                    # todo put this in gen_update_interval check so we only run this
+                    # when we want to optimize, but since currently im doing wgangp
+                    # and its 1:1 that check is really not needed. also I check preds_fake
+                    # in loss, so lets leave it be for now, until we get this working!
+                    z_vector = torch.randn((imgs_real.size(0),z_size)).to(device).float()
+                    fake_imgs = generator(z_vector, alpha, step).float()
+                    preds_fake = discriminator(fake_imgs, alpha, step).float()
+                
                     # generator loss
                     # swap loss! treat fake images as real images
-                    gen_real_loss = generator_loss_stylegan1(preds_fake)
+                    with torch.amp.autocast(device_type="cuda",enabled=False):
+                        gen_real_loss = generator_loss_stylegan1(preds_fake).float()
 
                     # optimize generator
                     # update generator with a delay, sylegan1 uses 1:1 update ratio
@@ -10666,9 +10672,21 @@ training_loop_stylegan(discriminator_stylegan1,
 # 
 # stylegan1_cifar10_20251115144021:
 #   training cifar10 with fp16, normal batchsize(like stylegan1_cifar10_20251114082051)
-#   lr=0.003: no nans as of epoch4@16x16:
-#
+#   lr=0.003: no nans as of epoch4@16x16, but the fp32 is considerably faster at convergence
+#   e.g. the 16x16 had to go nearly 30 epochs to show some images that resemble cifar10
+#   objects, until then it looked mostly blobs of color!even at epoch 40, the objects dont
+#   look properly formed where as in fp32 experiment they were looking good at early epochs!
+#   it shows, we definitely need to optimize the training somehow/fp16 cant be used like this
 # 
+# stylegan1_cifar10_20251115182244:
+# - wrapped generator in autocast previously only the loss section was put in autocast section
+#   wrapped the discriminator loss calculation part with autocast enabled=False:
+#   faced Nans at epoch 9 @4x4 !
+# 
+# - cast all important tensors to float both in discriminator and generator and disabled
+#   autocast for generator loss calculation, this fixed the nan errors that we got
+#   when we wrapped generator in autocast. now it trains well, the convergence is also
+#   much faster.
 # 
 # 
 # - cleanup comments/explanations in styleconvblock/generator/training section
