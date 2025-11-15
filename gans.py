@@ -9808,7 +9808,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         #   we go >65504 boom! we get inf!
                         # 
                         # norm of 1 to 10 is considered healthy, anything drastically higher
-                        # is a bad sign!(i.e exploding gradients)
+                        # is a bad sign!(i.e exploding gradients)(note in our current setup
+                        # this is the case, for other types of networks, much deeperones, etc
+                        # the norm can be different but for us right now this is the case)
                         scaler.unscale_(gen_optimizer)
                         nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
@@ -10032,77 +10034,92 @@ max_steps = 7#3 if dataset_name=="cifar10" else 7
 #  With channels=[512,256,128,64,32,16,8] (11mvs11m) the vram usage is
 #  up 3015MB @ 64x64 @ 128x128 its 3565MB.
 # 
-# with batchsize like 16/32 we face exploding gradients when we reach 8x8
-# I got this issue for both celeba and ffhq dataset. this shouldnt happen 
-# because we are using equalizedconv/linear so the learning rate is equalized
-# but for some reason this happens. even clipping the gradients to 1/10 doesnt
-# fix the issue. 
-# it could be a bug in my code honestly but for now im not going to bother!
-# update: it was in fact a bug in equalizedlinear. it would incorrectly make
-# the variance extremely low, resuling in very small numbers, which would then
-# be compounded and result in huge gradients in adam optimization and result
-# in gradient explosions and this happens at both fp32 and fp16. (i.e. 
-# that is since adam optimizer sees extremely small gradients, it
-# increases its adaptive learning rate, but when the activations get larger
-# (because of multiple layers in between all affecting the output) this leads
-# to gradient explosion even though our initial numebrs are extremely small
-# now if we use a large enough batch, the gradients will be much smoother 
-# and uniform, and we wouldnt face this issue, we would only suffer from slow convergence
-# (and also unstable training because discriminator trains faster than generator
-# because of this issue). however, when we use a small batchsize, it means we get
-# noisier gradients, and therefore the adam optimzier's adaptive statistics also 
-# become less stable/accurate/useful. therefore whenever the parameters magnitudes 
-# and adam's effective learning rates are mismatched, we can expect hell breaking loose!
-# the instability will be compounded and reveal itslef in the form of gradient explosions.
-#)gradient clipping also didnt help until I fixed the issue. 
-#
 # update:
-# after that fix I reran the experiement in fp32 with bs=16
-# autocast machinery was there, and it resulted in gradient explosion!
-# with fp16 I  would get nans! after commeninting the autocast machinery
-# retraining with fp32 and bs=16, the issue was gone. note that I had used
-# use_fp16=False, yet still I'd face gradient explosion for some reason
-# only after commenting the code relaetd to fp16/half preciison training
-# the issue was gone! so its 100% related to autocast (could be a pytorch bug
-# or my fp16 implementation!)
-# update:
-# found the bug! the scaler was always True by default, so when I disabled the fp16
-# the scaler would still scale the gradients and lead to explosion!
-# the fp16 getting nans is next to solve (probably related to loss/r1penalty)
-# I guess we need to calculate it in fp32 probably but lets see
-#
+#  with batchsize like 16/32 we face exploding gradients when we reach 8x8
+#  both at fp16 and fp32!
+#  I got this issue for both celeba and ffhq dataset. this shouldnt happen 
+#  because we are using equalizedconv/equzlizedlinear so the learning rate
+#  should be equalized but for some reason this happens. even clipping the
+#  gradients to 1 and even 10 doesnt fix the issue. (larger batchsize doesnt
+#  exibit this issue though!). this is probably a bug in my code honestly 
+#  but for now im not going to bother! im too exausted right now!
 # 
-
-if use_fp16:      #res 4,  8, 16,32,64,128,256 
-    BATCH_SIZES = [16,16,16,16,16,32]#,16]
+# update: 
+#  it was in fact a bug in equalizedlinear. it would incorrectly make
+#  the variance extremely low, resuling in very small numbers, which would then
+#  be compounded and result in huge gradients in adam optimization and result
+#  in gradient explosions and this happens at both fp32 and fp16.
+#  (i.e. that is since adam optimizer sees extremely small gradients, it
+#  increases its adaptive learning rate, but when the activations get larger
+#  (because of multiple layers in between all affecting the output) this leads
+#  to gradient explosion even though our initial numebrs are extremely small
+#  now if we use a large enough batch, the gradients will be much smoother 
+#  and uniform, and we wouldnt face this issue, we would only suffer from 
+#  slow convergence (and also unstable training because discriminator trains
+#  faster than generator because of this issue). 
+#  however, when we use a small batchsize, it means we get noisier gradients,
+#  and therefore the adam optimzier's adaptive statistics also become less 
+#  stable/accurate/useful. therefore whenever the parameters magnitudes 
+#  and adam's effective learning rates are mismatched, we can expect all hell breaking loose!
+#  the instability will be compounded and reveal itslef in the form of gradient explosions.
+#  gradient clipping also didnt help until I fixed the issue.
+#
+# update:
+#  after that fix I reran the experiement in fp32 with bs=16
+#  autocast machinery was there, and it resulted in gradient explosion!
+#  with fp16 I would get nans! after commenting the autocast machinery
+#  retraining with fp32 and bs=16, the issue was gone. 
+#  note that I had used use_fp16=False, yet still I'd face gradient explosion
+#  for some reason! only after commenting the code relaetd to fp16/half preciison training
+#  the issue was gone! so its 100% related to autocast (could be a pytorch bug
+#  or my fp16 implementation!)
+# update:
+#  found the bug! the scaler was always True by default, so when I disabled the fp16
+#  the scaler would still scale the gradients and lead to explosion!
+#  the fp16 getting nans is next to solve (probably related to loss/r1penalty)
+#  I guess we need to calculate it in fp32 probably but lets see
+# update: 
+#  it was the large lr(0.003) with small batchsize that caused the fp16 nans.
+#  lowering the lr down to 0.001 fixed the issue. didnt need to do gradient clipping
+#  but enabled it anyway beacuse smaller batchsize can yield abnormally huge gradients
+#  (its very noisy) and eventually build up larger weight norm(because of large updates!)
+#  until at some point we hit the 65504 limit of fp16 and overflow! I explained it
+#  in details severla times throughout the code! so I dont bother repeating it here again!
+# 
+# note if using fp16 and smaller batchsize(like 16),
+# use smaller lr! otherwise might get nans!
+#
+if use_fp16:    #res from 4 up to 256 (7 steps)
+    BATCH_SIZES = [128,128,128,128,64,32,16]
 else:
-    BATCH_SIZES = [16,16,16,16,16,32]#[128,128,128,64,32,16]#,8,4,2]
+    BATCH_SIZES = [128,128,128,64,32,16,8]#,4,2]
 
-# sidenote: in pro/stylegans usually kimage is used as the metric for
-# how long the training should go on. each epoch means one
-# round of full dataset consumption during training, but since
-# this can mean different number of images for different datasets
-# and using data-augmentations this can further get nuisansed for 
-# every dataset the authors talk about k real images (thousand images)
-# the discriminator needs to see. its a much better metric to keep track
-# of if you think about it.
-# they mentioned they used 1600 kimages per resolution. 800kimages for
-# fadein phase and 800kimages for stabilization (i.e. in total 1.6million images 
-# per resolution which if we use batchsize=128 its 12500 iterations
-# or for cifar10 it would be 32 epochs for each res! 
-# for stylegan1 this number is 12000kimage to 25000kimage (12m to 25m)
-# depending on the dataset which is 240 epochs in total to get the best results. 
-# (some other datasets like lsun seems to have been trained with
-# 40000kimage to 70000kimages in total. i.e. for the subsets like bedrooms 
-# at 256x256 70m images and for cars at 512x384 46m images were used)
-# they also do it a bit more efficiently than us, they switch to the 
-# next res when FID plateues! The FID itself is not calculated every epoch
-# they calculate it after some kimages seen. we havent done this
-# so far, but im writing this for future references. todo for later! 
-# Having done all of this, note that I could not get a decent outcome until
-# I swapped adain/lrelu. only then I got good results! so this is where my
-# implementation differs the most.
-# for celeba this is what I used, use more to get better
+# sidenote: 
+#  in pro/stylegans usually kimage is used as the metric for
+#  how long the training should go on. each epoch means one
+#  round of full dataset consumption during training, but since
+#  this can mean different number of images for different datasets
+#  and using data-augmentations this can further get nuisansed for 
+#  every dataset the authors talk about k real images (thousand images)
+#  the discriminator needs to see. its a much better metric to keep track
+#  of if you think about it.
+#  they mentioned they used 1600 kimages per resolution. 800kimages for
+#  fadein phase and 800kimages for stabilization (i.e. in total 1.6million images 
+#  per resolution which if we use batchsize=128 its 12500 iterations
+#  or for cifar10 it would be 32 epochs for each res! 
+#  for stylegan1 this number is 12000kimage to 25000kimage (12m to 25m)
+#  depending on the dataset which is 240 epochs in total to get the best results. 
+#  (some other datasets like lsun seems to have been trained with
+#  40000kimage to 70000kimages in total. i.e. for the subsets like bedrooms 
+#  at 256x256 70m images and for cars at 512x384 46m images were used)
+#  they also do it a bit more efficiently than us, they switch to the 
+#  next res when FID plateues! The FID itself is not calculated every epoch
+#  they calculate it after some kimages seen. we havent done this
+#  so far, but im writing this for future references. todo for later! 
+#  Having done all of this, note that I could not get a decent outcome until
+#  I swapped adain/lrelu. only then I got good results! so this is where my
+#  implementation differs the most.
+#  for celeba this is what I used, use more to get better
 # EPOCHS = [10,10,10,20,40,40,40]
 # EPOCHS = [10,10,20,30,50,60,70]
 # for cifar10, since our max res is 32x32, we need to allocate 
@@ -10118,18 +10135,18 @@ else:
 # EPOCHS = [10,10,20,50,30,60,70]
 # kimages = int(math.ceil(1_600_000 / get_dataset_size(dataset_name,split)))
 # print(f'{kimages=:,}')
-# update:
-# I ran a lot of tests, when I fixed my bug, I noticed with much number of 
-# epochs we can achieve pretty good results. so while kimages are a good 
-# measure to have, the good old epochs would do well as well. 
-# also the number of epochs is needless to say directly dependant on the model size
-# the larger the model, the less epochs per res is needed and vice versa. 
-# these are the new configs I came up with (initially used one of the pytorch impls)
 # 
-# ffhq128 [8,16,32,32,64,64], celeba is  [4,8,16,16,32,48]
-# I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
-# see debug logs for more information
-# for cifar10 we use more epochs for 32x32 [16,24,48,64,64,64]
+# update:
+#  I ran a lot of tests, when I fixed my bugs, I noticed with much number of 
+#  epochs we can achieve pretty good results. so while kimages are a good 
+#  measure to have, the good old epochs would do well as well. 
+#  also the number of epochs needless to say is directly dependant on the model size
+#  the larger the model, the less epochs per res is needed and vice versa. 
+#  these are the new configs I came up with (initially used one of the pytorch impls)
+#  ffhq128 [8,16,32,32,64,64], celeba [4,8,16,16,32,48]
+#  I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
+#  see debug logs for more information
+#  for cifar10 we use more epochs for 32x32 [16,24,48,64,64,64]
 EPOCHS = [16,24,48,64,64,64]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
@@ -10163,7 +10180,7 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, mn_nlayer,
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.003 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
 # log:
 # -I faced mode collapse in 64x64, then I noticed the mapping network lr 
 # was too low(1.5e-7!). this is around 10,000 times smaller than the rest
@@ -10184,18 +10201,39 @@ lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 #     the more layers the more unstability! so they multiply it by 0.01! I did that
 #     im not sure why disc is overpowering generator!
 # -update: it was a bug in equalizedlinear see debug log
+# -update: the fp16 can use lr=0.003 just fine given large batches, only if we go
+#  smaller batchsize(like 16/32) we face nans, in which case using lr=0.001 solves
+#  the issue. 
+#  the initial comment (1.5e-5 being too large) is simply incorrect beause
+#  it was caused by several bugs in the code at the time. one was buggy equalizedlinear
+#  and the other was a separate lr for mapping network that would make effective lr
+#  100x smaller! compounded by another bug, shariking that another 100x at every step
+#  during training! so the gradients were too tiny. using eps 1e-8 would therefore 
+#  not help as it was too small for fp16, leading to underflow and ultimaly
+#  0! remember the adams update formula is w = w - lr * m_hat / (sqrt(v_hat)+eps)
+#  so not only v_hat goes toward 0(very small), the eps thats being added is also practically 0,
+#  so it can underflow and become exactly 0, making the denominator practically zero
+#  and lead to division by zero and thus inf which in subsequent operations can 
+#  lead to nan! if it doesnt underflow and become 0, its a tiny number leading to
+#  large effective learnng rate, leading to gradient explosions and ultimatly nan!
+#  increasing the eps masked the first issue, made it so we dont face nans
+#  asap but the training was flawed until those bugs were fixed. moreover, later using
+#  smaller batchsizes, lead to nans again, because of noisier gradients which ultimately
+#  required smaller lr (and optionally gradient clipping) to safely prevent the nans
 # 
-# we can use much larger lr and get a much faster convergence
-lr_g = 0.001#0.0015 is used for res>64
-# 
-# made this 1000x larger than the normal case
-# this was the first thing I did when I got 
-# nans during fp16 training with lr 1.5e-5 for
-# mapping network, didnt work!
-# note:with gradient clipping nan issue is also gone but
-# by using larger eps(1e-5) the loss decreases twice as much
-# compared to the default eps(1e-8). the result is much better
-# with no gradient clipping with eps=1e-5
+# we can use much larger lr than 0.0015 and get a much faster convergence
+# 0.003 works great with large batches!
+lr_g = 0.003#0.0015 is used for res>64
+
+# update:
+#  made the lr 1000x larger than the normal case
+#  this was the first thing I did when I got 
+#  nans during fp16 training with lr 1.5e-5 for
+#  mapping network, didnt work!
+#  note:with gradient clipping nan issue is also gone but
+#  by using larger eps(1e-5) the loss decreases twice as much
+#  compared to the default eps(1e-8). the result is much better
+#  with no gradient clipping with eps=1e-5
 # 
 # 
 # sidenote: informative but not that relavent really!
@@ -10217,7 +10255,7 @@ lr_g = 0.001#0.0015 is used for res>64
 # so obviously if v (and thus sqrt(v)) goes to zero because of the tiny gradients then
 # the denominator practically becomes the eps! thus smaller eps -> smaller denominator
 # and smaller denominator leads to larger updates which in turn can lead to instablity 
-# in training and nans(in case it goes to zero) or gradient explosions.
+# in training and nans or gradient explosions.
 # 
 # in fp16 this is even worse because the smallest positive denormal/subnormal number that
 # can be represented is 5.96e-8 (or 2^-24) and eps is 1e-8(i.e. 2^-26) which is much smaller
@@ -10596,7 +10634,7 @@ training_loop_stylegan(discriminator_stylegan1,
 # - fix autocast or remove it completely: fixed scaler being True despite use_fp16=False
 #   now we dont get gradient explosion. I cant believe I missed that part!
 #
-# 20251114183323:
+# stylegan1_cifar10_20251114183323:
 # - test fp16 now with small batches so we have more unstable gradients to exacerbates
 #   the issue further so we can better identify and fix it. right off the bat grad_norm
 #   shot up to 119! we didnt touch anything in the code, we are just recording what
@@ -10604,19 +10642,27 @@ training_loop_stylegan(discriminator_stylegan1,
 #   cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
 #   baghie farda enshalaah
 # 
-# 20251115083009:
+# stylegan1_cifar10_20251115083009:
 # - removed fid_score calculation to reveal the underlying issue easily. 
 #   the configs are intact, bs=16, lr=0.003 and fp16=True, ok in epoch 9
 #   we get nans for loss. more specifically we can D_fake_avg is nan! (D_real_avg
 #   is very small, but for this res and cifar10, its normal). 
 #   
-# 20251115100058:
+# stylegan1_cifar10_20251115100058:
 # - set gradient_clipping to prevent gradient explosion with norm=10: at epoch4 the
 #   nans happened again.
-#   
+#
+# stylegan1_cifar10_0251115102555  
 # - lowered the lr = 0.001 and it seems to have fixed it!
 #      
-#
+# stylegan1_cifar10_20251115124520:
+# stylegan1_cifar10_20251115131747:
+# - with lower lr=0.001, disabled gradient clipping to see how stable the trainig is
+#   and whether we still need gradinet clipping because we use small batches
+#   which give noisy gradients: so far the gradient norm is very stable and <1
+#   but it'd be a good idea to have in place for cases where we increase lr abit
+#   or made changes in other hyperparameters. with gradnorm now part of training log
+#   it can be easily spotted what is amiss!
 #
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
