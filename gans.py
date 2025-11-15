@@ -9326,29 +9326,38 @@ for i in range(0,max_steps):
 # before we go for training we need a few more things to implement.
 # the mixing regularization and the loss function
 def r1_penalty(d_preds, x_real, gamma=10):
+    # update:
+    #   after adding fp16, I noticed r1_penalty needs to be done 
+    #   in full precision mode (i.e. fp32) otherwise we get nans
+    #   so this is here so all the operations is done in fp32
+    with torch.amp.autocast(device_type="cuda", enabled=False):
+        # force d_preds and x_real to be in fp32
+        d_preds_fp32 = d_preds.float()
+        x_real_fp32 = x_real.float()
     
-    assert x_real.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
-    #sidenote:
-    # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
-    # .sum() aggregates the discriminators outputs into a scaler 
-    # and tells the grad() what to differntiate. sum as you recall distributes
-    # the gradients to every single element equally, so its the same as starting
-    # the gradient calculation process by providing all ones for every d_preds elements
-    # (i.e. torch.ones_like(d_preds)). so its basically a simple trick
-    # that saves us from typing a few characters more! 
-    # I prefer our version better because its clear what and why im doing this(sum is
-    # aswell, but ours is straightforward)
-    grads = torch.autograd.grad(outputs=d_preds,
-                                inputs=x_real,
-                                grad_outputs=torch.ones_like(d_preds),
-                                create_graph=True)[0]
+        assert x_real_fp32.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
     
-    # take squared l2norm (l2norm is sqrt(sum(x²)) so squaring it becomes: sqrt(sum(x²))²
-    # we coluld do: grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
-    # but our second version is a bit faster becaue sqrt and pow operations are not 
-    # used (they cancel eachother out anyway so theres no need to calculate them)
-    grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
-    penalty = gamma/2 * grads_l2norm_squared
+        #sidenote:
+        # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
+        # .sum() aggregates the discriminators outputs into a scaler 
+        # and tells the grad() what to differntiate. sum as you recall distributes
+        # the gradients to every single element equally, so its the same as starting
+        # the gradient calculation process by providing all ones for every d_preds elements
+        # (i.e. torch.ones_like(d_preds)). so its basically a simple trick
+        # that saves us from typing a few characters more! 
+        # I prefer our version better because its clear what and why im doing this(sum is
+        # aswell, but ours is straightforward)
+        grads = torch.autograd.grad(outputs=d_preds_fp32,
+                                    inputs=x_real_fp32,
+                                    grad_outputs=torch.ones_like(d_preds_fp32),
+                                    create_graph=True)[0]
+        
+        # take squared l2norm (l2norm is sqrt(sum(x²)) so squaring it becomes: sqrt(sum(x²))²
+        # we coluld do: grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
+        # but our second version is a bit faster becaue sqrt and pow operations are not 
+        # used (they cancel eachother out anyway so theres no need to calculate them)
+        grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
+        penalty = gamma/2 * grads_l2norm_squared
     return penalty
 
 def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
@@ -9628,25 +9637,35 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                     # train discriminator/critic! 
                     # real image predictions
-                    preds_real = discriminator(imgs_real.float(), alpha, step).float()
+                    preds_real = discriminator(imgs_real, alpha, step)
                     # generate an image using generator 
-                    z_vector = torch.randn((imgs_real.size(0), z_size)).to(device).float()
+                    z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
                     # we detach the imgs_fake so the discriminator cant use the gradients
                     # from the generator and quickly learn!
-                    imgs_fake = generator(z_vector, alpha, step).detach().float()
+                    imgs_fake = generator(z_vector, alpha, step).detach()
                 
                     # add noise to fake images as well(not needed for dcgan)
                     # if noise_addition:
                     #     imgs_fake += 0.05 * torch.randn_like(imgs_fake)
                 
-                    preds_fake = discriminator(imgs_fake.float(), alpha, step).float()
+                    preds_fake = discriminator(imgs_fake, alpha, step)
                 
-                with torch.amp.autocast(device_type="cuda", enabled=False):    
-                    # calculate discrimiator loss out of real and fake losses
-                    disc_loss = discriminator_loss_stylegan1(preds_real,
-                                                            imgs_real,
-                                                            preds_fake, 
-                                                            gamma).float()
+                # calculate discrimiator loss out of real and fake losses
+                # sidenote:
+                #   for fp16 we need to calculate r1_penalty part
+                #   in full precision mode(fp32) otherwise we'll get nans!
+                #   we could also do it here , that is do:
+                #   
+                #   with torch.amp.autocast(device_type="cuda", enabled=False):
+                #       disc_loss = discriminator_loss_stylegan1(preds_real.float(), imgs_real.float(), preds_fake.float(), gamma)
+                #   
+                #   and it works, but the issue is this will be slow! because it forces
+                #   all of the operations involved in loss calculaton, such as 
+                #   F.softplus() and mean() take place in fp32 while they can prefectly 
+                #   run in fp16 and give us a boost! and it wont pose a numerical instability
+                #   either. r1_penalty on the other hand needs to be in fp32 so we only
+                #   run that portion in fp32. 
+                disc_loss = discriminator_loss_stylegan1(preds_real, imgs_real, preds_fake, gamma)
                 
                 # for debugging purposes
                 # if disc_real_mean is a lot larger than disc_fake_mean (e.g. 2.0 vs -2.0) 
@@ -9708,7 +9727,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #   used 10 so I use that as well-the issue was sth else.
                 # update2:
                 #   to fight nans, we use a larger eps for adam. it works much better 
-                # 
+                # update3:
+                #   r1_penalty needed to be calculaed in full precision. did that and fp16 is
+                #   working ok now.
+                #
                 # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
                 
@@ -9720,14 +9742,13 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     # when we want to optimize, but since currently im doing wgangp
                     # and its 1:1 that check is really not needed. also I check preds_fake
                     # in loss, so lets leave it be for now, until we get this working!
-                    z_vector = torch.randn((imgs_real.size(0),z_size)).to(device).float()
-                    fake_imgs = generator(z_vector, alpha, step).float()
-                    preds_fake = discriminator(fake_imgs, alpha, step).float()
+                    z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+                    fake_imgs = generator(z_vector, alpha, step)
+                    preds_fake = discriminator(fake_imgs, alpha, step)
                 
                     # generator loss
                     # swap loss! treat fake images as real images
-                    with torch.amp.autocast(device_type="cuda",enabled=False):
-                        gen_real_loss = generator_loss_stylegan1(preds_fake).float()
+                    gen_real_loss = generator_loss_stylegan1(preds_fake)
 
                     # optimize generator
                     # update generator with a delay, sylegan1 uses 1:1 update ratio
@@ -9786,7 +9807,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         #   at all and leads us down the abyss. we get huge gradients, huge 
                         #   weight updates and after a few epochs boom! two huge number's 
                         #   multiplication e.g. goes over 65504 and we get inf!
-                        
+                        #  update: 
+                        #   we also had to run r1_penalty in fp32 otherwise we'd get nans
+                        #   after some epochs.
+                        #
                         # monitor the norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                          
@@ -10686,7 +10710,15 @@ training_loop_stylegan(discriminator_stylegan1,
 # - cast all important tensors to float both in discriminator and generator and disabled
 #   autocast for generator loss calculation, this fixed the nan errors that we got
 #   when we wrapped generator in autocast. now it trains well, the convergence is also
-#   much faster.
+#   much faster.next remove excessive casts and see which part specifically needs fp32 
+
+# 20251115214132:
+# - removed all casts, only r1_penalty needed to be done in fp32, so the rest of the 
+#   code isnt changed. this should now give us a bit more speed as unlike before,
+#   only r1_penalty part is done in fp32 not the whole discriminator's loss.
+#   also the speedup should be apparent in higher resolutions where gpu is more
+#   involved, in early resolutions the speedup isnt tangible!
+#    
 # 
 # 
 # - cleanup comments/explanations in styleconvblock/generator/training section
