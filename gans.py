@@ -9326,38 +9326,28 @@ for i in range(0,max_steps):
 # before we go for training we need a few more things to implement.
 # the mixing regularization and the loss function
 def r1_penalty(d_preds, x_real, gamma=10):
-    # update:
-    #   after adding fp16, I noticed r1_penalty needs to be done 
-    #   in full precision mode (i.e. fp32) otherwise we get nans
-    #   so this is here so all the operations is done in fp32
-    with torch.amp.autocast(device_type="cuda", enabled=False):
-        # force d_preds and x_real to be in fp32
-        d_preds_fp32 = d_preds.float()
-        x_real_fp32 = x_real.float()
+    assert x_real.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
+    #sidenote:
+    # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
+    # .sum() aggregates the discriminators outputs into a scaler 
+    # and tells the grad() what to differntiate. sum as you recall distributes
+    # the gradients to every single element equally, so its the same as starting
+    # the gradient calculation process by providing all ones for every d_preds elements
+    # (i.e. torch.ones_like(d_preds)). so its basically a simple trick
+    # that saves us from typing a few characters more! 
+    # I prefer our version better because its clear what and why im doing this(sum is
+    # aswell, but ours is straightforward)
+    grads = torch.autograd.grad(outputs=d_preds,
+                                inputs=x_real,
+                                grad_outputs=torch.ones_like(d_preds),
+                                create_graph=True)[0]
     
-        assert x_real_fp32.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
-    
-        #sidenote:
-        # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
-        # .sum() aggregates the discriminators outputs into a scaler 
-        # and tells the grad() what to differntiate. sum as you recall distributes
-        # the gradients to every single element equally, so its the same as starting
-        # the gradient calculation process by providing all ones for every d_preds elements
-        # (i.e. torch.ones_like(d_preds)). so its basically a simple trick
-        # that saves us from typing a few characters more! 
-        # I prefer our version better because its clear what and why im doing this(sum is
-        # aswell, but ours is straightforward)
-        grads = torch.autograd.grad(outputs=d_preds_fp32,
-                                    inputs=x_real_fp32,
-                                    grad_outputs=torch.ones_like(d_preds_fp32),
-                                    create_graph=True)[0]
-        
-        # take squared l2norm (l2norm is sqrt(sum(x²)) so squaring it becomes: sqrt(sum(x²))²
-        # we coluld do: grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
-        # but our second version is a bit faster becaue sqrt and pow operations are not 
-        # used (they cancel eachother out anyway so theres no need to calculate them)
-        grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
-        penalty = gamma/2 * grads_l2norm_squared
+    # take squared l2norm (l2norm is sqrt(sum(x²)) so squaring it becomes: sqrt(sum(x²))²
+    # we coluld do: grads_l2norm_squared = grads.view(d_preds.size(0),-1).norm(2,dim=1).pow(2).mean()
+    # but our second version is a bit faster becaue sqrt and pow operations are not 
+    # used (they cancel eachother out anyway so theres no need to calculate them)
+    grads_l2norm_squared = grads.pow(2).view(d_preds.size(0),-1).sum(1).mean()
+    penalty = gamma/2 * grads_l2norm_squared
     return penalty
 
 def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
@@ -9377,7 +9367,12 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     # x_real.requires_grad_(True)
     
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
-    penalty = r1_penalty(d_preds_real, x_real, gamma)
+    # update:
+    #  after adding fp16, I noticed r1_penalty needs to be done 
+    #  in full precision mode (i.e. fp32) otherwise we get nans
+    with torch.amp.autocast(device_type="cuda", enabled=False):
+        penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
+    
     return loss + penalty
 
 def generator_loss_stylegan1(d_preds_fake):
@@ -10712,12 +10707,12 @@ training_loop_stylegan(discriminator_stylegan1,
 #   when we wrapped generator in autocast. now it trains well, the convergence is also
 #   much faster.next remove excessive casts and see which part specifically needs fp32 
 
-# 20251115214132:
+# 20251115214132/20251115223041:
 # - removed all casts, only r1_penalty needed to be done in fp32, so the rest of the 
 #   code isnt changed. this should now give us a bit more speed as unlike before,
 #   only r1_penalty part is done in fp32 not the whole discriminator's loss.
 #   also the speedup should be apparent in higher resolutions where gpu is more
-#   involved, in early resolutions the speedup isnt tangible!
+#   involved, in early resolutions the speedup isnt noticeable!
 #    
 # 
 # 
