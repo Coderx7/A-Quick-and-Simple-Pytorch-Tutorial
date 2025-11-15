@@ -9685,8 +9685,18 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #   0/0 -> nan (division by zero)
                 #   inf-inf -> nan: 
                 #   other invalid math ops like log(-1),sqrt(-1) etc -> nan
+                #   unstable activations cane cause nans as well(e.g. if they are not
+                #   normalized properly).
+                #   division by zero in (custom) loss functions 
+                #   or the grad scaler not handling the scaling well either not being enabled
+                #   or even disabled! (we faced this when fp_16=false, scaler was always true!
+                #   scaling the gradients incorrectly all the time) so its important to 
+                #   make sure the proper flag to use fp16 is passed to scaler properly.also
+                #   checking its value can give good insight into what it uses and whether we
+                #   need to tune it ourselves at some point during training.
                 #
-                # we souldnt be needing this for discriminator!
+                # we souldnt be needing this for discriminator cuz we arent doing anything
+                # special in it!(we might though! because of r1-penalty part we might!)
                 # 
                 # update: 
                 #   noticed clipping at 1 causes issues down the road and some implementations
@@ -9726,10 +9736,52 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         # update: 
                         #   monitoring gradient norm allows us to quickly know if something
                         #   is going wrong. the norm must not exceed 100! if that happens 
-                        #   something is very wrong. a health norm is much lower than 100
-                        #   but to monitor for a gradient explosion, 100 is good choice imo.
+                        #   something is very wrong. a healthy norm is much lower than 100
+                        #   (1~10) anything higher is a tell tale sign of gradient explosion
+                        #   so to monitor for a gradient explosion, 100 is good choice imo.
                         #   when setting mapping_network lr, during fp16 we face nans!
-                        #   we monitor its norm (one of the params is enough)
+                        #   that was fixed, it was because of extremeley small variance in 
+                        #   equalizedlinear I believe. 
+                        # update:
+                        #   we face nans in fp16, this time after trying small batches=16 with
+                        #   lr=0.003. larger batchsizes didnt cause any issues but when I 
+                        #   sstarted using small batchsizes, I started to get nans again!
+                        #   I also noticed we got large gradient norms early on. that means
+                        #   we have gradient explosion!(reported norm for mapping_network
+                        #   was above 100!(i.e. 119)!). thinking about it, it makes sense
+                        #   we introcude more unstable/noisy gradients by smaller batchsize,
+                        #   so we are more susceptible to nans (i.e. with smaller batchsizes
+                        #   we get much more noiseier and higher-variance estimate of the
+                        #   actual/true gradients. that is we can get an unsually/abnormally
+                        #   large gradients which can then result in exploding gradients
+                        #   if used with large enough lr!) that is, when we have exploding
+                        #   gradients, it results in a large, so large numbers the 
+                        #   fp16 cant represent properly and it overflows to inf(fp16 can
+                        #   only represent up to 65504! anything larger and we get inf!)
+                        #   now if we have sth like inf-inf, or 0 * inf, or anything*inf 
+                        #   it will result in a nan. 
+                        #   (we dont do 0 * sth, by that I mean we might have an underflow 
+                        #   happening somewhere aswell, resulting to loss of precision and
+                        #   ending up 0! which then gets multiplied by another bad result 
+                        #   from exploding gradient (inf) and ultimately get nan! 
+                        #   also our learning rate may be too large for that batchsize
+                        #   and be the reason why it fails!(large lr * large gradients->inf)
+                        # update: 
+                        #   it was the learning rate, reduced it to 0.001 and we no more 
+                        #   got nans! (this probably went sth like this, initially when we 
+                        #   start training our weights are random, so the first few predictions
+                        #   are bound to be wrong, this results in a large loss and consequently
+                        #   a large gradient. this goes on for a few epochs and the network over
+                        #   corrects and cant settle on a good spot,(takes large leaps in the 
+                        #   loss landscape(remember zig-zag movement!)) making more wrong 
+                        #   predictions so it exacerbates the issue further, we also use a 
+                        #   small batch, so some samples can be too off the rails, so they get
+                        #   abnormally large gradients, our large learning rate isnt helping
+                        #   at all and leads us down the abyss. we get huge gradients, huge 
+                        #   weight updates and after a few epochs boom! two huge number's 
+                        #   multiplication e.g. goes over 65504 and we get inf!
+                        
+                        # monitor the norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                          
                         # tried gradient clipping(1) to prevent explosion but didnt help
@@ -9740,9 +9792,25 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                         #   or simply did this for stable training (in which case they used a
                         #   larger norm like 10. we dont do that, and after our latest fixes 
                         #   it trains just fine without it)
+                        # update3:
+                        #   when we use small batchsizes, like 16, whith fp16 enabled, we get
+                        #   nans! that can be caused by undeflow/overflow due to fp16 small range
+                        #   we clip the gradients to see if it prevents the explosion
+                        #   we might have other issues (i.e. loss calculation may need to be
+                        #   done in fp32 to not get nans/inf itself!)
+                        # update4:
+                        #   it was the large lr with small batchsize. since small batchsize gave
+                        #   noisier and higher variance estimate of the actucal gradients 
+                        #   (some are unusually large) when model makes the early wrong 
+                        #   predictions, with huge gradients, we get huge weight updates, 
+                        #   and therefore, after a few epochs, weights values grow large,
+                        #   result in larger norms. add in large lr and the fact that if
+                        #   we go >65504 boom! we get inf!
                         # 
-                        # scaler.unscale_(gen_optimizer)
-                        # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+                        # norm of 1 to 10 is considered healthy, anything drastically higher
+                        # is a bad sign!(i.e exploding gradients)
+                        scaler.unscale_(gen_optimizer)
+                        nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
                         scaler_out_g = scaler.step(gen_optimizer)
                         
@@ -9820,10 +9888,12 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 
             is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
             fid_score_str = f"FID: {FID_score:.2f}"
-
-            # gp_str = f"GP[avg]: {gp_mean_epoch:.2f}"
             
-            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str}"
+            # mintor gradient norm for mapping_network to better
+            # tune hyper parameters, epsecially when it comes to fp16!
+            mn_grad_norm_str = f"GradNorm: {mn_grad_norm:.2f}"
+            
+            summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {mn_grad_norm_str}"
             
             print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
             print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
@@ -10093,7 +10163,7 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, mn_nlayer,
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.001 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # log:
 # -I faced mode collapse in 64x64, then I noticed the mapping network lr 
 # was too low(1.5e-7!). this is around 10,000 times smaller than the rest
@@ -10116,7 +10186,7 @@ lr_d = 0.003 #0.0015 for res>64, 0.002 for res>256 and 0.003 for res> 512
 # -update: it was a bug in equalizedlinear see debug log
 # 
 # we can use much larger lr and get a much faster convergence
-lr_g = 0.003#0.0015 is used for res>64
+lr_g = 0.001#0.0015 is used for res>64
 # 
 # made this 1000x larger than the normal case
 # this was the first thing I did when I got 
@@ -10533,8 +10603,21 @@ training_loop_stylegan(discriminator_stylegan1,
 #   happens and then go for the fix.ok faced nans! but in FID_score section!
 #   cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
 #   baghie farda enshalaah
+# 
+# 20251115083009:
+# - removed fid_score calculation to reveal the underlying issue easily. 
+#   the configs are intact, bs=16, lr=0.003 and fp16=True, ok in epoch 9
+#   we get nans for loss. more specifically we can D_fake_avg is nan! (D_real_avg
+#   is very small, but for this res and cifar10, its normal). 
 #   
-#  
+# 20251115100058:
+# - set gradient_clipping to prevent gradient explosion with norm=10: at epoch4 the
+#   nans happened again.
+#   
+# - lowered the lr = 0.001 and it seems to have fixed it!
+#      
+#
+#
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
 #  
