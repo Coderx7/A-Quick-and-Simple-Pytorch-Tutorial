@@ -9672,19 +9672,33 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 # disc_optimizer.step()
                 # fp16
                 scaler.scale(disc_loss).backward()
-                # clip gradients >1 so we dont hit nans because of possible overflows!
-                # we souldnt be needing this for discriminator, but to be same lets have it
-                #update: 
-                # noticed clipping at 1 causes issues down the road and some implementations
-                # used 10 so I use that as well
+                
+                # clip gradients >1 so we dont hit infs because of possible overflows!
+                # if we face nans, it means underflow or an invalid opeation occured
+                # (e.g. division by zero, sqrt(negative), log(negative), etc usually
+                # when we underflow we may face nans as well)
+                # 
+                # quick reminder:
+                #   overflow -> inf
+                #   undeflow -> 0 or subnormal(see note in training) that eventually becomes 0
+                #   1/0 -> inf (division by zero)
+                #   0/0 -> nan (division by zero)
+                #   inf-inf -> nan: 
+                #   other invalid math ops like log(-1),sqrt(-1) etc -> nan
+                #
+                # we souldnt be needing this for discriminator!
+                # 
+                # update: 
+                #   noticed clipping at 1 causes issues down the road and some implementations
+                #   used 10 so I use that as well-the issue was sth else.
                 # update2:
-                # see note below in generator section!
+                #   to fight nans, we use a larger eps for adam. it works much better 
+                # 
                 # scaler.unscale_(disc_optimizer)
                 # nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1)
-                # to fight nans, we use lower adam eps. it works much better 
+                
                 scaler_out_d = scaler.step(disc_optimizer)
-                # scaler.update()
-            
+                            
                 # now train genertor to create images that look real
                 # todo put this in gen_update_interval check so we only run this
                 # when we want to optimize, but since currently im doing wgangp
@@ -9700,37 +9714,38 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     gen_real_loss = generator_loss_stylegan1(preds_fake)
 
                     # optimize generator
-                    # update generator with a delay, usually update per 5 critic update
-                    # seems to make convergence faster
+                    # update generator with a delay, sylegan1 uses 1:1 update ratio
                     if (i+1)%gen_update_interval == 0:
                         gen_optimizer.zero_grad()
                         # gen_real_loss.backward()
                         # mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                         # gen_optimizer.step()
+                        
                         # fp16
                         scaler.scale(gen_real_loss).backward()
-                        # update: when setting mapping_network lr, during fp16 we face nans!
-                        # to see if we are hitting norm>100-1000 which means overflowing!
-                        # we monitor its norm (one of the params is enough)
+                        # update: 
+                        #   monitoring gradient norm allows us to quickly know if something
+                        #   is going wrong. the norm must not exceed 100! if that happens 
+                        #   something is very wrong. a health norm is much lower than 100
+                        #   but to monitor for a gradient explosion, 100 is good choice imo.
+                        #   when setting mapping_network lr, during fp16 we face nans!
+                        #   we monitor its norm (one of the params is enough)
                         mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
                          
-                        # clip gradients >1 so we dont hit nans because of possible overflows!
-                        # to fight nans, we use lower adam eps. it works much better
-                        # update:
-                        # clipping at 1 causes issues down the road and loss explodes!
-                        # I found some pytorch implementations used 10! 
-                        # if this caused issues, only clip mapping_network gradients
+                        # tried gradient clipping(1) to prevent explosion but didnt help
+                        # 
                         # update2:
-                        # stylegan1 didnt use any gradient clipping, they only trained in fp32
-                        # other implementations that did use this, either like us used fp16
-                        # or simply did this for stable training (in which case they used a larger
-                        # norm like 10. we dont do that, and after our latest fixes it trains
-                        # just fine without it)
+                        #   stylegan1 didnt use any gradient clipping, they only trained in fp32
+                        #   other implementations that did use this, either like us used fp16
+                        #   or simply did this for stable training (in which case they used a
+                        #   larger norm like 10. we dont do that, and after our latest fixes 
+                        #   it trains just fine without it)
+                        # 
                         # scaler.unscale_(gen_optimizer)
                         # nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                         
                         scaler_out_g = scaler.step(gen_optimizer)
-                        # scaler.update()
+                        
                         if mn_grad_norm>100:
                             print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
                         
@@ -9738,7 +9753,16 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                             ema_generator.load_state_dict(generator.state_dict())
                         else:
                             update_ema_generator(generator, ema_generator)
-                # update only once
+                
+                # update scaler only once
+                # we dont update the scale for individual models,
+                # we only update it once when we ran the optimization
+                # step for all of them. otherwise, the scaler will
+                # be in a constant loop of increasing/decreasing the
+                # scale and cause instability during training. instead
+                # we do it once, if a model needs larger scale it will take
+                # care of it otherwise it will use the same scale until one
+                # requires otherwise. its more efficient
                 scaler.update()
                     
                 status_r = get_status(disc_real_mean, higher_is_better=True)
@@ -10501,6 +10525,15 @@ training_loop_stylegan(discriminator_stylegan1,
 # stylegan1_cifar10_20251114164657:
 # - fix autocast or remove it completely: fixed scaler being True despite use_fp16=False
 #   now we dont get gradient explosion. I cant believe I missed that part!
+#
+# 20251114183323:
+# - test fp16 now with small batches so we have more unstable gradients to exacerbates
+#   the issue further so we can better identify and fix it. right off the bat grad_norm
+#   shot up to 119! we didnt touch anything in the code, we are just recording what
+#   happens and then go for the fix.ok faced nans! but in FID_score section!
+#   cov_prod_sqrt = linalg.sqrtm(real_cov.cpu().numpy() @ fake_cov.cpu().numpy())
+#   baghie farda enshalaah
+#   
 #  
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
