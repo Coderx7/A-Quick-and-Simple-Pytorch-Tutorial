@@ -10663,7 +10663,14 @@ training_loop_stylegan(discriminator_stylegan1,
 #   but it'd be a good idea to have in place for cases where we increase lr abit
 #   or made changes in other hyperparameters. with gradnorm now part of training log
 #   it can be easily spotted what is amiss!
+# 
+# stylegan1_cifar10_20251115144021:
+#   training cifar10 with fp16, normal batchsize(like stylegan1_cifar10_20251114082051)
+#   lr=0.003: no nans as of epoch4@16x16:
 #
+# 
+# 
+# 
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
 #  
