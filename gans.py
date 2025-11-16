@@ -10033,7 +10033,7 @@ gamma=10#10
 # larger number of samples!
 # so to test and evalualte we always try celeba first
 # and then cifar10 if we like
-dataset_name = 'cifar10'
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -10205,7 +10205,9 @@ generator_stylegan1 = GeneratorStyleGAN1(z_size, w_size, max_steps, mn_nlayer,
 generator_stylegan1 = generator_stylegan1.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.003 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
+# 0.003 works great for fp32 but
+# for fp16 use smaller lrs like 0.001 otherwise we get nans!
+lr_d = 0.001 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
 # log:
 # -I faced mode collapse in 64x64, then I noticed the mapping network lr 
 # was too low(1.5e-7!). this is around 10,000 times smaller than the rest
@@ -10246,9 +10248,11 @@ lr_d = 0.003 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
 #  smaller batchsizes, lead to nans again, because of noisier gradients which ultimately
 #  required smaller lr (and optionally gradient clipping) to safely prevent the nans
 # 
-# we can use much larger lr than 0.0015 and get a much faster convergence
+# we can use much larger lr than 0.0015 
+# and get a much faster convergence
 # 0.003 works great with large batches!
-lr_g = 0.003#0.0015 is used for res>64
+# however use smaller lrs like 0.001 when doing fp16!
+lr_g = 0.001#0.0015 is used for res>64
 
 # update:
 #  made the lr 1000x larger than the normal case
@@ -10711,10 +10715,25 @@ training_loop_stylegan(discriminator_stylegan1,
 # - removed all casts, only r1_penalty needed to be done in fp32, so the rest of the 
 #   code isnt changed. this should now give us a bit more speed as unlike before,
 #   only r1_penalty part is done in fp32 not the whole discriminator's loss.
-#   also the speedup should be apparent in higher resolutions where gpu is more
-#   involved, in early resolutions the speedup isnt noticeable!
-#    
-# 
+#   the images are not looking good, at least as not as the fp32 counterpart.
+#   they are malformed, at least it seems it might need more epochs! the fp32
+#   is considerably better formed espcially in last 4~5 epochs of 32x32 res.
+#   also I have not noticed any drastic speedup ups until 64x64. at 64x64 each epoch
+#   takes 7mins to complete(in fp32 it takes 15mins)
+#
+# - a quick test on ffhq to affirm everything is working properly: faced nans in e10@4x4
+#   lowered the lr = 0.001 to get rid of it. his happenes probably because ffhq
+#   has a much more complex distirbution than cifar10, so earlyon we can get huge gradients
+#   even though we have semi large batches, however having large lr lick 0.003
+#   will cause issues as we said fp16 has quit limited range and can easily overflow
+#   add to that the adam optimizer.(sidenote cifar10 has more semantic complexity, i.e.
+#   more classes, but from pixel level complexity, ffhq is more complex.(the network 
+#   needs to get everything right for an image to look right, lighnig, textures,shapes, 
+#   statical corrolations between pixels,etc)
+#   otherwise we will reject the result as bad, however, in cifar10, even if the class
+#   in question, a dog e.g. is malformed, its still a dog and at that low resolution 
+#   we dont care much, details are limited compared to ffhq. so I guess thats the cause
+#   and we fixed the issue as well with lower lr!)
 # 
 # - cleanup comments/explanations in styleconvblock/generator/training section
 # - test latent space
