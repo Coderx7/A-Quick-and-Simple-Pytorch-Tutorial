@@ -9494,7 +9494,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         data_augmentation = checkpoint["data_augmentation"]
         normalize = checkpoint["normalize"]
         use_fp16 = checkpoint["use_fp16"]
-        use_fp16 = checkpoint["use_fp16"]
         starting_step = checkpoint["step"]
         last_training_step_counter = checkpoint["training_step_counter"]
         decay_step = checkpoint.get("decay_step", decay_step)
@@ -9513,9 +9512,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 
     # store training log for each step  
     all_training_losses = [[] for _ in range(max_steps)]
-    # all_gradient_penalties = [[] for _ in range(max_steps)]
   
     print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
+        
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
             f'\n  --From Step:             {starting_step}'
@@ -9549,6 +9548,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     print(f'--Checkpoint Directory:      {weights_save_dir}')
     print(f'--Images Directory:          {images_save_dir}')
     
+    if (use_fp16 and (lr_d>0.001 or lr_g>0.001)):
+        print(f"⚠️ Warning! ⚠️ Large LR({lr_d},{lr_g}) for FP16 can lead to Nan! Decrease it for a stable training!")
+        
     for step in range(starting_step, max_steps):
         if starting_epoch == 0:
             disc_optimizer = torch.optim.Adam(discriminator.parameters(),lr=lr_d, betas=betas_d)
@@ -10037,7 +10039,7 @@ dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=True
+use_fp16=False
 
 # original paper uses 512
 z_size = 512
@@ -10172,7 +10174,7 @@ else:
 #  I got great results with [8,16,32,32,64,64] with both 23/25m and 11m models
 #  see debug logs for more information
 #  for cifar10 we use more epochs for 32x32 [16,24,48,64,64,64]
-EPOCHS = [16,24,48,64,64,64]# [4,8,16,16,32,48]
+EPOCHS = [8,16,32,32,64,64]# [4,8,16,16,32,48]
 
 gen_update_interval = 1
 # no where in the paper or official code they apply
@@ -10207,7 +10209,7 @@ generator_stylegan1 = generator_stylegan1.to(device)
 betas = [0, 0.99]
 # 0.003 works great for fp32 but
 # for fp16 use smaller lrs like 0.001 otherwise we get nans!
-lr_d = 0.001 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
+lr_d = 0.003 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
 # log:
 # -I faced mode collapse in 64x64, then I noticed the mapping network lr 
 # was too low(1.5e-7!). this is around 10,000 times smaller than the rest
@@ -10252,7 +10254,7 @@ lr_d = 0.001 #0.0015 onlyfor res>64, 0.002 for res>256 and 0.003 for res> 512
 # and get a much faster convergence
 # 0.003 works great with large batches!
 # however use smaller lrs like 0.001 when doing fp16!
-lr_g = 0.001#0.0015 is used for res>64
+lr_g = 0.003#0.0015 is used for res>64
 
 # update:
 #  made the lr 1000x larger than the normal case
