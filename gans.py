@@ -9357,11 +9357,29 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     
     
     # softplus+r1_penalty, is a non-saturating loss, like WGAN-GP,
-    # softplus is a smoothed version of relu (i.e. log(1+exp(x))) and is not bounded,
+    # softplus itself is a smoothed version of relu (i.e. log(1+exp(x))) and is not bounded,
     # so we are basically getting raw outputs/logits so the output can get as large as
-    # it wants! the sofplus+r1_penalty like in wgangp is there so we dont face vanishing 
-    # gradients!(discriminator doesnt get too good too fast!) but not the exploding gradients!
-    # in fact its very susceptible to gradient explosion! so be aware of that! 
+    # it wants! 
+    # the sofplus+r1_penalty like in wgangp is there so we dont face vanishing/exploding 
+    # gradients! the softplus prevents the vanishing gradients, by being non-saturating
+    # but not the exploding gradients!
+    # in fact its very susceptible to gradient explosions because its unbounded!
+    # by switching to a non-saturating loss, the discriminator's output can grow indefinitly!
+    # (it can learn to produce huge scores for tiny changes in input images! be it real or fake
+    # for real huge positive scores, for fakes, huge negative scores!)
+    # which means the gradient of the discriminator with respect to its input becomes huge!
+    # all of this means, the discriminator acts as a massive amplifier! 
+    # so when the generator backpropagates its loss, this huge gradient amplifier causes the gradient
+    # signal to explode!
+    # thats when the r1_penalty term comes in. its job is to make sure discriminator doesnt 
+    # get too good too fast! therefore the discriminator itself rarely faces gradient explosion
+    # if at all but the generator on the other hand that only uses softplus(D(x)) is very 
+    # prune/susciptible to gradient explosions. see the explanations ahead.
+    #
+    # note:r1_penalty does its job by penalizing large gradients, effectively preventing 
+    # the discriminator's function from becoming too steep and therefore keeping
+    # the amplifying rate/gain low!)
+    
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
     # update:
     #  after adding fp16, I noticed r1_penalty needs to be done 
@@ -9386,16 +9404,42 @@ def generator_loss_stylegan1(d_preds_fake):
     # functions like BCE, that uses sigmoid, when the model gets good, (the real images e.g.)
     # it produces values very close to 0, so the the gradients become extremely tiny and 
     # therefore the generator cant improve with those tiny gradients. 
-    # on the otherhand, when we use non-saturating losses, that are not bounded,(like WGAN), 
+    # on the otherhand, when we use non-saturating losses, that are not bounded,(like softplus/WGAN), 
     # i.e. we dont use any activations for the final layer of discirminator, no sigmoid is used,
     # the network can learn to produce very large scores for the real images and very small
     # ones (i.e. very large negative numbers) for fake images! 
     # so when we calculate the generator's loss by softplus(-disc(fake_images)).mean() and 
     # the discriminator produces large negative numbers then the gradients will be massive 
     # as well! this will lead to gradient explosion!
+    #
     # note the softplus uses log, and any large number given to log will be small, so loss 
-    # itself isnt going to explode, however the gradient will! if we check gradient norm it will
-    # be very obvious. (try with large weight values and it will be very obvious)
+    # itself isnt going to explode, the gradient will! and its the generator that goes down
+    # the hill!(i.e. the explosion happens in the generator not the discriminator 
+    # because the gradient is propegated through several layers in the generator! more in a moment
+    # for example imagine this:
+    # if our discriminator is very good and assigns a large positive number to real images,
+    # i.e. D(fake_imgs)=40 the gradient of softplus(y) with respect to its input(y) will be 
+    # dLG/dsotfplus(y) = 1/(1+e^-y) or in other words simply sigmoid(y), now the gradients
+    # with respect to discriminator will be then be dLG/dD_fake = -simoid(-40) = -4*10^-18 essentially 0! 
+    # the gradient will be very tiny and its almost nothing! (if its dumb and assigns a large 
+    # if model wasnt good and produced a large positive number for fake images, then there 
+    # would be no issues again! cause the gradient would be nearly 0 and at most generator wouldnt
+    # change much) however, when the discriminator assignes a large negative number to fake images,
+    # confidently identifying it as fake, i.e. D(fake_images)=-40, we then have (dervaitive with
+    # respect to D): softplus(y)=(-(-40)) -> softplus(40) -> -sigmoid(40)=-1.
+    # now if we have lets say 10 layers, and imagine their weights to be a value like 3 for 
+    # the sake of our example, then we will have -1*3^10=-59049! when we reach the first layer!
+    # as you can see the gradient magnitude just exploded through several layers of multiplications! 
+    # 
+    # note:3^10 is just an analogy in place of the actual multiplications that happen after each layer
+    # 
+    # (note the sign doesnt matter here the magnitude does! when updating the weights,
+    # we move in the opposite direction of the gradients (i.e. delta_w=-lr*grad=0.001*(-59049)=~59 e.g.
+    # so w_new = w_old+delta_w! now the new weights will also start to get large(explode) and
+    # in the next forward pass cause the activations to explode and result in nans!
+    # this is why we cant have disc get good quickly at all, if it does, we can face gradient explosion!
+    # and vanishing gradient depending which will result in exploding gradient ultimately!
+    # 
     return F.softplus(-d_preds_fake).mean()
 
 # we have implemented the disc/gen
