@@ -10025,7 +10025,7 @@ def get_dataset_size(name,split='train'):
 #%%
 print(f'Training StyleGAN1')
 gamma=10#10
-# cifar10 is a lot harder than celeba. 
+# cifar10 is a lot harder than celeba
 # simply becasue its a small multiclass dataset
 # that has only 50k training samples. basically
 # 10k for every class which is very low to get decent
@@ -10035,7 +10035,7 @@ gamma=10#10
 # larger number of samples!
 # so to test and evalualte we always try celeba first
 # and then cifar10 if we like
-dataset_name = 'ffhq'
+dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -10366,7 +10366,7 @@ def decay_func(step):
 # at epoch 2 of 8x8 it suddenly goes all solid grays
 # up to that point (i.e. all 4x4s, up until epoch 2 of 8x8 it looked normal!
 # so update ema needs some work!
-use_ema_inference = False
+use_ema_inference = True
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan1.parameters(), lr=lr_d, betas=betas)
 # mapping network is already using 100 times smaller learnng rate
@@ -10399,12 +10399,235 @@ training_loop_stylegan(discriminator_stylegan1,
                      device=device,
                      resume=False,
                      use_ema_inference=use_ema_inference,
-                    #  ema_warmup_images_threshold=1_000_000,
+                     ema_warmup_images_threshold=1_000_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      decay_step=decay_step,
                      decay_func=decay_func)
+
+# - cleanup comments/explanations in styleconvblock/generator/training section
+# - test latent space
+#  
+# todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
+# celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
+# we can test them and hopefully get decent results (after we got the right
+# hyperparameters!)
+#
+
+#%%
+#%%
+# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
+checkpoint_path ="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt"
+checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+
+# checkpoint["decay_step"] = 2
+# checkpoint["channels_d"] = [512,512,512,512,32,16,16]
+# checkpoint["channels_g"] = [512,512,512,512,32,16,16]
+checkpoint["lr_g"] = [0.003,0.003]
+# checkpoint["lambda_factor"] = 10
+# # since we changed the epochs, lr_d/lr_g wont take effect and instead
+# # we need to change the optimizers lr!
+# checkpoint["data_augmentation"]=True
+# checkpoint["normalize"]=True
+# checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
+# checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
+# #%%
+# torch.save(checkpoint,checkpoint_path)
+print(f'-'*30)
+for k,v in checkpoint.items():
+    if not isinstance(v,dict):
+        print(f'{k:<15} {v}')
+    elif "param_groups" in v.keys():
+        print(f'{k:<15} {v["param_groups"]}')
+
+#%%
+# debug logs:
+# note I want to get this to work organically, 
+# that is just like the original paper. for that
+# reason we should be able to get a working example
+# with the same hyperparameters and only what is
+# said in the paper, so we are not going to do
+# anything extra, like noise addition that we did
+# in earlier gan experiments. for that reason I 
+# remove those options so we can only focus on 
+# getting to the root of the issues and hopefully
+# implement everything accuractely.
+# 
+# starting the training with fp32 we had a bug
+# which made our mapping network to have lr=1.5e-7
+# this lead to mode collapse in 64x64 as the generator
+# was far behind(slow compared to) dicriminator.
+# switched to fp16 so we can use larger batches.
+# using fp16 and lr=1.5e-5 lead to nans early on
+# to solve the issue we used larger eps for adams
+# it worked very well and we no more got any nans
+# the 16x16 res looked specially good. both of the
+# discriminator and generator losses were balanced
+# both were around 1. but switching to 32x32, the
+# discriminator got the lead (down to .7 vs 1.8 gen)
+# the 32x32 didnt become as good as I expected, it 
+# was blury I didnt like it. when it got to 64x64
+# the discriminator loss became 0.4 and generator
+# became 3. the images had clear artifacts and malformed
+# so next we are going to apply gradient clipping
+# before that though I'd like to train in fp32 to
+# see much of this comes from fp16 and how much from
+# the actual traiing!
+# update: faced mode collapse 0.4 vs 3.26! discriminaror
+# massivly does better than generator
+# update:
+# usef fp32 this time, and the loss didnt change, upto16²
+# everything is very good, but starting with 32² it becomes
+# bad and in 64² it becomes worse, the loss is like fp16
+# so the fp16 wasnt the issue.
+# update(stylegan1_celeba_20251030125518): 
+# reverted back the adam eps=1e-8 and instead used gradient clipping
+# as expected we no more get nans in 8x8 res like before, however
+# I noticed the loss for both discriminator and generator
+# is much larger (5.88 va 10.10 vs 0.7 vs 1.2 in 32²) the quality
+# of generation is also much worse! we also faced partial model collapse
+# as early as e16@32²!
+# update:(20251030161059)
+# trying with fp32 and mn_lr=1e-4:‌ up to 16x16 it went great
+# d_loss and g_loss both around 1 and overall images look good
+# however starting 32x32, d_loss=0.7 but g_loss=1.6, as expected
+# this didnt turn out any better either!
+# update(20251030201508):
+# trying with fp32 and mn_lr=1e-3: absolutely no difference! 32x32 disc
+# gets lower loss(0.76) and gloss goes 1.76! at e3 of 64x64 we faced
+# abnormally large gradients in mapping network (started as 114,125~164
+# in the next few epochs went up in thousands, by epoch12 it was in hunderds
+# of thousands (406k!) and by e16 it was in in millions(7m!) it became so bad
+# in epoch31 the gradient norm was 8.8239e+12! ) so the mn_lr=1e-3 is just 
+# too much.we need to dial it back to 1e-5 and see whats giving generator a
+# hard time here!
+# update(20251031065944):
+# I reread the paper and had another look at the official tf impl
+# there was no sign of scaling the r1_penalty, infact there was
+# not any intermittent appliance of r1_penalty! they applied it
+# normally! to test the effect however, I disabled the scaling by
+# iteration count, to see the effect on the training. 
+# in 8x8 the discriminator loss that used to be larger than generator
+# is now lower! in 16x16 epoch 0, many white dots artifact are vsibile
+# now that dont happen when we scale! also the d_loss is also much lower
+# than the generator, and g_loss went up(2.5)!(it used to be the same for both around 1.1!)
+# and obviously the image quality goes down hill!
+# so not applying the r1_penalty makes discriminator do better! 
+# and make gens work harder and hence do worse!
+# in other words, applying it less frequently even with scaling
+# can only keep up to 16x16, after than the discriminator overpwoers
+# the generator. so next we will apply r1_penalty all the time!
+# update(20251031082850):
+# did nothing! my understanding seems wrong! need to read the whole official imp
+# and see what im doing wrong!
+# update:
+# im trying different parts now. siwtched to cifar10 for quicker experiments
+# (20251031164619):
+# I swapped the EqualizedConv2d with the old one we had for progan, and trained
+# the results were very bad, many grayish images, especially at 32², the losses
+# however were pretty close , like 0.89/1.4 but the outcome was very noisy.
+# (20251031185610):
+# swapped back to our stylegan specific version and so far its much more colorful
+# clearer (even at 16²) the losses are close (1.15 vs 0.989 @16²)
+# but when it comes to 32² it becomes blurry and discriminator gets the lower loss(0.8vs1.59)
+# (20251031220917, 20251101072321):
+# use larger gamma to make disc struggle abit more so generator can breathe abit!
+# at larger res like 32x32: ok this didnt help at all we still face the same issue
+# this might be due to model capacity itself. that is we may have used too few channels
+# for later resolutions that requrie more processings! 
+# update(20251101094159):
+# so lets increase channel counts like the original paper: the problem still exists
+# I trained with more channels, with less channels and the problem still exists, starting
+# with 32x32 the disc just overwhelms the generator, its loss quickly (i.e. epoch0!) gets
+# down(0.7 vs 1.2). trained with cifar10, celeba didnt make any difference, they show the
+# same exact symtopm! 
+# update(stylegan1_celeba_20251102091252):
+# I noticed some implementations include a blur module (anti-aliasing) while the official imp
+# has it implemented but didnt use it if I recall correctly. this was meant to fix the checkerboard
+# issues that happens when we go into higher res where its prominent and disc can easily find it
+# and flag the images as fake! I used that but the still didnt change anything!
+# update(stylegan1_celeba_20251102123140):
+# I went back to the begining and changed the order of adaIn and lrelu in StyleConvBlock.
+# I swapped the ordr and im currently training again hope this fixes the issue!(blur is also active in this experiement)
+# update: it actually did work! now in 32x32, the d_loss is 1.35 vs g_loss=0.728!
+# so it was the damn order all this time!! the convergence is much much faster now! and
+# we achieve very low FID as well (29.54 in epoch7@32²!)given this I guess we can only
+# use way fewer epochs! starting with epoch 4 @64x64 we got warnings for grad_norms exceedingly
+# getting larger for mapping network! the loss was still not affected, but I ended the 
+# training at epoch 6 so I can address it properly. I previously had gradient_clipping
+# for fp16 trainig but commented it out because I used larger eps for adams to make it
+# stable. now I will uncommented it and enable it as default as fp32 also seems to require it
+# update:(cifar10_20251103154849):
+# training cfar10 with small number of epochs and channels. the model fails to properly
+# form images at higher resolutions.insufficient training at lower res(only 10 epochs for
+# early resolutions (4²,8²,16²) with insufficient channels made 32x32 completely fail although
+# the loss seems okayish! but its completely random blobs! if you look closer we can see
+# early res were developing good siluhetts, low res versions of images, but before they converge
+# we started the next resolution/fade in process which ruined everything.
+# update:(cifar10_20251103185721)
+# with more epochs and more channels for each res, we get a better result. early in 32x32 we
+# can see the same issue as before, temporarily the images turn into bloby mess, but given more
+# epochs, they get more formed into actual images. horses, cars, are more clearly formed.but
+# overall the quality isnot good. using larger batchisze, more data helps. also the discriminator
+# is struggling and this is why the quality is getting worse! the generator is overpowering
+# the discriminator. need to fix that to get decent images. however im really tired! and it
+# is taking too much time to train! 
+#update:(stylegan1_ffhq_20251104101011)
+# test last experiment with lrelu>adain (original order) with ffhq:didnt change, still at
+# 32x32 we faced eventual mode collpase because discrimnators loss was lower than generators
+# now at this point i guess its because of batchsize we are using, because the paper uses
+# small batches per gpu (16 x8gpus) the gradients get accumulated as if its batchsize=128
+# but layer wise its not the same. note we have minibatchstddev when we use smaller batchsize
+# the stats will be much noisier than we use batchsize=128. I guess the paper authors relied
+# on this and specifically chose smaller batchsizes for this exact reason.unlike previous gans
+# progressive gans are relient on these kind of noise for stabliziation I guess. 
+# lets check this again with smaller batch size(for now lets just use smaller batchsize
+# we dont accumulate gradients to mimic the x8 for now!)(update:wrong! the batchsize was ok! the issue is sth else)
+# update:(20251105054505)
+# use smaller batchsizes, drastically longer trainig epochs per res:
+# 
+# update: 
+# refactored code a bit trying a few more experiments before calling it a day for good!
+# experiment 1(stylegan1_celeba_20251106112914): fp32 - large batches
+# use original order + lower disc_channels + more gen_channels + more epochs per res
+# interestingly I started getting warnings(mapping_network_grad_norm exceeding 100)
+# at epoch 21 at 16x16 resolution. it got worse so much by epoch 26 we hit 3000+, i.e.
+# gradient explosion. a bit of digging and it seems the problem is not in the code but
+# the hyperparameters I used. this time around I made discrimnator much thinner than the
+# generator (11m vs 23m). it seems the discriminator got good really well at that point
+# and created a massive gradient feedback for the fake images, the gradients ended up at
+# mapping_network which we happen to check for and we see the warning. also starting with
+# this we see the d_loss is a bit lower than g_loss (1.02 vs 1.1945) and images are getting
+# worse, weird artifacts are visible, so this might be the reason! I let it train until we 
+# reach 32x32 to see how it ends up! it got worse at 32x32 from iteration 0 epoch 0! 
+# its now in 20ks!(update: wrong see later updates what was the cause there was actually a bug 
+# in code that manifested itself with the specific hyperparametrs like that)
+## quicknote:
+# we remember that previously we said when discriminator gets really good, the gradients vanish
+# not explode, and thats why generator cant improve, cuz it doesnt get proper feedback. 
+# but here we are saying the complete opposite. the reason we say this here is because 
+# this behavior depends on the loss function we use. if we use staurating loss functions
+# like bce, that use sigmoid, when the model gets good, (the real images e.g.) it gives
+# values very close to 0, so the the gradients become extremely tiny and therefore the
+# generator cant improve with those tiny gradients. on the otherhand, when we use other
+# types of losses, like WGAN, we dont use any activations for the final layer of discirminator
+# no sigmoid is used, so the network can learn to produce very large scores for the correct
+# images(real ones) and very small ones (large negative numbers), so when we calculate the
+# genertor loss by -d(fake_images).mean() and the disc produces large negative numbers then 
+# the gradients will be massive as well!
+# now the intersting part is, in stylegan1 we are using softplus+r1_penalty, which is a
+# non-saturating loss, that looks like the WGAN-GP. softplus is a smoothed version of relu
+# (i.e. log(1+exp(x))) and is not bounded, so we are basically getting raw outputs/logits 
+# so the output can get as large as it wants! the sofplus+r1_penalty like in wgangp is there so we 
+# dont face vanishing gradients!(discriminator doesnt get too good too fast!)
+# but not the exploding gradients! in fact its very susceptible to gradient explosion as we can see!
+#   
 # 
 # experiments results/weights are stored at https://mega.nz/folder/zRcUHSJR#kjV_qY5LuinhdwugJZYL0A
 # quicklog 
@@ -10477,7 +10700,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #   the training!
 #
 # stylegan1_ffhq_20251108110259:
-# - next use the samle lr(0.003) for mapping_network as well! first resume
+# - next use the same lr(0.003) for mapping_network as well! first resume
 #   ok no apparent change so far, might be because in previous epoch mapping
 #   network hasnt caught up yet due to slow update rate. lets start fresh
 #
@@ -10713,7 +10936,8 @@ training_loop_stylegan(discriminator_stylegan1,
 #   when we wrapped generator in autocast. now it trains well, the convergence is also
 #   much faster.next remove excessive casts and see which part specifically needs fp32 
 
-# 20251115214132/20251115223041:
+# stylegan1_cifar10_20251115214132/
+# stylegan1_cifar10_20251115223041:
 # - removed all casts, only r1_penalty needed to be done in fp32, so the rest of the 
 #   code isnt changed. this should now give us a bit more speed as unlike before,
 #   only r1_penalty part is done in fp32 not the whole discriminator's loss.
@@ -10737,218 +10961,7 @@ training_loop_stylegan(discriminator_stylegan1,
 #   we dont care much, details are limited compared to ffhq. so I guess thats the cause
 #   and we fixed the issue as well with lower lr!)
 # 
-# - cleanup comments/explanations in styleconvblock/generator/training section
-# - test latent space
-#  
-# todo: remember to include dataset sizes e.g. celeba_hq is only 30K highres
-# celeba is around 200k, and ffhq_128 is around 70k. we have all of them so 
-# we can test them and hopefully get decent results (after we got the right
-# hyperparameters!)
-#
-# todo test with cifar10 without augmentation and with augmentation to get a good idea
-# about the dataset size effect (is 10k enough for each class or not)
-#
-# todo: re-enable autocast or completely remove it 
-#
-# if not we impl lazi penalty
-# if not we increase gamma=20
-# if not we increase lr=0.002 so gen can quickly update
-# do conv/lrelu/noise/adain and see how it does!
 
-#%%
-#%%
-# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
-checkpoint_path ="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt"
-checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
-
-# checkpoint["decay_step"] = 2
-# checkpoint["channels_d"] = [512,512,512,512,32,16,16]
-# checkpoint["channels_g"] = [512,512,512,512,32,16,16]
-checkpoint["lr_g"] = [0.003,0.003]
-# checkpoint["lambda_factor"] = 10
-# # since we changed the epochs, lr_d/lr_g wont take effect and instead
-# # we need to change the optimizers lr!
-# checkpoint["data_augmentation"]=True
-# checkpoint["normalize"]=True
-# checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
-# checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
-# #%%
-# torch.save(checkpoint,checkpoint_path)
-print(f'-'*30)
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
-
-#%%
-# debug logs:
-# note I want to get this to work organically, 
-# that is just like the original paper. for that
-# reason we should be able to get a working example
-# with the same hyperparameters and only what is
-# said in the paper, so we are not going to do
-# anything extra, like noise addition that we did
-# in earlier gan experiments. for that reason I 
-# remove those options so we can only focus on 
-# getting to the root of the issues and hopefully
-# implement everything accuractely.
-# 
-# starting the training with fp32 we had a bug
-# which made our mapping network to have lr=1.5e-7
-# this lead to mode collapse in 64x64 as the generator
-# was far behind(slow compared to) dicriminator.
-# switched to fp16 so we can use larger batches.
-# using fp16 and lr=1.5e-5 lead to nans early on
-# to solve the issue we used larger eps for adams
-# it worked very well and we no more got any nans
-# the 16x16 res looked specially good. both of the
-# discriminator and generator losses were balanced
-# both were around 1. but switching to 32x32, the
-# discriminator got the lead (down to .7 vs 1.8 gen)
-# the 32x32 didnt become as good as I expected, it 
-# was blury I didnt like it. when it got to 64x64
-# the discriminator loss became 0.4 and generator
-# became 3. the images had clear artifacts and malformed
-# so next we are going to apply gradient clipping
-# before that though I'd like to train in fp32 to
-# see much of this comes from fp16 and how much from
-# the actual traiing!
-# update: faced mode collapse 0.4 vs 3.26! discriminaror
-# massivly does better than generator
-# update:
-# usef fp32 this time, and the loss didnt change, upto16²
-# everything is very good, but starting with 32² it becomes
-# bad and in 64² it becomes worse, the loss is like fp16
-# so the fp16 wasnt the issue.
-# update(stylegan1_celeba_20251030125518): 
-# reverted back the adam eps=1e-8 and instead used gradient clipping
-# as expected we no more get nans in 8x8 res like before, however
-# I noticed the loss for both discriminator and generator
-# is much larger (5.88 va 10.10 vs 0.7 vs 1.2 in 32²) the quality
-# of generation is also much worse! we also faced partial model collapse
-# as early as e16@32²!
-# update:(20251030161059)
-# trying with fp32 and mn_lr=1e-4:‌ up to 16x16 it went great
-# d_loss and g_loss both around 1 and overall images look good
-# however starting 32x32, d_loss=0.7 but g_loss=1.6, as expected
-# this didnt turn out any better either!
-# update(20251030201508):
-# trying with fp32 and mn_lr=1e-3: absolutely no difference! 32x32 disc
-# gets lower loss(0.76) and gloss goes 1.76! at e3 of 64x64 we faced
-# abnormally large gradients in mapping network (started as 114,125~164
-# in the next few epochs went up in thousands, by epoch12 it was in hunderds
-# of thousands (406k!) and by e16 it was in in millions(7m!) it became so bad
-# in epoch31 the gradient norm was 8.8239e+12! ) so the mn_lr=1e-3 is just 
-# too much.we need to dial it back to 1e-5 and see whats giving generator a
-# hard time here!
-# update(20251031065944):
-# I reread the paper and had another look at the official tf impl
-# there was no sign of scaling the r1_penalty, infact there was
-# not any intermittent appliance of r1_penalty! they applied it
-# normally! to test the effect however, I disabled the scaling by
-# iteration count, to see the effect on the training. 
-# in 8x8 the discriminator loss that used to be larger than generator
-# is now lower! in 16x16 epoch 0, many white dots artifact are vsibile
-# now that dont happen when we scale! also the d_loss is also much lower
-# than the generator, and g_loss went up(2.5)!(it used to be the same for both around 1.1!)
-# and obviously the image quality goes down hill!
-# so not applying the r1_penalty makes discriminator do better! 
-# and make gens work harder and hence do worse!
-# in other words, applying it less frequently even with scaling
-# can only keep up to 16x16, after than the discriminator overpwoers
-# the generator. so next we will apply r1_penalty all the time!
-# update(20251031082850):
-# did nothing! my understanding seems wrong! need to read the whole official imp
-# and see what im doing wrong!
-# update:
-# im trying different parts now. siwtched to cifar10 for quicker experiments
-# (20251031164619):
-# I swapped the EqualizedConv2d with the old one we had for progan, and trained
-# the results were very bad, many grayish images, especially at 32², the losses
-# however were pretty close , like 0.89/1.4 but the outcome was very noisy.
-# (20251031185610):
-# swapped back to our stylegan specific version and so far its much more colorful
-# clearer (even at 16²) the losses are close (1.15 vs 0.989 @16²)
-# but when it comes to 32² it becomes blurry and discriminator gets the lower loss(0.8vs1.59)
-# (20251031220917, 20251101072321):
-# use larger gamma to make disc struggle abit more so generator can breathe abit!
-# at larger res like 32x32: ok this didnt help at all we still face the same issue
-# this might be due to model capacity itself. that is we may have used too few channels
-# for later resolutions that requrie more processings! 
-# update(20251101094159):
-# so lets increase channel counts like the original paper: the problem still exists
-# I trained with more channels, with less channels and the problem still exists, starting
-# with 32x32 the disc just overwhelms the generator, its loss quickly (i.e. epoch0!) gets
-# down(0.7 vs 1.2). trained with cifar10, celeba didnt make any difference, they show the
-# same exact symtopm! 
-# update(stylegan1_celeba_20251102091252):
-# I noticed some implementations include a blur module (anti-aliasing) while the official imp
-# has it implemented but didnt use it if I recall correctly. this was meant to fix the checkerboard
-# issues that happens when we go into higher res where its prominent and disc can easily find it
-# and flag the images as fake! I used that but the still didnt change anything!
-# update(stylegan1_celeba_20251102123140):
-# I went back to the begining and changed the order of adaIn and lrelu in StyleConvBlock.
-# I swapped the ordr and im currently training again hope this fixes the issue!(blur is also active in this experiement)
-# update: it actually did work! now in 32x32, the d_loss is 1.35 vs g_loss=0.728!
-# so it was the damn order all this time!! the convergence is much much faster now! and
-# we achieve very low FID as well (29.54 in epoch7@32²!)given this I guess we can only
-# use way fewer epochs! starting with epoch 4 @64x64 we got warnings for grad_norms exceedingly
-# getting larger for mapping network! the loss was still not affected, but I ended the 
-# training at epoch 6 so I can address it properly. I previously had gradient_clipping
-# for fp16 trainig but commented it out because I used larger eps for adams to make it
-# stable. now I will uncommented it and enable it as default as fp32 also seems to require it
-# update:(cifar10_20251103154849):
-# training cfar10 with small number of epochs and channels. the model fails to properly
-# form images at higher resolutions.insufficient training at lower res(only 10 epochs for
-# early resolutions (4²,8²,16²) with insufficient channels made 32x32 completely fail although
-# the loss seems okayish! but its completely random blobs! if you look closer we can see
-# early res were developing good siluhetts, low res versions of images, but before they converge
-# we started the next resolution/fade in process which ruined everything.
-# update:(cifar10_20251103185721)
-# with more epochs and more channels for each res, we get a better result. early in 32x32 we
-# can see the same issue as before, temporarily the images turn into bloby mess, but given more
-# epochs, they get more formed into actual images. horses, cars, are more clearly formed.but
-# overall the quality isnot good. using larger batchisze, more data helps. also the discriminator
-# is struggling and this is why the quality is getting worse! the generator is overpowering
-# the discriminator. need to fix that to get decent images. however im really tired! and it
-# is taking too much time to train! 
-#update:(stylegan1_ffhq_20251104101011)
-# test last experiment with lrelu>adain (original order) with ffhq:didnt change, still at
-# 32x32 we faced eventual mode collpase because discrimnators loss was lower than generators
-# now at this point i guess its because of batchsize we are using, because the paper uses
-# small batches per gpu (16 x8gpus) the gradients get accumulated as if its batchsize=128
-# but layer wise its not the same. note we have minibatchstddev when we use smaller batchsize
-# the stats will be much noisier than we use batchsize=128. I guess the paper authors relied
-# on this and specifically chose smaller batchsizes for this exact reason.unlike previous gans
-# progressive gans are relient on these kind of noise for stabliziation I guess. 
-# lets check this again with smaller batch size(for now lets just use smaller batchsize
-# we dont accumulate gradients to mimic the x8 for now!)(update:wrong! the batchsize was ok! the issue is sth else)
-# update:(20251105054505)
-# use smaller batchsizes, drastically longer trainig epochs per res:
-# 
-# update: 
-# refactored code a bit trying a few more experiments before calling a day for good!
-# experiment 1(stylegan1_celeba_20251106112914): fp32 - large batches
-# use original order + lower disc_channels + more gen_channels + more epochs per res
-# interstingly I started getting warnings(mapping_network_grad_norm exceeding 100)
-# at epoch 21 at 16x16 resolution. it got worse so much by epoch 26 we hit 3000+, i.e.
-# gradient explosion. a bit of digging and it seems the problem is not in the code but
-# the hyperparameters I used. this time around I made discrimnator much thinner than the
-# generator (11m vs 23m). it seems the discriminator got good really well at that point
-# and created a massive gradient feedback for the fake images, the gradients ended up at
-# mapping_network which we happen to check for and we see the warning. also starting with
-# this we see the d_loss be a bit lower than g_loss (1.02 vs 1.1945) and images are getting
-# worse, weird artifacts are visible, so this might be the reason I let it train until we 
-# reach 32x32 to see how it ends up! it got worse at 32x32 from iteration 0 epoch 0! its now 
-# in 20ks!(wrong see later updates what was the cause there was actually a bug in code that
-# manifested itself with the specific hyperparametrs like that)
-#
 #%%
 # Stylegan2/3?
 #%%
