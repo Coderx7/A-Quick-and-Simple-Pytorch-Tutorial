@@ -9355,17 +9355,13 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     # softplus is log(1+exp(x)) but since pytorch offers a numerically
     # stable version, we use the builtin one
     
-    # we can do this in the actual trainig loop, so we dont do this twice!
-    # think about it, the only worry is vram usage because of x_real.requires_grad_(True)
-    # I guess having this done only once is less headcahe and much clearer
-    # so we enable x_real.requires_grad(True) in the actual training loop itself!
-    # ultimately we may endup going fp16 if vram usage becomes too much for us
     
-    # our inputs are detached leaf nodes that dont have gradients by default
-    # the autograd system doesnt track gradients for them, so to get gradients,
-    # we need to enable their gradients 
-    # x_real.requires_grad_(True)
-    
+    # softplus+r1_penalty, is a non-saturating loss, like WGAN-GP,
+    # softplus is a smoothed version of relu (i.e. log(1+exp(x))) and is not bounded,
+    # so we are basically getting raw outputs/logits so the output can get as large as
+    # it wants! the sofplus+r1_penalty like in wgangp is there so we dont face vanishing 
+    # gradients!(discriminator doesnt get too good too fast!) but not the exploding gradients!
+    # in fact its very susceptible to gradient explosion! so be aware of that! 
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
     # update:
     #  after adding fp16, I noticed r1_penalty needs to be done 
@@ -9377,6 +9373,29 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
 
 def generator_loss_stylegan1(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
+    
+    # sidenote from future/reminder:
+    # I originally wrote this for dbeug log when I faced gradient explosion at some point
+    # but I thought having it here as a reminder works better so here it is:
+    #
+    # note, softplus is a non-saturating loss, just like the wgan/wgangp loss.
+    # this matters because in our previous experiments we saw when discriminator gets really 
+    # good, the gradients vanish and thats why generator cant improve, cuz it doesnt get 
+    # proper feedback. 
+    # however this behavior depends on the loss function we use. if we use a staurating loss
+    # functions like BCE, that uses sigmoid, when the model gets good, (the real images e.g.)
+    # it produces values very close to 0, so the the gradients become extremely tiny and 
+    # therefore the generator cant improve with those tiny gradients. 
+    # on the otherhand, when we use non-saturating losses, that are not bounded,(like WGAN), 
+    # i.e. we dont use any activations for the final layer of discirminator, no sigmoid is used,
+    # the network can learn to produce very large scores for the real images and very small
+    # ones (i.e. very large negative numbers) for fake images! 
+    # so when we calculate the generator's loss by softplus(-disc(fake_images)).mean() and 
+    # the discriminator produces large negative numbers then the gradients will be massive 
+    # as well! this will lead to gradient explosion!
+    # note the softplus uses log, and any large number given to log will be small, so loss 
+    # itself isnt going to explode, however the gradient will! if we check gradient norm it will
+    # be very obvious. (try with large weight values and it will be very obvious)
     return F.softplus(-d_preds_fake).mean()
 
 # we have implemented the disc/gen
@@ -9614,6 +9633,9 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 
                 imgs_real = imgs_real.to(device)
                 # enable gradients for the images
+                # our inputs are detached leaf nodes that dont have gradients by default
+                # the autograd system doesnt track gradients for them, so to get gradients,
+                # we need to enable their gradients
                 imgs_real.requires_grad_(True)
                 
                 #scale input to [-1,1]
