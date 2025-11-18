@@ -10494,34 +10494,81 @@ training_loop_stylegan(discriminator_stylegan1,
 
 #%%
 #%%
-# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
-checkpoint_path ="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt"
-checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
+def change_checkpoint_fields(checkpoint_path, updated_fields, display_fields=True, save=False):
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    
+    if display_fields:
+        print(f'Read checkpoint:')
+        for k,v in checkpoint.items():
+            if not isinstance(v,dict):
+                print(f'{k:<15} {v}')
+            elif "param_groups" in v.keys():
+                print(f'{k:<15} {v["param_groups"]}')
 
-# checkpoint["decay_step"] = 2
-# checkpoint["channels_d"] = [512,512,512,512,32,16,16]
-# checkpoint["channels_g"] = [512,512,512,512,32,16,16]
-checkpoint["lr_g"] = [0.003,0.003]
-# checkpoint["lambda_factor"] = 10
-# # since we changed the epochs, lr_d/lr_g wont take effect and instead
-# # we need to change the optimizers lr!
-# checkpoint["data_augmentation"]=True
-# checkpoint["normalize"]=True
-# checkpoint["disc_optimizer"]["param_groups"][0]["lr"] = 0.00004
-# checkpoint["gen_optimizer"]["param_groups"][0]["lr"] = 0.000042
-# #%%
-# torch.save(checkpoint,checkpoint_path)
-print(f'-'*30)
-for k,v in checkpoint.items():
-    if not isinstance(v,dict):
-        print(f'{k:<15} {v}')
-    elif "param_groups" in v.keys():
-        print(f'{k:<15} {v["param_groups"]}')
+    for k,v in updated_fields.items():
+        checkpoint[k] = v
+    
+    if display_fields:
+        print('#'*30)
+        print('Updated Checkpoint:')
+        for k,v in checkpoint.items():
+            if not isinstance(v,dict):
+                print(f'{k:<15} {v}')
+            elif "param_groups" in v.keys():
+                print(f'{k:<15} {v["param_groups"]}')
+    
+    if save:
+        torch.save(checkpoint,checkpoint_path)
+        print(f'new checkpoint saved to disk!')
+    
+    return checkpoint
+    
+# change some paratemers during experimental resumes!(like add more epochs, change lambda_factor, etc)
+# checkpoint_path ="./weights/gan/stylegan1_ffhq_20251113102258/checkpoint_step_4_20251113102258.ckpt"
+# updated_fields = {"data_augmentation":True,
+#                   "normalize":True}
+# chkpnt = change_checkpoint_fields(checkpoint_path, updated_fields,
+#                                   display_fields=True, 
+#                                   save=False)
+#%%
+def load_checkpoints(checkpoint_path, device="cuda"):
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    dataset_name = checkpoint["dataset_name"]
+    last_step = checkpoint["step"]
+    FID_score = checkpoint["FID"]
+    
+    z_size = checkpoint["z_size"]
+    w_size = checkpoint["w_size"]
+    max_steps = checkpoint["max_steps"]
+    mn_layers = checkpoint["mn_nlayer"]
+    channels = checkpoint["channels_g"]
+    style_mix = checkpoint["style_mixing_prob"]
+    swap_ordr = checkpoint["swap_adaIN_order"]
+    ema_wb = checkpoint["ema_w_beta"]
+        
+    generator_st1 = GeneratorStyleGAN1(z_size, w_size,max_steps,mn_layers,channels, style_mix, ema_wb, swap_ordr)
+    generator_st1.load_state_dict(checkpoint["gen_state_dict"])
+    generator_st1 = generator_st1.eval()
+    generator_st1 = generator_st1.to(device)
+
+    print(f'Loading checkpoint for {dataset_name} @ step={last_step} FID={FID_score}')
+    return generator_st1, last_step
+
+device = 'cuda'
+num_samples=36
+checkpoint_path = './weights/gan/stylegan1_ffhq_20251110095733/checkpoint_step_4_20251110095733.ckpt'
+generator_style1, last_step = load_checkpoints(checkpoint_path, device='cuda')
+
+z = torch.randn((num_samples, generator_style1.z_size), device=device)
+dim = 2**(last_step+1)
+res=f"{dim}x{dim}"
+with torch.no_grad():
+    imgs = generator_style1(z, alpha=1, step=last_step, psi=0.7)
+    display_images(imgs, 
+                   cols=6, 
+                   title=f'Step {last_step} [{res}]',
+                   unnormalize=True, 
+                   figsize=(16,8))
 
 #%%
 # debug logs:
