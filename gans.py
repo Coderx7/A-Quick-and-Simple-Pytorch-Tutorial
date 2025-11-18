@@ -9327,7 +9327,18 @@ for i in range(0,max_steps):
 # the mixing regularization and the loss function
 def r1_penalty(d_preds, x_real, gamma=10):
     assert x_real.requires_grad, 'discriminators inputs(x_real) must have requires_grad enabled!'
-    #sidenote:
+    
+    # here we are going to penalize large gradients this will effectively preventing 
+    # the gradients from exploding. the idea is, since we are using a non-saturing loss
+    # and we dont limit the discriminator;s output, discriminator can produce infintly large
+    # scores. this will therefore result in huge gradients and later gradient explosion.
+    # to fix this we simply try to prevent the gradient from getting too large, 
+    # or in other words prevent the discriminator's function from becoming too steep
+    # and therefore keeping its amplifying rate/gain low! when we do that, in effect it
+    # will slow down the discriminator's learning, so it effectively prevents the discriminator
+    # from becoming too good too fast!
+    # 
+    # sidenote:
     # we can do d_preds.sum() and remove torch.ones_like(d_preds) below
     # .sum() aggregates the discriminators outputs into a scaler 
     # and tells the grad() what to differntiate. sum as you recall distributes
@@ -9356,30 +9367,28 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     # stable version, we use the builtin one
     
     
-    # softplus+r1_penalty, is a non-saturating loss, like WGAN-GP,
-    # softplus itself is a smoothed version of relu (i.e. log(1+exp(x))) and is not bounded,
-    # so we are basically getting raw outputs/logits so the output can get as large as
-    # it wants! 
-    # the sofplus+r1_penalty like in wgangp is there so we dont face vanishing/exploding 
+    # softplus, is a non-saturating loss, like WGAN/GP. it is a smoothed version of
+    # relu (i.e. log(1+exp(x))) and is not bounded, so we are basically getting raw
+    # outputs/logits so the output can get as large as it wants!
+    # 
+    # the sofplus+r1_penalty is there so we dont face vanishing/exploding
     # gradients! the softplus prevents the vanishing gradients, by being non-saturating
     # but not the exploding gradients!
-    # in fact its very susceptible to gradient explosions because its unbounded!
+    # in fact because its unbounded its very susceptible to gradient explosions!
     # by switching to a non-saturating loss, the discriminator's output can grow indefinitly!
     # (it can learn to produce huge scores for tiny changes in input images! be it real or fake
     # for real huge positive scores, for fakes, huge negative scores!)
     # which means the gradient of the discriminator with respect to its input becomes huge!
     # all of this means, the discriminator acts as a massive amplifier! 
-    # so when the generator backpropagates its loss, this huge gradient amplifier causes the gradient
-    # signal to explode!
-    # thats when the r1_penalty term comes in. its job is to make sure discriminator doesnt 
-    # get too good too fast! therefore the discriminator itself rarely faces gradient explosion
-    # if at all but the generator on the other hand that only uses softplus(D(x)) is very 
-    # prune/susciptible to gradient explosions. see the explanations ahead.
+    # so when the generator backpropagates its loss, our discriminator which acts as this
+    # huge gradient amplifier causes the gradient signal to explode!
+    # 
+    # to fix the explosion part we use the r1_penalty term. its job is to make sure 
+    # discriminator doesnt get too good too fast! therefore the discriminator itself
+    # rarely faces gradient explosion if at all but the generator on the other hand 
+    # that only uses softplus(D(x)) is very prune/susciptible to gradient explosions.
+    # see the explanations ahead.
     #
-    # note:r1_penalty does its job by penalizing large gradients, effectively preventing 
-    # the discriminator's function from becoming too steep and therefore keeping
-    # the amplifying rate/gain low!)
-    
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
     # update:
     #  after adding fp16, I noticed r1_penalty needs to be done 
@@ -9415,13 +9424,14 @@ def generator_loss_stylegan1(d_preds_fake):
     # note the softplus uses log, and any large number given to log will be small, so loss 
     # itself isnt going to explode, the gradient will! and its the generator that goes down
     # the hill!(i.e. the explosion happens in the generator not the discriminator 
-    # because the gradient is propegated through several layers in the generator! more in a moment
+    # because the gradient is propegated through several layers in the generator! because of 
+    # repeated multiplications that follow!
     # for example imagine this:
     # if our discriminator is very good and assigns a large positive number to real images,
     # i.e. D(fake_imgs)=40 the gradient of softplus(y) with respect to its input(y) will be 
     # dLG/dsotfplus(y) = 1/(1+e^-y) or in other words simply sigmoid(y), now the gradients
-    # with respect to discriminator will be then be dLG/dD_fake = -simoid(-40) = -4*10^-18 essentially 0! 
-    # the gradient will be very tiny and its almost nothing! (if its dumb and assigns a large 
+    # with respect to discriminator will be dLG/dD_fake = -simoid(-40) = -4*10^-18 essentially 0!
+    # the gradient will be very tiny and its almost nothing!  
     # if model wasnt good and produced a large positive number for fake images, then there 
     # would be no issues again! cause the gradient would be nearly 0 and at most generator wouldnt
     # change much) however, when the discriminator assignes a large negative number to fake images,
@@ -9432,6 +9442,7 @@ def generator_loss_stylegan1(d_preds_fake):
     # as you can see the gradient magnitude just exploded through several layers of multiplications! 
     # 
     # note:3^10 is just an analogy in place of the actual multiplications that happen after each layer
+    # because that would also grow exponentially, I simply replaced it with an example with exponential growth like that!
     # 
     # (note the sign doesnt matter here the magnitude does! when updating the weights,
     # we move in the opposite direction of the gradients (i.e. delta_w=-lr*grad=0.001*(-59049)=~59 e.g.
