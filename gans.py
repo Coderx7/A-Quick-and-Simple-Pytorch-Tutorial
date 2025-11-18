@@ -10556,13 +10556,16 @@ for k,v in checkpoint.items():
 # before that though I'd like to train in fp32 to
 # see much of this comes from fp16 and how much from
 # the actual traiing!
+# 
 # update: faced mode collapse 0.4 vs 3.26! discriminaror
 # massivly does better than generator
+# 
 # update:
 # usef fp32 this time, and the loss didnt change, upto16²
 # everything is very good, but starting with 32² it becomes
 # bad and in 64² it becomes worse, the loss is like fp16
 # so the fp16 wasnt the issue.
+# 
 # update(stylegan1_celeba_20251030125518): 
 # reverted back the adam eps=1e-8 and instead used gradient clipping
 # as expected we no more get nans in 8x8 res like before, however
@@ -10570,11 +10573,13 @@ for k,v in checkpoint.items():
 # is much larger (5.88 va 10.10 vs 0.7 vs 1.2 in 32²) the quality
 # of generation is also much worse! we also faced partial model collapse
 # as early as e16@32²!
+# 
 # update:(20251030161059)
 # trying with fp32 and mn_lr=1e-4:‌ up to 16x16 it went great
 # d_loss and g_loss both around 1 and overall images look good
 # however starting 32x32, d_loss=0.7 but g_loss=1.6, as expected
 # this didnt turn out any better either!
+# 
 # update(20251030201508):
 # trying with fp32 and mn_lr=1e-3: absolutely no difference! 32x32 disc
 # gets lower loss(0.76) and gloss goes 1.76! at e3 of 64x64 we faced
@@ -10584,6 +10589,7 @@ for k,v in checkpoint.items():
 # in epoch31 the gradient norm was 8.8239e+12! ) so the mn_lr=1e-3 is just 
 # too much.we need to dial it back to 1e-5 and see whats giving generator a
 # hard time here!
+# 
 # update(20251031065944):
 # I reread the paper and had another look at the official tf impl
 # there was no sign of scaling the r1_penalty, infact there was
@@ -10600,38 +10606,47 @@ for k,v in checkpoint.items():
 # in other words, applying it less frequently even with scaling
 # can only keep up to 16x16, after than the discriminator overpwoers
 # the generator. so next we will apply r1_penalty all the time!
+# 
 # update(20251031082850):
 # did nothing! my understanding seems wrong! need to read the whole official imp
 # and see what im doing wrong!
+# 
 # update:
 # im trying different parts now. siwtched to cifar10 for quicker experiments
+# 
 # (20251031164619):
 # I swapped the EqualizedConv2d with the old one we had for progan, and trained
 # the results were very bad, many grayish images, especially at 32², the losses
 # however were pretty close , like 0.89/1.4 but the outcome was very noisy.
+# 
 # (20251031185610):
 # swapped back to our stylegan specific version and so far its much more colorful
 # clearer (even at 16²) the losses are close (1.15 vs 0.989 @16²)
 # but when it comes to 32² it becomes blurry and discriminator gets the lower loss(0.8vs1.59)
+# 
 # (20251031220917, 20251101072321):
 # use larger gamma to make disc struggle abit more so generator can breathe abit!
 # at larger res like 32x32: ok this didnt help at all we still face the same issue
 # this might be due to model capacity itself. that is we may have used too few channels
 # for later resolutions that requrie more processings! 
+# 
 # update(20251101094159):
 # so lets increase channel counts like the original paper: the problem still exists
 # I trained with more channels, with less channels and the problem still exists, starting
 # with 32x32 the disc just overwhelms the generator, its loss quickly (i.e. epoch0!) gets
 # down(0.7 vs 1.2). trained with cifar10, celeba didnt make any difference, they show the
 # same exact symtopm! 
+# 
 # update(stylegan1_celeba_20251102091252):
 # I noticed some implementations include a blur module (anti-aliasing) while the official imp
 # has it implemented but didnt use it if I recall correctly. this was meant to fix the checkerboard
 # issues that happens when we go into higher res where its prominent and disc can easily find it
 # and flag the images as fake! I used that but the still didnt change anything!
+# 
 # update(stylegan1_celeba_20251102123140):
 # I went back to the begining and changed the order of adaIn and lrelu in StyleConvBlock.
 # I swapped the ordr and im currently training again hope this fixes the issue!(blur is also active in this experiement)
+# 
 # update: it actually did work! now in 32x32, the d_loss is 1.35 vs g_loss=0.728!
 # so it was the damn order all this time!! the convergence is much much faster now! and
 # we achieve very low FID as well (29.54 in epoch7@32²!)given this I guess we can only
@@ -10639,6 +10654,7 @@ for k,v in checkpoint.items():
 # getting larger for mapping network! the loss was still not affected, but I ended the 
 # training at epoch 6 so I can address it properly. I previously had gradient_clipping
 # for fp16 trainig but commented it out because I used larger eps for adams to make it
+# 
 # stable. now I will uncommented it and enable it as default as fp32 also seems to require it
 # update:(cifar10_20251103154849):
 # training cfar10 with small number of epochs and channels. the model fails to properly
@@ -10647,6 +10663,7 @@ for k,v in checkpoint.items():
 # the loss seems okayish! but its completely random blobs! if you look closer we can see
 # early res were developing good siluhetts, low res versions of images, but before they converge
 # we started the next resolution/fade in process which ruined everything.
+# 
 # update:(cifar10_20251103185721)
 # with more epochs and more channels for each res, we get a better result. early in 32x32 we
 # can see the same issue as before, temporarily the images turn into bloby mess, but given more
@@ -10655,7 +10672,8 @@ for k,v in checkpoint.items():
 # is struggling and this is why the quality is getting worse! the generator is overpowering
 # the discriminator. need to fix that to get decent images. however im really tired! and it
 # is taking too much time to train! 
-#update:(stylegan1_ffhq_20251104101011)
+#
+# update:(stylegan1_ffhq_20251104101011)
 # test last experiment with lrelu>adain (original order) with ffhq:didnt change, still at
 # 32x32 we faced eventual mode collpase because discrimnators loss was lower than generators
 # now at this point i guess its because of batchsize we are using, because the paper uses
@@ -10685,7 +10703,7 @@ for k,v in checkpoint.items():
 # reach 32x32 to see how it ends up! it got worse at 32x32 from iteration 0 epoch 0! 
 # its now in 20ks!(update: wrong see later updates what was the cause there was actually a bug 
 # in code that manifested itself with the specific hyperparametrs like that)
-## quicknote:
+# quicknote:
 # we remember that previously we said when discriminator gets really good, the gradients vanish
 # not explode, and thats why generator cant improve, cuz it doesnt get proper feedback. 
 # but here we are saying the complete opposite. the reason we say this here is because 
@@ -10701,10 +10719,12 @@ for k,v in checkpoint.items():
 # now the intersting part is, in stylegan1 we are using softplus+r1_penalty, which is a
 # non-saturating loss, that looks like the WGAN-GP. softplus is a smoothed version of relu
 # (i.e. log(1+exp(x))) and is not bounded, so we are basically getting raw outputs/logits 
-# so the output can get as large as it wants! the sofplus+r1_penalty like in wgangp is there so we 
+# so the output can get as large as it wants! the sofplus like in wgangp is there so we 
 # dont face vanishing gradients!(discriminator doesnt get too good too fast!)
-# but not the exploding gradients! in fact its very susceptible to gradient explosion as we can see!
-#   
+# but not the exploding gradients! in fact its very susceptible to gradient explosion
+# to fix that r_penalty is used. but the generator doesnt use that term so it faces explosion
+# as we can see! (update the loss functions with new information, can remove this explanation)
+# 
 # 
 # experiments results/weights are stored at https://mega.nz/folder/zRcUHSJR#kjV_qY5LuinhdwugJZYL0A
 # quicklog 
