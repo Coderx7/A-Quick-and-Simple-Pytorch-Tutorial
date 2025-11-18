@@ -1047,13 +1047,13 @@ np.random.seed(66)
 random_gen = torch.manual_seed(66)
 
 @torch.no_grad()
-def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8):
+def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8, **kwargs):
     generator.eval()
     alphas = torch.linspace(0, 1, steps)
     grids = []
     for a in alphas:
         z_interp = (1-a)*z1 + a*z2 + eps
-        imgs = generator(z_interp)
+        imgs = generator(z_interp,**kwargs)
         imgs_grid = torch.cat((*imgs,), dim=1)
         # print(f'{imgs_grid.shape=}')
         grids.append(imgs_grid)
@@ -1178,7 +1178,7 @@ z_attr2 = z_attr2_all[ids]
 
 #%%
 @torch.no_grad()
-def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values,ncols=8):
+def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_base, alpha_values,ncols=8,**kwargs):
     # if its a single example, add batch dim
     if z_base.ndim==1:
         z_base.unsqueeze_(0)
@@ -1206,7 +1206,10 @@ def latent_arithmetic_unconditional(generator, z_with_attr, z_without_attr, z_ba
         # we only scale that direction by multiplying it exclusively
         z_new = z_base + (alpha * direction)
         # print(f'{z_new.shape=}')
-        imgs = generator(z_new).cpu()
+        # update from future:
+        # later on our generators take more parameters! so we pass future possible
+        # arguments this way
+        imgs = generator(z_new,**kwargs).cpu()
         imgs_grid = utils.make_grid(imgs,nrow=ncols)
         results.append(imgs_grid)
     return torch.stack(results)
@@ -1287,7 +1290,7 @@ def clip_normalize_image(imgs, size = 224) :
 
 @torch.no_grad()
 def calculate_direction_using_clip(generator, text_positive, text_negative, num_samples,
-    random_gen, batch_size=32, top_ratio=0.10, device="cpu"):
+    random_gen, batch_size=32, top_ratio=0.10, device="cpu", **kwargs):
 
     generator = generator.to(device).eval()
 
@@ -1336,7 +1339,7 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
     margins = []
     for i in range(0, num_samples, batch_size):
         z = Z[i:i+batch_size]
-        imgs = generator(z)
+        imgs = generator(z, **kwargs)
         imgs = clip_normalize_image(imgs)
         # grab image embeddings/features
         img_feats = clip_model.encode_image(imgs)
@@ -1371,13 +1374,13 @@ def calculate_direction_using_clip(generator, text_positive, text_negative, num_
     return direction.cpu(), info
 
 @torch.no_grad()
-def apply_direction(generator, z, direction, alphas=(-3,-2,-1,0,1,2,3)):
+def apply_direction(generator, z, direction, alphas=(-3,-2,-1,0,1,2,3),**kwargs):
     direction = direction.to(z.device)
     imgs = []
     # print(f'direction vector = {direction}')
     for a in alphas:
         z_new = z + a * direction.unsqueeze(0)
-        img = generator(z_new)
+        img = generator(z_new,**kwargs)
         imgs.append(img)
     return torch.cat(imgs, dim=0)
 #%%
@@ -1916,6 +1919,20 @@ print(f'{out.shape=}')
 # when we are done to remove them
 for hook in hooks:
     hook.remove()
+
+# update from future: moved this up here so so we can use them more easily for other gans as well
+# these will come in handy in training! we'll use them for label/attribute 
+celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
+                  'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
+                  'Blurry','Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 
+                  'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', 
+                  'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard', 
+                  'Oval_Face','Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks', 
+                  'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
+                  'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
+# to make it easier lets create a dictionary and pick the attributes that way!
+celeba_attr_word2idx = {name:i for i,name in enumerate(celeba_attribute_names)}
+celeba_attr_idx2word = {i:name for name,i in celeba_attr_word2idx.items()}
 #%%
 # now training
 batch_size = 128
@@ -1937,19 +1954,6 @@ intervals = num_batches//2 + 1
 
 # show top and bottom 5 attribute accuracies
 topk=10
-# these will come in handy in training! we'll use them for label/attribute 
-celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
-                  'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
-                  'Blurry','Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin', 
-                  'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones', 
-                  'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard', 
-                  'Oval_Face','Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks', 
-                  'Sideburns','Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings', 
-                  'Wearing_Hat','Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young']
-# to make it easier lets create a dictionary and pick the attributes that way!
-celeba_attr_word2idx = {name:i for i,name in enumerate(celeba_attribute_names)}
-celeba_attr_idx2word = {i:name for name,i in celeba_attr_word2idx.items()}
-
 #%%
 print(f'Training {CelebAClassifier.__name__}...')
 
@@ -2131,7 +2135,8 @@ for i, (pred,acc) in enumerate(zip(preds_thresh,preds)):
 
 @torch.no_grad()
 def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
-    attr_name, celeba_attr_word2idx, num_samples, random_generator, threshold=0.5, device='cuda'):
+    attr_name, celeba_attr_word2idx, num_samples, random_generator, 
+    threshold=0.5, device='cuda', **kwargs):
     
     generator.to(device)
     classifier.to(device)
@@ -2140,7 +2145,10 @@ def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
     classifier.eval()
     
     z = torch.randn(size=(num_samples,generator.z_size), device=device, generator=random_generator)
-    imgs = generator(z)
+    # update: later added **kwargs so in future models such as progans/stylegan we send
+    # additional arguments to the generator, this way we can use this with those archs
+    # as well
+    imgs = generator(z, **kwargs)
     # classify the images 
     preds = classifier.classify(imgs)
     preds = preds>threshold
@@ -2162,7 +2170,7 @@ def get_samples_for(generator:GeneratorCNN, classifier:CelebAClassifier,
     latents_no_attr = z[other_indexes]
     
     return (imgs_with_attr,latents_with_attr), (imgs_no_attr,latents_no_attr)
-
+#%%
 seed = 66
 device = 'cuda'
 
@@ -2207,14 +2215,15 @@ show_images(imgs_gen,f'Regenerated with latents({attr_name})',figsize=(12,6))
 # as we can get our hands on. 
 @torch.no_grad()
 def get_neutral_latents(generator:GeneratorCNN, classifier:CelebAClassifier,
-                        celeba_attr_word2idx, attr_name, num_samples, random_gen, device,threshold=0.1):
+                        celeba_attr_word2idx, attr_name, num_samples, random_gen,
+                        device, threshold=0.1, **kwargs):
     generator.eval()
     generator.to(device)
     classifier.eval()
     classifier.to(device)
     
     z_base = torch.randn(size=(num_samples, generator.z_size), device=device, generator=random_gen)
-    imgs = generator(z_base)
+    imgs = generator(z_base,**kwargs)
     preds = classifier.classify(imgs)
     # now we want to grab all the samples that have 
     # the lowest confidence for selected attribute
@@ -3549,21 +3558,27 @@ for k,v in checkpoint.items():
 print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
 #%%
 # now lets retest again 
-def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebAClassifier,
+def run_latent_arithmatic(attr_name, 
+                          generator:GeneratorCNN,
+                          classifier:CelebAClassifier,
                           word2idx, 
-                          random_gen, 
+                          random_gen,
                           showcase_one_sample=True,
                           num_samples=32, 
                           attribute_pool_size=256,
                           maximum_prob_for_neutral_confidence=0.1,
                           attribute_confidence_rate=0.7,
-                          alpha_values=torch.linspace(-3, 7, steps=24),
-                          device='cpu'):
+                          alpha_values: torch.Tensor | None = None,
+                          device='cpu',
+                          **kwargs):
 
+    if alpha_values is None:
+        alpha_values = torch.linspace(-3, 7, steps=24)
+                        
     z_base = get_neutral_latents(generator, classifier, word2idx, attr_name, num_samples,
                                 random_gen, device,
                                 # use lower probs to get more accurate results, 
-                                maximum_prob_for_neutral_confidence)
+                                maximum_prob_for_neutral_confidence,**kwargs)
 
     with_attrs, without_attrs = get_samples_for(generator, classifier, attr_name,
                                                 word2idx,
@@ -3576,7 +3591,8 @@ def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebACl
                                                 # therefore result in less accurate direction
                                                 # and ultimately worse result! 
                                                 threshold=attribute_confidence_rate,
-                                                device=device)
+                                                device=device,
+                                                **kwargs)
 
     (ims_attr, latents_attrs) = with_attrs
     (ims_no_attrs, latents_no_attrs) = without_attrs
@@ -3592,12 +3608,15 @@ def run_latent_arithmatic(attr_name, generator:GeneratorCNN, classifier:CelebACl
     
     latents = z_base[0] if showcase_one_sample else z_base
     
-    # from women to male!(woman gradually loses feminity and turns into male)
-    imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs[:zs.size(0)], latents, alpha_values)
+    #! why did I do this?zs.size(0)? was I trying to use more or elss attributes to 
+    #! see how that affects the result? add this as argument
+    topk=10 # zs.size(0)
+    # from women to male!(woman gradually loses feminity and turns into male) #latents_no_attrs[:topk]
+    imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs, latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic(opposite toward {attr_name})', figsize=(12,6))
     
-    # from male to female!(maleness decreases at each step)
-    imgs = latent_arithmetic_unconditional(generator, latents_no_attrs[:zs.size(0)], latents_attrs, latents, alpha_values)
+    # from male to female!(maleness decreases at each step) #latents_no_attrs[:topk]
+    imgs = latent_arithmetic_unconditional(generator, latents_no_attrs, latents_attrs, latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic({attr_name} toward the opposit)',figsize=(12,6))
     print(f'done!')
 #%%
@@ -10569,6 +10588,21 @@ with torch.no_grad():
                    title=f'Step {last_step} [{res}]',
                    unnormalize=True, 
                    figsize=(16,8))
+#%%
+run_latent_arithmatic(attr_name='Eyeglasses', 
+                      generator=generator_style1, 
+                      classifier=celeba_classifier, 
+                      word2idx=celeba_attr_word2idx,
+                      random_gen=random_gen,
+                      showcase_one_sample=True,
+                      num_samples=32,
+                      attribute_pool_size=256,
+                      maximum_prob_for_neutral_confidence=0.01,
+                      attribute_confidence_rate=0.8,
+                      alpha_values=None,
+                      device='cpu',
+                      alpha=1,
+                      step=last_step)
 
 #%%
 # debug logs:
