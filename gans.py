@@ -3611,12 +3611,12 @@ def run_latent_arithmatic(attr_name,
     #! why did I do this?zs.size(0)? was I trying to use more or elss attributes to 
     #! see how that affects the result? add this as argument
     topk=10 # zs.size(0)
-    # from women to male!(woman gradually loses feminity and turns into male) #latents_no_attrs[:topk]
-    imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs, latents, alpha_values,**kwargs)
+    # from women to male!(woman gradually loses feminity and turns into male) 
+    imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs[:topk], latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic(opposite toward {attr_name})', figsize=(12,6))
     
-    # from male to female!(maleness decreases at each step) #latents_no_attrs[:topk]
-    imgs = latent_arithmetic_unconditional(generator, latents_no_attrs, latents_attrs, latents, alpha_values,**kwargs)
+    # from male to female!(maleness decreases at each step)
+    imgs = latent_arithmetic_unconditional(generator, latents_no_attrs[:topk], latents_attrs, latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic({attr_name} toward the opposit)',figsize=(12,6))
     print(f'done!')
 #%%
@@ -10589,20 +10589,37 @@ with torch.no_grad():
                    unnormalize=True, 
                    figsize=(16,8))
 #%%
-run_latent_arithmatic(attr_name='Eyeglasses', 
-                      generator=generator_style1, 
-                      classifier=celeba_classifier, 
-                      word2idx=celeba_attr_word2idx,
-                      random_gen=random_gen,
-                      showcase_one_sample=True,
-                      num_samples=32,
-                      attribute_pool_size=256,
-                      maximum_prob_for_neutral_confidence=0.01,
-                      attribute_confidence_rate=0.8,
-                      alpha_values=None,
-                      device='cpu',
-                      alpha=1,
-                      step=last_step)
+# run_latent_arithmatic(attr_name='Eyeglasses', 
+#                       generator=generator_style1, 
+#                       classifier=celeba_classifier, 
+#                       word2idx=celeba_attr_word2idx,
+#                       random_gen=random_gen,
+#                       showcase_one_sample=True,
+#                       num_samples=32,
+#                       attribute_pool_size=256,
+#                       maximum_prob_for_neutral_confidence=0.01,
+#                       attribute_confidence_rate=0.8,
+#                       alpha_values=None,
+#                       device='cpu',
+#                       alpha=1,
+#                       step=last_step)
+# calculate the direction for glasses attribute
+
+# gen_kw = {"alpha":1,"step":last_step}
+# direction, info = calculate_direction_using_clip(generator_style1, 
+#                                                text_positive="no eyeglasses",
+#                                                text_negative="with eyeglasses",
+#                                                num_samples=1024,
+#                                                random_gen=random_gen,
+#                                                batch_size=64,
+#                                                top_ratio=0.10,
+#                                                device="cpu",
+#                                                **gen_kw)
+# print("CLIP direction stats:", info)
+
+# z = torch.randn(8, generator_style1.z_size, generator=random_gen)
+# imgs = apply_direction(generator_style1, z, direction, **gen_kw)
+# show_images(imgs,'CLIP direction',figsize=(12,6))
 
 #%%
 # debug logs:
