@@ -10596,23 +10596,89 @@ with torch.no_grad():
                    unnormalize=True, 
                    figsize=(16,8))
 #%%
+# to assign our custom function to existing instace
+import types
+
 @torch.no_grad()
-def create_interpolation_animation(imgs_tensor, filename='./results/gan/stylegan1/vis', sample_count=30, fps=30,mu=0.02,std=0.02):
+def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, interval=300, repeat=True, repeat_delay=1000):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     def animate(i):
-        
-        b,c,h,w = imgs_tensor[i].shape
-        imgs2 = imgs_tensor[i].view(imgs_tensor[i].size(0), c, h, w)#1x28x28 or 3x28x28
-        new_img = utils.make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+        img_tensor = imgs_tensor[i].squeeze(0)
+        frame = utils.make_grid(img_tensor, normalize=True).cpu().detach().numpy().transpose(1,2,0)
         ax.clear()
-        ax.imshow(new_img)
+        ax.imshow(frame)
 
-    anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True, repeat_delay=1000)
+    anim = animation.FuncAnimation(fig, 
+                                   animate,
+                                   frames=frames,
+                                   interval=interval, 
+                                   repeat=repeat, 
+                                   repeat_delay=repeat_delay)
     # save the git using pillow
-    anim.save(f'{filename}.gif', writer="pillow", fps=fps)
+    anim.save(f'{filename}.gif', writer="pillow")
     plt.show()
 
+# unlike our previous architectures, we use w to control the image generation, instead of z
+# so our experiments will be targeting w space instead. but since our generator's forward
+# pass only accepts z, we cant use that forward pass, we need to separate that logic. 
+# instead of going back and change the generator class and separate them there, we can 
+# easily do that here. becasue we dont do any fusion at inference, we don need progressive
+# growing, or style mixing, all of that can be removed. this makes the forward pass 
+# very simple and straight forward, just get the get the w, run through the layers 
+# and get the final image! 
+# (todo: definitely add this to the class when I refactor it later for easier handeling!)
+#
+# sidenote, to make this more seemless, we can monkey patch our class, so
+# lets write this asif its a method of ourGeneratorStyleGan1 class!
+
+def forward_from_w(self, w, step):
+    num_styles = 2*(step+1)
+    w = w.unsqueeze(1).repeat(1,num_styles,1)
+    
+    # set the batchsize for const_input/canvas
+    x = self.const_input.repeat(w.size(0), 1,1,1)
+    
+    for i in range(2*step+2):
+        x = self.blocks[i](x, w[:,i,:])
+    
+    return self.toImgs[step](x)
+
+# since we already have our loaded instance we simply assign it
+# if we hadnt loaded, we could do 
+# GeneratorStyleGAN1.custom_forward = custom_forward
+# and then instantaite and laod the weights
+# but now we simply add this as a new method
+generator_style1.forward_from_w = types.MethodType(forward_from_w, generator_style1)
+
+# now lets write the actual experiments on w
+# lets do a latent space exploration like before 
+@torch.no_grad()
+def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, alphas=None, interp_steps=60, device='cuda'):
+    generator = generator.to(device)
+    generator.eval()
+    
+    z1,z2 = tuple(z.to(device) for z in (z1,z2))
+    w1 = generator.mapping_network(z1)
+    w2 = generator.mapping_network(z2)
+    
+    # interpolate
+    if alphas is None:
+        alphas = torch.linspace(0, 1, interp_steps).to(device)
+    
+    imgs = []
+    for a in alphas:
+        interpol = torch.lerp(w1,w2,a)
+        img = generator.forward_from_w(interpol,step).cpu()
+        imgs.append(img)
+    output_imgs = torch.cat(imgs, dim=0)
+    return output_imgs
+
+timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+z1 = torch.randn(size=(1, generator_style1.z_size))
+z2 = torch.randn(size=(1, generator_style1.z_size))
+interps = interpolate_w(generator_style1, z1, z2, step=last_step, interp_steps=60)
+create_interpolation_animation(interps, filename=f'stylegan1_{timestamp}',frames=60)
 
 #%%
 # debug logs:
