@@ -10661,7 +10661,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, inter
 @torch.no_grad()
 def calculate_w_avg(self, batch_size, sample_size=500_000):
     device = next(self.parameters()).device
-    w_avg_sum = torch.zeros(size=(1,self.z_size), device=device)
+    w_avg_sum = torch.zeros(size=(1,self.w_size), device=device)
     num_batches = sample_size//batch_size
     
     for _ in tqdm(range(num_batches)):
@@ -10670,10 +10670,10 @@ def calculate_w_avg(self, batch_size, sample_size=500_000):
     
     return w_avg_sum/(num_batches*batch_size)
 
-# lets implement the main part:
+# now lets implement the main part which is forward with w:
 def forward_from_w(self, w, step, psi=None, w_avg=None):
     num_styles = 2*(step+1)
-    
+    # w = w.unsqueeze(1).repeat(1,num_styles,1)    
     if not self.training and psi:
         if w_avg is None:
             ema_w_batch = self.ema_w.repeat(w.size(0),1)
@@ -10681,8 +10681,9 @@ def forward_from_w(self, w, step, psi=None, w_avg=None):
             ema_w_batch = w_avg.repeat(w.size(0),1)
         w = ema_w_batch + psi * (w - ema_w_batch)
         
-    # we must broadcast it after truncation or otherwise it wont work
-    w = w.unsqueeze(1).repeat(1,num_styles,1)    
+    # we must broadcast it after truncation or
+    # otherwise truncation wont work
+    w = w.unsqueeze(1).repeat(1,num_styles,1)
     
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
@@ -10723,13 +10724,13 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, psi=None, w_avg=No
     output_imgs = torch.cat(imgs, dim=0)
     return output_imgs
 
-num_samples = 16
+num_samples = 36
 # with psi we can get better results though
 # less diverse depending on which value we pick
-psi=0.5#None
+psi=None#0.7
 # too few samples, and completeley fail, 
 # but with enough samples we get good results
-w_avg = generator_style1.calculate_w_avg(batch_size=500, sample_size=1000)#None
+w_avg = generator_style1.calculate_w_avg(batch_size=500, sample_size=100000)#None
 
 z1 = torch.randn(size=(1, generator_style1.z_size))
 z2 = torch.randn(size=(1, generator_style1.z_size))
@@ -10738,8 +10739,8 @@ interps = interpolate_w(generator_style1,
                         z1,
                         z2,
                         step=last_step, 
-                        psi=psi,
-                        w_avg=None,
+                        psi=psi,#None
+                        w_avg=None,#w_avg,#None
                         interp_steps=num_samples)
 
 display_images(interps, cols=int(num_samples**0.5), unnormalize=True)
