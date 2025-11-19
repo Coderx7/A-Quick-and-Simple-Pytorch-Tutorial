@@ -43,6 +43,8 @@ from torchvision import datasets, transforms
 from torchvision import utils, models
 
 import matplotlib.pyplot as plt
+# for creating gif files for animations later on
+import matplotlib.animation as animation
 %matplotlib inline
 
 #%%
@@ -1092,7 +1094,7 @@ def onchange(x):
     pass
 
 @torch.no_grad()
-def choose_meanstd(generator, num_samples,random_gen, ncols=8,):
+def choose_meanstd(generator, num_samples,random_gen, ncols=8,**kwargs):
     generator.eval()
     
     cv2.namedWindow('std_mu_finder')
@@ -1128,7 +1130,10 @@ def choose_meanstd(generator, num_samples,random_gen, ncols=8,):
         # we dont waste too much cpu and hug the system!
         if old_std!=std or old_mean!=mean or old_resample!=resample:
             new_z = frac_std * z + frac_mean
-            imgs = generator(new_z)
+            # update from future: added kwargs so
+            # this can be used for future gans as
+            # well which accept more arguments
+            imgs = generator(new_z, **kwargqs)
                        
             img = utils.make_grid(imgs, nrow=ncols, normalize=True, value_range=(-1, 1))
             img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
@@ -1920,7 +1925,8 @@ print(f'{out.shape=}')
 for hook in hooks:
     hook.remove()
 
-# update from future: moved this up here so so we can use them more easily for other gans as well
+# update from future: 
+# moved this up here so so we can use them more easily for other gans as well
 # these will come in handy in training! we'll use them for label/attribute 
 celeba_attribute_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes','Bald', 
                   'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',  
@@ -2048,7 +2054,7 @@ for epoch in range(epochs):
                 "val_accuracy":val_accuracy,
                 "val_per_attr_accuracy":val_per_attr_accuracy,
                 },"./weights/cebela_classifier.pt")
-#%%
+#%% load celeba classifier's weights
 # good now lets test this
 checkpoint = torch.load("./weights/cebela_classifier.pt", map_location="cpu",weights_only=False)
 celeba_classifier = CelebAClassifier()
@@ -3570,6 +3576,7 @@ def run_latent_arithmatic(attr_name,
                           attribute_confidence_rate=0.7,
                           alpha_values: torch.Tensor | None = None,
                           device='cpu',
+                          topk=10,
                           **kwargs):
 
     if alpha_values is None:
@@ -3610,12 +3617,12 @@ def run_latent_arithmatic(attr_name,
     
     #! why did I do this?zs.size(0)? was I trying to use more or elss attributes to 
     #! see how that affects the result? add this as argument
-    topk=10 # zs.size(0)
-    # from women to male!(woman gradually loses feminity and turns into male) 
+    # I wrote topk instead of zs.size(0)!
+    # e.g. from women to male!(woman gradually loses feminity and turns into male) 
     imgs = latent_arithmetic_unconditional(generator, latents_attrs, latents_no_attrs[:topk], latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic(opposite toward {attr_name})', figsize=(12,6))
     
-    # from male to female!(maleness decreases at each step)
+    # e.g. from male to female!(maleness decreases at each step)
     imgs = latent_arithmetic_unconditional(generator, latents_no_attrs[:topk], latents_attrs, latents, alpha_values,**kwargs)
     show_images(imgs, f'latent arithmetic({attr_name} toward the opposit)',figsize=(12,6))
     print(f'done!')
@@ -10589,37 +10596,23 @@ with torch.no_grad():
                    unnormalize=True, 
                    figsize=(16,8))
 #%%
-# run_latent_arithmatic(attr_name='Eyeglasses', 
-#                       generator=generator_style1, 
-#                       classifier=celeba_classifier, 
-#                       word2idx=celeba_attr_word2idx,
-#                       random_gen=random_gen,
-#                       showcase_one_sample=True,
-#                       num_samples=32,
-#                       attribute_pool_size=256,
-#                       maximum_prob_for_neutral_confidence=0.01,
-#                       attribute_confidence_rate=0.8,
-#                       alpha_values=None,
-#                       device='cpu',
-#                       alpha=1,
-#                       step=last_step)
-# calculate the direction for glasses attribute
+@torch.no_grad()
+def create_interpolation_animation(imgs_tensor, filename='./results/gan/stylegan1/vis', sample_count=30, fps=30,mu=0.02,std=0.02):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    def animate(i):
+        
+        b,c,h,w = imgs_tensor[i].shape
+        imgs2 = imgs_tensor[i].view(imgs_tensor[i].size(0), c, h, w)#1x28x28 or 3x28x28
+        new_img = utils.make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+        ax.clear()
+        ax.imshow(new_img)
 
-# gen_kw = {"alpha":1,"step":last_step}
-# direction, info = calculate_direction_using_clip(generator_style1, 
-#                                                text_positive="no eyeglasses",
-#                                                text_negative="with eyeglasses",
-#                                                num_samples=1024,
-#                                                random_gen=random_gen,
-#                                                batch_size=64,
-#                                                top_ratio=0.10,
-#                                                device="cpu",
-#                                                **gen_kw)
-# print("CLIP direction stats:", info)
+    anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True, repeat_delay=1000)
+    # save the git using pillow
+    anim.save(f'{filename}.gif', writer="pillow", fps=fps)
+    plt.show()
 
-# z = torch.randn(8, generator_style1.z_size, generator=random_gen)
-# imgs = apply_direction(generator_style1, z, direction, **gen_kw)
-# show_images(imgs,'CLIP direction',figsize=(12,6))
 
 #%%
 # debug logs:
