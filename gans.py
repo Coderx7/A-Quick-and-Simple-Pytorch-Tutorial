@@ -31,6 +31,7 @@ import gc
 import logging
 import builtins
 import yaml
+from tqdm import tqdm
 
 import numpy as np 
 
@@ -9218,9 +9219,31 @@ class GeneratorStyleGAN1(nn.Module):
         if self.training:
             self._update_ema_w(w)
 
-        # we use truncation trick during inference only 
+        # we use truncation trick during inference only
+        # sidenote: we could also do this in one go, post trainig
+        # by generating a few thousands sample ws using our 
+        # mapping network, and then aveage those ws! i.e.:
+        # zs = torch.randn(size=(50_000,self.z_size))
+        # ws_avg = self.mapping_network(zs).mean(dim=0,keepdim=True)
+        # w = ws_avg+psi*(w-ws_avg)
+        # that would give us the average w! the lager the sample size
+        # the more accurate our estimate will be but we can also learn
+        # it as we go during training so we opted to do this instead!
+        # sidenote2:
+        # why do we do thta? because in the z space, the are areas of low probablity
+        # that sometimes for some reasons, map to strange/low quality/weird samples
+        # images, either because some features are not developed properly because the
+        # training samples are not enough(i.e. they are underepresented), or the network 
+        # is not capable enough, for whatever reason, they just happen to be much different
+        # than normal images! now if we instead try to sample ws closer to aveage face(average w), 
+        # the chances of getting more high quality, but typical/average looking images increases.
+        # so we are trading between higher quality vs diversity, cuz the closer we get to avegae
+        # the more uniform/the same we look! too much far away from average therefore means
+        # somethin is drastically different than the average!
         if not self.training and psi:
             ema_w_batch = self.ema_w.repeat(w.size(0),1)
+            # (1-psi)*ema_w + psi*w or simplified as
+            # ema_w+psi*(w-ema_w)
             w = ema_w_batch + psi * (w - ema_w_batch)
         
         if self.training and random.random() <self.style_mixing_prob:
@@ -10632,9 +10655,34 @@ def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, inter
 # sidenote, to make this more seemless, we can monkey patch our class, so
 # lets write this asif its a method of ourGeneratorStyleGan1 class!
 
-def forward_from_w(self, w, step):
+#update from future:
+# lets calculate average w post training and see if its the same
+# as ema_w or close to it and use it in truncation trick
+@torch.no_grad()
+def calculate_w_avg(self, batch_size, sample_size=500_000):
+    device = next(self.parameters()).device
+    w_avg_sum = torch.zeros(size=(1,self.z_size), device=device)
+    num_batches = sample_size//batch_size
+    
+    for _ in tqdm(range(num_batches)):
+        zs = torch.randn((batch_size, self.z_size),device=device)
+        w_avg_sum += self.mapping_network(zs).mean(dim=0,keepdim=True)
+    
+    return w_avg_sum/(num_batches*batch_size)
+
+# lets implement the main part:
+def forward_from_w(self, w, step, psi=None, w_avg=None):
     num_styles = 2*(step+1)
-    w = w.unsqueeze(1).repeat(1,num_styles,1)
+    
+    if not self.training and psi:
+        if w_avg is None:
+            ema_w_batch = self.ema_w.repeat(w.size(0),1)
+        else:
+            ema_w_batch = w_avg.repeat(w.size(0),1)
+        w = ema_w_batch + psi * (w - ema_w_batch)
+        
+    # we must broadcast it after truncation or otherwise it wont work
+    w = w.unsqueeze(1).repeat(1,num_styles,1)    
     
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
@@ -10650,11 +10698,12 @@ def forward_from_w(self, w, step):
 # and then instantaite and laod the weights
 # but now we simply add this as a new method
 generator_style1.forward_from_w = types.MethodType(forward_from_w, generator_style1)
+generator_style1.calculate_w_avg = types.MethodType(calculate_w_avg, generator_style1)
 
 # now lets write the actual experiments on w
 # lets do a latent space exploration like before 
 @torch.no_grad()
-def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, alphas=None, interp_steps=60, device='cuda'):
+def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, psi=None, w_avg=None, alphas=None, interp_steps=60, device='cuda'):
     generator = generator.to(device)
     generator.eval()
     
@@ -10669,16 +10718,35 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, alphas=None, inter
     imgs = []
     for a in alphas:
         interpol = torch.lerp(w1,w2,a)
-        img = generator.forward_from_w(interpol,step).cpu()
+        img = generator.forward_from_w(interpol,step,psi,w_avg).cpu()
         imgs.append(img)
     output_imgs = torch.cat(imgs, dim=0)
     return output_imgs
 
-timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+num_samples = 16
+# with psi we can get better results though
+# less diverse depending on which value we pick
+psi=0.5#None
+# too few samples, and completeley fail, 
+# but with enough samples we get good results
+w_avg = generator_style1.calculate_w_avg(batch_size=500, sample_size=1000)#None
+
 z1 = torch.randn(size=(1, generator_style1.z_size))
 z2 = torch.randn(size=(1, generator_style1.z_size))
-interps = interpolate_w(generator_style1, z1, z2, step=last_step, interp_steps=60)
-create_interpolation_animation(interps, filename=f'stylegan1_{timestamp}',frames=60)
+
+interps = interpolate_w(generator_style1,
+                        z1,
+                        z2,
+                        step=last_step, 
+                        psi=psi,
+                        w_avg=None,
+                        interp_steps=num_samples)
+
+display_images(interps, cols=int(num_samples**0.5), unnormalize=True)
+
+#%%
+# 
+
 
 #%%
 # debug logs:
