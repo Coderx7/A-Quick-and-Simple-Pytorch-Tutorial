@@ -3582,7 +3582,7 @@ def run_latent_arithmatic(attr_name,
 
     if alpha_values is None:
         alpha_values = torch.linspace(-3, 7, steps=24)
-                        
+
     z_base = get_neutral_latents(generator, classifier, word2idx, attr_name, num_samples,
                                 random_gen, device,
                                 # use lower probs to get more accurate results, 
@@ -10585,7 +10585,7 @@ def load_checkpoints(checkpoint_path, device="cuda"):
     dataset_name = checkpoint["dataset_name"]
     last_step = checkpoint["step"]
     FID_score = checkpoint["FID"]
-    
+
     z_size = checkpoint["z_size"]
     w_size = checkpoint["w_size"]
     max_steps = checkpoint["max_steps"]
@@ -10594,7 +10594,7 @@ def load_checkpoints(checkpoint_path, device="cuda"):
     style_mix = checkpoint["style_mixing_prob"]
     swap_ordr = checkpoint["swap_adaIN_order"]
     ema_wb = checkpoint["ema_w_beta"]
-        
+
     generator_st1 = GeneratorStyleGAN1(z_size, w_size,max_steps,mn_layers,channels, style_mix, ema_wb, swap_ordr)
     generator_st1.load_state_dict(checkpoint["gen_state_dict"])
     generator_st1 = generator_st1.eval()
@@ -10661,7 +10661,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, inter
 @torch.no_grad()
 def calculate_w_avg(self, batch_size, sample_size=500_000):
     
-    assert batch_size<sample_size,f'{batch_size=} can not be greater than {sample_size=}!'
+    assert batch_size<=sample_size,f'{batch_size=} can not be greater than {sample_size=}!'
     num_batches = sample_size//batch_size
         
     device = next(self.parameters()).device
@@ -10678,9 +10678,33 @@ def calculate_w_avg(self, batch_size, sample_size=500_000):
     return w_avg_sum/num_batches
 
 # now lets implement the main part which is forward with w:
-def forward_from_w(self, w, step, psi=None, w_avg=None):
+def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
+    
+    # disable noise injection by setting noise weights to all zero
+    # so we remove all aspect of variations so we can properly test
+    # truncation impact!
+    # sidenote:
+    # initially every time I tried different psi ratios, nothing 
+    # would change it was as if psi=None! my manual w_avg didnt
+    # do anything! I tried everything until I found out there's 
+    # another source of randomness in our model and thats noise_injection!
+    # I though that cant be, cuz its supposed to only affect fine details
+    # but after I set it to all zeros, effectively disabling it
+    # now different psi rates show their effect. now we can see 
+    # with psi=0 e.g. we get single image replicated for all images
+    # as its using the averge w! now w shows its impact!
+    # todo: add an option for constant_noise to styleConvBlock
+    # so during inference tests like this we can easily experiment!
+    # without any issues!
+    if constant_noise:
+        print("Warning: After using constant_noise = True, original weights are gone."
+              " Load from checkpoint to get origianl weights if you havent used a copy!")
+        for block in self.blocks:
+            if hasattr(block, "noise_inject"):
+                block.noise_inject.weight.data *= 0
+    
     num_styles = 2*(step+1)
-    # w = w.unsqueeze(1).repeat(1,num_styles,1)
+    w = w.unsqueeze(1).repeat(1,num_styles,1)
     if not self.training and psi is not None:
         if w_avg is None:
             ema_w_batch = self.ema_w.repeat(w.size(0),1)
@@ -10690,7 +10714,7 @@ def forward_from_w(self, w, step, psi=None, w_avg=None):
         
     # we must broadcast it after truncation or
     # otherwise truncation wont work
-    w = w.unsqueeze(1).repeat(1,num_styles,1)
+    # w = w.unsqueeze(1).repeat(1,num_styles,1)
     
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
@@ -10711,7 +10735,9 @@ generator_style1.calculate_w_avg = types.MethodType(calculate_w_avg, generator_s
 # now lets write the actual experiments on w
 # lets do a latent space exploration like before 
 @torch.no_grad()
-def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, psi=None, w_avg=None, alphas=None, interp_steps=60, device='cuda'):
+def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, 
+                  psi=None, w_avg=None, constant_noise=False,
+                  alphas=None, interp_steps=60, device='cuda'):
     generator = generator.to(device)
     generator.eval()
     
@@ -10726,38 +10752,82 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, psi=None, w_avg=No
     imgs = []
     for a in alphas:
         interpol = torch.lerp(w1,w2,a)
-        img = generator.forward_from_w(interpol,step,psi,w_avg).cpu()
+        img = generator.forward_from_w(interpol,step,psi,w_avg,constant_noise).cpu()
         imgs.append(img)
     output_imgs = torch.cat(imgs, dim=0)
     return output_imgs
 
-num_samples = 36
+# for w_avg, too few samples, and we fail
+# to get a close estimate but with enough
+# samples we get good results
+def get_w_avg(sample_size=100_000):
+    if sample_size>100_000:
+        batch_size = int(0.1*sample_size)
+    else:
+        batch_size = math.ceil(0.5*sample_size)
+    return generator_style1.calculate_w_avg(batch_size, sample_size)
+
+sample_size = 100_000
+w_avg = get_w_avg(sample_size=sample_size)
+
+#to see how close our w_avg is to ema_w
+# print(f'ema_w norm: {generator_style1.ema_w.norm()}')
+# print(f'manual w_avg norm: {w_avg.norm()}')
+
+# now to get a better overall view of noise_injection
+# lets keep everything the same except constant_noise(disable noise injection)
+def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=None, num_samples=36):
+    
+    if psi_rates is None:
+        psi_rates = [0, 0.3, 0.7, 1]
+        
+    # since when we do constant_noise=True, we physically set all the weights to 0
+    # in order to be able to work on the same instantce of our model we make a copy
+    # here so the original weights are not altered and we can run other tests!
+    generator_copy = copy.deepcopy(generator_style1)
+        
+    w_avg = get_w_avg(sample_size=w_avg_sample_size)
+    
+    # show the norm difference to see how close they are
+    print(f'self.ema_w norm: {generator_copy.ema_w.norm().item()}')
+    print(f'manual w_avg norm: {w_avg.norm().item()}')
+    
+    interps0 = interpolate_w(generator_copy, z1, z2, step, psi=None, w_avg=None, constant_noise=constant_noise, interp_steps=num_samples)
+    display_images(interps0, title=f'psi=None | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
+    
+    for rate in psi_rates:
+        interps1 = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=None, constant_noise=constant_noise, interp_steps=num_samples)
+        interps2 = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=w_avg, constant_noise=constant_noise, interp_steps=num_samples)
+    
+        display_images(interps1, title=f'psi={rate} + ema_w | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
+        display_images(interps2, title=f'psi={rate} + w-avg(sz={w_avg_sample_size:,}) | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
+
+
+# now lets try 
+num_samples = 64
 cols = int(num_samples**0.5)
-# with psi we can get better results though
-# less diverse depending on which value we pick
-# psi=None#0.7
-# too few samples, and completeley fail, 
-# but with enough samples we get good results
-sample_size = 100000
-batch_size = int(0.1*sample_size) if sample_size>1000_000 else math.ceil(0.5*sample_size)
-w_avg = generator_style1.calculate_w_avg(batch_size, sample_size)#None
 
 z1 = torch.randn(size=(1, generator_style1.z_size))
 z2 = torch.randn(size=(1, generator_style1.z_size))
 
-interps0 = interpolate_w(generator_style1, z1, z2, step=last_step, psi=None, w_avg=None, interp_steps=num_samples)
-interps1 = interpolate_w(generator_style1, z1, z2, step=last_step, psi=0.01, w_avg=None, interp_steps=num_samples)
-interps2 = interpolate_w(generator_style1, z1, z2, step=last_step, psi=0.01, w_avg=w_avg, interp_steps=num_samples)
-interps3 = interpolate_w(generator_style1, z1, z2, step=last_step, psi=0.7, w_avg=None, interp_steps=num_samples)
-interps4 = interpolate_w(generator_style1, z1, z2, step=last_step, psi=0.7, w_avg=w_avg, interp_steps=num_samples)
-
-display_images(interps0, title='psi=None', cols=cols, unnormalize=True)
-display_images(interps1, title='psi=0.01', cols=cols, unnormalize=True)
-display_images(interps2, title=f'psi=0.01 with manual w-avg(samplesz={sample_size:,})', cols=cols, unnormalize=True)
-display_images(interps3, title='psi=0.7', cols=cols, unnormalize=True)
-display_images(interps4, title=f'psi=0.7 with manual w-avg(samplesz={sample_size:,})', cols=cols, unnormalize=True)
+run_interpolation_test(last_step, 
+                       sample_size,
+                       #psi_rates=[0,0.5,1.2,3,5],
+                       constant_noise=True,
+                       num_samples=num_samples)
+# with constant noise, we can truly see the average 
+# and images close to average are exceptionally
+# clear and well developed!
+# with psi rate we can see how better results though less diverse depending
+# on which value we pick
 #%%
-# 
+# now lets do this with noise injection i.e. constant_noise=False
+run_interpolation_test(last_step, 
+                       sample_size,
+                       #psi_rates=[0,0.5,1.2,3,5],
+                       constant_noise=False,
+                       num_samples=num_samples)
+
 
 
 #%%
