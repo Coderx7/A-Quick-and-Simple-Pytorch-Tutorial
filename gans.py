@@ -10623,7 +10623,7 @@ with torch.no_grad():
 import types
 
 @torch.no_grad()
-def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, interval=300, repeat=True, repeat_delay=1000):
+def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, repeat=True, repeat_delay=1000):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     def animate(i):
@@ -10634,7 +10634,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', frames=30, inter
 
     anim = animation.FuncAnimation(fig, 
                                    animate,
-                                   frames=frames,
+                                   frames=imgs_tensor.size(0),
                                    interval=interval, 
                                    repeat=repeat, 
                                    repeat_delay=repeat_delay)
@@ -10852,7 +10852,7 @@ for noise_status in [True]:
                            constant_noise=noise_status,
                            alphas=alphas,
                            num_samples=36,
-                           make_gifs=0,
+                           make_gifs=True,
                            gif_dir='./results/gan/stylegan1/gifs',
                            interval=100)
 
