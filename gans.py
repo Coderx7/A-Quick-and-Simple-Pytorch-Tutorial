@@ -32,6 +32,9 @@ import logging
 import builtins
 import yaml
 from tqdm import tqdm
+# for types.MethodType(), to assign our custom
+# functions to existing instace
+import types
 
 import numpy as np 
 
@@ -10619,9 +10622,6 @@ with torch.no_grad():
                    unnormalize=True, 
                    figsize=(16,8))
 #%%
-# to assign our custom function to existing instace
-import types
-
 @torch.no_grad()
 def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, repeat=True, repeat_delay=1000):
     fig = plt.figure()
@@ -10704,7 +10704,7 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
                 block.noise_inject.weight.data *= 0
     
     num_styles = 2*(step+1)
-    w = w.unsqueeze(1).repeat(1,num_styles,1)
+    # w = w.unsqueeze(1).repeat(1,num_styles,1)
     if not self.training and psi is not None:
         if w_avg is None:
             ema_w_batch = self.ema_w.repeat(w.size(0),1)
@@ -10714,7 +10714,14 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
         
     # we must broadcast it after truncation or
     # otherwise truncation wont work
-    # w = w.unsqueeze(1).repeat(1,num_styles,1)
+    # if we broadcast before truncation
+    # then every single style layer would recieve
+    # a different latent code!
+    # since w now has shape the (b,num_styles,512) while ema_w_batch
+    # is (b,512) so it will be broadcast to to (b, num_styles, 512)
+    # as well which then when we do w-ema_w_batch and then multiply by psi
+    # it gets applied independently to every copy of the repeated w!
+    w = w.unsqueeze(1).repeat(1,num_styles,1)
     
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
@@ -10737,12 +10744,10 @@ generator_style1.calculate_w_avg = types.MethodType(calculate_w_avg, generator_s
 @torch.no_grad()
 def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, 
                   psi=None, w_avg=None, constant_noise=False,
-                  alphas=None, interp_steps=60, device='cuda'):
+                  alphas=None, interp_steps=60, eps=1e-8,device='cuda'):
     generator = generator.to(device)
     generator.eval()
-    
-    
-    
+        
     z1,z2 = tuple(z.to(device) for z in (z1,z2))
     w1 = generator.mapping_network(z1)
     w2 = generator.mapping_network(z2)
@@ -10755,6 +10760,9 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step,
         
     imgs = []
     for a in alphas:
+        # interpol = (1-a)*w1 + a*w2 #i.e. w1+a(w2-w1)
+        # we can also use lerp which simply does the same thing
+        # i.e. start + weight*end-start
         interpol = torch.lerp(w1,w2,a)
         img = generator.forward_from_w(interpol,step,psi,w_avg,constant_noise).cpu()
         imgs.append(img)
@@ -10855,6 +10863,8 @@ for noise_status in [True]:
                            make_gifs=True,
                            gif_dir='./results/gan/stylegan1/gifs',
                            interval=100)
+#%%
+
 
 #%%
 # debug logs:
