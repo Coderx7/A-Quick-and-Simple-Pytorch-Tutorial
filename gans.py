@@ -10864,8 +10864,132 @@ for noise_status in [True]:
                            gif_dir='./results/gan/stylegan1/gifs',
                            interval=100)
 #%%
+# now lets do some style mixing, use one z for the coarse features
+# and another one for style change. 
 
+# now lets implement the main part which is forward with w:
+def apply_truncation(self, w, psi=None):
+    if not self.training and psi is not None:
+        if w_avg is None:
+            ema_w_batch = self.ema_w.repeat(w.size(0),1)
+        else:
+            ema_w_batch = w_avg.repeat(w.size(0),1)
+        w = ema_w_batch + psi * (w - ema_w_batch)
+    return w
 
+def forward_from_w_simple(self, w, step, constant_noise=False):
+    # backup original weights
+    if not hasattr(self, "block_cpy"):
+        self.blocks_cpy = copy.deepcopy(self.blocks)
+    
+    if constant_noise:
+        for block in self.blocks:
+            if hasattr(block, "noise_inject"):
+                block.noise_inject.weight.data *= 0
+    else:
+        # use original weights
+        self.blocks = copy.deepcopy(self.blocks_cpy)
+        
+    # set the batchsize for const_input/canvas
+    x = self.const_input.repeat(w.size(0), 1,1,1)
+    
+    for i in range(2*step+2):
+        x = self.blocks[i](x, w[:,i,:])
+    
+    return self.toImgs[step](x)
+
+# update:
+# for latent related experiments we need to always use constant_noise
+# to properly see the impact of other factors like stylemixing at
+# different levels. truncation also helps a lot
+@torch.no_grad()
+def style_mix(self, z_source, z_style, layer_indx_for_crossover,
+              step, psi=None, constant_noise=True):
+    
+    num_layers = 2*self.max_steps
+    assert 0<layer_indx_for_crossover<num_layers, f'layer index{layer_indx_for_crossover} must be < {num_layers}'
+    
+    device = next(self.parameters()).device
+    
+    z_source = z_source.to(device)
+    z_style = z_style.to(device)   
+    
+    w_source = self.mapping_network(z_source)
+    w_style = self.mapping_network(z_style)
+    
+    # apply truncation
+    w_source = self.apply_truncation(w_source, psi)
+    w_style = self.apply_truncation(w_style, psi)
+    
+    # expand to match shape
+    w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
+    w_style = w_style.unsqueeze(1).repeat(1,num_layers,1)
+    
+    # we are going to need both source and style ws for later
+    # so lets use it to create our result w_mixed
+    w_mixed = w_source.clone()
+    w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
+    
+    img_source = self.forward_from_w_simple(w_source,step,constant_noise).cpu()
+    img_style = self.forward_from_w_simple(w_style,step,constant_noise).cpu()
+    img_mixed = self.forward_from_w_simple(w_mixed,step,constant_noise).cpu()
+    
+    return img_source, img_style, img_mixed
+
+# lets add them to our instance 
+generator_style1.apply_truncation =  types.MethodType(apply_truncation, generator_style1)
+generator_style1.forward_from_w_simple = types.MethodType(forward_from_w_simple, generator_style1)
+generator_style1.style_mix = types.MethodType(style_mix, generator_style1)
+
+z_source = torch.randn(1, generator_style1.z_size, device=device)
+z_style = torch.randn(1, generator_style1.z_size, device=device)
+
+# a good crossover point is usually around half the layers
+# we have max_steps=7 so we have 14 layers, 7, 8 is good
+# however different layers affect different details experiment
+# with all and see the result
+layer_crossover = 8
+img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
+                                                         z_style, 
+                                                         layer_crossover, 
+                                                         step=last_step,
+                                                         psi=0.8,
+                                                         constant_noise=True)
+imgs = torch.cat([img_src,img_style,img_mix])
+display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
+# as we can see, the structure of the source image stays the same, but the 
+# texture/style of the style image is transfered. lets see how each layer affects
+# the result 
+#%%
+def change_styles(z_source, z_style, step, psi=0.8):
+    num_layers = 2*generator_style1.max_steps-1
+    imgs_all = []
+    for layer in range(1,num_layers):
+        img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
+                                                                 z_style, 
+                                                                 layer, 
+                                                                 step=step,
+                                                                 psi=psi,
+                                                                 constant_noise=True)
+        
+        imgs = torch.cat([img_src,img_style,img_mix],dim=0)
+        # print(f'{imgs.shape=}')
+        
+        row = utils.make_grid(imgs, nrow=3, normalize=True)
+        display_images(row, title=f'{layer} source|style|mix',
+                       unnormalize=False,  figsize=(8,6))
+        # print(f'{row.shape=}')
+        
+        imgs_all.append(row.unsqueeze(0))
+    
+    ims = torch.cat(imgs_all, dim=0)
+    # print(f'{ims.shape=}')
+    display_images(ims,
+                   title='images source|style|mix',
+                   unnormalize=False,
+                   figsize=(8,6))
+        
+change_styles(z_source,z_style,last_step,psi=0.7)
 #%%
 # debug logs:
 # note I want to get this to work organically, 
