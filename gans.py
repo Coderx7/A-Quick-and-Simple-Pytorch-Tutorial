@@ -10741,6 +10741,8 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step,
     generator = generator.to(device)
     generator.eval()
     
+    
+    
     z1,z2 = tuple(z.to(device) for z in (z1,z2))
     w1 = generator.mapping_network(z1)
     w2 = generator.mapping_network(z2)
@@ -10748,7 +10750,9 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step,
     # interpolate
     if alphas is None:
         alphas = torch.linspace(0, 1, interp_steps).to(device)
-    
+    else:
+        alphas = alphas.to(device)
+        
     imgs = []
     for a in alphas:
         interpol = torch.lerp(w1,w2,a)
@@ -10776,14 +10780,19 @@ w_avg = get_w_avg(sample_size=sample_size)
 
 # now to get a better overall view of noise_injection
 # lets keep everything the same except constant_noise(disable noise injection)
-def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=None, alphas=None, num_samples=36, make_gifs=False, interval=300):
+def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=None,
+                           alphas=None, num_samples=36, make_gifs=False,
+                           gif_dir='./results/gan/stylegan1/gifs',interval=300):
     
     if psi_rates is None:
         psi_rates = [0, 0.3, 0.7, 1]
         
-    # since when we do constant_noise=True, we physically set all the weights to 0
-    # in order to be able to work on the same instantce of our model we make a copy
-    # here so the original weights are not altered and we can run other tests!
+    # since when we do constant_noise=True, 
+    # we physically set all the weights to 0
+    # in order to be able to work on the same
+    # instantce of our model we make a copy
+    # here so the original weights are not 
+    # altered and we can run other tests!
     generator_copy = copy.deepcopy(generator_style1)
         
     w_avg = get_w_avg(sample_size=w_avg_sample_size)
@@ -10792,29 +10801,23 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
     print(f'self.ema_w norm: {generator_copy.ema_w.norm().item()}')
     print(f'manual w_avg norm: {w_avg.norm().item()}')
     
-    interps0 = interpolate_w(generator_copy, z1, z2, step, psi=None, w_avg=None, 
-                             constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
-    display_images(interps0, title=f'psi=None | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
-    
     for rate in psi_rates:
-        interps1 = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=None,
-                                 constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
-        interps2 = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=w_avg, 
-                                 constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
-        
-        display_images(interps1, title=f'psi={rate} + ema_w | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
-        display_images(interps2, title=f'psi={rate} + w-avg(sz={w_avg_sample_size:,}) | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
-        
-        # lets also make some gifs    
-        if make_gifs:
-            fname =f"interp_psi_None_const_noise_{constant_noise}"
-            create_interpolation_animation(interps0, fname, interval=interval)
+        for weight in [None, w_avg]:
+            interpolated_images = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=weight,
+                                    constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
             
-            fname =f"interp_psi_{rate}_ema_w_const_noise_{constant_noise}"
-            create_interpolation_animation(interps1, fname, interval=interval)
+            if make_gifs:
+                msg = "ema_w" if weight is None else "w-avg"
+                fname =f"interpolation_psi_{rate}_{msg}_const_noise_{constant_noise}"
+                # make sure directory exists, if not create it
+                os.makedirs(gif_dir, exist_ok=True)
+                fpath = os.path.join(gif_dir, fname)
+                create_interpolation_animation(interpolated_images, fpath, interval=interval)
+            else:
+                #display as a grid
+                msg = "ema_w" if weight is None else f"w-avg(sz={w_avg_sample_size:,})"
+                display_images(interpolated_images, title=f'psi={rate} + {msg} | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
             
-            fname = f"interp_psi_{rate}_w_avg(sz_{w_avg_sample_size})_const_noise_{constant_noise}"
-            create_interpolation_animation(interps2, fname, interval=interval)
 
 # now lets try 
 num_samples = 36
@@ -10842,12 +10845,15 @@ run_interpolation_test(last_step,
                        num_samples=num_samples)
 #%%
 # now lets also make some gifs as well!
-for noise_status in [True, False]:
+alphas = torch.linspace(0,1,25)
+for noise_status in [True]:
     run_interpolation_test(last_step, sample_size,
-                           psi_rates=[0, 0.7],
+                           psi_rates=[0.7],
                            constant_noise=noise_status,
-                           num_samples=60,
-                           make_gifs=True,
+                           alphas=alphas,
+                           num_samples=36,
+                           make_gifs=0,
+                           gif_dir='./results/gan/stylegan1/gifs',
                            interval=100)
 
 #%%
