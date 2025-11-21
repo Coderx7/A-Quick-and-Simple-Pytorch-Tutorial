@@ -10899,7 +10899,7 @@ def forward_from_w_simple(self, w, step, constant_noise=False):
     return self.toImgs[step](x)
 
 # update:
-# for latent related experiments we need to always use constant_noise
+# for latent related experiments we need to use constant_noise
 # to properly see the impact of other factors like stylemixing at
 # different levels. truncation also helps a lot
 @torch.no_grad()
@@ -10944,16 +10944,19 @@ generator_style1.style_mix = types.MethodType(style_mix, generator_style1)
 z_source = torch.randn(1, generator_style1.z_size, device=device)
 z_style = torch.randn(1, generator_style1.z_size, device=device)
 
-# a good crossover point is usually around half the layers
-# we have max_steps=7 so we have 14 layers, 7, 8 is good
-# however different layers affect different details experiment
-# with all and see the result
-layer_crossover = 8
+# different layers affect different details experiment
+# with all and see the result. e.g. starting from 4 
+# we can see more drastic style transfers. if we go
+# lower, like 1, 2 , we are basically seeing second z!
+# the majority of values belong to second z, but starting
+# from 3,4, we can see the first image is structually there
+# and styles start to transfer.(skin tone, colors, are obvious) 
+layer_crossover = 5
 img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
                                                          z_style, 
                                                          layer_crossover, 
                                                          step=last_step,
-                                                         psi=0.8,
+                                                         psi=None,
                                                          constant_noise=True)
 imgs = torch.cat([img_src,img_style,img_mix])
 display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
