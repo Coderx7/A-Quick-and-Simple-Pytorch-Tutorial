@@ -9289,10 +9289,13 @@ class GeneratorStyleGAN1(nn.Module):
             # (remember progan!) however, the whole issue was the enganglement! so this 
             # helps with that! I guess its now too obvious!)
             #
-            # sidenote:repeat uses view underthe hood, so it doesnt actually copy
-            # anything, just points to the underlying data, so we could have
-            # repeated for the whole layers by default and later here only grab
-            # up to the current step layers! that would have worked as well
+            # sidenote: we could use expand but have to clone it, because expand uses 
+            # view under the hood, so it doesnt actually copy anything, just points to
+            # the underlying data so to get correct result we need to clone it, but 
+            # repeat copies the data! which makes it prefect for us here!
+            # 
+            # so we could have also repeated for the whole layers by default and later
+            # here only grab up to the current step layers! that would have worked as well
             # todo do this instead!
             crossover_point = random.randint(1, num_styles-1)
             # repeat along the channels dim so we get (b,num_styles,w_dim)
@@ -10659,7 +10662,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, re
 # lets calculate average w post training and see if its the same
 # as ema_w or close to it and use it in truncation trick
 @torch.no_grad()
-def calculate_w_avg(self, batch_size, sample_size=500_000):
+def calculate_w_avg(self, batch_size, sample_size=500_000, random_gen=None):
     
     assert batch_size<=sample_size,f'{batch_size=} can not be greater than {sample_size=}!'
     num_batches = sample_size//batch_size
@@ -10668,11 +10671,11 @@ def calculate_w_avg(self, batch_size, sample_size=500_000):
     w_avg_sum = torch.zeros(size=(1,self.w_size), device=device)
     
     if sample_size<=500_000:
-        zs = torch.randn((sample_size, self.z_size), device=device)
+        zs = torch.randn((sample_size, self.z_size), device=device, generator=random_gen)
         return self.mapping_network(zs).mean(dim=0, keepdim=True)
     
     for _ in tqdm(range(num_batches)):
-        zs = torch.randn((batch_size, self.z_size),device=device)
+        zs = torch.randn((batch_size, self.z_size),device=device, generator=random_gen)
         w_avg_sum += self.mapping_network(zs).mean(dim=0,keepdim=True)
 
     return w_avg_sum/num_batches
@@ -10779,12 +10782,12 @@ def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step,
 # for w_avg, too few samples, and we fail
 # to get a close estimate but with enough
 # samples we get good results
-def get_w_avg(sample_size=100_000):
+def get_w_avg(sample_size=100_000, random_gen=None):
     if sample_size>100_000:
         batch_size = int(0.1*sample_size)
     else:
         batch_size = math.ceil(0.5*sample_size)
-    return generator_style1.calculate_w_avg(batch_size, sample_size)
+    return generator_style1.calculate_w_avg(batch_size, sample_size, random_gen)
 
 sample_size = 100_000
 w_avg = get_w_avg(sample_size=sample_size)
@@ -10797,7 +10800,7 @@ w_avg = get_w_avg(sample_size=sample_size)
 # lets keep everything the same except constant_noise(disable noise injection)
 def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=None,
                            alphas=None, num_samples=36, make_gifs=False,
-                           gif_dir='./results/gan/stylegan1/gifs',interval=100):
+                           gif_dir='./results/gan/stylegan1/gifs',interval=100,random_gen=None):
     
     if psi_rates is None:
         psi_rates = [0, 0.3, 0.7, 1]
@@ -10811,7 +10814,7 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
     # update: no more needed! 
     # generator_copy = copy.deepcopy(generator_style1)
 
-    w_avg = get_w_avg(sample_size=w_avg_sample_size)
+    w_avg = get_w_avg(sample_size=w_avg_sample_size,random_gen=random_gen)
     
     # show the norm difference to see how close they are
     print(f'self.ema_w norm: {generator_style1.ema_w.norm().item()}')
@@ -10837,17 +10840,18 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
 # now lets try 
 num_samples = 36
 cols = int(num_samples**0.5)
+seed = 66
+fixed_randg = torch.cuda.manual_seed_all(seed) if device=="cuda" else torch.manual_seed(seed)
 
-random_g = torch.cuda.manual_seed(66) if device=="cuda" else torch.manual_seed(66)
-
-z1 = torch.randn(size=(1, generator_style1.z_size),generator=random_g)
-z2 = torch.randn(size=(1, generator_style1.z_size),generator=random_g)
+z1 = torch.randn(size=(1, generator_style1.z_size),generator=fixed_randg)
+z2 = torch.randn(size=(1, generator_style1.z_size),generator=fixed_randg)
 
 run_interpolation_test(last_step, 
                        sample_size,
                        #psi_rates=[0,0.5,1.2,3,5],
                        constant_noise=True,
-                       num_samples=num_samples)
+                       num_samples=num_samples,
+                       random_gen=fixed_randg)
 # with constant noise, we can truly see the average 
 # and images close to average are exceptionally
 # clear and well developed!
