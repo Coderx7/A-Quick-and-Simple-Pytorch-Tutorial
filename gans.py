@@ -10808,17 +10808,18 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
     # instantce of our model we make a copy
     # here so the original weights are not 
     # altered and we can run other tests!
-    generator_copy = copy.deepcopy(generator_style1)
+    # update: no more needed! 
+    # generator_copy = copy.deepcopy(generator_style1)
 
     w_avg = get_w_avg(sample_size=w_avg_sample_size)
     
     # show the norm difference to see how close they are
-    print(f'self.ema_w norm: {generator_copy.ema_w.norm().item()}')
+    print(f'self.ema_w norm: {generator_style1.ema_w.norm().item()}')
     print(f'manual w_avg norm: {w_avg.norm().item()}')
     
     for rate in psi_rates:
         for weight in [None, w_avg]:
-            interpolated_images = interpolate_w(generator_copy, z1, z2, step, psi=rate, w_avg=weight,
+            interpolated_images = interpolate_w(generator_style1, z1, z2, step, psi=rate, w_avg=weight,
                                     constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
             
             if make_gifs:
@@ -10837,8 +10838,10 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
 num_samples = 36
 cols = int(num_samples**0.5)
 
-z1 = torch.randn(size=(1, generator_style1.z_size))
-z2 = torch.randn(size=(1, generator_style1.z_size))
+random_g = torch.cuda.manual_seed(66) if device=="cuda" else torch.manual_seed(66)
+
+z1 = torch.randn(size=(1, generator_style1.z_size),generator=random_g)
+z2 = torch.randn(size=(1, generator_style1.z_size),generator=random_g)
 
 run_interpolation_test(last_step, 
                        sample_size,
