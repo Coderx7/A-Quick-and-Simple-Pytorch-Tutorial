@@ -10986,7 +10986,7 @@ def forward_from_w_simple(self, w, step, constant_noise=False):
 # different levels. truncation also helps a lot
 @torch.no_grad()
 def style_mix(self, z_source, z_style, layer_indx_for_crossover,
-              step, psi=None, constant_noise=True):
+              step, psi_src=None, psi_sty=None, constant_noise=True):
     
     num_layers = 2*self.max_steps
     assert 0<layer_indx_for_crossover<num_layers, f'layer index{layer_indx_for_crossover} must be < {num_layers}'
@@ -11000,8 +11000,8 @@ def style_mix(self, z_source, z_style, layer_indx_for_crossover,
     w_style = self.mapping_network(z_style)
     
     # apply truncation
-    w_source = self.apply_truncation(w_source, psi)
-    w_style = self.apply_truncation(w_style, psi)
+    w_source = self.apply_truncation(w_source, psi_src)
+    w_style = self.apply_truncation(w_style, psi_sty)
     
     # expand to match shape
     w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
@@ -11038,7 +11038,8 @@ img_src, img_style, img_mix = generator_style1.style_mix(z_source,
                                                          z_style, 
                                                          layer_crossover, 
                                                          step=last_step,
-                                                         psi=None,
+                                                         psi_src=0.7,
+                                                         psi_sty=0.8,
                                                          constant_noise=True)
 imgs = torch.cat([img_src,img_style,img_mix])
 display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
@@ -11046,7 +11047,7 @@ display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(
 # texture/style of the style image is transfered. lets see how each layer affects
 # the result 
 #%%
-def change_styles(z_source, z_style, step, psi=0.8):
+def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
     num_layers = 2*generator_style1.max_steps-1
     imgs_all = []
     for layer in range(1,num_layers):
@@ -11054,7 +11055,8 @@ def change_styles(z_source, z_style, step, psi=0.8):
                                                                  z_style, 
                                                                  layer, 
                                                                  step=step,
-                                                                 psi=psi,
+                                                                 psi_src=psi_src,
+                                                                 psi_sty=psi_sty,
                                                                  constant_noise=True)
         
         imgs = torch.cat([img_src,img_style,img_mix],dim=0)
@@ -11074,7 +11076,7 @@ def change_styles(z_source, z_style, step, psi=0.8):
                    unnormalize=False,
                    figsize=(8,6))
         
-change_styles(z_source,z_style,last_step,psi=0.7)
+change_styles(z_source,z_style,last_step,psi_src=0.8, psi_sty=0.8)
 #%%
 # debug logs:
 # note I want to get this to work organically, 
