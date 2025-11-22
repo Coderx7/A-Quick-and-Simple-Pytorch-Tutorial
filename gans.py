@@ -10733,16 +10733,16 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
     # call. because its there that we upsample the input 
     # 
     # 
-    if not hasattr(self, "blocks_bkup"):
-        self.blocks_bkup = copy.deepcopy(self.blocks)
+    # if not hasattr(self, "blocks_bkup"):
+    #     self.blocks_bkup = copy.deepcopy(self.blocks)
     
-    if constant_noise:
-        for block in self.blocks:
-            if hasattr(block, "noise_inject"):
-                block.noise_inject.weight.data *= 0
-    else:
-        # restre original weights
-        self.blocks = copy.deepcopy(self.blocks_bkup)
+    # if constant_noise:
+    #     for block in self.blocks:
+    #         if hasattr(block, "noise_inject"):
+    #             block.noise_inject.weight.data *= 0
+    # else:
+    #     # restre original weights
+    #     self.blocks = copy.deepcopy(self.blocks_bkup)
         
     num_styles = 2*(step+1)
     # w = w.unsqueeze(1).repeat(1,num_styles,1)
@@ -10766,9 +10766,13 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
     
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
+
+    noise = None
+    if constant_noise:
+        noise = torch.zeros((x.size(0),1,x.size(2),x.size(3)),device=x.device)    
     
     for i in range(2*step+2):
-        x = self.blocks[i](x, w[:,i,:])
+        x = self.blocks[i](x, w[:,i,:], noise)
     
     return self.toImgs[step](x)
 
@@ -10991,23 +10995,27 @@ def apply_truncation(self, w, psi=None):
     return w
 
 def forward_from_w_simple(self, w, step, constant_noise=False):
-    # backup original weights
-    if not hasattr(self, "blocks_bkup"):
-        self.blocks_bkup = copy.deepcopy(self.blocks)
+    # # backup original weights
+    # if not hasattr(self, "blocks_bkup"):
+    #     self.blocks_bkup = copy.deepcopy(self.blocks)
     
-    if constant_noise:
-        for block in self.blocks:
-            if hasattr(block, "noise_inject"):
-                block.noise_inject.weight.data *= 0
-    else:
-        # restre original weights
-        self.blocks = copy.deepcopy(self.blocks_bkup)
+    # if constant_noise:
+    #     for block in self.blocks:
+    #         if hasattr(block, "noise_inject"):
+    #             block.noise_inject.weight.data *= 0
+    # else:
+    #     # restre original weights
+    #     self.blocks = copy.deepcopy(self.blocks_bkup)
         
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
     
+    noise = None
+    if constant_noise:
+        noise = torch.zeros((x.size(0),1,x.size(2),x.size(3)),device=x.device) 
+    
     for i in range(2*step+2):
-        x = self.blocks[i](x, w[:,i,:])
+        x = self.blocks[i](x, w[:,i,:], noise)
     
     return self.toImgs[step](x)
 
@@ -11103,9 +11111,10 @@ def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
     ims = torch.cat(imgs_all, dim=0)
     # print(f'{ims.shape=}')
     display_images(ims,
-                   title='images source|style|mix',
+                   title='Source | Style | Mix',
                    unnormalize=False,
-                   figsize=(8,6))
+                   cols=1,
+                   figsize=(16,16))
         
 change_styles(z_source,z_style,last_step,psi_src=0.8, psi_sty=0.8)
 #%%
