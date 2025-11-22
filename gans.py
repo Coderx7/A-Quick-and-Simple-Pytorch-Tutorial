@@ -8913,9 +8913,23 @@ class NoiseInjection(nn.Module):
         self.weight = nn.Parameter(torch.zeros(1,channels,1,1))
 
     def forward(self, x, noise=None):
-        # for debugging purposes we send in a fixed noise
-        # thats why I included a noise argument here.otherwise
-        # we dont need that
+        # for debugging purposes we can send in a fixed noise
+        # otherwise we dont need that.(we need it for paper experiments aswell)
+        # during inference time, to create different experiments
+        # that we see in the paper, we need to disable noise injection
+        # as a source of randomness so we can experiment and see the 
+        # effects of truncation trick and or style mixing.
+        # I explained more in the experiment section after the training.
+        # we dont really need the noise argument in training, its mostly
+        # for those experiments.
+        # update:
+        # for the experiment, I had to manually set the weighst to zero
+        # because I couldnt use the noise argument here properly because
+        # of shape mismatch.(getting the right size in loop becomes cumbersome
+        # unless we changethe forwardpass toa ccount for this which I dont like
+        # I want to keep it as straight forward as I can. so I guess
+        # to make this easier I can simply add the logic here! simply
+        # create the zero tensor here if noise needs to be constant/disabled!)
         if noise is None:
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
 
@@ -9030,7 +9044,7 @@ class StyleConvBlock(nn.Module):
             # 4x4 res doesnt use any conv layer!
             out = x
             
-        # inject noise into the output featuremaps
+        # inject noise into the output featuremaps,
         out = self.noise_inject(out, noise)
         
         # apply a separate bias!
@@ -10702,6 +10716,14 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
     
     # since we are setting original weighst to zero
     # when constant_noise=True, we take a backup for later
+    # todo the noise argument in noiseinjection block
+    # doesnt allow me to send properly shaped noise
+    # from outside! I must add the logic inside noise_inject
+    # so instead of random, use a zero one e.g. or 
+    # handle noise's correct size inside generator's forward
+    # call. because its there that we upsample the input 
+    # 
+    # 
     if not hasattr(self, "blocks_bkup"):
         self.blocks_bkup = copy.deepcopy(self.blocks)
     
