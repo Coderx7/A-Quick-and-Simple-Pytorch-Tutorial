@@ -10638,7 +10638,7 @@ checkpoint_path = './weights/gan/stylegan1_ffhq_20251110095733/checkpoint_step_4
 generator_style1, last_step = load_checkpoints(checkpoint_path, device='cuda')
 
 z = torch.randn((num_samples, generator_style1.z_size), device=device)
-dim = 2**(last_step+1)
+dim = 2<<last_step+1
 res=f"{dim}x{dim}"
 with torch.no_grad():
     imgs = generator_style1(z, alpha=1, step=last_step, psi=0.7)
@@ -10705,47 +10705,7 @@ def calculate_w_avg(self, batch_size, sample_size=500_000, random_gen=None):
 
 # now lets implement the main part which is forward with w:
 def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
-    
-    # disable noise injection by setting noise weights to all zero
-    # so we remove all aspect of variations so we can properly test
-    # truncation impact!
-    # sidenote:
-    # initially every time I tried different psi ratios, nothing 
-    # would change it was as if psi=None! my manual w_avg didnt
-    # do anything! I tried everything until I found out there's 
-    # another source of randomness in our model and thats noise_injection!
-    # I though that cant be, cuz its supposed to only affect fine details
-    # but after I set it to all zeros, effectively disabling it
-    # now different psi rates show their effect. now we can see 
-    # with psi=0 e.g. we get single image replicated for all images
-    # as its using the averge w! now w shows its impact!
-    # todo: add an option for constant_noise to styleConvBlock
-    # so during inference tests like this we can easily experiment!
-    # without any issues!
-    
-    # since we are setting original weighst to zero
-    # when constant_noise=True, we take a backup for later
-    # todo the noise argument in noiseinjection block
-    # doesnt allow me to send properly shaped noise
-    # from outside! I must add the logic inside noise_inject
-    # so instead of random, use a zero one e.g. or 
-    # handle noise's correct size inside generator's forward
-    # call. because its there that we upsample the input 
-    # 
-    # 
-    # if not hasattr(self, "blocks_bkup"):
-    #     self.blocks_bkup = copy.deepcopy(self.blocks)
-    
-    # if constant_noise:
-    #     for block in self.blocks:
-    #         if hasattr(block, "noise_inject"):
-    #             block.noise_inject.weight.data *= 0
-    # else:
-    #     # restre original weights
-    #     self.blocks = copy.deepcopy(self.blocks_bkup)
-        
     num_styles = 2*(step+1)
-    # w = w.unsqueeze(1).repeat(1,num_styles,1)
     if not self.training and psi is not None:
         if w_avg is None:
             ema_w_batch = self.ema_w.repeat(w.size(0),1)
@@ -10767,6 +10727,19 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
 
+    # disable noise injection by setting noise weights to all zero
+    # so we remove all aspect of variations so we can properly test
+    # truncation impact!
+    # sidenote:
+    # initially every time I tried different psi ratios, nothing 
+    # would change it was as if psi=None! my manual w_avg didnt
+    # do anything! I tried everything until I found out there's 
+    # another source of randomness in our model and thats noise_injection!
+    # I though that cant be, cuz its supposed to only affect fine details
+    # but after I set it to all zeros, effectively disabling it
+    # now different psi rates show their effect. now we can see 
+    # with psi=0 e.g. we get single image replicated for all images
+    # as its using the averge w! now w shows its impact!
     noise = None
     if constant_noise:
         noise = torch.zeros((x.size(0),1,x.size(2),x.size(3)),device=x.device)    
@@ -11115,8 +11088,35 @@ def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
                    unnormalize=False,
                    cols=1,
                    figsize=(16,16))
+
+change_styles(z_source,z_style,last_step,psi_src=0.7, psi_sty=0.7)
+#%%
+# now lets see the default method with constant noise
+# we should get much better results this  time 
+
+torch.no_grad()
+def run_simple_gen_with_const_noise(constant_noise=True, num_samples=36):
+    
+    z = torch.randn((num_samples, generator_style1.z_size), device=device)
+    noise = torch.zeros((num_samples,1,dim,dim),device=device) if constant_noise else None
+    # None is basically psi=1, but im including it for the sake of including it!
+    for i in [None, 0.4,0.7,1]:
+        imgs = generator_style1(z, alpha=1, step=last_step, psi=i, noise=noise)
         
-change_styles(z_source,z_style,last_step,psi_src=0.8, psi_sty=0.8)
+        display_images(imgs, 
+                        cols=6, 
+                        title=f'Step {last_step} [{res}] - [PSI: {i}] - [Inject Noise: {not constant_noise}]',
+                        unnormalize=True, 
+                        figsize=(16,8))
+        
+run_simple_gen_with_const_noise()
+# as we can see we get much better results, but less diverse as well when we use constant_noise
+# note that without constant_noise, we cant properly see the impact of psi/stylemix as we
+# mentioned earlier. also note we havent trained our model very well! just enough to get
+# decent looking images. it would take a lot of time (I wasted two weeks on experimenting
+# with my buggy implementation unitl I fixed them! so I didnt let it train for too much when
+# things got working!) so by trainig more our default mode should start looking great as well
+# but can always use truncation trick with constant noise to get much better results if we need to!
 #%%
 # debug logs:
 # note I want to get this to work organically, 
