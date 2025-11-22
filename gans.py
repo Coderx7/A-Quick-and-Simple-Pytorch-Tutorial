@@ -8940,7 +8940,7 @@ class NoiseInjection(nn.Module):
         if noise is None:
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
         else: # or if we use a fixed something, we make sure its dims match!
-            noise = F.interpolate(noise, size=(1,x.size(2),x.size(3)))
+            noise = F.interpolate(noise, size=(x.size(2), x.size(3)))
         return x+(self.weight*noise)
 
 # StyleBlock
@@ -9229,7 +9229,7 @@ class GeneratorStyleGAN1(nn.Module):
              self.ema_w.mul_(self.ema_w_beta).add_(w_batch.mean(0), alpha=1-self.ema_w_beta)
     
    
-    def forward(self, z, alpha, step, psi=None):
+    def forward(self, z, alpha, step, psi=None, noise=None):
         # stylemixing during training
         # initially I used a single w for all layers, but as the paper
         # says, the w must be per layer. that is duing the mixing process
@@ -9344,8 +9344,8 @@ class GeneratorStyleGAN1(nn.Module):
         
         if step == 0: #4x4
             # we need to pass a separate w for each layer accordingly
-            x = self.blocks[0](x, w[:,0,:])
-            x = self.blocks[1](x, w[:,1,:])
+            x = self.blocks[0](x, w[:,0,:], noise)
+            x = self.blocks[1](x, w[:,1,:], noise)
             return self.toImgs[step](x)
         
         # now feed the inputs x and w to blocks
@@ -9359,7 +9359,7 @@ class GeneratorStyleGAN1(nn.Module):
             # if we do this after the following if block, previous_image
             # would be the raw const_input that has not been stylized by adain
             # and noiseinjection is not applied!
-            x = self.blocks[i](x, w[:,i,:])
+            x = self.blocks[i](x, w[:,i,:],noise)
             # save a copy of previous step output
             if i == (2*step-1) and alpha<1:
                 # the current x is the output for previous res so 
@@ -9393,9 +9393,10 @@ for i in range(0,max_steps):
     H = W = 2**i*4
     x = torch.randn(size=(5,3,H,W))
     z = torch.randn(size=(5,100))
+    n = torch.zeros((5,1,H,W))
     disc_out = disc(x, alpha=1, step=i)
     print(f'disc_out.shape: {tuple(disc_out.shape)}')
-    gen_out = gen(z, alpha=1, step=i)
+    gen_out = gen(z, alpha=1, step=i,noise=n)
     print(f'gen_out.shape : {tuple(gen_out.shape)}')
 
 #%%
