@@ -10696,13 +10696,20 @@ def forward_from_w(self, w, step, psi=None, w_avg=None, constant_noise=False):
     # todo: add an option for constant_noise to styleConvBlock
     # so during inference tests like this we can easily experiment!
     # without any issues!
+    
+    # since we are setting original weighst to zero
+    # when constant_noise=True, we take a backup for later
+    if not hasattr(self, "blocks_bkup"):
+        self.blocks_bkup = copy.deepcopy(self.blocks)
+    
     if constant_noise:
-        print("Warning: After using constant_noise = True, original weights are gone."
-              " Load from checkpoint to get origianl weights if you havent used a copy!")
         for block in self.blocks:
             if hasattr(block, "noise_inject"):
                 block.noise_inject.weight.data *= 0
-    
+    else:
+        # restre original weights
+        self.blocks = copy.deepcopy(self.blocks_bkup)
+        
     num_styles = 2*(step+1)
     # w = w.unsqueeze(1).repeat(1,num_styles,1)
     if not self.training and psi is not None:
@@ -10744,7 +10751,7 @@ generator_style1.calculate_w_avg = types.MethodType(calculate_w_avg, generator_s
 @torch.no_grad()
 def interpolate_w(generator:GeneratorStyleGAN1, z1, z2, step, 
                   psi=None, w_avg=None, constant_noise=False,
-                  alphas=None, interp_steps=60, eps=1e-8,device='cuda'):
+                  alphas=None, interp_steps=60, device='cuda'):
     generator = generator.to(device)
     generator.eval()
         
@@ -10790,11 +10797,11 @@ w_avg = get_w_avg(sample_size=sample_size)
 # lets keep everything the same except constant_noise(disable noise injection)
 def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=None,
                            alphas=None, num_samples=36, make_gifs=False,
-                           gif_dir='./results/gan/stylegan1/gifs',interval=300):
+                           gif_dir='./results/gan/stylegan1/gifs',interval=100):
     
     if psi_rates is None:
         psi_rates = [0, 0.3, 0.7, 1]
-        
+
     # since when we do constant_noise=True, 
     # we physically set all the weights to 0
     # in order to be able to work on the same
@@ -10802,7 +10809,7 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
     # here so the original weights are not 
     # altered and we can run other tests!
     generator_copy = copy.deepcopy(generator_style1)
-        
+
     w_avg = get_w_avg(sample_size=w_avg_sample_size)
     
     # show the norm difference to see how close they are
@@ -10825,7 +10832,6 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
                 #display as a grid
                 msg = "ema_w" if weight is None else f"w-avg(sz={w_avg_sample_size:,})"
                 display_images(interpolated_images, title=f'psi={rate} + {msg} | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
-            
 
 # now lets try 
 num_samples = 36
@@ -10867,7 +10873,6 @@ for noise_status in [True]:
 # now lets do some style mixing, use one z for the coarse features
 # and another one for style change. 
 
-# now lets implement the main part which is forward with w:
 def apply_truncation(self, w, psi=None):
     if not self.training and psi is not None:
         if w_avg is None:
@@ -10879,16 +10884,16 @@ def apply_truncation(self, w, psi=None):
 
 def forward_from_w_simple(self, w, step, constant_noise=False):
     # backup original weights
-    if not hasattr(self, "block_cpy"):
-        self.blocks_cpy = copy.deepcopy(self.blocks)
+    if not hasattr(self, "blocks_bkup"):
+        self.blocks_bkup = copy.deepcopy(self.blocks)
     
     if constant_noise:
         for block in self.blocks:
             if hasattr(block, "noise_inject"):
                 block.noise_inject.weight.data *= 0
     else:
-        # use original weights
-        self.blocks = copy.deepcopy(self.blocks_cpy)
+        # restre original weights
+        self.blocks = copy.deepcopy(self.blocks_bkup)
         
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
@@ -10926,7 +10931,7 @@ def style_mix(self, z_source, z_style, layer_indx_for_crossover,
     w_style = w_style.unsqueeze(1).repeat(1,num_layers,1)
     
     # we are going to need both source and style ws for later
-    # so lets use it to create our result w_mixed
+    # reference so lets use it to create our result w_mixed
     w_mixed = w_source.clone()
     w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
     
