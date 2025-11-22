@@ -10822,8 +10822,15 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
     
     for rate in psi_rates:
         for weight in [None, w_avg]:
-            interpolated_images = interpolate_w(generator_style1, z1, z2, step, psi=rate, w_avg=weight,
-                                    constant_noise=constant_noise, alphas=alphas, interp_steps=num_samples)
+            interpolated_images = interpolate_w(generator_style1,
+                                                z1, 
+                                                z2,
+                                                step,
+                                                psi=rate,
+                                                w_avg=weight,
+                                                constant_noise=constant_noise,
+                                                alphas=alphas,
+                                                interp_steps=num_samples)
             
             if make_gifs:
                 msg = "ema_w" if weight is None else "w-avg"
@@ -10840,11 +10847,73 @@ def run_interpolation_test(step, w_avg_sample_size, constant_noise, psi_rates=No
 # now lets try 
 num_samples = 36
 cols = int(num_samples**0.5)
-seed = 66
-fixed_randg = torch.cuda.manual_seed_all(seed) if device=="cuda" else torch.manual_seed(seed)
+seed=66
+# seed global pytorch rng
+torch.manual_seed(seed)
+# seed cuda rng on all gpus
+torch.cuda.manual_seed_all(seed)
+# and finally get a fixed random generator.
+# sidenote:
+# previously I would use the generator returned from manual_seed*()
+# but I noticed it fails from time to time. 
+# turns out the manual_seed/manual_seed_all()
+# return the default_generator which is used
+# whenever a random generator is not passed to randn e.g.
+# the issue is that, if we rely on this, and 
+# somewhere in our code or a library we use,
+# calls torch.rand*()(i.e. randn,ranint,etc)
+# without an explicit random generator, it 
+# will change the default_generator internal state
+# and therefore change our randomness!breaking our fixed state!
+# extra-note:
+# the Random Number Generator pytorch uses is
+# known as a stateful pseduo-random number generator (PRNG for short)
+# note the stateful part. now it works just like
+# a tape with an infinit sequence of random numbers
+# written on it. it has a read head that points to
+# the next number that we havent used yet. 
+# each time we call a rand function (e.g. randn, randint,etc)
+# it advances the read head on that sequence/stream.
+# effectively updating the internal state and calculating
+# the new random number from the new sequence of numbers.
+# when we use a separate generator, we get a private stream
+# so when we call rand* function, it gives us determinstic
+# outputs. because its not shared, so each number in 
+# the sequence of numbers gets used by the same order
+# we call rand* functions in our cdoe and we always get
+# the same random number.
+# but when we use the default/global random generator
+# each time a rand function is called, the stream is
+# advanced and the internal state changes, this is because
+# it is shared by everyone, so any function/code in 
+# our codebase or libraries that use the default generator
+# causes the head to move forward, so our rand* functions
+# that get called each time, they get a different randomnumber
+# hence why we get different results.
+# (note things like other library calling for randomness,
+# layers like dropout, dataloaders even use randomness,
+# cuda kernels, they are all sources of changing the default
+# generator state. even the order of operations can affect this)
+#
+# e.g. imagine this to be our tape
+# tape an infinitly large list [0,1,2,3,4,...]
+# the read head points to the next unused number as random value
+# each call to rand/randn/etc uses a number and thus 
+# moves the head forward! when we use a private generator
+# we have a private list of numbers, we first call rand1
+# it uses the first number and moves to the next in sequence
+# when we use rand function 2 e.g., it uses the new (second) number
+# when we use rand function 3 e.g. it uses the next one. 
+# if we repeat this, it starts all over again. each rand uses
+# a new/different random number, but our results will be the same
+# because if the first got 0, second got 1, third got2, they 
+# will always be that as long as the order is the same. 
+# (i.e. rand1 is called first, rand2 called second and rand3 called last!)
+# todo: simplify and make it shorter its too long
+fixed_randg = torch.Generator(device=device).manual_seed(seed)
 
-z1 = torch.randn(size=(1, generator_style1.z_size),generator=fixed_randg)
-z2 = torch.randn(size=(1, generator_style1.z_size),generator=fixed_randg)
+z1 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
+z2 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
 
 run_interpolation_test(last_step, 
                        sample_size,
@@ -10875,7 +10944,8 @@ for noise_status in [True]:
                            num_samples=36,
                            make_gifs=True,
                            gif_dir='./results/gan/stylegan1/gifs',
-                           interval=100)
+                           interval=100,
+                           random_gen=fixed_randg)
 #%%
 # now lets do some style mixing, use one z for the coarse features
 # and another one for style change. 
@@ -10953,8 +11023,8 @@ generator_style1.apply_truncation =  types.MethodType(apply_truncation, generato
 generator_style1.forward_from_w_simple = types.MethodType(forward_from_w_simple, generator_style1)
 generator_style1.style_mix = types.MethodType(style_mix, generator_style1)
 
-z_source = torch.randn(1, generator_style1.z_size, device=device)
-z_style = torch.randn(1, generator_style1.z_size, device=device)
+z_source = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
+z_style = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
 
 # different layers affect different details experiment
 # with all and see the result. e.g. starting from 4 
