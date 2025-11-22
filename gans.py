@@ -8915,14 +8915,16 @@ class NoiseInjection(nn.Module):
     def forward(self, x, noise=None):
         # for debugging purposes we can send in a fixed noise
         # otherwise we dont need that.(we need it for paper experiments aswell)
-        # during inference time, to create different experiments
-        # that we see in the paper, we need to disable noise injection
-        # as a source of randomness so we can experiment and see the 
-        # effects of truncation trick and or style mixing.
         # I explained more in the experiment section after the training.
         # we dont really need the noise argument in training, its mostly
         # for those experiments.
         # update:
+        # ok I never actually got to use this for debugging during training
+        # however during inference time, to create different experiments
+        # that we see in the paper, I had to disable noise injection
+        # because it acts as a source of randomness, so I could experiment
+        # and show the effects of truncation trick and or style mixing like
+        # the paper! 
         # for the experiment, I had to manually set the weighst to zero
         # because I couldnt use the noise argument here properly because
         # of shape mismatch.(getting the right size in loop becomes cumbersome
@@ -8930,9 +8932,15 @@ class NoiseInjection(nn.Module):
         # I want to keep it as straight forward as I can. so I guess
         # to make this easier I can simply add the logic here! simply
         # create the zero tensor here if noise needs to be constant/disabled!)
+        # todo keep noise=None as default so we dont change anything in code by default
+        # but add new case to dynamically update the spataial dim of the noise here
+        # so we dont get shape mismatch! anymore! for constant/zero case this
+        # works 100% and for anytihng other like a fixed tensor of some value, 
+        # this should still work!
         if noise is None:
             noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
-
+        else: # or if we use a fixed something, we make sure its dims match!
+            noise = F.interpolate(noise, size=(1,x.size(2),x.size(3)))
         return x+(self.weight*noise)
 
 # StyleBlock
