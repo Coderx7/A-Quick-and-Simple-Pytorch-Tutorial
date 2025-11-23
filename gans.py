@@ -10634,6 +10634,13 @@ def load_checkpoints(checkpoint_path, device="cuda"):
 
 device = 'cuda'
 num_samples=36
+#cifar10
+# checkpoint_path = './weights/gan/stylegan1_cifar10_20251114082051/checkpoint_step_3_20251114082051.ckpt'
+#not as good as previous one, but interesting nonethelss.
+# checkpoint_path = './weights/gan/stylegan1_cifar10_20251115223041/checkpoint_step_3_20251115223041.ckpt'
+# 23/25m model-not trained as long! the next one
+# checkpoint_path = './weights/gan/stylegan1_ffhq_20251109035618/checkpoint_step_4_20251109035618.ckpt'
+# gives the best results so far (11/11m models)
 checkpoint_path = './weights/gan/stylegan1_ffhq_20251110095733/checkpoint_step_4_20251110095733.ckpt'
 generator_style1, last_step = load_checkpoints(checkpoint_path, device='cuda')
 
@@ -10922,8 +10929,6 @@ fixed_randg = torch.Generator(device=device).manual_seed(seed)
 # (i.e. rand1 is called first, rand2 called second and rand3 called last!)
 # todo: simplify and make it shorter its too long
 
-
-
 z1 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
 z2 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
 
@@ -10972,18 +10977,6 @@ def apply_truncation(self, w, psi=None):
     return w
 
 def forward_from_w_simple(self, w, step, constant_noise=False):
-    # # backup original weights
-    # if not hasattr(self, "blocks_bkup"):
-    #     self.blocks_bkup = copy.deepcopy(self.blocks)
-    
-    # if constant_noise:
-    #     for block in self.blocks:
-    #         if hasattr(block, "noise_inject"):
-    #             block.noise_inject.weight.data *= 0
-    # else:
-    #     # restre original weights
-    #     self.blocks = copy.deepcopy(self.blocks_bkup)
-        
     # set the batchsize for const_input/canvas
     x = self.const_input.repeat(w.size(0), 1,1,1)
     
