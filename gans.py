@@ -10861,25 +10861,26 @@ torch.manual_seed(seed)
 # seed cuda rng on all gpus
 torch.cuda.manual_seed_all(seed)
 # and finally get a fixed random generator.
+fixed_randg = torch.Generator(device=device).manual_seed(seed)
 # sidenote:
 # previously I would use the generator returned from manual_seed*()
-# but I noticed it fails from time to time. 
+# but I noticed it doesnt give me determinstic outputs properly!
 # turns out the manual_seed/manual_seed_all()
 # return the default_generator which is used
 # whenever a random generator is not passed to randn e.g.
 # the issue is that, if we rely on this, and 
 # somewhere in our code or a library we use,
-# calls torch.rand*()(i.e. randn,ranint,etc)
+# calls torch.rand*()(i.e. randn,randint,etc)
 # without an explicit random generator, it 
-# will change the default_generator internal state
-# and therefore change our randomness!breaking our fixed state!
+# will use and thus change the default_generator internal state
+# and therefore change our randomness! breaking our determinstic output
 # extra-note:
 # the Random Number Generator pytorch uses is
 # known as a stateful pseduo-random number generator (PRNG for short)
-# note the stateful part. now it works just like
+# note the stateful part. it works just like
 # a tape with an infinit sequence of random numbers
 # written on it. it has a read head that points to
-# the next number that we havent used yet. 
+# the next number that we havent used yet and 
 # each time we call a rand function (e.g. randn, randint,etc)
 # it advances the read head on that sequence/stream.
 # effectively updating the internal state and calculating
@@ -10889,21 +10890,23 @@ torch.cuda.manual_seed_all(seed)
 # outputs. because its not shared, so each number in 
 # the sequence of numbers gets used by the same order
 # we call rand* functions in our cdoe and we always get
-# the same random number.
+# the same random numbers in succession.
 # but when we use the default/global random generator
-# each time a rand function is called, the stream is
+# each time a rand function is called, regardless from where
+# our codebase, or a thirdparty library code, the stream is
 # advanced and the internal state changes, this is because
 # it is shared by everyone, so any function/code in 
 # our codebase or libraries that use the default generator
 # causes the head to move forward, so our rand* functions
 # that get called each time, they get a different randomnumber
-# hence why we get different results.
-# (note things like other library calling for randomness,
-# layers like dropout, dataloaders even use randomness,
+# hence why we get different results sometimes!
+# (note things like other layers like dropout, dataloaders,
 # cuda kernels, they are all sources of changing the default
-# generator state. even the order of operations can affect this)
-#
-# e.g. imagine this to be our tape
+# generator state because they all use randomness. even the 
+# order of operations can affect this so to get 100% determinstic
+# output we must use a dedicated random generator and not use
+# the global/default generator)
+# to make this click! imagine this to be our tape
 # tape an infinitly large list [0,1,2,3,4,...]
 # the read head points to the next unused number as random value
 # each call to rand/randn/etc uses a number and thus 
@@ -10918,7 +10921,8 @@ torch.cuda.manual_seed_all(seed)
 # will always be that as long as the order is the same. 
 # (i.e. rand1 is called first, rand2 called second and rand3 called last!)
 # todo: simplify and make it shorter its too long
-fixed_randg = torch.Generator(device=device).manual_seed(seed)
+
+
 
 z1 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
 z2 = torch.randn(size=(1, generator_style1.z_size), device=device, generator=fixed_randg)
