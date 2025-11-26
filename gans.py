@@ -12015,7 +12015,7 @@ class StyleConvBlock2(nn.Module):
     def forward(self, x, w, noise=None):
         # sg2 does conv then upsample?
         if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode="nearest")
+            x = F.interpolate(x, scale_factor=2, mode="bilinear")
             # blur the output to hide checker marks effects this is especially important
             # for 32x32 and higher res so the discriminator doesnt win too quickly!
             x = self.blur(x)
@@ -12080,7 +12080,36 @@ class GeneratorStyleGAN2(nn.Module):
     def _update_ema_w(self, w_batch):
          if self.training:
              self.ema_w.mul_(self.ema_w_beta).add_(w_batch.mean(0), alpha=1-self.ema_w_beta)
-       
+    
+    # this time lets separate the forward pass using w
+    # to make it easier for calculating path length regularization
+    # and future interpolation experimets
+    def foward_from_w(self, w, noise=None):
+        if w.ndim==2:
+            w = w.unsqueeze(1).repeat(1, len(self.blocks),1)
+        
+        # set the batchsize forr const_input/canvas
+        x = self.const_input.repeat(w.size(0), 1,1,1)
+        
+        #4x4
+        x = self.blocks[0](x, w[:,0,:], noise)
+        x = self.blocks[1](x, w[:,1,:], noise)
+        # grab the first image(i.e old image )
+        img = self.toImgs[0](x)
+        
+        # main loop, skip connections
+        for i in range(1, len(self.channels)):
+            idx1 = 2*i
+            # upsample the previous img so we can add it to the new image(current resolution)
+            img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
+            #process the input for this resolution
+            x = self.blocks[idx1](x, w[:, idx1], noise)
+            x = self.blocks[idx1+1](x, w[:, idx1+1], noise)
+            # create the image for current resolution and add it to the previous one
+            img = img + self.toImgs[i](x)
+            
+        return img
+           
     def forward(self, z, psi=None, noise=None):
         num_layers = len(self.blocks)
         w = self.mapping_network(z)
@@ -12104,34 +12133,10 @@ class GeneratorStyleGAN2(nn.Module):
         else:
             w = w.unsqueeze(1).repeat(1, num_layers,1)
 
-        # set the batchsize forr const_input/canvas
-        x = self.const_input.repeat(z.size(0), 1,1,1)
-        
-        #4x4
-        x = self.blocks[0](x, w[:,0,:], noise)
-        x = self.blocks[1](x, w[:,1,:], noise)
-        # grab the first image(i.e old image )
-        img = self.toImgs[0](x)
-        
-        # main loop, skip connections
-        for i in range(1, len(self.channels)):
-            idx1 = 2*i
-            
-            # upsample the previous img so we can add it to the new image(current resolution)
-            img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
-            
-            #process the input for this resolution
-            x = self.blocks[idx1](x, w[:, idx1], noise)
-            x = self.blocks[idx1+1](x, w[:, idx1+1], noise)
-            # create the image for current resolution and add it to the previous one
-            img = img + self.toImgs[i](x)
-            
+        img = self.foward_from_w(w, noise)
         return img
     
     
-# x = torch.randn(size=(5,3,256,256))
-# z = torch.randn(size=(5,100))
-max_steps = 7
 channels=[512,256,128,64,32,16,8]
 disc = DiscriminatorStyleGAN2(channels=channels)
 gen = GeneratorStyleGAN2(100,100,channels=channels)
@@ -12147,6 +12152,512 @@ print(f'disc_out.shape: {tuple(disc_out.shape)}')
 gen_out = gen(z, noise=n)
 print(f'gen_out.shape : {tuple(gen_out.shape)}')
     
+#%%
+def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
+    # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
+    # softplus is log(1+exp(x)) but since pytorch offers a numerically
+    # stable version, we use the builtin one
+    
+    
+    # softplus, is a non-saturating loss, like WGAN/GP. it is a smoothed version of
+    # relu (i.e. log(1+exp(x))) and is not bounded, so we are basically getting raw
+    # outputs/logits so the output can get as large as it wants!
+    # 
+    # the sofplus+r1_penalty is there so we dont face vanishing/exploding
+    # gradients! the softplus prevents the vanishing gradients, by being non-saturating
+    # but not the exploding gradients!
+    # in fact because its unbounded its very susceptible to gradient explosions!
+    # by switching to a non-saturating loss, the discriminator's output can grow indefinitly!
+    # (it can learn to produce huge scores for tiny changes in input images! be it real or fake
+    # for real huge positive scores, for fakes, huge negative scores!)
+    # which means the gradient of the discriminator with respect to its input becomes huge!
+    # all of this means, the discriminator acts as a massive amplifier! 
+    # so when the generator backpropagates its loss, our discriminator which acts as this
+    # huge gradient amplifier causes the gradient signal to explode!
+    # 
+    # to fix the explosion part we use the r1_penalty term. its job is to make sure 
+    # discriminator doesnt get too good too fast! therefore the discriminator itself
+    # rarely faces gradient explosion if at all but the generator on the other hand 
+    # that only uses softplus(D(x)) is very prune/susciptible to gradient explosions.
+    # see the explanations ahead.
+    #
+    loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
+    # update:
+    #  after adding fp16, I noticed r1_penalty needs to be done 
+    #  in full precision mode (i.e. fp32) otherwise we get nans
+    with torch.amp.autocast(device_type="cuda", enabled=False):
+        penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
+    
+    return loss + penalty
+
+def generator_loss_stylegan1(d_preds_fake):
+    # G_loss = E[softplus(-D(G(z)))]
+    
+    # sidenote from future/reminder:
+    # I originally wrote this for dbeug log when I faced gradient explosion at some point
+    # but I thought having it here as a reminder works better so here it is:
+    #
+    # note, softplus is a non-saturating loss, just like the wgan/wgangp loss.
+    # this matters because in our previous experiments we saw when discriminator gets really 
+    # good, the gradients vanish and thats why generator cant improve, cuz it doesnt get 
+    # proper feedback. 
+    # however this behavior depends on the loss function we use. if we use a staurating loss
+    # functions like BCE, that uses sigmoid, when the model gets good, (the real images e.g.)
+    # it produces values very close to 0, so the the gradients become extremely tiny and 
+    # therefore the generator cant improve with those tiny gradients. 
+    # on the otherhand, when we use non-saturating losses, that are not bounded,(like softplus/WGAN), 
+    # i.e. we dont use any activations for the final layer of discirminator, no sigmoid is used,
+    # the network can learn to produce very large scores for the real images and very small
+    # ones (i.e. very large negative numbers) for fake images! 
+    # so when we calculate the generator's loss by softplus(-disc(fake_images)).mean() and 
+    # the discriminator produces large negative numbers then the gradients will be massive 
+    # as well! this will lead to gradient explosion!
+    #
+    # note the softplus uses log, and any large number given to log will be small, so loss 
+    # itself isnt going to explode, the gradient will! and its the generator that goes down
+    # the hill!(i.e. the explosion happens in the generator not the discriminator 
+    # because the gradient is propegated through several layers in the generator! because of 
+    # repeated multiplications that follow!
+    # for example imagine this:
+    # if our discriminator is very good and assigns a large positive number to real images,
+    # i.e. D(fake_imgs)=40 the gradient of softplus(y) with respect to its input(y) will be 
+    # dLG/dsotfplus(y) = 1/(1+e^-y) or in other words simply sigmoid(y), now the gradients
+    # with respect to discriminator will be dLG/dD_fake = -simoid(-40) = -4*10^-18 essentially 0!
+    # the gradient will be very tiny and its almost nothing!  
+    # if model wasnt good and produced a large positive number for fake images, then there 
+    # would be no issues again! cause the gradient would be nearly 0 and at most generator wouldnt
+    # change much) however, when the discriminator assignes a large negative number to fake images,
+    # confidently identifying it as fake, i.e. D(fake_images)=-40, we then have (dervaitive with
+    # respect to D): softplus(y)=(-(-40)) -> softplus(40) -> -sigmoid(40)=-1.
+    # now if we have lets say 10 layers, and imagine their weights to be a value like 3 for 
+    # the sake of our example, then we will have -1*3^10=-59049! when we reach the first layer!
+    # as you can see the gradient magnitude just exploded through several layers of multiplications! 
+    # 
+    # note:3^10 is just an analogy in place of the actual multiplications that happen after each layer
+    # because that would also grow exponentially, I simply replaced it with an example with exponential growth like that!
+    # 
+    # (note the sign doesnt matter here the magnitude does! when updating the weights,
+    # we move in the opposite direction of the gradients (i.e. delta_w=-lr*grad=0.001*(-59049)=~59 e.g.
+    # so w_new = w_old+delta_w! now the new weights will also start to get large(explode) and
+    # in the next forward pass cause the activations to explode and result in nans!
+    # this is why we cant have disc get good quickly at all, if it does, we can face gradient explosion!
+    # and vanishing gradient depending which will result in exploding gradient ultimately!
+    # 
+    return F.softplus(-d_preds_fake).mean()
+
+# we have implemented the disc/gen
+# we have implemented the losses
+# so lets do the training loop
+
+@torch.no_grad()
+def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
+    # sidenote, we only update the parameters we dont touch buffers 
+    # as it would have destroyed their stats!)
+    # this dynamic decay is from stylegan2 if I dont get any better 
+    # results will go back to the old version!
+    # decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
+    for ema_p,p in zip(g_ema.parameters(), g.parameters()):
+        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+    # copy the ema_w over
+    g_ema.ema_w.copy_(g.ema_w)
+    
+
+def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
+                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
+                         split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
+                         use_ema_inference=False, ema_warmup_images_threshold=2000_000,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
+                         decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
+                         ):
+    
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+    current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
+
+    lr_d = disc_optimizer.param_groups[0]["lr"]
+    lr_g = gen_optimizer.param_groups[0]["lr"]
+    # print(f'{lr_g=}')
+    betas_d = disc_optimizer.defaults["betas"]
+    betas_g = gen_optimizer.defaults["betas"]
+    
+    ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
+    
+    # real images seen so far during training
+    ema_warmup_images_seen = 0
+    
+    assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
+    
+    metric = IS_FID_Calculator(device)
+
+    fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
+
+    starting_step = 0
+    starting_epoch = 0
+    last_training_step_counter = 0
+    max_steps = discriminator.max_steps
+    z_size = generator.z_size
+    
+    scaler = torch.amp.grad_scaler.GradScaler(device, enabled=use_fp16)
+    
+    # check for resuming from a checkpoint
+    if resume:
+        if checkpoint_path:
+            checkpoint_filename = os.path.split(checkpoint_path)[-1]
+        else:
+            checkpoints_dirs = sorted([subdir for subdir in os.listdir(weights_save_dir)\
+                                       if os.path.isdir(os.path.join(weights_save_dir, subdir))])
+            #grab the last checkpoint/most recent one
+            checkpoint_dirpath = os.path.join(weights_save_dir, checkpoints_dirs[-1])
+            # grab the latest checkpoint 
+            checkpoint_files = sorted([f for f in os.listdir(checkpoint_dirpath) if f.endswith(".ckpt")])
+            checkpoint_filename = checkpoint_files[-1]
+            checkpoint_path = os.path.join(checkpoint_dirpath, checkpoint_filename)
+        
+        if not os.path.exists(checkpoint_path):
+            raise ValueError("The Path is not valid")
+        
+        # load the stuff
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        max_steps = checkpoint["max_steps"]
+        channels_d = checkpoint["channels_d"]
+        discriminator.setup_layers(max_steps,channels_d)
+        discriminator.load_state_dict(checkpoint["disc_state_dict"])
+        discriminator = discriminator.to(device)
+        
+        z_size = checkpoint["z_size"]
+        w_size = checkpoint["w_size"]
+        mn_nlayer = checkpoint["mn_nlayer"]
+        channels_g = checkpoint["channels_g"]
+        style_mixing_prob = checkpoint["style_mixing_prob"]
+        swap_adaIN_order = checkpoint["swap_adaIN_order"]
+        ema_w_beta = checkpoint["ema_w_beta"]
+        
+        generator.setup_layers(z_size, w_size, max_steps, mn_nlayer, channels_g,
+                               style_mixing_prob=style_mixing_prob,
+                               ema_w_beta=ema_w_beta,
+                               swap_adaIN_order=swap_adaIN_order)
+        generator.load_state_dict(checkpoint["gen_state_dict"])
+        generator = generator.to(device)
+        
+        scaler.load_state_dict(checkpoint.get("scaler_state_dict", scaler.state_dict()))
+        
+        # load the ema version, dont forget to also load the images seen so far!
+        ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
+        ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
+        if use_ema_inference:
+            ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
+            ema_generator = ema_generator.to(device)
+        
+        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+
+        # grab the initial lrs
+        lr_d = checkpoint["lr_d"]
+        lr_g = checkpoint["lr_g"]
+        betas_d = disc_optimizer.defaults["betas"]
+        betas_g = gen_optimizer.defaults["betas"]
+
+        data_augmentation = checkpoint["data_augmentation"]
+        normalize = checkpoint["normalize"]
+        use_fp16 = checkpoint["use_fp16"]
+        last_training_step_counter = checkpoint["training_step_counter"]
+        decay_step = checkpoint.get("decay_step", decay_step)
+        epochs = checkpoint["epochs"]
+        starting_epoch = checkpoint["epoch"]+1
+        batch_size_list = checkpoint["batch_size_list"]
+        gen_update_interval = checkpoint["gen_update_interval"]
+        r1_penalty_interval = checkpoint["r1_penalty_interval"]
+        gamma = checkpoint["gamma"]
+        # noise_addition = checkpoint["noise_addition"]
+        
+        if starting_epoch == epoch_list[starting_step]:
+            starting_step += 1
+            # also reset the initial epoch for the new step
+            starting_epoch = 0
+
+    # store training log for each step  
+    all_training_losses = [[] for _ in range(max_steps)]
+  
+    print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
+        
+    if resume:
+        print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
+            f'\n  --From Step:             {starting_step}'
+            f'\n  --From Epoch:            {starting_epoch}'
+            f'\n  --Checkpoint Path:       {checkpoint_path}'
+            f'\n  --Last FID:              {checkpoint["FID"]}'
+            f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
+          
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
+    print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
+    print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
+    print(f'--swap_adaIN_order:          {generator.swap_adaIN_order}')
+    print(f'--Dataset:                   {dataset_name}-{split}')
+    print(f'--DataAugmentation:          {data_augmentation}')
+    print(f'--Normalize[-1,1]:           {normalize}')
+    print(f'--Use Half-Precision:        {use_fp16}')
+    print(f'--Discriminator LR:          {lr_d}')
+    print(f'--Generator LR:              {lr_g}')
+    print(f'--Max Step:                  {discriminator.max_steps}')
+    print(f'--Decay Step:                {decay_step}')
+    print(f'--Epochs:                    {epoch_list} ')
+    print(f'--Batch-Sizes:               {batch_size_list} ')
+    print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
+    print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
+    print(f'--Generator update interval: {gen_update_interval}')
+    print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
+    print(f'--Gama factor:               {gamma}')
+    print(f'--PSI:                       {psi}')
+    print(f'--gen_num_samples:           {gen_num_samples}')
+    print(f'--Checkpoint Directory:      {weights_save_dir}')
+    print(f'--Images Directory:          {images_save_dir}')
+    
+    if (use_fp16 and (lr_d>0.001 or lr_g>0.001)):
+        print(f"⚠️ Warning! ⚠️ Large LR({lr_d},{lr_g}) for FP16 can lead to Nan! Decrease it for a stable training!")
+        
+    train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res),
+                                    batch_size=batch_size, 
+                                    data_augmentation=data_augmentation,
+                                    normalize=normalize)
+    num_batches = len(train_loader)
+    interval = num_batches//2+1
+    training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
+    
+
+    current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
+    current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
+
+    print(f'Training ')
+    print(f'  --Epochs:                      {epochs} ')
+    print(f'  --BatchSize:                   {batch_size} ')
+    print(f'  --Number of Batches:           {num_batches} ')
+    print(f'  --Interval:                    {interval} ')
+    print(f'  --R1-Interval:                 {r1_penalty_interval} ')
+    print(f'  --Last training Step taken:    {training_step_counter} ')
+    print(f'  --Current Discriminator LRs:   {current_lr_d}')
+    print(f'  --Current Generator LRs:       {current_lr_g}')
+    print(f'  --Current Discriminator Betas: {betas_d}')
+    print(f'  --Current Generator Betas:     {betas_g}')
+
+    
+    for epoch in range(starting_epoch, epochs):
+        discriminator.train()
+        generator.train()
+
+        losses = []
+        # step_all_gps = []
+        epoch_scores = []
+        for i, (imgs_real, _) in enumerate(train_loader):
+            
+            imgs_real = imgs_real.to(device)
+            imgs_real.requires_grad_(True)
+            # track how many real images the network has seen
+            ema_warmup_images_seen += imgs_real.size(0)
+
+            with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                preds_real = discriminator(imgs_real)
+                z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                imgs_fake = generator(z_vector).detach()
+                preds_fake = discriminator(imgs_fake)
+            
+            disc_loss = discriminator_loss_stylegan1(preds_real, imgs_real, preds_fake, gamma)
+            
+            # for debugging purposes
+            disc_real_mean = preds_real.mean().item()
+            disc_fake_mean = preds_fake.mean().item()
+            
+            preds_detached = preds_fake.detach()
+            disc_fake_std = preds_detached.std()
+            disc_real_std = preds_real.detach().std()
+
+            epoch_scores.append((disc_real_mean, disc_fake_mean))
+            
+            disc_optimizer.zero_grad()
+            scaler.scale(disc_loss).backward()
+            scaler_out_d = scaler.step(disc_optimizer)
+                        
+            # now train genertor to create images that look real
+            with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+                fake_imgs = generator(z_vector)
+                preds_fake = discriminator(fake_imgs)
+            
+                # generator loss
+                # swap loss! treat fake images as real images
+                gen_real_loss = generator_loss_stylegan1(preds_fake)
+
+                # optimize generator
+                # update generator with a delay, sylegan1 uses 1:1 update ratio
+                if (i+1)%gen_update_interval == 0:
+                    gen_optimizer.zero_grad()
+                    scaler.scale(gen_real_loss).backward()
+                    # monitor the norm (one of the params is enough)
+                    mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                    scaler.unscale_(gen_optimizer)
+                    nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+                    
+                    scaler_out_g = scaler.step(gen_optimizer)
+                    
+                    if mn_grad_norm>100:
+                        print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
+                    
+                    if ema_warmup_images_seen < ema_warmup_images_threshold:
+                        ema_generator.load_state_dict(generator.state_dict())
+                    else:
+                        update_ema_generator(generator, ema_generator)
+
+            scaler.update()
+                
+            status_r = get_status(disc_real_mean, higher_is_better=True)
+            status_f = get_status(disc_fake_mean, higher_is_better=False)
+            status_o = get_overall_status(disc_real_mean, disc_fake_mean)
+
+            d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+            d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
+
+            if (i+1)%interval==0:
+                print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f}')
+                print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
+                
+            losses.append((disc_loss.item(), gen_real_loss.item()))
+            
+            # update the training steps
+            training_step_counter += 1
+    
+        d_loss_mean = np.mean(np.array(losses)[:,0])
+        g_loss_mean = np.mean(np.array(losses)[:,1])
+
+        all_training_losses.append((d_loss_mean, g_loss_mean))
+        
+        # real
+        average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
+        average_score_real_std = np.mean(np.array(epoch_scores)[:,0])
+        # fake
+        average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
+        average_score_fake_std = np.std(np.array(epoch_scores)[:,1])
+        
+        if quick_and_noisy_IS_FID:
+            IS_score = metric.compute_IS(imgs_fake)
+            FID_score = metric.compute_FID(imgs_real, imgs_fake)
+        else:
+            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
+
+        status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
+        status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
+        status_avg_o = get_overall_status(average_score_real_mean,
+                                            average_score_fake_mean,
+                                            IS_score=IS_score,
+                                            min_mu=1.2)
+        
+        real_stats_avg_str = f"D_real_avg: {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<+.4f} 📈"
+        fake_stats_avg_str = f"D_fake_avg: {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<+.4f} 📉"
+
+        dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.4f}"
+        gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.4f}"
+
+        is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
+        fid_score_str = f"FID: {FID_score:.2f}"
+        
+        # mintor gradient norm for mapping_network to better
+        # tune hyper parameters, epsecially when it comes to fp16!
+        mn_grad_norm_str = f"GradNorm: {mn_grad_norm:.2f}"
+        
+        summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {mn_grad_norm_str}"
+        
+        print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
+        print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
+        print(f'[Epoch {epoch}/{epochs}] {summary}')
+        
+        #save model weights at each epoch
+        checkpoint_dir = f"{weights_save_dir}/{current_experiment_name}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        state_dicts = {"disc_state_dict":discriminator.state_dict(),
+                        "gen_state_dict":generator.state_dict(),
+                        "gen_ema_state_dict":ema_generator.state_dict() if use_ema_inference else None,
+                        "disc_optimizer":disc_optimizer.state_dict(),
+                        "gen_optimizer":gen_optimizer.state_dict(),
+                        "scaler_state_dict":scaler.state_dict()
+                        }
+        settings = {
+                    "z_size":generator.z_size,
+                    "w_size":generator.w_size,
+                    "mn_nlayer":generator.mn_num_layers,
+                    "channels_d":discriminator.channels,
+                    "channels_g":generator.channels,
+                    "style_mixing_prob":generator.style_mixing_prob,
+                    "ema_w_beta":generator.ema_w_beta,
+                    "use_fp16":use_fp16,
+                    "lr_d":lr_d,
+                    "lr_g":lr_g,
+                    "max_steps":discriminator.max_steps,
+                    "training_step_counter":training_step_counter,
+                    "ema_warmup_images_threshold":ema_warmup_images_threshold,
+                    "ema_warmup_images_seen":ema_warmup_images_seen,
+                    "epoch":epoch,
+                    "epochs":epochs,
+                    "batch_size":batch_size,
+                    "gamma":gamma,
+                    "psi":psi,
+                    "gen_update_interval":gen_update_interval,
+                    "r1_penalty_interval":r1_penalty_interval,
+                    "FID":FID_score,
+                    "IS":IS_score,
+                    "dataset_name":dataset_name,
+                    "data_augmentation":data_augmentation,
+                    "normalize":normalize,
+                    "split":split,
+                }
+        loss_dicts = {"d_loss_mean":d_loss_mean,
+                        "g_loss_mean":g_loss_mean,
+                        "all_training_losses":all_training_losses
+                        }
+        # all_settings = {**state_dicts,**settings}
+        all_settings = state_dicts | settings | loss_dicts
+        torch.save(all_settings, f"{checkpoint_dir}/checkpoint_step_{experiment_date}.ckpt")
+        
+        # generate some images mid training to evaluate our model's performance 
+        with torch.no_grad():
+            gen = ema_generator.eval() if use_ema_inference else generator.eval()
+            
+            generated_images = gen(fixed_z, psi=psi)
+            
+            ema_marker_str = "[EMA]_" if use_ema_inference else ""
+            loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
+            lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e}"
+            title_str = f"Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
+            img_store_dir_path = f'{images_save_dir}/stylegan2/{dataset_name}_{experiment_date}'
+            img_filename = f'{ema_marker_str}epoch_{epoch}.jpg'
+            save_path= os.path.join(img_store_dir_path, img_filename)
+                            
+            display_images(generated_images, 
+                            cols=gen_num_samples//8,
+                            title=f"{ema_marker_str}{title_str}",
+                            unnormalize=True,
+                            save_path=save_path,
+                            figsize=(16,8))
+            
+            # save the original images only when ema is enable, 
+            # otherwise its already being saved/displayed
+            if keep_raw_generations and use_ema_inference:
+                generated_images = generator(fixed_z, psi=psi)
+                display_images(generated_images, 
+                                cols=gen_num_samples//8,
+                                title=title_str,
+                                unnormalize=True,
+                                save_path=save_path.replace(ema_marker_str,""),
+                                figsize=(16,8))
+                
+            # save the settings that achieved this aswell
+            settings_path = os.path.join(img_store_dir_path,'settings.yaml')
+            with open(settings_path, "w") as f:
+                yaml.dump(settings,f, sort_keys=False)
+
+    print("SttyleGAN2 training is complete!")
+
+
+
 #%%
 # a detour to something fun CycleGAN
 # 
