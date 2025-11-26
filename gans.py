@@ -5295,8 +5295,9 @@ def gradient_penalty_progan(discriminator:DiscriminatorProGAN, imgs_real, imgs_f
                                only_inputs=True,)[0]
     # caculate l2-norm of gradients
     grad_norm = grad.view(batch_size, -1).norm(2, dim=1)
-    # make sure the gradient norm with respect to inputs is almost equal to 1
-    # any deviation from norm = 1 is therefore penalized
+    # make sure the gradient norm with respect to inputs 
+    # is almost equal to 1. any deviation from norm = 1 
+    # is therefore penalized.
     penalty = ((grad_norm - 1) ** 2).mean()
     return penalty
 
@@ -5305,7 +5306,8 @@ def wgangp_critic_loss_progan(critic:DiscriminatorProGAN, imgs_real, imgs_fake, 
     fake_preds = critic(imgs_fake, *args)
     wgan_loss = wgan_critic_loss(real_preds, fake_preds)
     gp = gradient_penalty_progan(critic, imgs_real, imgs_fake, *args)
-    # gp shouldnt be large!
+    # gp shouldnt be large! the normal range is 1 at most 10! anything
+    # larger it means gradient explosion is underway!
     if gp>100:
         print(f'WARNING: High Gradient Policy: {gp.item():.2f}')
         # returning gp is a good idea cause allows us to log it
@@ -11114,7 +11116,10 @@ run_simple_gen_with_const_noise()
 # with my buggy implementation unitl I fixed them! so I didnt let it train for too much when
 # things got working!) so by trainig more our default mode should start looking great as well
 # but can always use truncation trick with constant noise to get much better results if we need to!
-#%%
+# also the most important part, we can clearly see the slow and smooth trnasition when interpolating
+# which shows the features are disentangled much better than progan version. (add more tests/
+# make it more obvious (train with celeba, use celeba classifier so we can do more experiments))
+#%% stylegan1 debug logs:
 # debug logs:
 # note I want to get this to work organically, 
 # that is just like the original paper. for that
@@ -11651,7 +11656,497 @@ run_simple_gen_with_const_noise()
 # 
 
 #%%
-# Stylegan2/3?
+# Stylegan2 Analyzing and Improving the Image Quality of StyleGAN https://arxiv.org/pdf/1912.04958
+# we had great success with stylegan1 and also learned a lot!
+# now lets go for the second paper, stylegan2 and see what its baout!
+# before we continue I strongly recommend to read the paper. 
+# espcially have a look at the pages 11 and onward where it talks about
+# implementation details and other interesting stats like gpu hours
+#  
+# the paper sums up the issues in the styelgan1 as two major design falws
+# one steming from the way adaIN normalization was done (i.e. the blob artifact
+# or water drop artifact that was present in some images, the ones that didnt
+# show it, also had it in their featuremaps!) and the other
+# related to the progressive nature of the architecture that lead to
+# some artifacts of its own (i.e. caused 'phase' artifact see fig6 page 6)
+#  The key issue is that the progressively grown generator appears to have a strong location
+# basically the issue seems to be, the progressively grown generator has a 
+# location prereference for details, for example features like teeths or eyes
+# may remain stuck(remain the same) when we move smoothly over the image (i.e. interpolating
+# smoothly) before suddenly jumping to the next preferred location. see 
+# the acompayning video https://www.youtube.com/watch?v=c-NJtV9Jvp0
+# which demonstrates this). logically they should move smoothly over the image
+# the authors add that they believe the problem is that in the progressive growing
+# "...each resolution serves momentarily as the output resolution, forcing it to
+# generate maximal frequency details, which then leads to the trained network to
+# have excessively high frequencies in the intermediate layers, compromising
+# shift invariance". for this reason the dropped the progressive growing and instead
+# opted to use MSG-GAN inspired architecture which they modified further by
+# adding residual connections that would ultimately make it similar to LAPGAN!
+# without the per-resolution discriminators!
+# they add that the residual connections in discriminator's were helpful whereas
+# they were harmful in generators!(with an exception for lsun dataset experiments)
+# so at the end they used a skip generator and a residual discriminator without
+# progressive growing.
+# 
+# from paper:
+# "... The key aspect of progressive growing, which we would
+# like to preserve, is that the generator will initially focus on
+# low-resolution features and then slowly shift its attention to
+# finer details. The architectures in Figure 7 make it possible
+# for the generator to first output low resolution images that
+# are not affected by the higher-resolution layers in a significant way, 
+# and later shift the focus to the higher-resolution layers as the
+# training proceeds. Since this is not enforced in any way, 
+# the generator will do it only if it is beneficial. 
+# To analyze the behavior in practice, we need to quantify how
+# strongly the generator relies on particular resolutions over
+# the course of training.
+# Since the skip generator (Figure 7b) forms the image by
+# explicitly summing RGB values from multiple resolutions,
+# we can estimate the relative importance of the corresponding 
+# layers by measuring how much they contribute to the
+# final image. In Figure 8a, we plot the standard deviation of
+# the pixel values produced by each tRGB layer as a function
+# of training time. We calculate the standard deviations over
+# 1024 random samples of w and normalize the values so that
+# they sum to 100%."
+#
+# ...At the start of training, we can see that the new skip
+# generator behaves similar to progressive growing — now
+# achieved without changing the network topology. It would
+# thus be reasonable to expect the highest resolution to 
+# dominate towards the end of the training. The plot, however,
+# shows that this fails to happen in practice, which indicates
+# that the generator may not be able to “fully utilize” the target resolution.
+# To verify this, we inspected the generated images manually and
+# noticed that they generally lack some of the pixel-level detail
+# that is present in the training data — the images could be described
+# as being sharpened versions of 512² images instead of true 10242 images.
+# This leads us to hypothesize that there is a capacity problem in our networks,
+# which we test by doubling the number of feature maps in the highest-resolution 
+# layers of both networks .
+# This brings the behavior more in line with expectations:
+# Figure 8b shows a significant increase in the contribution of the highest-resolution layers,
+# and Table 1, row F shows that FID and Recall improve markedly.
+# The last row shows that baseline StyleGAN also benefits from additional
+# capacity, but its quality remains far below StyleGAN2.
+# ..."
+# 
+# Projection of images to latent space
+# Inverting the synthesis network g, i.e. manipulating a given image in the latent space:
+#
+# "...Manipulating a given image in the latent feature space requires finding a matching
+# latent code w for it first. Previous research [1, 10] suggests
+# that instead of finding a common latent code w, the results
+# improve if a separate w is chosen for each layer of the generator. 
+# The same approach was used in an early encoder implementation [32]. 
+# While extending the latent space in this fashion finds a closer match to a given image,
+# it also enables projecting arbitrary images that should have no latent representation.
+# 
+# Instead, we concentrate on finding latent codes in the original, unextended latent space,
+# as these correspond to images that the generator could have produced.
+# Our projection method differs from previous methods in two ways. 
+# First, we add ramped-down noise to the latent code during optimization in order to explore
+# the latent space more comprehensively. 
+# Second, we also optimize the stochastic noise inputs of the StyleGAN generator, regularizing
+# them to ensure they do not end up carrying coherent signal. 
+# The regularization is based on enforcing the autocorrelation coefficients of the noise maps
+# to match those of unit Gaussian noise over multiple scales. Details of our projection method
+# can be found in Appendix"
+#
+# Attribution of generated images: 
+# "Detection of manipulated or generated images is a very
+# important task. At present, classifier-based methods can
+# quite reliably detect generated images, regardless of their
+# exact origin [29, 45, 40, 51, 41]. However, given the rapid
+# pace of progress in generative methods, this may not be a
+# lasting situation. Besides general detection of fake images,
+# we may also consider a more limited form of the problem:
+# being able to attribute a fake image to its specific source [2].
+# With StyleGAN, this amounts to checking if there exists a
+# w ∈ W that re-synthesis the image in question.
+# We measure how well the projection succeeds by computing the LPIPS [50] 
+# distance between original and resynthesized image as DLPIPS[x, g(˜g−1 (x))], 
+# where x is the image being analyzed and g˜−1 denotes the approximate projection operation.
+# Figure 10 shows histograms of these distances for LSUN CAR and FFHQ datasets
+# using the original StyleGAN and StyleGAN2, and Figure 9 shows example projections.
+# The images generated using StyleGAN2
+# can be projected into W so well that they can be almost
+# unambiguously attributed to the generating network. However, with the original StyleGAN,
+# even though it should
+# technically be possible to find a matching latent code, it appears that the mapping from W 
+# to images is too complex for this to succeed reliably in practice. 
+# We find it encouraging that StyleGAN2 makes source attribution easier even though the
+# image quality has improved significantly"
+    
+# they also noted that both FID and P&R(i.e. Precision and Recall) metrics that were used
+# to quantitvely analyze the outputs, focus on textures rather than shapes and thus do not
+# accurately capture all aspects of image quality. they also found out the Perceptual Path
+# Length(PPL) metric that they origibnally introduced for estimating the quality of lating
+# space interpolations does a much better job and corrolates with consitency and stablity of
+# shapes hence why they decided to regularize the synthesis netwrk(generator) so it
+# favors smooths mappings and as consequnetly achieved a clear improvement in quality.
+# 
+# they also added they found "that projection of images to the latent space W worked 
+# significantly better with the new, pathlength regularized StyleGAN2 generator
+# than with the original StyleGAN. This makes it easier to attribute a genertaed image
+# to its source!"
+#
+# implementation wise, the stylegan2 closely resembles stylegan1, the basic building blocks
+# are still the same, BatchSTDDev, MappingNetwork, r1penaly, non-saturating logistic loss,,
+# euqlized learing rate, stylemixing, truncation trick, ema of generators weights, nearly 
+# everything is intact except a few items like the network architecture itself and the
+# normalization process which now insead of normalizing the pixel features using adaIn, 
+# we now normalize the weights of the convolution layer . this preserves the statistics (mean/std)
+# while preventing the droplet artifact that was caused by instance normalization in adaIN module. this is refered to as weight modulation.
+#
+# (they also uses bilinear upsampling this time around)
+
+#sidenote: 
+# the paper syas the value for gamma γ is considerably different for different datasets
+# for example for ffhq its 10 but for lsun they used γ=100!
+# "...We have found that the optimal choices
+# for the training length and R1 regularization weight γ tend
+# to vary considerably between datasets and configurations.
+# We use γ = 10 for all training runs except for configuration E in Table 1,
+# as well as LSUN CHURCH and LSUN HORSE in Table 3, where we use γ = 100."
+#
+
+
+#%%
+class Blur(nn.Module):
+    def __init__(self):
+        super().__init__()
+        kernel = torch.tensor([1,2,1])
+        kernel = kernel.view(1,-1) * kernel.view(-1,1)
+        kernel = kernel/kernel.sum()
+        self.register_buffer("kernel", kernel.view(1,1,3,3))
+
+    def forward(self, x):
+        in_channels = x.size(1)
+        kernel = self.kernel.repeat(in_channels, 1,1,1)
+        x = F.pad(x,[1,1,1,1],mode='reflect')
+        return F.conv2d(x, kernel, groups=in_channels)
+
+class EqualizedLinear(nn.Linear):
+    def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
+        super().__init__(in_features, out_features, bias=True, device=device, dtype=dtype) 
+        self.lr_mult = lr_mult
+        self.weight.data.normal_(0,1/lr_mult)
+        self.scaler = (1/math.sqrt(self.in_features))*self.lr_mult
+        
+    def forward(self, x):
+        return F.linear(x, self.weight*self.scaler, self.bias*self.lr_mult)
+
+class EqualizedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, lr_mult=1.0, bias=True):
+        super().__init__()
+
+        self.bias = bias
+        self.stride = stride
+        self.padding = padding
+        self.lr_mult = lr_mult
+
+        # initialize the weights 
+        self.weight = nn.Parameter(torch.randn(size=(out_channels, in_channels, kernel_size, kernel_size)))
+        self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+        
+        fan_in = in_channels * kernel_size * kernel_size
+        self.scaler = math.sqrt(2/(fan_in)) * lr_mult
+        
+    def forward(self, x):
+        scaled_weights = self.weight * self.scaler
+        scaled_bias = self.bias * self.lr_mult if self.bias is not None else None
+        return F.conv2d(x, scaled_weights, scaled_bias, stride=self.stride, padding=self.padding)
+
+# the discriminator block now uses residual connections
+# so we need to add that here as well
+class DiscBlockStyleGAN2(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.blur = Blur()
+        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   # before we downsample, we blur the input
+                                   Blur(),
+                                   nn.AvgPool2d(2),
+                                  )
+        self.skip = EqualizedConv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        
+    def forward(self, x):
+        skip = self.skip(x)
+        skip = F.avg_pool2d(skip,2,2)
+        out = self.block(x)
+        return out+skip
+    
+class DiscriminatorStyleGAN2(nn.Module):
+    def __init__(self, channels=[512,512,512,256,128,64,32]):
+        super().__init__()
+
+        self.setup_layers(channels)
+    
+    def setup_layers(self, channels):
+        self.channels = channels
+
+        self.fromImgs = nn.Sequential(EqualizedConv2d(3, self.channels[-1], kernel_size=1),
+                                      nn.LeakyReLU(0.2))
+        
+        blocks = []
+        for i in range(len(self.channels)-1,0,-1):
+            blocks.append(DiscBlockStyleGAN2(self.channels[i],self.channels[i-1]))
+            
+        self.blocks = nn.Sequential(*blocks)
+        
+        self.final = nn.Sequential(AddBatchStdDev(),
+                                   EqualizedConv2d(self.channels[0]+1, self.channels[0], kernel_size=3, padding=1),
+                                   nn.LeakyReLU(0.2),
+                                   nn.Flatten(),
+                                   EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedLinear(self.channels[0],1))
+                               
+    
+    def forward(self, x):
+        out = self.fromImgs(x)
+        out = self.blocks(out)
+        out = self.final(out)
+        return out.view(-1,1)
+ 
+class MappingNetwork2(nn.Module):
+    def __init__(self, z_dim=512, w_dim=512, num_layers=8):
+        super().__init__()
+        layers = [] 
+        for i in range(num_layers):
+            layers.append(EqualizedLinear(z_dim if i==0 else w_dim, w_dim, lr_mult=0.01))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+        self.net = nn.Sequential(*layers)
+        
+    def forward(self, z):
+        # we dont use any pixelnorm in mapping network anymore
+        return self.net(z)
+
+# since weight modulation is really a simple linear layer applied on w
+# we implement it as a part of the conv module instead of a seprate one
+# class WeightModulation(nn.Module):
+#     def __init__(self, channels, w_dim=512):
+#         super().__init__()
+#         self.fc_style = EqualizedLinear(w_dim, channels)
+
+#     def forward(self, w):
+#         style = self.fc_style(w).unsqueeze(2).unsqueeze(3)
+#         return style
+
+class ModulatedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, w_dim,demodulate=True, eps=1e-8):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size= kernel_size
+        self.padding = padding
+        self.stride = stride
+        self.w_dim = w_dim
+        self.demodulate = demodulate
+        self.eps = eps
+        
+        self.weight = torch.nn.Parameter(torch.randn(size=(1,out_channels, in_channels, kernel_size, kernel_size)))
+        # weight modulation
+        self.fc_style = EqualizedLinear(w_dim, in_channels)
+        # initialize the bias/scale to 1
+        self.fc_style.bias.data.fill_(1)
+                
+    def forward(self, x, w):
+        b,c,img_h,img_w = x.shape
+        # shape:(batch,1,in_channel,1,1)
+        style = self.fc_style(w).view(-1,1,c,1,1)
+        weights = self.weight * style 
+        
+        # weight demodulation 
+        demod = torch.rsqrt(weights.pow(2).sum((2,3,4))+self.eps)
+        weights = weights * demod.view(-1,self.out_channels,1,1,1)
+        # reshape x for group convolution trick
+        # to handle different weighst per batch item, we put the batch dim
+        # into output channels and use groups=batch
+        if self.demodulate:
+            x = x.view(1, b*c,img_h,img_w)
+            weights = weights.view(b*self.out_channels, c, self.kernel_size, self.kernel_size)
+        
+        # apply the conv operationg using the weights
+        out = F.conv2d(x, weights, stride=self.stride, padding=self.padding, groups=b)
+        # reshape back to original shape
+        out = out.view(b, self.out_channels, img_h, img_w)
+        return out
+                
+class NoiseInjection(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.weight = nn.Parameter(torch.zeros(1,channels,1,1))
+
+    def forward(self, x, noise=None):
+        if noise is None:
+            noise = torch.randn(size=(x.size(0), 1, x.size(2), x.size(3)), device=x.device)
+        else: 
+            noise = F.interpolate(noise, size=(x.size(2), x.size(3)))
+        return x+(self.weight*noise)
+
+class StyleConvBlock2(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
+                 w_size=512, upsample=False, eps=1e-8, apply_conv=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.bias = bias
+        self.w_size = w_size
+        self.upsample = upsample
+        self.eps = eps
+        self.apply_conv = apply_conv
+
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding, w_size,eps)
+        self.noise_inject = NoiseInjection(out_channels)
+        self.bias = nn.Parameter(torch.zeros(out_channels,))
+        self.blur = Blur()
+
+    def forward(self, x, w, noise=None):
+        # sg2 does conv then upsample?
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
+            # blur the output to hide checker marks effects this is especially important
+            # for 32x32 and higher res so the discriminator doesnt win too quickly!
+            x = self.blur(x)
+
+        out = self.conv(x, w)
+            
+        # inject noise into the output featuremaps,
+        out = self.noise_inject(out, noise)
+        
+        if out.ndim==2:
+            out += self.bias
+        else:
+            out += self.bias.view(1,-1,1,1)
+
+        out = F.leaky_relu(out, negative_slope=0.2)
+        return out
+
+# now unlike the previous version, we no more use progressive growing, 
+# so now each block generates the image and adds it to the previous upsampled image
+# (the old image is upsampled and then added to the new image from current resolution)
+# and the final image will be the summed up version of all previous images. 
+class GeneratorStyleGAN2(nn.Module):
+    def __init__(self, z_size=512, w_size=512, mn_num_layers=8,
+                 channels=[512,512,512,256,128,64,32],
+                 style_mixing_prob=0.9, ema_w_beta=0.995,):
+        super().__init__()
+        
+        self.setup_layers(z_size, w_size, mn_num_layers,
+                          channels, style_mixing_prob, 
+                          ema_w_beta)
+                
+    def setup_layers(self, z_size, w_size, mn_num_layers,
+                     channels, style_mixing_prob, ema_w_beta):
+        
+        self.z_size = z_size
+        self.w_size = w_size
+        self.mn_num_layers = mn_num_layers
+                
+        self.style_mixing_prob = style_mixing_prob
+        self.ema_w_beta = ema_w_beta
+        self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
+        
+        self.channels = channels
+        
+        # in the second version we use randn instead of just ones
+        self.const_input = nn.Parameter(torch.randn(size=(1, self.channels[0], 4, 4)))
+        
+        self.mapping_network = MappingNetwork2(z_size, w_size, self.mn_num_layers)
+        
+        self.blocks = nn.ModuleList()
+        self.toImgs = nn.ModuleList()
+        
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
+        self.toImgs.append(EqualizedConv2d(self.channels[0], 3, kernel_size=1))
+        for i in range(1, len(channels)):
+            self.blocks.append(StyleConvBlock2(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
+            self.blocks.append(StyleConvBlock2(self.channels[i], self.channels[i], w_size=w_size, upsample=False))
+            self.toImgs.append(EqualizedConv2d(self.channels[i], 3, kernel_size=1))
+            
+    @torch.no_grad()
+    def _update_ema_w(self, w_batch):
+         if self.training:
+             self.ema_w.mul_(self.ema_w_beta).add_(w_batch.mean(0), alpha=1-self.ema_w_beta)
+       
+    def forward(self, z, psi=None, noise=None):
+        num_layers = len(self.blocks)
+        w = self.mapping_network(z)
+        
+        if self.training:
+            self._update_ema_w(w)
+
+        if not self.training and psi:
+            ema_w_batch = self.ema_w.repeat(w.size(0),1)
+            w = ema_w_batch + psi * (w - ema_w_batch)
+        
+        if self.training and random.random() <self.style_mixing_prob:
+            # grab a second z, calculate the w
+            z2 = torch.randn(size=z.size(), device=z.device)
+            w2 = self.mapping_network(z2)
+            # in stylegan2 we use all the layers,as
+            # theres no steps!/prograssive growing!
+            crossover_point = random.randint(1, num_layers-1)
+            w = w.unsqueeze(1).repeat(1, num_layers,1)# (b,num_styles,w_dim)
+            w[:, crossover_point:,:] = w2.unsqueeze(1).repeat(1, num_layers-crossover_point,1)
+        else:
+            w = w.unsqueeze(1).repeat(1, num_layers,1)
+
+        # set the batchsize forr const_input/canvas
+        x = self.const_input.repeat(z.size(0), 1,1,1)
+        
+        #4x4
+        x = self.blocks[0](x, w[:,0,:], noise)
+        x = self.blocks[1](x, w[:,1,:], noise)
+        # grab the first image(i.e old image )
+        img = self.toImgs[0](x)
+        
+        # main loop, skip connections
+        for i in range(1, len(self.channels)):
+            idx1 = 2*i
+            
+            # upsample the previous img so we can add it to the new image(current resolution)
+            img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
+            
+            #process the input for this resolution
+            x = self.blocks[idx1](x, w[:, idx1], noise)
+            x = self.blocks[idx1+1](x, w[:, idx1+1], noise)
+            # create the image for current resolution and add it to the previous one
+            img = img + self.toImgs[i](x)
+            
+        return img
+    
+    
+# x = torch.randn(size=(5,3,256,256))
+# z = torch.randn(size=(5,100))
+max_steps = 7
+channels=[512,256,128,64,32,16,8]
+disc = DiscriminatorStyleGAN2(channels=channels)
+gen = GeneratorStyleGAN2(100,100,channels=channels)
+
+for m in [disc, gen]:
+    print(f'channels: {m.channels}')
+H=W=2**(len(channels)+1)
+x = torch.randn(size=(5,3,H,W))
+z = torch.randn(size=(5,100))
+n = torch.zeros((5,1,H,W))    
+disc_out = disc(x)
+print(f'disc_out.shape: {tuple(disc_out.shape)}')
+gen_out = gen(z, noise=n)
+print(f'gen_out.shape : {tuple(gen_out.shape)}')
+    
 #%%
 # a detour to something fun CycleGAN
 # 
