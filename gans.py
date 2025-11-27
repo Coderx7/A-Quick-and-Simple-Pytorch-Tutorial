@@ -12190,48 +12190,34 @@ class StyleConvBlock2(nn.Module):
         if self.upsample:
             # instead of upsample+blur, we now use upsample2d(from upfirdn2d)
             # we can use upsample/blur but we may not get the exact results 
-            # (the texture sticking issue may not be fixed)
-            # so I thought lets be faithful to the original impl as much as we can
+            # although if I recall correctly, this was done only for gaining 
+            # more performance and less vram usage.
+            # anyway lets be faithful to the original impl as much as we can
             # when we got our results, we can always switch back to this again and
             # see how much of an impact it has on our results
-            # update:
-            # using avgpool/bilinear causes the sticking issue. that is high frequency 
-            # details such as hair strand, pores, grass, teeth, etc tend to stick to the
-            # screen coordinates( where they usually appear as the paper puts it) when 
-            # we try to morph the latent vector to rotate a face for example. 
-            # when the face moves, the texture stays fixed on the pixel grid( i.e. 
-            # wherever it is it doesnt move in the image)
-            # the reason for that is the way we apply the bluring on the image. 
-            # we use avgpool2d to downsample and mathematically its equivalent to
-            # applying a box filter with the kernel [1,1]. as it turns out box filters
-            # are terrible at anti-aliasing because they leak high frequencies.
-            # so to solve this issue, the authors tried a larger kernel! i.e. [1, 3, 3, 1]
-            # which acts as a much stronger low pass filter (approximating a guassian).
-            # this blurs the signal just enough during up/downsampling to ensure the features
-            # move smoothly with the object!
-            # if we were to approximate this without writting the upfirdn2d, we had to use 
-            # f.interpolate(mode="bicubic") for upsample since its closer to [1,3,3,1] than bilinear
-            # and for downsample we needed to use conv2d with guassian blur kernel.(the kernel is
-            # exactly the outer product of the [1,3,3,1] with itself, normalized so sum is 1, 
-            # it'd be a 4x4 kernel as a result. 
+            # also if we were to approximate this without writting the upfirdn2d,
+            # we could use f.interpolate(mode="bicubic") for upsample since its 
+            # closer to [1,3,3,1] than bilinear and for downsample conv2d with 
+            # guassian blur kernel.(the kernel is exactly the outer product of 
+            # the [1,3,3,1] with itself, normalized so sum is 1, it'd be a 4x4 kernel. 
             # sample code (from gemini):
             # def get_stylegan_blur_kernel(channels, device='cuda'):
-            #     # 1. Define the base vector [1, 3, 3, 1]
+            #     # Define the base vector [1, 3, 3, 1]
             #     k = torch.tensor([1, 3, 3, 1], dtype=torch.float32, device=device)
             #    
-            #     # 2. Create the 2D matrix (Outer Product)
+            #     # Create the 2D matrix (Outer Product)
             #     # Shape becomes [4, 4]
             #     k2d = torch.outer(k, k)
             #    
-            #     # 3. Normalize (Sum must be 1.0 to preserve brightness)
+            #     # Normalize (Sum must be 1.0 to preserve brightness)
             #     k2d = k2d / k2d.sum()
             #    
-            #     # 4. Reshape for PyTorch Conv2d: [Out_Channels, In_Channels/Groups, H, W]
+            #     # Reshape for PyTorch Conv2d: [Out_Channels, In_Channels/Groups, H, W]
             #     # For a depthwise convolution (applying blur to each channel independently),
             #     # In_Channels/Groups must be 1.
             #     kernel = k2d.view(1, 1, 4, 4)
             #    
-            #     # 5. Repeat for every channel in your image
+            #     # Repeat for every channel in your image
             #     return kernel.repeat(channels, 1, 1, 1)
             # 
             # # example:
@@ -12451,11 +12437,11 @@ def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0
 
 
 def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:GeneratorStyleGAN2, disc_optimizer:torch.optim.Adam, 
-                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, dataset_name,
+                         gen_optimizer:torch.optim.Adam, epochs, batch_size, dataset_name,
                          split, data_augmentation=False, normalize=True, use_fp16=False, path_length_interval=4,
                          r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
-                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,eps=1e-8,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False, eps=1e-8,
                          weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
                          ):
     
@@ -12580,8 +12566,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'--Use F16:                   {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
-    print(f'--Epochs:                    {epochs} ')
-    print(f'--Batch-Sizes:               {batch_size_list} ')
+    print(f'--Epochs:                    {epochs}')
+    print(f'--Batch-Size:                {batch_size}')
     print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
     print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
     print(f'--Path Length Reg interval:  {path_length_interval}')
@@ -12594,7 +12580,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     
     if (use_fp16 and (lr_d>0.001 or lr_g>0.001)):
         print(f"⚠️ Warning! ⚠️ Large LR({lr_d},{lr_g}) for FP16 can lead to Nan! Decrease it for a stable training!")
-        
+    
+    res = 2<<len(generator.channels)    
     train_loader = get_dataloader(dataset_name, split=split, 
                                   resize_dims=(res,res),
                                   batch_size=batch_size, 
@@ -12607,7 +12594,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
     current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
 
-    print(f'Training StyleGAN2')
+    print(f'Training StyleGAN2 on [{res}x{res}]')
     print(f'  --Epochs:                      {epochs}')
     print(f'  --BatchSize:                   {batch_size}')
     print(f'  --Number of Batches:           {num_batches}')
@@ -12852,7 +12839,80 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 yaml.dump(settings,f, sort_keys=False)
 
     print("SttyleGAN2 training is complete!")
+#%%
+#%% training stylegan1
+print(f'Training StyleGAN1')
+# gamma value can change from dataset to dataste
+# for ffhq I guess they used 10 but for lsun they used 100!
+gamma=10
+dataset_name = 'celeba'
+split = 'train'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+use_fp16=False
+
+# original paper uses 512
+z_size = 512
+w_size = 512
+
+if use_fp16:
+    BATCH_SIZES = 128
+else:
+    BATCH_SIZES = 128
+
+EPOCHS = 100
+
+path_length_interval = 4
+r1_penalty_interval = 16
+style_mixing_prob = 0.9
+# truncation rate
+psi = 0.7
+
+channels_d = [512,256,128,64,32,16,8]
+channels_g = [512,256,128,64,32,16,8]
+#discriminator
+discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d)
+discriminator_stylegan2 = discriminator_stylegan2.to(device)
+#generator
+mn_nlayer = 8
+generator_stylegan2 = GeneratorStyleGAN2(z_size, w_size, mn_nlayer,
+                                         channels_g, style_mixing_prob)
+
+generator_stylegan2 = generator_stylegan2.to(device)
+
+betas = [0, 0.99]
+lr_d = 0.003
+lr_g = 0.003
+
+eps = 1e-5 if use_fp16 else 1e-8
+
+use_ema_inference = True
+
+disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
+
+training_loop_stylegan2(discriminator_stylegan2,
+                     generator_stylegan2,
+                     disc_optimizer=disc_optimizer,
+                     gen_optimizer=gen_optimizer, 
+                     epochs=EPOCHS,
+                     batch_size=BATCH_SIZES,
+                     path_length_interval=path_length_interval,
+                     r1_penalty_interval=r1_penalty_interval,
+                     dataset_name=dataset_name,
+                     split=split,
+                     data_augmentation=True,
+                     gamma=gamma,
+                     psi=psi,
+                     use_fp16=use_fp16,
+                     device=device,
+                     resume=False,
+                     use_ema_inference=use_ema_inference,
+                     ema_warmup_images_threshold=1_000_000,
+                     keep_raw_generations=True,
+                     quick_and_noisy_IS_FID=False,
+                    #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
+                     )
 
 #%%
 # a detour to something fun CycleGAN
