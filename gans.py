@@ -12702,7 +12702,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
 
             if (i+1)%interval==0:
-                print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f}')
+                print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f} | PLR: {plr_loss.item():.4f}')
                 print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
                 
             losses.append((disc_loss.item(), gen_real_loss.item()))
@@ -12746,9 +12746,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         
         # mintor gradient norm for mapping_network to better
         # tune hyper parameters, epsecially when it comes to fp16!
-        mn_grad_norm_str = f"GradNorm: {mn_grad_norm:.2f}"
+        mn_grad_norm_str = f"GradNorm: {mn_grad_norm:.4f}"
         
-        summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {mn_grad_norm_str}"
+        plr_mean_str = f"Path Length mean: {path_length_mean.item():.4f}"
+        
+        summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {mn_grad_norm_str} | {plr_mean_str}"
         
         print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
         print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
