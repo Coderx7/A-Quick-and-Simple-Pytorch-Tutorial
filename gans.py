@@ -12425,16 +12425,16 @@ def path_length_regularization_loss(fake_imgs,
 
 
 @torch.no_grad()
-def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
+def update_ema_generator(gen:GeneratorStyleGAN1, gen_ema:GeneratorStyleGAN1, images_seen, decay_rate=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
     # results will go back to the old version!
-    # decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
-    for ema_p,p in zip(g_ema.parameters(), g.parameters()):
+    decay = min(1 - 1 / (images_seen / 10000 + 1), decay_rate)
+    for ema_p,p in zip(gen_ema.parameters(), gen.parameters()):
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
     # copy the ema_w over
-    g_ema.ema_w.copy_(g.ema_w)
+    gen_ema.ema_w.copy_(gen.ema_w)
 
 
 def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:GeneratorStyleGAN2, disc_optimizer:torch.optim.Adam, 
@@ -12690,7 +12690,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 if ema_warmup_images_seen < ema_warmup_images_threshold:
                     ema_generator.load_state_dict(generator.state_dict())
                 else:
-                    update_ema_generator(generator, ema_generator)
+                    update_ema_generator(generator, ema_generator, ema_warmup_images_seen)
 
             scaler.update()
                 
