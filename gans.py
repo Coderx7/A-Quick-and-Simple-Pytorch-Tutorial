@@ -12438,15 +12438,15 @@ def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0
 
 def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:GeneratorStyleGAN2, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epochs, batch_size, dataset_name,
-                         split, data_augmentation=False, normalize=True, use_fp16=False, path_length_interval=4,
-                         r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
-                         use_ema_inference=False, ema_warmup_images_threshold=2000_000,
-                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False, eps=1e-8,
-                         weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
-                         ):
+                         split, data_augmentation=False, normalize=True, use_fp16=False, 
+                         path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
+                         gen_num_samples = 64, use_ema_inference=False, ema_warmup_images_threshold=2000_000,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
+                         resume=False, eps=1e-8, weights_save_dir='./weights/gan',
+                         images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-    current_experiment_name = f"stylegan1_{dataset_name}_{experiment_date}"
+    current_experiment_name = f"stylegan2_{dataset_name}_{experiment_date}"
 
     lr_d = disc_optimizer.param_groups[0]["lr"]
     lr_g = gen_optimizer.param_groups[0]["lr"]
@@ -12599,8 +12599,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'  --BatchSize:                   {batch_size}')
     print(f'  --Number of Batches:           {num_batches}')
     print(f'  --Interval:                    {interval}')
-    print(f'  --R1-Interval:                 {r1_penalty_interval}')
-    print(f'  --Path Length Reg-Interval:    {path_length_interval}')
+    print(f'  --Path Length Interval:        {path_length_interval}')
+    print(f'  --R1-Penalty Interval:         {r1_penalty_interval}')
     print(f'  --Last training Step taken:    {training_step_counter}')
     print(f'  --Current Discriminator LRs:   {current_lr_d}')
     print(f'  --Current Generator LRs:       {current_lr_g}')
@@ -12624,7 +12624,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 preds_real = discriminator(imgs_real)
                 z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
-                imgs_fake,_ = generator(z_vector).detach()
+                imgs_fake = generator(z_vector)[0].detach()
                 preds_fake = discriminator(imgs_fake)
             
             disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
@@ -12642,7 +12642,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             disc_optimizer.zero_grad()
             scaler.scale(disc_loss).backward()
             scaler_out_d = scaler.step(disc_optimizer)
-                        
+
             # now train genertor to create images that look real
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
@@ -12839,13 +12839,12 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 yaml.dump(settings,f, sort_keys=False)
 
     print("SttyleGAN2 training is complete!")
-#%%
-#%% training stylegan1
-print(f'Training StyleGAN1')
+#%% training stylegan2
+print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
 gamma=10
-dataset_name = 'celeba'
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -12854,11 +12853,8 @@ use_fp16=False
 # original paper uses 512
 z_size = 512
 w_size = 512
-
-if use_fp16:
-    BATCH_SIZES = 128
-else:
-    BATCH_SIZES = 128
+# with 128x128, fp32 with 64 bs -> vram 6033mb
+BATCH_SIZES = 128 if use_fp16 else 64
 
 EPOCHS = 100
 
@@ -12867,9 +12863,9 @@ r1_penalty_interval = 16
 style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
-
-channels_d = [512,256,128,64,32,16,8]
-channels_g = [512,256,128,64,32,16,8]
+#up to 128x128
+channels_d = [256,128,64,32,16,8]
+channels_g = [256,128,64,32,16,8]
 #discriminator
 discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d)
 discriminator_stylegan2 = discriminator_stylegan2.to(device)
@@ -12877,7 +12873,6 @@ discriminator_stylegan2 = discriminator_stylegan2.to(device)
 mn_nlayer = 8
 generator_stylegan2 = GeneratorStyleGAN2(z_size, w_size, mn_nlayer,
                                          channels_g, style_mixing_prob)
-
 generator_stylegan2 = generator_stylegan2.to(device)
 
 betas = [0, 0.99]
