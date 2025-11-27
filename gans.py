@@ -11817,13 +11817,19 @@ run_simple_gen_with_const_noise()
 #%%
 # blur() is not used in this version and instead the authors used a cuda kernel
 # for the upsample/downsample 
-# I took this part from chat gpt:
-# -------------------------
-# helpers: kernel / upfirdn
-# -------------------------
-import torch
-import torch.nn.functional as F
-
+# I took this part from chatgpt:
+# update:
+# the chatgpt version was not only buggy but extremely slow
+# the previous version used view, pad and permute which permute 
+# e.g. breaks tensor contiguity in memory and thus forces pytorch
+# to copy the entire memory block.
+# moreover in this implementation we use conv_transpose2d and conv2d
+# that have optimized cuda kernels, and therefore are significantly 
+# faster than maual indexing in previous impl.
+# this implementation also calculates the specific cropping/padding
+# needed to match the exact pixel alignment in original/official stylegan2
+# which is critical for the "texture sticking" fix!
+# (by the way this is from gemini):
 def make_kernel(k):
     k = torch.tensor(k, dtype=torch.float32)
     if k.ndim == 1:
@@ -11831,59 +11837,152 @@ def make_kernel(k):
     k = k / k.sum()
     return k
 
-def upfirdn2d(x, kernel, up=1, down=1, pad=(0,0,0,0)):
-    # ... (Your existing implementation here is mathematically valid, just slow) ...
-    # Keep the implementation you provided for this function
+def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
+    """
+    Fast pure-torch implementation of StyleGAN2 upfirdn2d.
     
-    # prepare kernel
-    kernel = kernel.to(x.device, dtype=x.dtype)
-    kernel = torch.flip(kernel, [0,1]).contiguous()
-    kH, kW = kernel.shape
+    Args:
+        input: (B, C, H, W)
+        kernel: (kH, kW) - separable or 2d kernel
+        up: int, upsampling factor
+        down: int, downsampling factor
+        pad: tuple (pad0, pad1) represents (pad_x, pad_y). 
+             If you have 4 pad values, pass them accordingly.
+    """
+    out = input
+    
+    # Prepare kernel
+    # (kH, kW) -> (1, 1, kH, kW)
+    kernel = kernel.to(input.device, dtype=input.dtype).unsqueeze(0).unsqueeze(0)
+    
+    # If the kernel is small (like [1,3,3,1]), flipping doesn't matter much 
+    # as it is symmetric, but strictly speaking StyleGAN flips it.
+    kernel = torch.flip(kernel, [2, 3])
 
-    # 1) upsample (insert zeros)
+    # input_height = input.shape[2]
+    # input_width = input.shape[3]
+    
+    # --------------------------------------
+    # 1. UPSAMPLE (using ConvTranspose2d)
+    # --------------------------------------
     if up > 1:
-        x = x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1)
-        x = F.pad(x, (0, up-1, 0, 0))
-        x = x.view(x.size(0), x.size(1), x.size(2), x.size(3)*up)
-        x = x.permute(0,1,3,2).contiguous()
-        x = x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1)
-        x = F.pad(x, (0, up-1, 0, 0))
-        x = x.view(x.size(0), x.size(1), x.size(2)*up, x.size(3)).permute(0,1,3,2).contiguous()
+        # Reshape kernel for Grouped ConvTranspose: (C, 1, kH, kW)
+        # We repeat the kernel for every channel, and use groups=C
+        # This keeps channels independent.
+        w = kernel.repeat(input.shape[1], 1, 1, 1)
+        
+        # Scaling factor is required because conv_transpose spreads energy
+        w = w * (up ** 2) 
+        
+        # Calculate padding
+        # Standard StyleGAN2 padding logic for upsampling:
+        # pad_x0 = (kW - up) // 2
+        # pad_x1 = (kW - up + 1) // 2
+        # pad_y0 = (kH - up) // 2
+        # pad_y1 = (kH - up + 1) // 2
+        
+        # However, ConvTranspose2d output size logic is:
+        # H_out = (H_in - 1) * stride - 2 * padding + kernel_size
+        # We manipulate F.pad on the input to achieve exact alignment.
+        
+        # Simply pad input to simulate the "valid" region
+        p_x0 = (kernel.shape[3] - up) // 2
+        p_x1 = (kernel.shape[3] - up + 1) // 2
+        p_y0 = (kernel.shape[2] - up) // 2
+        p_y1 = (kernel.shape[2] - up + 1) // 2
+        
+        # Apply user supplied pad if it exists (StyleGAN2 passes pad args)
+        if len(pad) == 4:
+            p_x0 += pad[0]
+            p_x1 += pad[1]
+            p_y0 += pad[2]
+            p_y1 += pad[3]
+        elif len(pad) == 2:
+            p_x0 += pad[0]
+            p_x1 += pad[0]
+            p_y0 += pad[1]
+            p_y1 += pad[1]
 
-    # 2) pad
-    pad_x0, pad_x1, pad_y0, pad_y1 = pad
-    x = F.pad(x, (pad_x0, pad_x1, pad_y0, pad_y1))
+        # In ConvTranspose, 'padding' argument crops the output. 
+        # But it's easier to verify by using F.conv_transpose2d with padding=0
+        # and cropping manually or padding input carefully.
+        
+        # Let's use the standard "Rosinality" approach which is robust:
+        # 1. Pad input manually
+        out = F.pad(out, (0, 0, 0, 0)) # Placeholder if we needed pre-padding
+        
+        # 2. Run Transpose Conv
+        # We let the conv expand it, then we crop the edges to match StyleGAN math
+        out = F.conv_transpose2d(out, w, stride=up, padding=0, groups=out.shape[1])
+        
+        # 3. Crop to remove the extra pixels introduced by kernel width
+        # The output of conv_transpose is larger than we want.
+        # We need to crop (p_x0, p_x1, p_y0, p_y1) from the edges.
+        
+        # Compute dimensions
+        h_new = out.shape[2]
+        w_new = out.shape[3]
+        
+        out = out[:, :, p_y0 : h_new - p_y1, p_x0 : w_new - p_x1]
 
-    # 3) conv
-    b, c, h, w = x.shape
-    x = x.reshape(b * c, 1, h, w)
-    k = kernel.view(1, 1, kH, kW)
-    out = F.conv2d(x, k, padding=0)
-    out = out.reshape(b, c, out.shape[2], out.shape[3])
+    # --------------------------------------
+    # 2. DOWNSAMPLE (using Conv2d with stride)
+    # --------------------------------------
+    elif down > 1:
+        # Reshape kernel for Grouped Conv2d: (C, 1, kH, kW)
+        w = kernel.repeat(input.shape[1], 1, 1, 1)
+        
+        # Calculate padding
+        # Standard StyleGAN2 padding logic for downsampling:
+        # pad_x0 = (kW - down + 1) // 2
+        # pad_x1 = (kW - down) // 2
+        
+        p_x0 = (kernel.shape[3] - down + 1) // 2
+        p_x1 = (kernel.shape[3] - down) // 2
+        p_y0 = (kernel.shape[2] - down + 1) // 2
+        p_y1 = (kernel.shape[2] - down) // 2
 
-    # 4) downsample
-    if down > 1:
-        out = out[:, :, ::down, ::down]
+        if len(pad) == 4:
+            p_x0 += pad[0]
+            p_x1 += pad[1]
+            p_y0 += pad[2]
+            p_y1 += pad[3]
+            
+        # Pad the input
+        out = F.pad(out, (p_x0, p_x1, p_y0, p_y1))
+        
+        # Apply Strided Convolution
+        out = F.conv2d(out, w, stride=down, padding=0, groups=out.shape[1])
+
+    # --------------------------------------
+    # 3. KERNEL ONLY (No scaling, just filtering)
+    # --------------------------------------
+    else:
+        # Just a standard depthwise convolution with padding to maintain size
+        w = kernel.repeat(input.shape[1], 1, 1, 1)
+        
+        p_x = (kernel.shape[3] - 1) // 2
+        p_y = (kernel.shape[2] - 1) // 2
+        
+        if len(pad) == 4:
+            out = F.pad(out, pad)
+        else:
+            out = F.pad(out, (p_x, p_x, p_y, p_y)) # Symmetric padding if not specified
+            
+        out = F.conv2d(out, w, stride=1, padding=0, groups=out.shape[1])
+
     return out
 
-FIR_KERNEL = make_kernel([1,3,3,1])
+# WRAPPERS
+FIR_KERNEL = make_kernel([1, 3, 3, 1])
 
 def upsample_2d(x, kernel=FIR_KERNEL, factor=2):
-    # FIXED PADDING CALCULATION
-    # When upsampling manually (inserting zeros), the convolution acts on the 
-    # already-expanded image. To preserve dimensions, we need:
-    # pad = kernel_size - 1
-    # For k=4: pad=3 (1 left, 2 right)
-    pad = ( (kernel.shape[1]-1)//2, (kernel.shape[1])//2,
-            (kernel.shape[0]-1)//2, (kernel.shape[0])//2 )
-            
-    return upfirdn2d(x, kernel, up=factor, down=1, pad=pad)
+    # Wrapper handles the default kernel
+    return upfirdn2d(x, kernel, up=factor)
 
 def downsample_2d(x, kernel=FIR_KERNEL, factor=2):
-    # This was already correct
-    pad = ( (kernel.shape[1]-1)//2, (kernel.shape[1])//2,
-            (kernel.shape[0]-1)//2, (kernel.shape[0])//2 )
-    return upfirdn2d(x, kernel, up=1, down=factor, pad=pad)
+    # Wrapper handles the default kernel
+    return upfirdn2d(x, kernel, down=factor)
     
 # class Blur(nn.Module):
 #     def __init__(self):
@@ -12098,6 +12197,10 @@ class StyleConvBlock2(nn.Module):
         # sg2 does conv then upsample?
         if self.upsample:
             # instead of upsample+blur, we now use upsample2d(from upfirdn2d)
+            # we can use upsample/blur but we might not get the exact results 
+            # so I thought lets be faithful to the original impl as much as we can
+            # when we got our results, we can always switch back to this again and
+            # see how much of an impact it has on our results
             # x = F.interpolate(x, scale_factor=2, mode="bilinear")
             # x = self.blur(x)
             x = upsample_2d(x)
