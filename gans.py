@@ -12912,6 +12912,18 @@ training_loop_stylegan2(discriminator_stylegan2,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      )
 
+# debug log:
+# stylegan2_ffhq_20251127152002:
+# - everything is going smoothly alhamdolelah! we are at epoch 53, with 2m/4m models
+#   the configuration is [256,128,64,32,16,8]. with batchsize=64, we are using 6G of
+#   vram! the training is fast with this config in 5 hours we have done 54 epochs so 
+#   10 epochs per hour! image quality is still not good, but its vibrant and overall
+#   wellformed for the most part. I was thinking if we can relax the mapping network
+#   reduced lr a bit to see if it can make the convergence faster. the overal training
+#   seems absolutely ok. but I would like to give that a try. I guess I'll do that after
+#   I increased the model capacity a bit to see how it works.
+#
+# 
 #%%
 # a detour to something fun CycleGAN
 # 
