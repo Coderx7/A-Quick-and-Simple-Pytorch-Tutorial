@@ -9539,7 +9539,7 @@ def generator_loss_stylegan1(d_preds_fake):
 # so lets do the training loop
 
 @torch.no_grad()
-def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
+def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
@@ -9549,8 +9549,8 @@ def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, dec
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
     # copy the ema_w over
     g_ema.ema_w.copy_(g.ema_w)
-    
-
+   
+   
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
@@ -11815,19 +11815,89 @@ run_simple_gen_with_const_noise()
 #
 
 #%%
-class Blur(nn.Module):
-    def __init__(self):
-        super().__init__()
-        kernel = torch.tensor([1,2,1])
-        kernel = kernel.view(1,-1) * kernel.view(-1,1)
-        kernel = kernel/kernel.sum()
-        self.register_buffer("kernel", kernel.view(1,1,3,3))
+# blur() is not used in this version and instead the authors used a cuda kernel
+# for the upsample/downsample 
+# I took this part from chat gpt:
+# -------------------------
+# helpers: kernel / upfirdn
+# -------------------------
+import torch
+import torch.nn.functional as F
 
-    def forward(self, x):
-        in_channels = x.size(1)
-        kernel = self.kernel.repeat(in_channels, 1,1,1)
-        x = F.pad(x,[1,1,1,1],mode='reflect')
-        return F.conv2d(x, kernel, groups=in_channels)
+def make_kernel(k):
+    k = torch.tensor(k, dtype=torch.float32)
+    if k.ndim == 1:
+        k = k[:, None] * k[None, :]
+    k = k / k.sum()
+    return k
+
+def upfirdn2d(x, kernel, up=1, down=1, pad=(0,0,0,0)):
+    # ... (Your existing implementation here is mathematically valid, just slow) ...
+    # Keep the implementation you provided for this function
+    
+    # prepare kernel
+    kernel = kernel.to(x.device, dtype=x.dtype)
+    kernel = torch.flip(kernel, [0,1]).contiguous()
+    kH, kW = kernel.shape
+
+    # 1) upsample (insert zeros)
+    if up > 1:
+        x = x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1)
+        x = F.pad(x, (0, up-1, 0, 0))
+        x = x.view(x.size(0), x.size(1), x.size(2), x.size(3)*up)
+        x = x.permute(0,1,3,2).contiguous()
+        x = x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1)
+        x = F.pad(x, (0, up-1, 0, 0))
+        x = x.view(x.size(0), x.size(1), x.size(2)*up, x.size(3)).permute(0,1,3,2).contiguous()
+
+    # 2) pad
+    pad_x0, pad_x1, pad_y0, pad_y1 = pad
+    x = F.pad(x, (pad_x0, pad_x1, pad_y0, pad_y1))
+
+    # 3) conv
+    b, c, h, w = x.shape
+    x = x.reshape(b * c, 1, h, w)
+    k = kernel.view(1, 1, kH, kW)
+    out = F.conv2d(x, k, padding=0)
+    out = out.reshape(b, c, out.shape[2], out.shape[3])
+
+    # 4) downsample
+    if down > 1:
+        out = out[:, :, ::down, ::down]
+    return out
+
+FIR_KERNEL = make_kernel([1,3,3,1])
+
+def upsample_2d(x, kernel=FIR_KERNEL, factor=2):
+    # FIXED PADDING CALCULATION
+    # When upsampling manually (inserting zeros), the convolution acts on the 
+    # already-expanded image. To preserve dimensions, we need:
+    # pad = kernel_size - 1
+    # For k=4: pad=3 (1 left, 2 right)
+    pad = ( (kernel.shape[1]-1)//2, (kernel.shape[1])//2,
+            (kernel.shape[0]-1)//2, (kernel.shape[0])//2 )
+            
+    return upfirdn2d(x, kernel, up=factor, down=1, pad=pad)
+
+def downsample_2d(x, kernel=FIR_KERNEL, factor=2):
+    # This was already correct
+    pad = ( (kernel.shape[1]-1)//2, (kernel.shape[1])//2,
+            (kernel.shape[0]-1)//2, (kernel.shape[0])//2 )
+    return upfirdn2d(x, kernel, up=1, down=factor, pad=pad)
+    
+# class Blur(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         kernel = torch.tensor([1,2,1])
+#         kernel = kernel.view(1,-1) * kernel.view(-1,1)
+#         kernel = kernel/kernel.sum()
+#         self.register_buffer("kernel", kernel.view(1,1,3,3))
+
+#     def forward(self, x):
+#         in_channels = x.size(1)
+#         kernel = self.kernel.repeat(in_channels, 1,1,1)
+#         x = F.pad(x,[1,1,1,1],mode='reflect')
+#         return F.conv2d(x, kernel, groups=in_channels)
 
 class EqualizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
@@ -11870,9 +11940,10 @@ class DiscBlockStyleGAN2(nn.Module):
                                    nn.LeakyReLU(0.2),
                                    EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
-                                   # before we downsample, we blur the input
-                                   Blur(),
-                                   nn.AvgPool2d(2),
+                                   # instead of blur and downsample we use the new downsample_2d
+                                   # in forward
+                                   # Blur(),
+                                   #nn.AvgPool2d(2),
                                   )
         # for residual connection we can simply downsample the input and add it to output
         # but having a linear transformation like conv doesnt hurt and usually is usuful
@@ -11881,8 +11952,10 @@ class DiscBlockStyleGAN2(nn.Module):
         
     def forward(self, x):
         skip = self.skip(x)
-        skip = F.avg_pool2d(skip,2,2)
+        # skip = F.avg_pool2d(skip,2,2)
+        skip = downsample_2d(skip)
         out = self.block(x)
+        out = downsample_2d(out)
         return out+skip
     
 class DiscriminatorStyleGAN2(nn.Module):
@@ -12024,10 +12097,10 @@ class StyleConvBlock2(nn.Module):
     def forward(self, x, w, noise=None):
         # sg2 does conv then upsample?
         if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode="bilinear")
-            # blur the output to hide checker marks effects this is especially important
-            # for 32x32 and higher res so the discriminator doesnt win too quickly!
-            x = self.blur(x)
+            # instead of upsample+blur, we now use upsample2d(from upfirdn2d)
+            # x = F.interpolate(x, scale_factor=2, mode="bilinear")
+            # x = self.blur(x)
+            x = upsample_2d(x)
 
         out = self.conv(x, w)
             
