@@ -5441,7 +5441,7 @@ def get_overall_status(real_mean, fake_mean, IS_score=None,
 
 @torch.no_grad()   
 def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
-                     dataset_name, split, alpha, step, batch_size=64, num_samples=10_000):
+                     dataset_name, split, batch_size=64, num_samples=10_000, **kwargs):
     # instead of going over the whole trainig sets, we can choose
     # a portion of them instead grab a subset of the dataloader as many as num_samples
     # and generate as many as num_samples fake_loader
@@ -5453,7 +5453,7 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
     
     assert real_batch_cnt == fake_batch_cnt, f'real and fake images count must match ({real_batch_cnt} vs {fake_batch_cnt})'    
     
-    def fake_loader(num_samples, batch_size, alpha, step):
+    def fake_loader(num_samples, batch_size, **kwargs):
         device = next(gen.parameters()).device
         
         for i in range(fake_batch_cnt):
@@ -5461,13 +5461,14 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
             # grab as many as they are not more
             current_batch_size = min(batch_size, num_samples - i*batch_size)
             z = torch.randn(size=(current_batch_size, gen.z_size), device=device)
-            fakes = gen(z, alpha, step)
+            # update from future (for stylegan2)
+            fakes,*_ = gen(z, **kwargs)
             # return a tuple to mimic an actual dataloader!
             yield fakes, torch.zeros((current_batch_size,1))
     
-    IS_score = metric.compute_IS(fake_loader(num_samples, batch_size, alpha, step))
+    IS_score = metric.compute_IS(fake_loader(num_samples, batch_size, **kwargs))
     FID_score = metric.compute_FID(real_loader,
-                                   fake_loader(num_samples, batch_size, alpha, step),
+                                   fake_loader(num_samples, batch_size, **kwargs),
                                    dataset_name=dataset_name,
                                    split=f'{split}_{num_samples//1000}K')
     return IS_score, FID_score
@@ -5999,7 +6000,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
                 IS_score = metric.compute_IS(imgs_fake)
                 FID_score = metric.compute_FID(imgs_real, imgs_fake)
             else:
-                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
+                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha=alpha, step=step)
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
@@ -10057,7 +10058,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 IS_score = metric.compute_IS(imgs_fake)
                 FID_score = metric.compute_FID(imgs_real, imgs_fake)
             else:
-                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
+                IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha=alpha, step=step)
 
             status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
             status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
@@ -10179,7 +10180,7 @@ def get_dataset_size(name,split='train'):
     dl = get_dataloader(name,split,batch_size=1)
     return len(dl)
 
-#%%
+#%% training stylegan1
 print(f'Training StyleGAN1')
 gamma=10#10
 # cifar10 is a lot harder than celeba
@@ -10572,8 +10573,7 @@ training_loop_stylegan(discriminator_stylegan1,
 # hyperparameters!)
 #
 
-#%%
-#%%
+#%% change_checkpoint_fields
 def change_checkpoint_fields(checkpoint_path, updated_fields, display_fields=True, save=False):
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     
@@ -10610,7 +10610,7 @@ def change_checkpoint_fields(checkpoint_path, updated_fields, display_fields=Tru
 # chkpnt = change_checkpoint_fields(checkpoint_path, updated_fields,
 #                                   display_fields=True, 
 #                                   save=False)
-#%%
+#%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda"):
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     dataset_name = checkpoint["dataset_name"]
@@ -10656,7 +10656,7 @@ with torch.no_grad():
                    title=f'Step {last_step} [{res}]',
                    unnormalize=True, 
                    figsize=(16,8))
-#%%
+#%% create_interpolation_animation
 @torch.no_grad()
 def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, repeat=True, repeat_delay=1000):
     fig = plt.figure()
@@ -10945,14 +10945,14 @@ run_interpolation_test(last_step,
 # clear and well developed!
 # with psi rate we can see how better results though less diverse depending
 # on which value we pick
-#%%
+#%% run_interpolation_test
 # now lets do this with noise injection i.e. constant_noise=False
 run_interpolation_test(last_step, 
                        sample_size,
                        #psi_rates=[0,0.5,1.2,3,5],
                        constant_noise=False,
                        num_samples=num_samples)
-#%%
+#%% making some gifs
 # now lets also make some gifs as well!
 alphas = torch.linspace(0,1,25)
 for noise_status in [True]:
@@ -10965,7 +10965,7 @@ for noise_status in [True]:
                            gif_dir='./results/gan/stylegan1/gifs',
                            interval=100,
                            random_gen=fixed_randg)
-#%%
+#%% truncation and stylemixing tests
 # now lets do some style mixing, use one z for the coarse features
 # and another one for style change. 
 
@@ -11057,7 +11057,7 @@ display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(
 # as we can see, the structure of the source image stays the same, but the 
 # texture/style of the style image is transfered. lets see how each layer affects
 # the result 
-#%%
+#%% change styles
 def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
     num_layers = 2*generator_style1.max_steps-1
     imgs_all = []
@@ -11655,7 +11655,8 @@ run_simple_gen_with_const_noise()
 #   and we fixed the issue as well with lower lr!)
 # 
 
-#%%
+#
+# %% styleGAN2
 # Stylegan2 Analyzing and Improving the Image Quality of StyleGAN https://arxiv.org/pdf/1912.04958
 # we had great success with stylegan1 and also learned a lot!
 # now lets go for the second paper, stylegan2 and see what its baout!
@@ -11813,7 +11814,6 @@ run_simple_gen_with_const_noise()
 # as well as LSUN CHURCH and LSUN HORSE in Table 3, where we use γ = 100."
 #
 
-
 #%%
 class Blur(nn.Module):
     def __init__(self):
@@ -11874,6 +11874,9 @@ class DiscBlockStyleGAN2(nn.Module):
                                    Blur(),
                                    nn.AvgPool2d(2),
                                   )
+        # for residual connection we can simply downsample the input and add it to output
+        # but having a linear transformation like conv doesnt hurt and usually is usuful
+        # nonetheless
         self.skip = EqualizedConv2d(in_channels, out_channels, kernel_size=1, bias=False)
         
     def forward(self, x):
@@ -11907,7 +11910,7 @@ class DiscriminatorStyleGAN2(nn.Module):
                                    EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
                                    nn.LeakyReLU(0.2),
                                    EqualizedLinear(self.channels[0],1))
-                               
+
     
     def forward(self, x):
         out = self.fromImgs(x)
@@ -11915,6 +11918,7 @@ class DiscriminatorStyleGAN2(nn.Module):
         out = self.final(out)
         return out.view(-1,1)
  
+ # in mapping network we dont use any normalization either (no pixelnorm)
 class MappingNetwork2(nn.Module):
     def __init__(self, z_dim=512, w_dim=512, num_layers=8):
         super().__init__()
@@ -11939,8 +11943,12 @@ class MappingNetwork2(nn.Module):
 #         style = self.fc_style(w).unsqueeze(2).unsqueeze(3)
 #         return style
 
+# this was supposed to be applied on EqualizedConv2d weights, but since our
+# modulation operation cancels out the scaling part of the equalized conv2d
+# then we dont need to bother bother writting that down! also we need the plain
+# EqualizedConv2d for discriminator, so we implement this as a new module
 class ModulatedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, w_dim,demodulate=True, eps=1e-8):
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, w_dim=512, demodulate=True, eps=1e-8):
         super().__init__()
 
         self.in_channels = in_channels
@@ -11953,7 +11961,7 @@ class ModulatedConv2d(nn.Module):
         self.eps = eps
         
         self.weight = torch.nn.Parameter(torch.randn(size=(1,out_channels, in_channels, kernel_size, kernel_size)))
-        # weight modulation
+        # weight modulation is simply fc layer transforming w and acts as a scale
         self.fc_style = EqualizedLinear(w_dim, in_channels)
         # initialize the bias/scale to 1
         self.fc_style.bias.data.fill_(1)
@@ -11964,15 +11972,16 @@ class ModulatedConv2d(nn.Module):
         style = self.fc_style(w).view(-1,1,c,1,1)
         weights = self.weight * style 
         
-        # weight demodulation 
-        demod = torch.rsqrt(weights.pow(2).sum((2,3,4))+self.eps)
-        weights = weights * demod.view(-1,self.out_channels,1,1,1)
+        if self.demodulate:        
+            # weight demodulation.(remember sqrt/rsqrt accept only positive numbers, any negatives results in nan!)
+            demod = torch.rsqrt(weights.pow(2).sum((2,3,4))+self.eps)
+            weights = weights * demod.view(-1,self.out_channels,1,1,1)
+
         # reshape x for group convolution trick
-        # to handle different weighst per batch item, we put the batch dim
-        # into output channels and use groups=batch
-        if self.demodulate:
-            x = x.view(1, b*c,img_h,img_w)
-            weights = weights.view(b*self.out_channels, c, self.kernel_size, self.kernel_size)
+        # to handle different weighst for each batch sample,
+        # we put the batch dim into output channels and use groups=batch
+        x = x.view(1, b*c,img_h,img_w)
+        weights = weights.view(b*self.out_channels, c, self.kernel_size, self.kernel_size)
         
         # apply the conv operationg using the weights
         out = F.conv2d(x, weights, stride=self.stride, padding=self.padding, groups=b)
@@ -11994,7 +12003,7 @@ class NoiseInjection(nn.Module):
 
 class StyleConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
-                 w_size=512, upsample=False, eps=1e-8, apply_conv=True):
+                 w_size=512, upsample=False, eps=1e-8, demodulate=True):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -12005,9 +12014,9 @@ class StyleConvBlock2(nn.Module):
         self.w_size = w_size
         self.upsample = upsample
         self.eps = eps
-        self.apply_conv = apply_conv
+        self.demodulate = demodulate
 
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding, w_size,eps)
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding, w_size, demodulate,eps)
         self.noise_inject = NoiseInjection(out_channels)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         self.blur = Blur()
@@ -12040,23 +12049,25 @@ class StyleConvBlock2(nn.Module):
 class GeneratorStyleGAN2(nn.Module):
     def __init__(self, z_size=512, w_size=512, mn_num_layers=8,
                  channels=[512,512,512,256,128,64,32],
-                 style_mixing_prob=0.9, ema_w_beta=0.995,):
+                 style_mixing_prob=0.9, ema_w_beta=0.995, eps=1e-8):
         super().__init__()
         
         self.setup_layers(z_size, w_size, mn_num_layers,
                           channels, style_mixing_prob, 
-                          ema_w_beta)
+                          ema_w_beta,eps)
                 
     def setup_layers(self, z_size, w_size, mn_num_layers,
-                     channels, style_mixing_prob, ema_w_beta):
+                     channels, style_mixing_prob, ema_w_beta, eps):
         
         self.z_size = z_size
         self.w_size = w_size
         self.mn_num_layers = mn_num_layers
-                
+        
         self.style_mixing_prob = style_mixing_prob
         self.ema_w_beta = ema_w_beta
         self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
+        # for fp16 tests in case we faced instabilityies that require larger eps
+        self.eps = eps
         
         self.channels = channels
         
@@ -12068,14 +12079,14 @@ class GeneratorStyleGAN2(nn.Module):
         self.blocks = nn.ModuleList()
         self.toImgs = nn.ModuleList()
         
-        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
-        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False))
-        self.toImgs.append(EqualizedConv2d(self.channels[0], 3, kernel_size=1))
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps))
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps))
+        self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False,eps=eps))
         for i in range(1, len(channels)):
-            self.blocks.append(StyleConvBlock2(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True))
-            self.blocks.append(StyleConvBlock2(self.channels[i], self.channels[i], w_size=w_size, upsample=False))
-            self.toImgs.append(EqualizedConv2d(self.channels[i], 3, kernel_size=1))
-            
+            self.blocks.append(StyleConvBlock2(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True,eps=eps))
+            self.blocks.append(StyleConvBlock2(self.channels[i], self.channels[i], w_size=w_size, upsample=False,eps=eps))
+            self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False,eps=eps))
+
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
          if self.training:
@@ -12084,7 +12095,7 @@ class GeneratorStyleGAN2(nn.Module):
     # this time lets separate the forward pass using w
     # to make it easier for calculating path length regularization
     # and future interpolation experimets
-    def foward_from_w(self, w, noise=None):
+    def forward_from_w(self, w, noise=None):
         if w.ndim==2:
             w = w.unsqueeze(1).repeat(1, len(self.blocks),1)
         
@@ -12095,7 +12106,7 @@ class GeneratorStyleGAN2(nn.Module):
         x = self.blocks[0](x, w[:,0,:], noise)
         x = self.blocks[1](x, w[:,1,:], noise)
         # grab the first image(i.e old image )
-        img = self.toImgs[0](x)
+        img = self.toImgs[0](x, w[:,1,:])
         
         # main loop, skip connections
         for i in range(1, len(self.channels)):
@@ -12103,12 +12114,17 @@ class GeneratorStyleGAN2(nn.Module):
             # upsample the previous img so we can add it to the new image(current resolution)
             img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
             #process the input for this resolution
-            x = self.blocks[idx1](x, w[:, idx1], noise)
-            x = self.blocks[idx1+1](x, w[:, idx1+1], noise)
+            x = self.blocks[idx1](x, w[:, idx1,:], noise)
+            x = self.blocks[idx1+1](x, w[:, idx1+1,:], noise)
             # create the image for current resolution and add it to the previous one
-            img = img + self.toImgs[i](x)
+            img = img + self.toImgs[i](x, w[:, idx1+1,:])
             
         return img
+
+    def apply_truncation(self, psi, w):
+        ema_w_batch = self.ema_w.repeat(w.size(0),1)
+        w = ema_w_batch + psi * (w - ema_w_batch)
+        return w
            
     def forward(self, z, psi=None, noise=None):
         num_layers = len(self.blocks)
@@ -12118,8 +12134,7 @@ class GeneratorStyleGAN2(nn.Module):
             self._update_ema_w(w)
 
         if not self.training and psi:
-            ema_w_batch = self.ema_w.repeat(w.size(0),1)
-            w = ema_w_batch + psi * (w - ema_w_batch)
+            w = self.apply_truncation(psi, w)
         
         if self.training and random.random() <self.style_mixing_prob:
             # grab a second z, calculate the w
@@ -12133,9 +12148,14 @@ class GeneratorStyleGAN2(nn.Module):
         else:
             w = w.unsqueeze(1).repeat(1, num_layers,1)
 
-        img = self.foward_from_w(w, noise)
-        return img
-    
+        img = self.forward_from_w(w, noise)
+        # since we want to calculate path length regularization,
+        # we need w for each generated image so we can see how much
+        # an image changes when w changes (calculate its gradient with
+        # respect to w so aside from making our forward to work with w
+        # we can simply return w with the generated images as well and
+        # make our life easier!)
+        return img,w
     
 channels=[512,256,128,64,32,16,8]
 disc = DiscriminatorStyleGAN2(channels=channels)
@@ -12146,111 +12166,64 @@ for m in [disc, gen]:
 H=W=2**(len(channels)+1)
 x = torch.randn(size=(5,3,H,W))
 z = torch.randn(size=(5,100))
-n = torch.zeros((5,1,H,W))    
+n = torch.zeros((5,1,H,W))
 disc_out = disc(x)
 print(f'disc_out.shape: {tuple(disc_out.shape)}')
-gen_out = gen(z, noise=n)
-print(f'gen_out.shape : {tuple(gen_out.shape)}')
+gen_out,ws = gen(z, noise=n)
+print(f'gen_out.shape:\nimgs:{tuple(gen_out.shape)} ws:{tuple(ws.shape)}')
     
 #%%
-def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
-    # D_loss = E[softplus(-D(x_real)) + softplus(D(G(z)))]+ r1_penalty
-    # softplus is log(1+exp(x)) but since pytorch offers a numerically
-    # stable version, we use the builtin one
-    
-    
-    # softplus, is a non-saturating loss, like WGAN/GP. it is a smoothed version of
-    # relu (i.e. log(1+exp(x))) and is not bounded, so we are basically getting raw
-    # outputs/logits so the output can get as large as it wants!
-    # 
-    # the sofplus+r1_penalty is there so we dont face vanishing/exploding
-    # gradients! the softplus prevents the vanishing gradients, by being non-saturating
-    # but not the exploding gradients!
-    # in fact because its unbounded its very susceptible to gradient explosions!
-    # by switching to a non-saturating loss, the discriminator's output can grow indefinitly!
-    # (it can learn to produce huge scores for tiny changes in input images! be it real or fake
-    # for real huge positive scores, for fakes, huge negative scores!)
-    # which means the gradient of the discriminator with respect to its input becomes huge!
-    # all of this means, the discriminator acts as a massive amplifier! 
-    # so when the generator backpropagates its loss, our discriminator which acts as this
-    # huge gradient amplifier causes the gradient signal to explode!
-    # 
-    # to fix the explosion part we use the r1_penalty term. its job is to make sure 
-    # discriminator doesnt get too good too fast! therefore the discriminator itself
-    # rarely faces gradient explosion if at all but the generator on the other hand 
-    # that only uses softplus(D(x)) is very prune/susciptible to gradient explosions.
-    # see the explanations ahead.
-    #
+# the losses stay the same, we just need to apply the r1_penalty at some interval
+# we can still do it all the time, but its inefficient and we can get a little perf
+# boost by doing it intermittently!
+def discriminator_loss_stylegan2(d_preds_real, x_real, d_preds_fake, gamma, i, r1_penalty_interval):
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
-    # update:
-    #  after adding fp16, I noticed r1_penalty needs to be done 
-    #  in full precision mode (i.e. fp32) otherwise we get nans
+    penalty = 0
+    
+    # unlike stylegan1, we dont need to apply penalty all the time!
     with torch.amp.autocast(device_type="cuda", enabled=False):
-        penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
+        # only apply penalty every r1_penalty_interval
+        if (i%r1_penalty_interval)==0:
+            penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
     
-    return loss + penalty
+    # remember to scale the penalty so on average 
+    # the same amount of regularization is applied at the end
+    return loss + (penalty*r1_penalty_interval)
 
-def generator_loss_stylegan1(d_preds_fake):
+def generator_loss_stylegan2(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
-    
-    # sidenote from future/reminder:
-    # I originally wrote this for dbeug log when I faced gradient explosion at some point
-    # but I thought having it here as a reminder works better so here it is:
-    #
-    # note, softplus is a non-saturating loss, just like the wgan/wgangp loss.
-    # this matters because in our previous experiments we saw when discriminator gets really 
-    # good, the gradients vanish and thats why generator cant improve, cuz it doesnt get 
-    # proper feedback. 
-    # however this behavior depends on the loss function we use. if we use a staurating loss
-    # functions like BCE, that uses sigmoid, when the model gets good, (the real images e.g.)
-    # it produces values very close to 0, so the the gradients become extremely tiny and 
-    # therefore the generator cant improve with those tiny gradients. 
-    # on the otherhand, when we use non-saturating losses, that are not bounded,(like softplus/WGAN), 
-    # i.e. we dont use any activations for the final layer of discirminator, no sigmoid is used,
-    # the network can learn to produce very large scores for the real images and very small
-    # ones (i.e. very large negative numbers) for fake images! 
-    # so when we calculate the generator's loss by softplus(-disc(fake_images)).mean() and 
-    # the discriminator produces large negative numbers then the gradients will be massive 
-    # as well! this will lead to gradient explosion!
-    #
-    # note the softplus uses log, and any large number given to log will be small, so loss 
-    # itself isnt going to explode, the gradient will! and its the generator that goes down
-    # the hill!(i.e. the explosion happens in the generator not the discriminator 
-    # because the gradient is propegated through several layers in the generator! because of 
-    # repeated multiplications that follow!
-    # for example imagine this:
-    # if our discriminator is very good and assigns a large positive number to real images,
-    # i.e. D(fake_imgs)=40 the gradient of softplus(y) with respect to its input(y) will be 
-    # dLG/dsotfplus(y) = 1/(1+e^-y) or in other words simply sigmoid(y), now the gradients
-    # with respect to discriminator will be dLG/dD_fake = -simoid(-40) = -4*10^-18 essentially 0!
-    # the gradient will be very tiny and its almost nothing!  
-    # if model wasnt good and produced a large positive number for fake images, then there 
-    # would be no issues again! cause the gradient would be nearly 0 and at most generator wouldnt
-    # change much) however, when the discriminator assignes a large negative number to fake images,
-    # confidently identifying it as fake, i.e. D(fake_images)=-40, we then have (dervaitive with
-    # respect to D): softplus(y)=(-(-40)) -> softplus(40) -> -sigmoid(40)=-1.
-    # now if we have lets say 10 layers, and imagine their weights to be a value like 3 for 
-    # the sake of our example, then we will have -1*3^10=-59049! when we reach the first layer!
-    # as you can see the gradient magnitude just exploded through several layers of multiplications! 
-    # 
-    # note:3^10 is just an analogy in place of the actual multiplications that happen after each layer
-    # because that would also grow exponentially, I simply replaced it with an example with exponential growth like that!
-    # 
-    # (note the sign doesnt matter here the magnitude does! when updating the weights,
-    # we move in the opposite direction of the gradients (i.e. delta_w=-lr*grad=0.001*(-59049)=~59 e.g.
-    # so w_new = w_old+delta_w! now the new weights will also start to get large(explode) and
-    # in the next forward pass cause the activations to explode and result in nans!
-    # this is why we cant have disc get good quickly at all, if it does, we can face gradient explosion!
-    # and vanishing gradient depending which will result in exploding gradient ultimately!
-    # 
     return F.softplus(-d_preds_fake).mean()
 
-# we have implemented the disc/gen
-# we have implemented the losses
-# so lets do the training loop
+
+# we also need Path length regularization loss for the generator
+def path_length_regularization_loss(fake_imgs,
+                                    w_latents,
+                                    mean_path_length, 
+                                    decay=0.01, 
+                                    pl_weight=2):
+    
+    # get the noise (y) , random noise images
+    # but we can use randn with the same shape as images aswell
+    # noise/sqrt(img_h*img_w)
+    noise = torch.randn_like(fake_imgs)/math.sqrt(math.prod(fake_imgs.shape[2:]))    
+    # now we calculate the gradients of the image*noise w.r.t w latents
+    # this measures how much the image changes when w changes
+    # we use sum() so we dont do .mean at the end
+    grad = torch.autograd.grad(outputs=(fake_imgs*noise).sum(),
+                               inputs=w_latents,
+                               create_graph=True)[0]
+    
+    path_lengths = torch.sqrt(grad.pow(2).sum(dim=2).mean(dim=1))
+    # update the moving average (no grad)
+    path_mean = mean_path_length + decay*(path_lengths.mean() - mean_path_length)
+    # now calculate the penalty
+    path_penalty = (path_lengths - path_mean).pow(2).mean()*pl_weight
+    
+    return path_penalty, path_mean.detach()
+
 
 @torch.no_grad()
-def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
+def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
@@ -12260,14 +12233,15 @@ def update_ema_generator(g:DiscriminatorStyleGAN1, g_ema:GeneratorStyleGAN1, dec
         ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
     # copy the ema_w over
     g_ema.ema_w.copy_(g.ema_w)
-    
 
-def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
-                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
-                         split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
+
+def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:GeneratorStyleGAN2, disc_optimizer:torch.optim.Adam, 
+                         gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, dataset_name,
+                         split, data_augmentation=False, normalize=True, use_fp16=False, path_length_interval=4,
+                         r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
                          use_ema_inference=False, ema_warmup_images_threshold=2000_000,
-                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
-                         decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,eps=1e-8,
+                         weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
                          ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -12284,8 +12258,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     # real images seen so far during training
     ema_warmup_images_seen = 0
     
-    assert discriminator.max_steps == generator.max_steps, 'max_steps for generator and discriminator/critic must be equal!'
-    
     metric = IS_FID_Calculator(device)
 
     fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
@@ -12293,7 +12265,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     starting_step = 0
     starting_epoch = 0
     last_training_step_counter = 0
-    max_steps = discriminator.max_steps
     z_size = generator.z_size
     
     scaler = torch.amp.grad_scaler.GradScaler(device, enabled=use_fp16)
@@ -12318,9 +12289,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         # load the stuff
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
-        max_steps = checkpoint["max_steps"]
         channels_d = checkpoint["channels_d"]
-        discriminator.setup_layers(max_steps,channels_d)
+        discriminator.setup_layers(channels_d)
         discriminator.load_state_dict(checkpoint["disc_state_dict"])
         discriminator = discriminator.to(device)
         
@@ -12329,13 +12299,11 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         mn_nlayer = checkpoint["mn_nlayer"]
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
-        swap_adaIN_order = checkpoint["swap_adaIN_order"]
         ema_w_beta = checkpoint["ema_w_beta"]
         
-        generator.setup_layers(z_size, w_size, max_steps, mn_nlayer, channels_g,
+        generator.setup_layers(z_size, w_size, mn_nlayer, channels_g,
                                style_mixing_prob=style_mixing_prob,
-                               ema_w_beta=ema_w_beta,
-                               swap_adaIN_order=swap_adaIN_order)
+                               ema_w_beta=ema_w_beta,eps=eps)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
@@ -12361,7 +12329,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         normalize = checkpoint["normalize"]
         use_fp16 = checkpoint["use_fp16"]
         last_training_step_counter = checkpoint["training_step_counter"]
-        decay_step = checkpoint.get("decay_step", decay_step)
         epochs = checkpoint["epochs"]
         starting_epoch = checkpoint["epoch"]+1
         batch_size_list = checkpoint["batch_size_list"]
@@ -12375,8 +12342,8 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             # also reset the initial epoch for the new step
             starting_epoch = 0
 
-    # store training log for each step  
-    all_training_losses = [[] for _ in range(max_steps)]
+    # store training log
+    all_training_losses = []
   
     print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
         
@@ -12392,20 +12359,17 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
     print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
-    print(f'--swap_adaIN_order:          {generator.swap_adaIN_order}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--DataAugmentation:          {data_augmentation}')
     print(f'--Normalize[-1,1]:           {normalize}')
-    print(f'--Use Half-Precision:        {use_fp16}')
+    print(f'--Use F16:                   {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
     print(f'--Generator LR:              {lr_g}')
-    print(f'--Max Step:                  {discriminator.max_steps}')
-    print(f'--Decay Step:                {decay_step}')
-    print(f'--Epochs:                    {epoch_list} ')
+    print(f'--Epochs:                    {epochs} ')
     print(f'--Batch-Sizes:               {batch_size_list} ')
     print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
     print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
-    print(f'--Generator update interval: {gen_update_interval}')
+    print(f'--Path Length Reg interval:  {path_length_interval}')
     print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
     print(f'--Gama factor:               {gamma}')
     print(f'--PSI:                       {psi}')
@@ -12416,37 +12380,37 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
     if (use_fp16 and (lr_d>0.001 or lr_g>0.001)):
         print(f"⚠️ Warning! ⚠️ Large LR({lr_d},{lr_g}) for FP16 can lead to Nan! Decrease it for a stable training!")
         
-    train_loader = get_dataloader(dataset_name, split=split, resize_dims=(res,res),
-                                    batch_size=batch_size, 
-                                    data_augmentation=data_augmentation,
-                                    normalize=normalize)
+    train_loader = get_dataloader(dataset_name, split=split, 
+                                  resize_dims=(res,res),
+                                  batch_size=batch_size, 
+                                  data_augmentation=data_augmentation,
+                                  normalize=normalize)
     num_batches = len(train_loader)
     interval = num_batches//2+1
     training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
-    
 
     current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
     current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
 
-    print(f'Training ')
-    print(f'  --Epochs:                      {epochs} ')
-    print(f'  --BatchSize:                   {batch_size} ')
-    print(f'  --Number of Batches:           {num_batches} ')
-    print(f'  --Interval:                    {interval} ')
-    print(f'  --R1-Interval:                 {r1_penalty_interval} ')
-    print(f'  --Last training Step taken:    {training_step_counter} ')
+    print(f'Training StyleGAN2')
+    print(f'  --Epochs:                      {epochs}')
+    print(f'  --BatchSize:                   {batch_size}')
+    print(f'  --Number of Batches:           {num_batches}')
+    print(f'  --Interval:                    {interval}')
+    print(f'  --R1-Interval:                 {r1_penalty_interval}')
+    print(f'  --Path Length Reg-Interval:    {path_length_interval}')
+    print(f'  --Last training Step taken:    {training_step_counter}')
     print(f'  --Current Discriminator LRs:   {current_lr_d}')
     print(f'  --Current Generator LRs:       {current_lr_g}')
     print(f'  --Current Discriminator Betas: {betas_d}')
     print(f'  --Current Generator Betas:     {betas_g}')
 
-    
+    path_length_mean = 0
     for epoch in range(starting_epoch, epochs):
         discriminator.train()
         generator.train()
 
         losses = []
-        # step_all_gps = []
         epoch_scores = []
         for i, (imgs_real, _) in enumerate(train_loader):
             
@@ -12458,10 +12422,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 preds_real = discriminator(imgs_real)
                 z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
-                imgs_fake = generator(z_vector).detach()
+                imgs_fake,_ = generator(z_vector).detach()
                 preds_fake = discriminator(imgs_fake)
             
-            disc_loss = discriminator_loss_stylegan1(preds_real, imgs_real, preds_fake, gamma)
+            disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
             
             # for debugging purposes
             disc_real_mean = preds_real.mean().item()
@@ -12480,32 +12444,50 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             # now train genertor to create images that look real
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
-                fake_imgs = generator(z_vector)
+                fake_imgs,_ = generator(z_vector)
                 preds_fake = discriminator(fake_imgs)
             
                 # generator loss
                 # swap loss! treat fake images as real images
-                gen_real_loss = generator_loss_stylegan1(preds_fake)
+                gen_real_loss = generator_loss_stylegan2(preds_fake)
 
                 # optimize generator
                 # update generator with a delay, sylegan1 uses 1:1 update ratio
-                if (i+1)%gen_update_interval == 0:
-                    gen_optimizer.zero_grad()
-                    scaler.scale(gen_real_loss).backward()
-                    # monitor the norm (one of the params is enough)
-                    mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
-                    scaler.unscale_(gen_optimizer)
-                    nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
-                    
-                    scaler_out_g = scaler.step(gen_optimizer)
-                    
-                    if mn_grad_norm>100:
-                        print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
-                    
-                    if ema_warmup_images_seen < ema_warmup_images_threshold:
-                        ema_generator.load_state_dict(generator.state_dict())
-                    else:
-                        update_ema_generator(generator, ema_generator)
+                gen_optimizer.zero_grad()
+                scaler.scale(gen_real_loss).backward()
+                # monitor the norm (one of the params is enough)
+                mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                scaler.unscale_(gen_optimizer)
+                nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+                
+                # apply path length regularization every 4 iterations
+                if i%path_length_interval==0: 
+                    # since we already did .backward()once, the computational graph is freed
+                    # we can do (backward(keep_graph=true)) but it takes vram so instead
+                    # we do a second foward pass and grab the fake_imgs, ws we want and a
+                    # active computational graph which we can use to calculate plr! 
+                    # also like r1_penalty we need to calculate this in fp32
+                    with torch.amp.autocast(device_type="cuda", enabled=False):
+                        fake_imgs,w_latents = generator(z_vector)
+                        plr_loss, path_length_mean = path_length_regularization_loss(fake_imgs,
+                                                                                 w_latents,
+                                                                                 path_length_mean)
+                        # scale the plr_loss so on average the regularization stays the same
+                        plr_loss*=path_length_interval
+                    # note since we havent done optimizer.step(), all backward()s
+                    # will accumulate the gradients as normal so we are ok!
+                    scaler.scale(plr_loss).backward()
+                
+                # take optimizer step
+                scaler_out_g = scaler.step(gen_optimizer)
+                
+                if mn_grad_norm>100:
+                    print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
+                
+                if ema_warmup_images_seen < ema_warmup_images_threshold:
+                    ema_generator.load_state_dict(generator.state_dict())
+                else:
+                    update_ema_generator(generator, ema_generator)
 
             scaler.update()
                 
@@ -12541,7 +12523,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             IS_score = metric.compute_IS(imgs_fake)
             FID_score = metric.compute_FID(imgs_real, imgs_fake)
         else:
-            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split, alpha, step)
+            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split)
 
         status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
         status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
@@ -12588,10 +12570,10 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     "channels_g":generator.channels,
                     "style_mixing_prob":generator.style_mixing_prob,
                     "ema_w_beta":generator.ema_w_beta,
+                    "eps":generator.eps,
                     "use_fp16":use_fp16,
                     "lr_d":lr_d,
                     "lr_g":lr_g,
-                    "max_steps":discriminator.max_steps,
                     "training_step_counter":training_step_counter,
                     "ema_warmup_images_threshold":ema_warmup_images_threshold,
                     "ema_warmup_images_seen":ema_warmup_images_seen,
@@ -12600,7 +12582,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                     "batch_size":batch_size,
                     "gamma":gamma,
                     "psi":psi,
-                    "gen_update_interval":gen_update_interval,
+                    "path_length_interval":path_length_interval,
                     "r1_penalty_interval":r1_penalty_interval,
                     "FID":FID_score,
                     "IS":IS_score,
@@ -12621,7 +12603,7 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
         with torch.no_grad():
             gen = ema_generator.eval() if use_ema_inference else generator.eval()
             
-            generated_images = gen(fixed_z, psi=psi)
+            generated_images,_ = gen(fixed_z, psi=psi)
             
             ema_marker_str = "[EMA]_" if use_ema_inference else ""
             loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
@@ -12641,21 +12623,20 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
             # save the original images only when ema is enable, 
             # otherwise its already being saved/displayed
             if keep_raw_generations and use_ema_inference:
-                generated_images = generator(fixed_z, psi=psi)
+                generated_images,_ = generator(fixed_z, psi=psi)
                 display_images(generated_images, 
                                 cols=gen_num_samples//8,
                                 title=title_str,
                                 unnormalize=True,
                                 save_path=save_path.replace(ema_marker_str,""),
                                 figsize=(16,8))
-                
+
             # save the settings that achieved this aswell
             settings_path = os.path.join(img_store_dir_path,'settings.yaml')
             with open(settings_path, "w") as f:
                 yaml.dump(settings,f, sort_keys=False)
 
     print("SttyleGAN2 training is complete!")
-
 
 
 #%%
