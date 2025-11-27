@@ -11828,8 +11828,9 @@ run_simple_gen_with_const_noise()
 # faster than maual indexing in previous impl.
 # this implementation also calculates the specific cropping/padding
 # needed to match the exact pixel alignment in original/official stylegan2
-# which is critical for the "texture sticking" fix!
-# (by the way this is from gemini):
+# (the code is from gemini):
+# update fournd a good explanation for upfirdn:
+# read https://ppeetteerrsx.com/post/cuda/stylegan_cuda_kernels/
 def make_kernel(k):
     k = torch.tensor(k, dtype=torch.float32)
     if k.ndim == 1:
@@ -12881,7 +12882,7 @@ lr_g = 0.003
 
 eps = 1e-5 if use_fp16 else 1e-8
 
-use_ema_inference = True
+use_ema_inference = False
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
