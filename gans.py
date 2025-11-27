@@ -12106,14 +12106,6 @@ class MappingNetwork2(nn.Module):
 
 # since weight modulation is really a simple linear layer applied on w
 # we implement it as a part of the conv module instead of a seprate one
-# class WeightModulation(nn.Module):
-#     def __init__(self, channels, w_dim=512):
-#         super().__init__()
-#         self.fc_style = EqualizedLinear(w_dim, channels)
-
-#     def forward(self, w):
-#         style = self.fc_style(w).unsqueeze(2).unsqueeze(3)
-#         return style
 
 # this was supposed to be applied on EqualizedConv2d weights, but since our
 # modulation operation cancels out the scaling part of the equalized conv2d
@@ -12137,7 +12129,7 @@ class ModulatedConv2d(nn.Module):
         self.fc_style = EqualizedLinear(w_dim, in_channels)
         # initialize the bias/scale to 1
         self.fc_style.bias.data.fill_(1)
-                
+
     def forward(self, x, w):
         b,c,img_h,img_w = x.shape
         # shape:(batch,1,in_channel,1,1)
@@ -12197,10 +12189,57 @@ class StyleConvBlock2(nn.Module):
         # sg2 does conv then upsample?
         if self.upsample:
             # instead of upsample+blur, we now use upsample2d(from upfirdn2d)
-            # we can use upsample/blur but we might not get the exact results 
+            # we can use upsample/blur but we may not get the exact results 
+            # (the texture sticking issue may not be fixed)
             # so I thought lets be faithful to the original impl as much as we can
             # when we got our results, we can always switch back to this again and
             # see how much of an impact it has on our results
+            # update:
+            # using avgpool/bilinear causes the sticking issue. that is high frequency 
+            # details such as hair strand, pores, grass, teeth, etc tend to stick to the
+            # screen coordinates( where they usually appear as the paper puts it) when 
+            # we try to morph the latent vector to rotate a face for example. 
+            # when the face moves, the texture stays fixed on the pixel grid( i.e. 
+            # wherever it is it doesnt move in the image)
+            # the reason for that is the way we apply the bluring on the image. 
+            # we use avgpool2d to downsample and mathematically its equivalent to
+            # applying a box filter with the kernel [1,1]. as it turns out box filters
+            # are terrible at anti-aliasing because they leak high frequencies.
+            # so to solve this issue, the authors tried a larger kernel! i.e. [1, 3, 3, 1]
+            # which acts as a much stronger low pass filter (approximating a guassian).
+            # this blurs the signal just enough during up/downsampling to ensure the features
+            # move smoothly with the object!
+            # if we were to approximate this without writting the upfirdn2d, we had to use 
+            # f.interpolate(mode="bicubic") for upsample since its closer to [1,3,3,1] than bilinear
+            # and for downsample we needed to use conv2d with guassian blur kernel.(the kernel is
+            # exactly the outer product of the [1,3,3,1] with itself, normalized so sum is 1, 
+            # it'd be a 4x4 kernel as a result. 
+            # sample code (from gemini):
+            # def get_stylegan_blur_kernel(channels, device='cuda'):
+            #     # 1. Define the base vector [1, 3, 3, 1]
+            #     k = torch.tensor([1, 3, 3, 1], dtype=torch.float32, device=device)
+            #    
+            #     # 2. Create the 2D matrix (Outer Product)
+            #     # Shape becomes [4, 4]
+            #     k2d = torch.outer(k, k)
+            #    
+            #     # 3. Normalize (Sum must be 1.0 to preserve brightness)
+            #     k2d = k2d / k2d.sum()
+            #    
+            #     # 4. Reshape for PyTorch Conv2d: [Out_Channels, In_Channels/Groups, H, W]
+            #     # For a depthwise convolution (applying blur to each channel independently),
+            #     # In_Channels/Groups must be 1.
+            #     kernel = k2d.view(1, 1, 4, 4)
+            #    
+            #     # 5. Repeat for every channel in your image
+            #     return kernel.repeat(channels, 1, 1, 1)
+            # 
+            # # example:
+            # channels = x.shape[1]
+            # blur_kernel = get_stylegan_blur_kernel(channels, device=x.device)
+            # # stride=2 for downsampling
+            # # padding=1 for making sure the output size is exactly half (64 -> 32)
+            # F.conv2d(x, weight=gaussian_blur_kernel, stride=2, padding=1, groups=channels))
             # x = F.interpolate(x, scale_factor=2, mode="bilinear")
             # x = self.blur(x)
             x = upsample_2d(x)
