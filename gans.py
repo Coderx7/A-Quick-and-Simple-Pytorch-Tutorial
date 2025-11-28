@@ -11818,21 +11818,32 @@ run_simple_gen_with_const_noise()
 
 #%%
 # blur() is not used in this version and instead the authors used a cuda kernel
-# for the upsample/downsample 
-# I took this part from chatgpt:
+# for the upsample/downsample called upfirdn2d!
+# I initially was going to stick to simple upsample/downsample and not
+# bother with this detail, but later changed my mind and went to
+# implement it after I noticed the actual thing requires custom cuda
+# kernels being compiled and then used, I didnt like the hassle and
+# asked chatgpt to give me a faithful implementation but in python!
 # update:
 # the chatgpt version was not only buggy but extremely slow
-# the previous version used view, pad and permute which permute 
-# e.g. breaks tensor contiguity in memory and thus forces pytorch
-# to copy the entire memory block.
-# moreover in this implementation we use conv_transpose2d and conv2d
+# and on top of that it used view, pad and permute a lot. 
+# permute itself breaks tensor contiguity and forces pytorch
+# to copy the entire memory block so it slows things down considerably!
+# so I forgot about it and instead went for a better implementation.
+# the new implementation uses conv_transpose2d and conv2d
 # that have optimized cuda kernels, and therefore are significantly 
-# faster than maual indexing in previous impl.
-# this implementation also calculates the specific cropping/padding
-# needed to match the exact pixel alignment in original/official stylegan2
+# faster than maual indexing in previous impl. unlike the first implenetation
+# this new one calculates the specific cropping/padding thats needed to
+# match the exact pixel alignment in original/official stylegan2 accurately
 # (the code is from gemini):
-# update fournd a good explanation for upfirdn:
+# update fournd a good explanation for upfirdn2d:
 # read https://ppeetteerrsx.com/post/cuda/stylegan_cuda_kernels/
+# update2: 
+# I trained the model without upfirdn2d, using the old upsample/downsample
+# we had, and the training went smoothly, I didnt see any differences
+# with the same config, the output looked the same to me. maybe the
+# effects it has will be more appraent when we do some interpolation?
+# im not sure, see the debug log for the future updates!
 def make_kernel(k):
     k = torch.tensor(k, dtype=torch.float32)
     if k.ndim == 1:
@@ -12253,7 +12264,7 @@ class StyleConvBlock2(nn.Module):
             # # padding=1 for making sure the output size is exactly half (64 -> 32)
             # F.conv2d(x, weight=gaussian_blur_kernel, stride=2, padding=1, groups=channels))
             
-            # we can now experiment with the old method as well            
+            # we can now experiment with the old method as well     
             x = self.upsample_fn(x)
 
         out = self.conv(x, w)
@@ -12351,7 +12362,7 @@ class GeneratorStyleGAN2(nn.Module):
             
         return img
 
-    def apply_truncation(self, psi, w):
+    def apply_truncation(self, w, psi):
         ema_w_batch = self.ema_w.repeat(w.size(0),1)
         w = ema_w_batch + psi * (w - ema_w_batch)
         return w
@@ -12364,7 +12375,7 @@ class GeneratorStyleGAN2(nn.Module):
             self._update_ema_w(w)
 
         if not self.training and psi:
-            w = self.apply_truncation(psi, w)
+            w = self.apply_truncation(w, psi)
         
         if self.training and random.random() <self.style_mixing_prob:
             # grab a second z, calculate the w
@@ -12572,11 +12583,6 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         gamma = checkpoint["gamma"]
         # noise_addition = checkpoint["noise_addition"]
         
-        if starting_epoch == epoch_list[starting_step]:
-            starting_step += 1
-            # also reset the initial epoch for the new step
-            starting_epoch = 0
-
     # store training log
     all_training_losses = []
   
@@ -12967,9 +12973,273 @@ training_loop_stylegan2(discriminator_stylegan2,
 #   wellformed for the most part. I was thinking if we can relax the mapping network
 #   reduced lr a bit to see if it can make the convergence faster. the overal training
 #   seems absolutely ok. but I would like to give that a try. I guess I'll do that after
-#   I increased the model capacity a bit to see how it works.
+#   I increased the model capacity a bit to see how it works. the results after 100 epochs
+#   turned out not bad considering we're only using 2m/4m model and only 100 epochs. 
+#   it did improve so provided we trained it more we'd get better results. it took 
+#   around 10 hours to finish 100 epochs by the way.
 #
+# stylegan2_ffhq_20251128073036:
+# - updated both discriminator and generator to work with and without upfirdn2d. we can 
+#   now easily switch and experiment with the normal upsample/downsample and see itsimpatc
+#   the first time im going to use no blur just upsampe and downsample. ok it went smoothly
+#   at least seemingly until I test the interpolations and see how the results looks
 # 
+#%%
+#%% load_checkpoints
+def load_checkpoints(checkpoint_path, device="cuda"):
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    dataset_name = checkpoint["dataset_name"]
+    epoch = checkpoint["epoch"]
+    FID_score = checkpoint["FID"]
+
+    z_size = checkpoint["z_size"]
+    w_size = checkpoint["w_size"]
+    mn_layers = checkpoint["mn_nlayer"]
+    channels = checkpoint["channels_g"]
+    style_mix = checkpoint["style_mixing_prob"]
+    eps = checkpoint["eps"]
+    use_upfirdn2d = checkpoint.get("use_upfirdn2d",True)
+    ema_wb = checkpoint["ema_w_beta"]
+    
+    res = 2<<(len(channels)+1)
+    
+    generator_st2 = GeneratorStyleGAN2(z_size, w_size,mn_layers,channels, style_mix, ema_wb, use_upfirdn2d,eps)
+    generator_st2.load_state_dict(checkpoint["gen_state_dict"])
+    generator_st2 = generator_st2.eval()
+    generator_st2 = generator_st2.to(device)
+
+    print(f'Loading checkpoint for {dataset_name} [{res}x{res}] @ Epoch {epoch} FID={FID_score}')
+    return generator_st2, res
+
+device = 'cuda'
+num_samples=1
+checkpoint_path = './weights/gan/stylegan2_ffhq_20251127152002/checkpoint_step_20251127152002.ckpt'
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251128073036/checkpoint_step_20251128073036.ckpt'
+generator_stylegan2, dim = load_checkpoints(checkpoint_path, device='cuda')
+
+z = torch.randn((num_samples, generator_stylegan2.z_size), device=device)
+res=f"{dim}x{dim}"
+with torch.no_grad():
+    imgs,ws = generator_stylegan2(z, psi=0.7)
+    display_images(imgs, 
+                   cols=1, 
+                   title=f'StyleGAN2 [{res}]',
+                   unnormalize=True, 
+                   figsize=(16,8))
+#%% create_interpolation_animation
+@torch.no_grad()
+def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, repeat=True, repeat_delay=1000):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    def animate(i):
+        img_tensor = imgs_tensor[i].squeeze(0)
+        frame = utils.make_grid(img_tensor, normalize=True).cpu().detach().numpy().transpose(1,2,0)
+        ax.clear()
+        ax.imshow(frame)
+
+    anim = animation.FuncAnimation(fig, 
+                                   animate,
+                                   frames=imgs_tensor.size(0),
+                                   interval=interval, 
+                                   repeat=repeat, 
+                                   repeat_delay=repeat_delay)
+    # save the git using pillow
+    anim.save(f'{filename}.gif', writer="pillow")
+    plt.show()
+
+# now lets write the actual experiments on w
+# lets do a latent space exploration like before 
+@torch.no_grad()
+def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, 
+                  psi=None, constant_noise=False,
+                  alphas=None, interp_steps=60, device='cuda'):
+    generator = generator.to(device)
+    generator.eval()
+        
+    z1,z2 = tuple(z.to(device) for z in (z1,z2))
+    w1 = generator.mapping_network(z1)
+    w2 = generator.mapping_network(z2)
+    
+    # interpolate
+    if alphas is None:
+        alphas = torch.linspace(0, 1, interp_steps).to(device)
+    else:
+        alphas = alphas.to(device)
+    
+    noise = None
+    if constant_noise:
+        noise = torch.zeros((z1.size(0),1,1,1),device=device)    
+        
+    imgs = []
+    for a in alphas:
+        # interpol = (1-a)*w1 + a*w2 #i.e. w1+a(w2-w1)
+        # we can also use lerp which simply does the same thing
+        # i.e. start + weight*end-start
+        interpol = torch.lerp(w1,w2,a)
+        interpol = generator.apply_truncation(interpol,psi)
+        img = generator.forward_from_w(interpol,noise).cpu()
+        imgs.append(img)
+    output_imgs = torch.cat(imgs, dim=0)
+    return output_imgs
+
+def run_interpolation_test(generator, constant_noise, psi_rates=None,
+                           alphas=None, num_samples=36, make_gifs=False,
+                           gif_dir='./results/gan/stylegan2/gifs',interval=100,
+                           random_gen=None):
+    
+    if psi_rates is None:
+        psi_rates = [0, 0.3, 0.7, 1]
+    
+    for rate in psi_rates:
+        interpolated_images = interpolate_w(generator,
+                                            z1, 
+                                            z2,
+                                            psi=rate,
+                                            constant_noise=constant_noise,
+                                            alphas=alphas,
+                                            interp_steps=num_samples)
+            
+        if make_gifs:
+            fname =f"interpolation_psi_{rate}_const_noise_{constant_noise}"
+            # make sure directory exists, if not create it
+            os.makedirs(gif_dir, exist_ok=True)
+            fpath = os.path.join(gif_dir, fname)
+            create_interpolation_animation(interpolated_images, fpath, interval=interval)
+        else:
+            display_images(interpolated_images, title=f'psi={rate} | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
+
+# now lets try 
+num_samples = 36
+cols = int(num_samples**0.5)
+seed=66
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+fixed_randg = torch.Generator(device=device).manual_seed(seed)
+
+z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
+z2 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
+
+run_interpolation_test(generator_stylegan2,
+                       #psi_rates=[0,0.5,1.2,3,5],
+                       constant_noise=True,
+                       num_samples=num_samples,
+                       random_gen=fixed_randg)
+
+#%% run_interpolation_test
+# now lets do this with noise injection i.e. constant_noise=False
+run_interpolation_test(generator_stylegan2, 
+                       #psi_rates=[0,0.5,1.2,3,5],
+                       constant_noise=False,
+                       num_samples=num_samples,
+                       random_gen=fixed_randg)
+#%% making some gifs
+# now lets also make some gifs as well!
+alphas = torch.linspace(0,1,25)
+for noise_status in [True]:
+    run_interpolation_test(generator_stylegan2,
+                           psi_rates=[0.7],
+                           constant_noise=noise_status,
+                           alphas=alphas,
+                           num_samples=36,
+                           make_gifs=True,
+                           gif_dir='./results/gan/stylegan2/gifs',
+                           interval=100,
+                           random_gen=fixed_randg)
+#%%
+# @torch.no_grad()
+# def style_mix(self, z_source, z_style, layer_indx_for_crossover,
+#               psi_src=None, psi_sty=None, constant_noise=True):
+    
+#     num_layers = 2*len
+#     assert 0<layer_indx_for_crossover<num_layers, f'layer index{layer_indx_for_crossover} must be < {num_layers}'
+    
+#     device = next(self.parameters()).device
+    
+#     z_source = z_source.to(device)
+#     z_style = z_style.to(device)   
+    
+#     w_source = self.mapping_network(z_source)
+#     w_style = self.mapping_network(z_style)
+    
+#     # apply truncation
+#     w_source = self.apply_truncation(w_source, psi_src)
+#     w_style = self.apply_truncation(w_style, psi_sty)
+    
+#     # expand to match shape
+#     w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
+#     w_style = w_style.unsqueeze(1).repeat(1,num_layers,1)
+    
+#     # we are going to need both source and style ws for later
+#     # reference so lets use it to create our result w_mixed
+#     w_mixed = w_source.clone()
+#     w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
+    
+#     img_source = self.forward_from_w_simple(w_source,step,constant_noise).cpu()
+#     img_style = self.forward_from_w_simple(w_style,step,constant_noise).cpu()
+#     img_mixed = self.forward_from_w_simple(w_mixed,step,constant_noise).cpu()
+    
+#     return img_source, img_style, img_mixed
+
+# # lets add them to our instance 
+# generator_style1.apply_truncation =  types.MethodType(apply_truncation, generator_style1)
+# generator_style1.forward_from_w_simple = types.MethodType(forward_from_w_simple, generator_style1)
+# generator_style1.style_mix = types.MethodType(style_mix, generator_style1)
+
+# z_source = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
+# z_style = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
+
+# # different layers affect different details experiment
+# # with all and see the result. e.g. starting from 4 
+# # we can see more drastic style transfers. if we go
+# # lower, like 1, 2 , we are basically seeing second z!
+# # the majority of values belong to second z, but starting
+# # from 3,4, we can see the first image is structually there
+# # and styles start to transfer.(skin tone, colors, are obvious) 
+# layer_crossover = 5
+# img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
+#                                                          z_style, 
+#                                                          layer_crossover, 
+#                                                          step=last_step,
+#                                                          psi_src=0.7,
+#                                                          psi_sty=0.8,
+#                                                          constant_noise=True)
+# imgs = torch.cat([img_src,img_style,img_mix])
+# display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
+# # as we can see, the structure of the source image stays the same, but the 
+# # texture/style of the style image is transfered. lets see how each layer affects
+# # the result 
+# #%% change styles
+# def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
+#     num_layers = 2*generator_style1.max_steps-1
+#     imgs_all = []
+#     for layer in range(1,num_layers):
+#         img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
+#                                                                  z_style, 
+#                                                                  layer, 
+#                                                                  step=step,
+#                                                                  psi_src=psi_src,
+#                                                                  psi_sty=psi_sty,
+#                                                                  constant_noise=True)
+        
+#         imgs = torch.cat([img_src,img_style,img_mix],dim=0)
+#         # print(f'{imgs.shape=}')
+        
+#         row = utils.make_grid(imgs, nrow=3, normalize=True)
+#         display_images(row, title=f'{layer} source|style|mix',
+#                        unnormalize=False,  figsize=(8,6))
+#         # print(f'{row.shape=}')
+        
+#         imgs_all.append(row.unsqueeze(0))
+    
+#     ims = torch.cat(imgs_all, dim=0)
+#     # print(f'{ims.shape=}')
+#     display_images(ims,
+#                    title='Source | Style | Mix',
+#                    unnormalize=False,
+#                    cols=1,
+#                    figsize=(16,16))
+
+# change_styles(z_source,z_style,last_step,psi_src=0.7, psi_sty=0.7)
 #%%
 # a detour to something fun CycleGAN
 # 
