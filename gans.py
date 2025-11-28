@@ -35,6 +35,8 @@ from tqdm import tqdm
 # for types.MethodType(), to assign our custom
 # functions to existing instace
 import types
+from functools import partial
+
 
 import numpy as np 
 
@@ -11985,19 +11987,19 @@ def downsample_2d(x, kernel=FIR_KERNEL, factor=2):
     # Wrapper handles the default kernel
     return upfirdn2d(x, kernel, down=factor)
     
-# class Blur(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         kernel = torch.tensor([1,2,1])
-#         kernel = kernel.view(1,-1) * kernel.view(-1,1)
-#         kernel = kernel/kernel.sum()
-#         self.register_buffer("kernel", kernel.view(1,1,3,3))
+class Blur(nn.Module):
+    def __init__(self):
+        super().__init__()
+        kernel = torch.tensor([1,2,1])
+        kernel = kernel.view(1,-1) * kernel.view(-1,1)
+        kernel = kernel/kernel.sum()
+        self.register_buffer("kernel", kernel.view(1,1,3,3))
 
-#     def forward(self, x):
-#         in_channels = x.size(1)
-#         kernel = self.kernel.repeat(in_channels, 1,1,1)
-#         x = F.pad(x,[1,1,1,1],mode='reflect')
-#         return F.conv2d(x, kernel, groups=in_channels)
+    def forward(self, x):
+        in_channels = x.size(1)
+        kernel = self.kernel.repeat(in_channels, 1,1,1)
+        x = F.pad(x,[1,1,1,1],mode='reflect')
+        return F.conv2d(x, kernel, groups=in_channels)
 
 class EqualizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, lr_mult=1, device=None, dtype=None):
@@ -12033,8 +12035,10 @@ class EqualizedConv2d(nn.Module):
 # the discriminator block now uses residual connections
 # so we need to add that here as well
 class DiscBlockStyleGAN2(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding=1, bias=False, use_upfirdn2d=True):
         super().__init__()
+        self.use_upfirdn2d = use_upfirdn2d
         self.blur = Blur()
         self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
                                    nn.LeakyReLU(0.2),
@@ -12050,29 +12054,39 @@ class DiscBlockStyleGAN2(nn.Module):
         # nonetheless
         self.skip = EqualizedConv2d(in_channels, out_channels, kernel_size=1, bias=False)
         
+        if use_upfirdn2d:
+            self.downsample_fn = downsample_2d
+        else:
+            avg_pool = partial(F.avg_pool2d, kernel_size=2, stride=2)
+            self.downsample_fn = avg_pool
+            #or use blur like stylegan1?
+            # self.downsample_fn = lambda x : avg_pool(self.blur(x))
+        
     def forward(self, x):
         skip = self.skip(x)
         # skip = F.avg_pool2d(skip,2,2)
-        skip = downsample_2d(skip)
+        skip = self.downsample_fn(skip)
         out = self.block(x)
-        out = downsample_2d(out)
+        out = self.downsample_fn(out)
         return out+skip
     
 class DiscriminatorStyleGAN2(nn.Module):
-    def __init__(self, channels=[512,512,512,256,128,64,32]):
+    def __init__(self, channels=[512,512,512,256,128,64,32], use_upfirdn2d=True):
         super().__init__()
 
-        self.setup_layers(channels)
+        self.setup_layers(channels,use_upfirdn2d)
     
-    def setup_layers(self, channels):
+    def setup_layers(self, channels, use_upfirdn2d):
         self.channels = channels
-
+        # whether to use the upfrdn2d or normal avgpool for downsampling
+        self.use_upfirdn2d = use_upfirdn2d
+        
         self.fromImgs = nn.Sequential(EqualizedConv2d(3, self.channels[-1], kernel_size=1),
                                       nn.LeakyReLU(0.2))
         
         blocks = []
         for i in range(len(self.channels)-1,0,-1):
-            blocks.append(DiscBlockStyleGAN2(self.channels[i],self.channels[i-1]))
+            blocks.append(DiscBlockStyleGAN2(self.channels[i],self.channels[i-1], use_upfirdn2d=use_upfirdn2d))
             
         self.blocks = nn.Sequential(*blocks)
         
@@ -12168,7 +12182,7 @@ class NoiseInjection(nn.Module):
 
 class StyleConvBlock2(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
-                 w_size=512, upsample=False, eps=1e-8, demodulate=True):
+                 w_size=512, upsample=False, eps=1e-8, demodulate=True, use_upfirdn2d=True):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -12180,11 +12194,22 @@ class StyleConvBlock2(nn.Module):
         self.upsample = upsample
         self.eps = eps
         self.demodulate = demodulate
+        # whether to choose upfirdn2d or normal interpolate to upsample
+        self.use_upfirdn2d = use_upfirdn2d
 
         self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding, w_size, demodulate,eps)
         self.noise_inject = NoiseInjection(out_channels)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         self.blur = Blur()
+        
+        if use_upfirdn2d:
+            self.upsample_fn = upsample_2d
+        else:
+            interp = partial(F.interpolate, scale_factor=2, mode="bilinear", align_corners=False)
+            self.upsample_fn = interp
+            #or use blur like stylegan1?
+            # self.upsample_fn = lambda x : self.blur(interp(x))
+
 
     def forward(self, x, w, noise=None):
         # sg2 does conv then upsample?
@@ -12227,9 +12252,9 @@ class StyleConvBlock2(nn.Module):
             # # stride=2 for downsampling
             # # padding=1 for making sure the output size is exactly half (64 -> 32)
             # F.conv2d(x, weight=gaussian_blur_kernel, stride=2, padding=1, groups=channels))
-            # x = F.interpolate(x, scale_factor=2, mode="bilinear")
-            # x = self.blur(x)
-            x = upsample_2d(x)
+            
+            # we can now experiment with the old method as well            
+            x = self.upsample_fn(x)
 
         out = self.conv(x, w)
             
@@ -12251,15 +12276,16 @@ class StyleConvBlock2(nn.Module):
 class GeneratorStyleGAN2(nn.Module):
     def __init__(self, z_size=512, w_size=512, mn_num_layers=8,
                  channels=[512,512,512,256,128,64,32],
-                 style_mixing_prob=0.9, ema_w_beta=0.995, eps=1e-8):
+                 style_mixing_prob=0.9, ema_w_beta=0.995, 
+                 use_upfirdn2d=True, eps=1e-8):
         super().__init__()
         
         self.setup_layers(z_size, w_size, mn_num_layers,
                           channels, style_mixing_prob, 
-                          ema_w_beta,eps)
+                          ema_w_beta, use_upfirdn2d, eps)
                 
     def setup_layers(self, z_size, w_size, mn_num_layers,
-                     channels, style_mixing_prob, ema_w_beta, eps):
+                     channels, style_mixing_prob, ema_w_beta, use_upfirdn2d, eps):
         
         self.z_size = z_size
         self.w_size = w_size
@@ -12268,6 +12294,8 @@ class GeneratorStyleGAN2(nn.Module):
         self.style_mixing_prob = style_mixing_prob
         self.ema_w_beta = ema_w_beta
         self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
+        # whether to use the upfirdn2d for upsampling or not
+        self.use_upfirdn2d = use_upfirdn2d
         # for fp16 tests in case we faced instabilityies that require larger eps
         self.eps = eps
         
@@ -12281,12 +12309,12 @@ class GeneratorStyleGAN2(nn.Module):
         self.blocks = nn.ModuleList()
         self.toImgs = nn.ModuleList()
         
-        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps))
-        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps))
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps,use_upfirdn2d=use_upfirdn2d))
+        self.blocks.append(StyleConvBlock2(self.channels[0], self.channels[0], w_size=w_size, upsample=False,eps=eps,use_upfirdn2d=use_upfirdn2d))
         self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False,eps=eps))
         for i in range(1, len(channels)):
-            self.blocks.append(StyleConvBlock2(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True,eps=eps))
-            self.blocks.append(StyleConvBlock2(self.channels[i], self.channels[i], w_size=w_size, upsample=False,eps=eps))
+            self.blocks.append(StyleConvBlock2(self.channels[i-1], self.channels[i], w_size=w_size, upsample=True,eps=eps,use_upfirdn2d=use_upfirdn2d))
+            self.blocks.append(StyleConvBlock2(self.channels[i], self.channels[i], w_size=w_size, upsample=False,eps=eps,use_upfirdn2d=use_upfirdn2d))
             self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False,eps=eps))
 
     @torch.no_grad()
@@ -12360,8 +12388,9 @@ class GeneratorStyleGAN2(nn.Module):
         return img,w
     
 channels=[512,256,128,64,32,16,8]
-disc = DiscriminatorStyleGAN2(channels=channels)
-gen = GeneratorStyleGAN2(100,100,channels=channels)
+use_upfirdn2d=True
+disc = DiscriminatorStyleGAN2(channels=channels,use_upfirdn2d=use_upfirdn2d)
+gen = GeneratorStyleGAN2(100,100,channels=channels,use_upfirdn2d=use_upfirdn2d)
 
 for m in [disc, gen]:
     print(f'channels: {m.channels}')
@@ -12867,8 +12896,8 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 #up to 128x128
-channels_d = [256,128,64,32,16,8]
-channels_g = [256,128,64,32,16,8]
+channels_d = [512,256,128,64,32,16]#,8]
+channels_g = [512,256,128,64,32,16]#,8]
 #discriminator
 discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d)
 discriminator_stylegan2 = discriminator_stylegan2.to(device)
@@ -12912,6 +12941,9 @@ training_loop_stylegan2(discriminator_stylegan2,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      )
 
+#todo use Closed-Form Factorization of Latent Semantics in GANs (https://arxiv.org/abs/2007.06600) 
+# stated in rosalin repo to search for directions
+# 
 # debug log:
 # stylegan2_ffhq_20251127152002:
 # - everything is going smoothly alhamdolelah! we are at epoch 53, with 2m/4m models
