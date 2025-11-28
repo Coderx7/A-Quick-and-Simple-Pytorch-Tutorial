@@ -12885,6 +12885,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 yaml.dump(settings,f, sort_keys=False)
 
     print("SttyleGAN2 training is complete!")
+
 #%% training stylegan2
 print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
@@ -12900,7 +12901,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZES = 128 if use_fp16 else 64
+BATCH_SIZES = 128 if use_fp16 else 32
 
 EPOCHS = 100
 
@@ -12910,11 +12911,11 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 #up to 128x128
-channels_d = [256,128,64,32,16,8]
-channels_g = [256,128,64,32,16,8]
+channels_d = [512,256,128,64,32,16]#,8]
+channels_g = [512,256,128,64,32,16]#,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
-use_upfirdn2d = False # True
+use_upfirdn2d = True # True
 
 #discriminator
 discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d,
@@ -12976,13 +12977,20 @@ training_loop_stylegan2(discriminator_stylegan2,
 #   I increased the model capacity a bit to see how it works. the results after 100 epochs
 #   turned out not bad considering we're only using 2m/4m model and only 100 epochs. 
 #   it did improve so provided we trained it more we'd get better results. it took 
-#   around 10 hours to finish 100 epochs by the way.
+#   around 10 hours to finish 100 epochs by the way.(it took 5/6mins per epoch)
 #
 # stylegan2_ffhq_20251128073036:
 # - updated both discriminator and generator to work with and without upfirdn2d. we can 
 #   now easily switch and experiment with the normal upsample/downsample and see itsimpatc
 #   the first time im going to use no blur just upsampe and downsample. ok it went smoothly
 #   at least seemingly until I test the interpolations and see how the results looks
+#   we need to train a more powerful model to be able to better test its features. these two
+#   models are not there yet.(by the way it took 4 mins per epoch)
+#
+# stylegan2_ffhq_20251128162446:
+# - with the new channel config of [512,256,128,64,32,16], we have 11/10m models, with bs=32
+#   vram usage of 9500MB and use_upfirdn2d = True, we started the training hopefully we get
+#   much better results. each epoch takes 13/14mins!
 # 
 #%%
 #%% load_checkpoints
@@ -13050,8 +13058,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, re
 # now lets write the actual experiments on w
 # lets do a latent space exploration like before 
 @torch.no_grad()
-def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, 
-                  psi=None, constant_noise=False,
+def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, psi=None, constant_noise=False,
                   alphas=None, interp_steps=60, device='cuda'):
     generator = generator.to(device)
     generator.eval()
@@ -13072,9 +13079,6 @@ def interpolate_w(generator:GeneratorStyleGAN2, z1, z2,
         
     imgs = []
     for a in alphas:
-        # interpol = (1-a)*w1 + a*w2 #i.e. w1+a(w2-w1)
-        # we can also use lerp which simply does the same thing
-        # i.e. start + weight*end-start
         interpol = torch.lerp(w1,w2,a)
         interpol = generator.apply_truncation(interpol,psi)
         img = generator.forward_from_w(interpol,noise).cpu()
@@ -13146,100 +13150,95 @@ for noise_status in [True]:
                            interval=100,
                            random_gen=fixed_randg)
 #%%
-# @torch.no_grad()
-# def style_mix(self, z_source, z_style, layer_indx_for_crossover,
-#               psi_src=None, psi_sty=None, constant_noise=True):
+@torch.no_grad()
+def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_crossover,
+              psi_src=None, psi_sty=None, constant_noise=True):
     
-#     num_layers = 2*len
-#     assert 0<layer_indx_for_crossover<num_layers, f'layer index{layer_indx_for_crossover} must be < {num_layers}'
+    num_layers = 2*len(generator.channels)
+    assert 0<layer_indx_for_crossover<num_layers, f'layer index{layer_indx_for_crossover} must be < {num_layers}'
     
-#     device = next(self.parameters()).device
+    device = next(generator.parameters()).device
     
-#     z_source = z_source.to(device)
-#     z_style = z_style.to(device)   
+    z_source = z_source.to(device)
+    z_style = z_style.to(device)   
     
-#     w_source = self.mapping_network(z_source)
-#     w_style = self.mapping_network(z_style)
+    w_source = generator.mapping_network(z_source)
+    w_style = generator.mapping_network(z_style)
     
-#     # apply truncation
-#     w_source = self.apply_truncation(w_source, psi_src)
-#     w_style = self.apply_truncation(w_style, psi_sty)
+    # apply truncation
+    w_source = generator.apply_truncation(w_source, psi_src)
+    w_style = generator.apply_truncation(w_style, psi_sty)
     
-#     # expand to match shape
-#     w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
-#     w_style = w_style.unsqueeze(1).repeat(1,num_layers,1)
+    # expand to match shape
+    w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
+    w_style = w_style.unsqueeze(1).repeat(1,num_layers,1)
     
-#     # we are going to need both source and style ws for later
-#     # reference so lets use it to create our result w_mixed
-#     w_mixed = w_source.clone()
-#     w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
+    # we are going to need both source and style ws for later
+    # reference so lets use it to create our result w_mixed
+    w_mixed = w_source.clone()
+    w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
     
-#     img_source = self.forward_from_w_simple(w_source,step,constant_noise).cpu()
-#     img_style = self.forward_from_w_simple(w_style,step,constant_noise).cpu()
-#     img_mixed = self.forward_from_w_simple(w_mixed,step,constant_noise).cpu()
+    img_source = generator.forward_from_w(w_source, constant_noise).cpu()
+    img_style = generator.forward_from_w(w_style, constant_noise).cpu()
+    img_mixed = generator.forward_from_w(w_mixed, constant_noise).cpu()
     
-#     return img_source, img_style, img_mixed
+    return img_source, img_style, img_mixed
 
-# # lets add them to our instance 
-# generator_style1.apply_truncation =  types.MethodType(apply_truncation, generator_style1)
-# generator_style1.forward_from_w_simple = types.MethodType(forward_from_w_simple, generator_style1)
-# generator_style1.style_mix = types.MethodType(style_mix, generator_style1)
+z_source = torch.randn(1, generator_stylegan2.z_size, device=device, generator=fixed_randg)
+z_style = torch.randn(1, generator_stylegan2.z_size, device=device, generator=fixed_randg)
 
-# z_source = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
-# z_style = torch.randn(1, generator_style1.z_size, device=device, generator=fixed_randg)
-
-# # different layers affect different details experiment
-# # with all and see the result. e.g. starting from 4 
-# # we can see more drastic style transfers. if we go
-# # lower, like 1, 2 , we are basically seeing second z!
-# # the majority of values belong to second z, but starting
-# # from 3,4, we can see the first image is structually there
-# # and styles start to transfer.(skin tone, colors, are obvious) 
-# layer_crossover = 5
-# img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
-#                                                          z_style, 
-#                                                          layer_crossover, 
-#                                                          step=last_step,
-#                                                          psi_src=0.7,
-#                                                          psi_sty=0.8,
-#                                                          constant_noise=True)
-# imgs = torch.cat([img_src,img_style,img_mix])
-# display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
-# # as we can see, the structure of the source image stays the same, but the 
-# # texture/style of the style image is transfered. lets see how each layer affects
-# # the result 
-# #%% change styles
-# def change_styles(z_source, z_style, step, psi_src=0.8, psi_sty=0.8):
-#     num_layers = 2*generator_style1.max_steps-1
-#     imgs_all = []
-#     for layer in range(1,num_layers):
-#         img_src, img_style, img_mix = generator_style1.style_mix(z_source, 
-#                                                                  z_style, 
-#                                                                  layer, 
-#                                                                  step=step,
-#                                                                  psi_src=psi_src,
-#                                                                  psi_sty=psi_sty,
-#                                                                  constant_noise=True)
+# different layers affect different details experiment
+# with all and see the result. e.g. starting from 4 
+# we can see more drastic style transfers. if we go
+# lower, like 1, 2 , we are basically seeing second z!
+# the majority of values belong to second z, but starting
+# from 3,4, we can see the first image is structually there
+# and styles start to transfer.(skin tone, colors, are obvious) 
+layer_crossover = 5
+img_src, img_style, img_mix = style_mix(generator_stylegan2,
+                                        z_source, 
+                                        z_style, 
+                                        layer_crossover, 
+                                        psi_src=0.7,
+                                        psi_sty=0.8,
+                                        constant_noise=True)
+imgs = torch.cat([img_src,img_style,img_mix])
+display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
+# as we can see, the structure of the source image stays the same, but the 
+# texture/style of the style image is transfered. lets see how each layer affects
+# the result 
+#%% change styles
+def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
+    num_layers = 2*len(generator_stylegan2.channels)
+    imgs_all = []
+    for layer in range(1,num_layers):
+        img_src, img_style, img_mix = style_mix(generator_stylegan2,
+                                                z_source, 
+                                                z_style, 
+                                                layer, 
+                                                psi_src=psi_src,
+                                                psi_sty=psi_sty,
+                                                constant_noise=True)
         
-#         imgs = torch.cat([img_src,img_style,img_mix],dim=0)
-#         # print(f'{imgs.shape=}')
+        imgs = torch.cat([img_src,img_style,img_mix],dim=0)
+        # print(f'{imgs.shape=}')
         
-#         row = utils.make_grid(imgs, nrow=3, normalize=True)
-#         display_images(row, title=f'{layer} source|style|mix',
-#                        unnormalize=False,  figsize=(8,6))
-#         # print(f'{row.shape=}')
+        row = utils.make_grid(imgs, nrow=3, normalize=True)
+        display_images(row, title=f'{layer} source|style|mix',
+                       unnormalize=False,  figsize=(8,6))
+        # print(f'{row.shape=}')
         
-#         imgs_all.append(row.unsqueeze(0))
+        imgs_all.append(row.unsqueeze(0))
     
-#     ims = torch.cat(imgs_all, dim=0)
-#     # print(f'{ims.shape=}')
-#     display_images(ims,
-#                    title='Source | Style | Mix',
-#                    unnormalize=False,
-#                    cols=1,
-#                    figsize=(16,16))
+    ims = torch.cat(imgs_all, dim=0)
+    # print(f'{ims.shape=}')
+    display_images(ims,
+                   title='Source | Style | Mix',
+                   unnormalize=False,
+                   cols=1,
+                   figsize=(16,16))
 
-# change_styles(z_source,z_style,last_step,psi_src=0.7, psi_sty=0.7)
+change_styles(z_source,z_style,last_step,psi_src=0.7, psi_sty=0.7)
 #%%
 # a detour to something fun CycleGAN
 # 
