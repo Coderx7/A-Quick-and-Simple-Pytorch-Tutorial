@@ -12521,7 +12521,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         channels_d = checkpoint["channels_d"]
-        discriminator.setup_layers(channels_d)
+        disc_use_upfirdn2d = checkpoint.get("disc_use_upfirdn2d",True)
+        discriminator.setup_layers(channels_d, disc_use_upfirdn2d)
         discriminator.load_state_dict(checkpoint["disc_state_dict"])
         discriminator = discriminator.to(device)
         
@@ -12531,10 +12532,13 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
         ema_w_beta = checkpoint["ema_w_beta"]
+        gen_use_upfirdn2d = checkpoint.get("gen_use_upfirdn2d",True)
         
         generator.setup_layers(z_size, w_size, mn_nlayer, channels_g,
                                style_mixing_prob=style_mixing_prob,
-                               ema_w_beta=ema_w_beta,eps=eps)
+                               ema_w_beta=ema_w_beta,
+                               use_upfirdn2d=gen_use_upfirdn2d,
+                               eps=eps)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
@@ -12590,6 +12594,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
     print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
+    print(f'--Disc use_upfirdn2d:        {discriminator.use_upfirdn2d}')
+    print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--DataAugmentation:          {data_augmentation}')
     print(f'--Normalize[-1,1]:           {normalize}')
@@ -12802,6 +12808,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                     "mn_nlayer":generator.mn_num_layers,
                     "channels_d":discriminator.channels,
                     "channels_g":generator.channels,
+                    "disc_use_upfirdn2d":discriminator.use_upfirdn2d,
+                    "gen_use_upfirdn2d":generator.use_upfirdn2d,
                     "style_mixing_prob":generator.style_mixing_prob,
                     "ema_w_beta":generator.ema_w_beta,
                     "eps":generator.eps,
@@ -12896,15 +12904,21 @@ style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
 #up to 128x128
-channels_d = [512,256,128,64,32,16]#,8]
-channels_g = [512,256,128,64,32,16]#,8]
+channels_d = [256,128,64,32,16,8]
+channels_g = [256,128,64,32,16,8]
+
+# whether to use upfirdn2d or normal upsample/downsample
+use_upfirdn2d = False # True
+
 #discriminator
-discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d)
+discriminator_stylegan2 = DiscriminatorStyleGAN2(channels=channels_d,
+                                                 use_upfirdn2d=use_upfirdn2d)
 discriminator_stylegan2 = discriminator_stylegan2.to(device)
 #generator
 mn_nlayer = 8
 generator_stylegan2 = GeneratorStyleGAN2(z_size, w_size, mn_nlayer,
-                                         channels_g, style_mixing_prob)
+                                         channels_g, style_mixing_prob, 
+                                         use_upfirdn2d=use_upfirdn2d)
 generator_stylegan2 = generator_stylegan2.to(device)
 
 betas = [0, 0.99]
