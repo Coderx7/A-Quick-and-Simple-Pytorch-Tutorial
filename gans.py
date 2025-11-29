@@ -12990,7 +12990,8 @@ training_loop_stylegan2(discriminator_stylegan2,
 # stylegan2_ffhq_20251128162446:
 # - with the new channel config of [512,256,128,64,32,16], we have 11/10m models, with bs=32
 #   vram usage of 9500MB and use_upfirdn2d = True, we started the training hopefully we get
-#   much better results. each epoch takes 13/14mins!
+#   much better results. each epoch takes 13/14mins! the image quality is much better but 
+#   I guess we could improve more by more training or a larger network. 
 # 
 #%%
 #%% load_checkpoints
@@ -13009,7 +13010,7 @@ def load_checkpoints(checkpoint_path, device="cuda"):
     use_upfirdn2d = checkpoint.get("use_upfirdn2d",True)
     ema_wb = checkpoint["ema_w_beta"]
     
-    res = 2<<(len(channels)+1)
+    res = 2<<(len(channels))
     
     generator_st2 = GeneratorStyleGAN2(z_size, w_size,mn_layers,channels, style_mix, ema_wb, use_upfirdn2d,eps)
     generator_st2.load_state_dict(checkpoint["gen_state_dict"])
@@ -13020,9 +13021,13 @@ def load_checkpoints(checkpoint_path, device="cuda"):
     return generator_st2, res
 
 device = 'cuda'
-num_samples=1
-checkpoint_path = './weights/gan/stylegan2_ffhq_20251127152002/checkpoint_step_20251127152002.ckpt'
+num_samples=6
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251127152002/checkpoint_step_20251127152002.ckpt'
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128073036/checkpoint_step_20251128073036.ckpt'
+# 11/10m 
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446_e53.ckpt'
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446_e90.ckpt'
+checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446.ckpt'
 generator_stylegan2, dim = load_checkpoints(checkpoint_path, device='cuda')
 
 z = torch.randn((num_samples, generator_stylegan2.z_size), device=device)
@@ -13030,7 +13035,7 @@ res=f"{dim}x{dim}"
 with torch.no_grad():
     imgs,ws = generator_stylegan2(z, psi=0.7)
     display_images(imgs, 
-                   cols=1, 
+                   cols=2, 
                    title=f'StyleGAN2 [{res}]',
                    unnormalize=True, 
                    figsize=(16,8))
@@ -13178,9 +13183,13 @@ def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_cr
     w_mixed = w_source.clone()
     w_mixed[:,layer_indx_for_crossover:,:] = w_style[:,layer_indx_for_crossover:,:]
     
-    img_source = generator.forward_from_w(w_source, constant_noise).cpu()
-    img_style = generator.forward_from_w(w_style, constant_noise).cpu()
-    img_mixed = generator.forward_from_w(w_mixed, constant_noise).cpu()
+    noise = None
+    if constant_noise:
+        noise = torch.zeros((w_source.size(0),1,1,1),device=device)
+    
+    img_source = generator.forward_from_w(w_source, noise).cpu()
+    img_style = generator.forward_from_w(w_style, noise).cpu()
+    img_mixed = generator.forward_from_w(w_mixed, noise).cpu()
     
     return img_source, img_style, img_mixed
 
@@ -13238,7 +13247,11 @@ def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
                    cols=1,
                    figsize=(16,16))
 
-change_styles(z_source,z_style,last_step,psi_src=0.7, psi_sty=0.7)
+change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
+#%%
+
+
+
 #%%
 # a detour to something fun CycleGAN
 # 
