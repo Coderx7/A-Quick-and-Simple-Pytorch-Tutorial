@@ -13060,11 +13060,59 @@ def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, re
     anim.save(f'{filename}.gif', writer="pillow")
     plt.show()
 
+
+# sidenote:
+# for interpolation we can either use lerp or slerp
+# the most straight one is linear interpolation (i.e. lerp)
+# which means we move in a straight line in our latent space
+# from vector v1 to vector v2 each time taking a step from v1 toward v2.
+# basically v_out = (1-t)*v1 + t*v2 (t is a value between 0 and 1)
+# so when t=0 we are at v1 and when t=1 we are at v2 and all the other
+# values in between therefore give us points between these two ends. 
+# so far so good. the issue however is that, it sometimes results
+# in less natural looking/distorted transitions because the straight path
+# might(and usually do) go through areas in the latent space that dont 
+# corrospond to well formed or realistic faces/objects(i.e. areas of malformed/underdeveopled/faulty samples!)
+# and therefore cause artifacts or a less smooth change in appearance.
+# for this reason, slerp is used instead. slerp is simply spherical linear interpolation
+# and it means we move between the two vectors along the arc of a great circle, on a hypersphere.
+# this has two important implications, one because we use the same angle
+# between the two vectors, we maintain a constant rate of change, i.e. we'll 
+# have a more uniform and natural looking transformation in our interpolation.
+# this is not the case for lerp as it can have a non-uniform rate of change when
+# its projected onto the hyperspher.
+# second and more importantly, the distribution of meaningful latent vectors is usually
+# more like a hypersphere, so staying on this surface will give us more chance of remaining
+# within areas/regions of latent space that produce high-quality/realstic faces/objects.
+# 
+def slerp(w1, w2, t, threshold=0.9995):
+    # normalize the input vectors so we get work with directions
+    w1norm = w1 / torch.linalg.norm(w1)
+    w2norm = w2 / torch.linalg.norm(w2)
+
+    dot = torch.sum(w1norm * w2norm)
+
+    # if the two vectors are close enough then we
+    # can probably use lerp without any issues
+    # the two vectors are idential if their dot product
+    # is 1!
+    if torch.abs(dot)>threshold:
+        return torch.lerp(w1,w2,t)
+
+    # caulate the angle between the two vectors
+    theta = torch.acos(dot)
+    sin_theta = torch.sin(theta)
+
+    # moving from w1 to w2 along the arc between the two
+    a = torch.sin((1.0 - t) * theta) / sin_theta
+    b = torch.sin(t * theta) / sin_theta
+    return a * w1 + b * w2
+
 # now lets write the actual experiments on w
 # lets do a latent space exploration like before 
 @torch.no_grad()
 def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, psi=None, constant_noise=False,
-                  alphas=None, interp_steps=60, device='cuda'):
+                  alphas=None, use_slerp=True, interp_steps=60, device='cuda'):
     generator = generator.to(device)
     generator.eval()
         
@@ -13084,7 +13132,12 @@ def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, psi=None, constant_noise
         
     imgs = []
     for a in alphas:
-        interpol = torch.lerp(w1,w2,a)
+        if use_slerp:
+            # slerp does a much smoother interpolation
+            # 
+            interpol = slerp(w1,w2,a)
+        else:
+            interpol = torch.lerp(w1,w2,a)
         interpol = generator.apply_truncation(interpol,psi)
         img = generator.forward_from_w(interpol,noise).cpu()
         imgs.append(img)
@@ -13092,13 +13145,14 @@ def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, psi=None, constant_noise
     return output_imgs
 
 def run_interpolation_test(generator, constant_noise, psi_rates=None,
-                           alphas=None, num_samples=36, make_gifs=False,
+                           alphas=None, use_slerp=True, num_samples=36, make_gifs=False,
                            gif_dir='./results/gan/stylegan2/gifs',interval=100,
                            random_gen=None):
     
     if psi_rates is None:
         psi_rates = [0, 0.3, 0.7, 1]
     
+    mode = "slerp" if use_slerp else "lerp"
     for rate in psi_rates:
         interpolated_images = interpolate_w(generator,
                                             z1, 
@@ -13106,16 +13160,17 @@ def run_interpolation_test(generator, constant_noise, psi_rates=None,
                                             psi=rate,
                                             constant_noise=constant_noise,
                                             alphas=alphas,
+                                            use_slerp=use_slerp,
                                             interp_steps=num_samples)
             
         if make_gifs:
-            fname =f"interpolation_psi_{rate}_const_noise_{constant_noise}"
+            fname =f"interpolation_psi_{rate}_const_noise_{constant_noise}_using_{mode}"
             # make sure directory exists, if not create it
             os.makedirs(gif_dir, exist_ok=True)
             fpath = os.path.join(gif_dir, fname)
             create_interpolation_animation(interpolated_images, fpath, interval=interval)
         else:
-            display_images(interpolated_images, title=f'psi={rate} | constant_noise:{constant_noise}', cols=cols, unnormalize=True)
+            display_images(interpolated_images, title=f'psi={rate} | constant_noise:{constant_noise} using {mode}', cols=cols, unnormalize=True)
 
 # now lets try 
 num_samples = 36
@@ -13143,12 +13198,13 @@ run_interpolation_test(generator_stylegan2,
                        random_gen=fixed_randg)
 #%% making some gifs
 # now lets also make some gifs as well!
-alphas = torch.linspace(0,1,25)
+alphas = torch.linspace(-2,2,60)#-1,1
 for noise_status in [True]:
     run_interpolation_test(generator_stylegan2,
                            psi_rates=[0.7],
                            constant_noise=noise_status,
                            alphas=alphas,
+                           use_slerp=True,
                            num_samples=36,
                            make_gifs=True,
                            gif_dir='./results/gan/stylegan2/gifs',
@@ -13249,8 +13305,6 @@ def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
 
 change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
 #%%
-
-
 
 #%%
 # a detour to something fun CycleGAN
