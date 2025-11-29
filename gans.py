@@ -13305,7 +13305,87 @@ def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
 
 change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
 #%%
+# grab the modulation weights for closed form factorization
+# we are trying to extract meaninful directions fromw eights
+# so we can use them to generate images along those directions
+# creating images with certain attributes.
+# for best performance the ema version of the generator weights are 
+# used, but since our ema hasnt been working properly weuse normal weights
+weights = []
+for k,v in generator_stylegan2.state_dict().items():
+    # print(k)
+    # grab only fc_style weights in blocks that deal with style
+    if "fc_style.weight" in k and "blocks" in k:
+        print(f'{k}')
+        weights.append(v)
 
+Ws = torch.cat(weights)
+# now using svd we get eigen vectors(unique directions)
+eigen_vecs = torch.svd(Ws).V.to("cpu")
+#sidenote:reminder
+# svd or singular value decompision basically breaks down our input matrix into its fundamental/principal building blocks!
+# we want the V matrix, because its columns (or rows of Vᵀ) are the right singular vectors
+# i.e. these vectors form an orthonormal basis for the input space! that is in other words,
+# each of these vectors represent the principap directions of variations in our input! 
+# in our case, they are the directions in w latent space that cause the most significant and
+# and also independent changes in the final style of the image.
+# the first singular vector is the direction of maximum change, the second one is the next most
+# significant direction orthonormal to the first one and so on and so forth!
+# 
+# sidenote2:
+# this is obvious but im saying it anyway what we have here are singular vectors, 
+# (which are eigenvectors of WsᵀWs) but since its pretty common to call this eigenvector
+# I do this aswell. the important matter is we know the distinction!
+#%%
+# and now we can apply these new directions to our latent vectors ws and get the result
+# lets test this
+@torch.no_grad()
+def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction, psi=None, constant_noise=False,
+                  alphas=None, interp_steps=60, device='cuda'):
+    generator = generator.to(device)
+    generator.eval()
+    
+    direction = direction.to(device) 
+    w = generator.mapping_network(z1)
+        
+    # interpolate
+    if alphas is None:
+        alphas = torch.linspace(0, 1, interp_steps).to(device)
+    else:
+        alphas = alphas.to(device)
+    
+    noise = None
+    if constant_noise:
+        noise = torch.zeros((z1.size(0),1,1,1),device=device)    
+        
+    imgs = []
+    for a in alphas:
+        w = w+a*direction
+        w = generator.apply_truncation(w, psi)
+        img = generator.forward_from_w(w, noise).cpu()
+        imgs.append(img)
+    
+    output_imgs = torch.cat(imgs, dim=0)
+    return output_imgs
+
+seed=66
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+fixed_randg = torch.Generator(device=device).manual_seed(seed)
+z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
+
+imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
+                                                    z1, 
+                                                    eigen_vecs[-6],
+                                                    psi=0.75,
+                                                    constant_noise=True,
+                                                    alphas=None,
+                                                    interp_steps=20,
+                                                    device='cuda')
+display_images(imgs_with_directions, 
+               title=f'direction applied',
+               cols=5, 
+               unnormalize=True)
 #%%
 # a detour to something fun CycleGAN
 # 
