@@ -2874,6 +2874,17 @@ class IS_FID_Calculator():
         # to save/cache the score for real images so we dont 
         # compute them over and over 
         self.cache_dir = cache_dir
+        self._cach_dirname = "IS_FID_cache"
+        # in order to preserve data integrity between experiments
+        # we clear the caches whenever we create a new instance
+        # and build new ones for that instance, this way if an
+        # experiment uses some type of dataaugmentation or resizing
+        # etc on the dataset x, the other datasets that dont use
+        # those augmentations/resizes or do something of their own
+        # will have the wrong cache! so we clear the caches and build
+        # new ones each time. so during each experiment we always
+        # use fresh caches prepared specificially for that experiment
+        self._clear_cache()
         
         weights=models.Inception_V3_Weights.IMAGENET1K_V1
         self.model = models.inception_v3(weights=weights).to(device)
@@ -2887,7 +2898,15 @@ class IS_FID_Calculator():
         # for FID we remove the classifier but for IS we
         # actually use the classifier!
         self.fc = self.model.fc
-        
+    
+    def _clear_cache(self):
+        dir_path = os.path.join(self.cache_dir, self._cach_dirname)
+        for f in os.listdir(dir_path):
+            if "fid_stats" in f and os.path.splitext(f)[-1]==".pt":
+                file_path = os.path.join(dir_path,f)
+                os.remove(file_path)
+                print(f'{file_path} removed!')
+            
     def _preprocess(self, imgs):
         # images to inception must be in [0-1] range since ours
         # is in -1,1 we normalize it back to 0-1!
@@ -3023,7 +3042,7 @@ class IS_FID_Calculator():
         if dataset_name: parts.append(dataset_name)
         if split: parts.append(split)
         fname = "_".join(parts)+".pt"
-        dir_path = os.path.join(self.cache_dir, "IS_FID_cache")
+        dir_path = os.path.join(self.cache_dir, self._cach_dirname)
         os.makedirs(dir_path, exist_ok=True)
         return os.path.join(dir_path, fname)
     
@@ -12950,7 +12969,7 @@ print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
 gamma=10
-dataset_name = 'ffhq'
+dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -12974,8 +12993,8 @@ psi = 0.7
 # it takes 13/14mins per epoch. 
 # for quick tests [256,128,64,32,16,8] should be good
 # it takes 4/5mins per epoch.
-channels_d = [256,128,64,32,16,8]
-channels_g = [256,128,64,32,16,8]
+channels_d = [512,256,128,64,32,16]#,8]
+channels_g = [512,256,128,64,32,16]#,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
@@ -13068,7 +13087,7 @@ training_loop_stylegan2(discriminator_stylegan2,
 #
 #%%
 #%% load_checkpoints
-def load_checkpoints(checkpoint_path, device="cuda"):
+def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     dataset_name = checkpoint["dataset_name"]
     epoch = checkpoint["epoch"]
@@ -13082,11 +13101,18 @@ def load_checkpoints(checkpoint_path, device="cuda"):
     eps = checkpoint["eps"]
     use_upfirdn2d = checkpoint.get("use_upfirdn2d",True)
     ema_wb = checkpoint["ema_w_beta"]
-    
+    ema_weights = checkpoint["gen_ema_state_dict"]
     res = 2<<(len(channels))
     
     generator_st2 = GeneratorStyleGAN2(z_size, w_size,mn_layers,channels, style_mix, ema_wb, use_upfirdn2d,eps)
-    generator_st2.load_state_dict(checkpoint["gen_state_dict"])
+    
+    if use_ema and ema_weights is not None:
+        generator_st2.load_state_dict(ema_weights)
+        print('ema weights loaded!')
+    else:
+        generator_st2.load_state_dict(checkpoint["gen_state_dict"])
+        print('normal weights loaded!')
+    
     generator_st2 = generator_st2.eval()
     generator_st2 = generator_st2.to(device)
 
@@ -13095,13 +13121,17 @@ def load_checkpoints(checkpoint_path, device="cuda"):
 
 device = 'cuda'
 num_samples=6
+use_ema = True
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251127152002/checkpoint_step_20251127152002.ckpt'
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128073036/checkpoint_step_20251128073036.ckpt'
 # 11/10m 
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446_e53.ckpt'
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446_e90.ckpt'
-checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446.ckpt'
-generator_stylegan2, dim = load_checkpoints(checkpoint_path, device='cuda')
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446.ckpt'
+# ffhq with ema -small model (4m)
+checkpoint_path = './weights/gan/stylegan2_ffhq_20251130084938/checkpoint_step_20251130084938.ckpt'
+
+generator_stylegan2, dim = load_checkpoints(checkpoint_path, device='cuda', use_ema=use_ema)
 
 z = torch.randn((num_samples, generator_stylegan2.z_size), device=device)
 res=f"{dim}x{dim}"
