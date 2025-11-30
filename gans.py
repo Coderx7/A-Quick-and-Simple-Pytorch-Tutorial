@@ -12960,7 +12960,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZES = 128 if use_fp16 else 32
+BATCH_SIZES = 128 if use_fp16 else 64
 
 EPOCHS = 100
 
@@ -13056,6 +13056,16 @@ training_loop_stylegan2(discriminator_stylegan2,
 #   much better results. each epoch takes 13/14mins! the image quality is much better but 
 #   I guess we could improve more by more training or a larger network. 
 # 
+# stylegan2_ffhq_20251130084938:
+# fixed ema update bug, updated the decay formula for ema update and now we are trainig 
+# ffhq with the same config as stylegan2_ffhq_20251127152002 to see how the ema affects
+# our results. I also need to fix FID calculation, its been failing for sometime now!
+# not sure whats causing it. the ema really improves the image generation quality
+# the ema version at 44 looks like the 100 of normal model. the end result in ema
+# has less artifacts than the ordinary/main model. so its a must have during training
+# however it does not substitude a stronger model obviously. while our 4m config performed
+# much better this way, I still prefer the 11/10m version better!
+#
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda"):
