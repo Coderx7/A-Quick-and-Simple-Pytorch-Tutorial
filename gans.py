@@ -2901,11 +2901,14 @@ class IS_FID_Calculator():
     
     def _clear_cache(self):
         dir_path = os.path.join(self.cache_dir, self._cach_dirname)
-        for f in os.listdir(dir_path):
+        cache_files = os.listdir(dir_path)
+        if len(cache_files) > 0:
+            print("Clearning FID/IS Cache...")
+        for f in cache_files:
             if "fid_stats" in f and os.path.splitext(f)[-1]==".pt":
                 file_path = os.path.join(dir_path,f)
                 os.remove(file_path)
-                print(f'{file_path} removed!')
+                print(f"  --{f} removed!")
             
     def _preprocess(self, imgs):
         # images to inception must be in [0-1] range since ours
@@ -5466,7 +5469,15 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
     # instead of going over the whole trainig sets, we can choose
     # a portion of them instead grab a subset of the dataloader as many as num_samples
     # and generate as many as num_samples fake_loader
-    subset = torch.utils.data.Subset(data_loader.dataset, range(num_samples))
+    # update:
+    # to make sure we get all classes, and not just create a dataloader out of one class
+    # by mistake shuffle the indexes! this important because somedatasets are sorted
+    # so our previous version which uses (range(num_samples)) would grab the first
+    # class or classes, and we would be comparing e.g. airplanes with everything else!
+    # so this fixes that as well.
+    total_sample_count = len(data_loader.dataset)
+    indexes = torch.randperm(total_sample_count)[:num_samples]
+    subset = torch.utils.data.Subset(data_loader.dataset, indexes)
     real_loader = DataLoader(subset, batch_size, shuffle=False, num_workers=8, pin_memory=True)
     
     real_batch_cnt = len(real_loader)
@@ -5484,8 +5495,12 @@ def get_IS_FID_score(metric:IS_FID_Calculator, gen:GeneratorProGAN, data_loader,
             z = torch.randn(size=(current_batch_size, gen.z_size), device=device)
             # update from future (for stylegan2)
             fakes,*_ = gen(z, **kwargs)
+            #update:
+            # to be sure the range is valid -1,1 especially for stylegans
+            # we apply a tanh, obviously this isnt a problem as we are not 
+            # training! just to be sure FID recieves proper range!
             # return a tuple to mimic an actual dataloader!
-            yield fakes, torch.zeros((current_batch_size,1))
+            yield fakes.tanh(), torch.zeros((current_batch_size,1))
     
     IS_score = metric.compute_IS(fake_loader(num_samples, batch_size, **kwargs))
     FID_score = metric.compute_FID(real_loader,
@@ -12969,7 +12984,7 @@ print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
 gamma=10
-dataset_name = 'celeba'
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -12993,8 +13008,11 @@ psi = 0.7
 # it takes 13/14mins per epoch. 
 # for quick tests [256,128,64,32,16,8] should be good
 # it takes 4/5mins per epoch.
-channels_d = [512,256,128,64,32,16]#,8]
-channels_g = [512,256,128,64,32,16]#,8]
+channels_d = [256,128,64,32,16,8]
+channels_g = [256,128,64,32,16,8]
+
+# channels_d = [512,256,128,64,32,16]#,8]
+# channels_g = [512,256,128,64,32,16]#,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
@@ -13041,7 +13059,6 @@ training_loop_stylegan2(discriminator_stylegan2,
                      kimg=10,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
-                    #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
                      )
 
 #todo use Closed-Form Factorization of Latent Semantics in GANs (https://arxiv.org/abs/2007.06600) 
@@ -13085,6 +13102,9 @@ training_loop_stylegan2(discriminator_stylegan2,
 # however it does not substitude a stronger model obviously. while our 4m config performed
 # much better this way, I still prefer the 11/10m version better!
 #
+#
+# - fixed FID cache bug
+
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
