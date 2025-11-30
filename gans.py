@@ -12475,23 +12475,71 @@ def path_length_regularization_loss(fake_imgs,
 
 
 @torch.no_grad()
-def update_ema_generator(gen:GeneratorStyleGAN2, gen_ema:GeneratorStyleGAN2, images_seen, decay_rate=0.999):
+def update_ema_generator(gen:GeneratorStyleGAN2, 
+                         gen_ema:GeneratorStyleGAN2, 
+                         current_batch_size, 
+                         images_seen,
+                         ema_kimg=10_000, 
+                         rampup_rate=0.05):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
-    # this dynamic decay is from stylegan2 if I dont get any better 
-    # results will go back to the old version!
-    decay = min(1 - 1 / (images_seen / 10000 + 1), decay_rate)
+    # 
+    # in stylegan2, the decay is calculated automatically based on
+    # how many kimages the model has seen so far so we dont need to
+    # keep copying weights manually until some kimages and then start the 
+    # actual ema process. (imagine it as length of memory)
+    # this is done all automcatically it goes like this, we use a rampup
+    # rate which is 1/2 of the images seen so far and calculate the effective decay
+    # like this decay = 0.5^(batch_size/half_life)
+    # batchsize is there so we tune the decay automatically based on 
+    # how many steps (updates) is required, forexample if we want 
+    # the history to fade after 10k images, and we have batchsize=10
+    # thats 1000 update steps,so we need to decay accordingly in this
+    # 1000 steps, likewise if the batchsize is larger,e.g. 1000, then we 
+    # need to decay in 10 steps! if we dont use this, when we train using 
+    # a larger batchsize, it would result in an ema thats too fast/jittery
+    # and when using smaller batchsize, it would result in an ema thats too slow
+    # to update!
+    
+    # kimages here controls how far back we can remember, its called half-life as well
+    # the model gives 50% importance to the last kimages seen and another 50% to 
+    # everything that happened before that! so choosing the right value is very important
+    # forexample if we chose a high value like 20/50, it would make the ema to change 
+    # very slowly, it will be very smooth and stable but at the same time if the model
+    # learns a new feature (e.g. like sunglasses,etc) it will treat it as temporary jitter
+    # and the ema wont immediatley show it, it will take a long time to show it!
+    # conversly, if we chose a small value like 1, the ema will therefore change much quickly
+    # basically following the main model, it will reflect the main model, so we wont be
+    # getting the averging/smoothing effect out of it! the same artifacts, etc will be there too
+    # kimg = 10 was the sweetspot the authords found for 256x256, for higher resolutions like 1024x1024
+    # they used 20. since we are training to128x128 in fp32, we choose 10 as well but if it 
+    # doesnt turn out ok we can play with it!
+    nimgs = ema_kimg * 1000
+    # rampup is there so we can shorten the so called memory initially 
+    # when the initial weights are garbage and then linearly increase it
+    # until we hit the kimgs target, i.e. let the training progresses and weights
+    # become more sensible!
+    # if we dont do this, early on when weights are random, we will be
+    # accumuliating them into ema and it will take a long time for them
+    # to disappear(for the ema to forget those garbage weights).
+    # so the result to look good will take a long time
+    if rampup_rate is not None:
+        nimg = min(nimgs, images_seen*rampup_rate)
+        
+    # 1e-8 is there to avoid division by zero
+    decay = 0.5**(current_batch_size/max(nimg,1e-8))
+    
     for ema_p,p in zip(gen_ema.parameters(), gen.parameters()):
         ema_p.data.mul_(decay).add_(p.data, alpha=1-decay)
-    # copy the ema_w over
+    # # copy the ema_w over
     gen_ema.ema_w.copy_(gen.ema_w)
-
-
+    
+    
 def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:GeneratorStyleGAN2, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epochs, batch_size, dataset_name,
                          split, data_augmentation=False, normalize=True, use_fp16=False, 
                          path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
-                         gen_num_samples = 64, use_ema_inference=False, ema_warmup_images_threshold=2000_000,
+                         gen_num_samples = 64, use_ema_inference=False, kimg=10,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
                          resume=False, eps=1e-8, weights_save_dir='./weights/gan',
                          images_save_dir='./results/gan', checkpoint_path=None, ):
@@ -12566,7 +12614,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         scaler.load_state_dict(checkpoint.get("scaler_state_dict", scaler.state_dict()))
         
         # load the ema version, dont forget to also load the images seen so far!
-        ema_warmup_images_threshold = checkpoint["ema_warmup_images_threshold"]
+        kimg = checkpoint["kimg"]
         ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
         if use_ema_inference:
             ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
@@ -12620,7 +12668,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'--Generator LR:              {lr_g}')
     print(f'--Epochs:                    {epochs}')
     print(f'--Batch-Size:                {batch_size}')
-    print(f'--ema_warmup_image_threshold:{ema_warmup_images_threshold:,} ')
+    print(f'--ema_kimage:                {kimg:,} ')
     print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
     print(f'--Path Length Reg interval:  {path_length_interval}')
     print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
@@ -12738,10 +12786,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 if mn_grad_norm>100:
                     print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
                 
-                if ema_warmup_images_seen < ema_warmup_images_threshold:
-                    ema_generator.load_state_dict(generator.state_dict())
-                else:
-                    update_ema_generator(generator, ema_generator, ema_warmup_images_seen)
+                update_ema_generator(generator,
+                                     ema_generator,
+                                     imgs_real.size(0),
+                                     ema_warmup_images_seen,
+                                     ema_kimg=kimg)
 
             scaler.update()
                 
@@ -12833,7 +12882,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                     "lr_d":lr_d,
                     "lr_g":lr_g,
                     "training_step_counter":training_step_counter,
-                    "ema_warmup_images_threshold":ema_warmup_images_threshold,
+                    "kimg":kimg,
                     "ema_warmup_images_seen":ema_warmup_images_seen,
                     "epoch":epoch,
                     "epochs":epochs,
@@ -12970,7 +13019,7 @@ training_loop_stylegan2(discriminator_stylegan2,
                      device=device,
                      resume=False,
                      use_ema_inference=use_ema_inference,
-                     ema_warmup_images_threshold=600_000,
+                     kimg=10,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
