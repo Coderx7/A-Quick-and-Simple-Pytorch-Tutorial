@@ -12984,7 +12984,7 @@ print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
 gamma=10
-dataset_name = 'ffhq'
+dataset_name = 'celeba'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -12994,7 +12994,7 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZES = 128 if use_fp16 else 64
+BATCH_SIZES = 128 if use_fp16 else 32
 
 EPOCHS = 100
 
@@ -13008,11 +13008,11 @@ psi = 0.7
 # it takes 13/14mins per epoch. 
 # for quick tests [256,128,64,32,16,8] should be good
 # it takes 4/5mins per epoch.
-channels_d = [256,128,64,32,16,8]
-channels_g = [256,128,64,32,16,8]
+# channels_d = [256,128,64,32,16,8]
+# channels_g = [256,128,64,32,16,8]
 
-# channels_d = [512,256,128,64,32,16]#,8]
-# channels_g = [512,256,128,64,32,16]#,8]
+channels_d = [512,256,128,64,32,16]#,8]
+channels_g = [512,256,128,64,32,16]#,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
@@ -13102,8 +13102,8 @@ training_loop_stylegan2(discriminator_stylegan2,
 # however it does not substitude a stronger model obviously. while our 4m config performed
 # much better this way, I still prefer the 11/10m version better!
 #
-#
-# - fixed FID cache bug
+# stylegan2_celeba_20251130203936:
+# - fixed FID cache bug, use [512,256,128,64,32,16] bs=32,use_upfirdn2d = True:
 
 #%%
 #%% load_checkpoints
