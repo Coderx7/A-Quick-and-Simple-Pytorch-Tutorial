@@ -5249,7 +5249,7 @@ for i in range(max_steps):
     print(f'disc_out.shape: {tuple(disc_out.shape)}')
     gen_out = gen(z, alpha=1, step=i)
     print(f'gen_out.shape : {tuple(gen_out.shape)}')
-#%%
+#%% progan loss functions and related functions for trainig
 # now training part!
 # before we write the training loop, there are a few things we need to be aware of
 # first we are dealing with different resolutions, so we need a separate dataloader
@@ -5487,9 +5487,9 @@ def update_ema_generator(g:GeneratorProGAN, g_ema:GeneratorProGAN, decay=0.999):
     # any, but if we had like batchnorm, we wouldnt touch them as it would have
     # destroyed their stats!)
     for ema_p,p in zip(g_ema.parameters(),g.parameters()):
-        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+        ema_p.data.mul_(decay).add_(p.data, alpha=1-decay)
 
-#%%
+#%% progan trainig loop
 
 def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorProGAN, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
@@ -5568,7 +5568,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     # if we dont update by having an if statement to see if we are passed that warmup step(i.e.2)
     # that would be two checks! so we dont want the second method, its inefficient and not good
     # the first method gives us more flexibility
-    #
+    # update: found the issue, and fixed it (see debug log tldr add_() was missing!)
     # instead of copy.deepcopy we could instantiate a new copy adn simply do 
     # load_statedict() on it. i.e. do 
     # ema_generator = GeneratorProGAN(generator.z_size, generator.max_steps).requires_grad_(False).eval()
@@ -6097,7 +6097,7 @@ def training_loop_progan(discriminator:DiscriminatorProGAN, generator:GeneratorP
     print("ProGAN training is complete!")
 
 
-#%%
+#%%progan training
 print(f'Training PROGAN!')
 loss_type = 'wgangp'
 # initially set to 10, but during trainig since 64x64,
@@ -6324,8 +6324,9 @@ decay_step = 7#4#3#2
 # save it in the checkpoints anyway! note choosing ema_warmup_images_threshold
 # is crucial to get a working ema! otherwise it will become solid grays!
 # warmup is different dataset to dataset! I explained this in trainig loop
-# read that if you missed! 
-use_ema_inference = False
+# read that if you missed!
+# update : fixed it see debug log 
+use_ema_inference = True
 
 # disc_optimizer = torch.optim.RMSprop(discriminatorI64.parameters(), lr=5e-5) # for wgan
 disc_optimizer = torch.optim.Adam(discriminator_progan.parameters(), lr_d, betas=betas)
@@ -6404,7 +6405,7 @@ training_loop_progan(discriminator_progan,
 # plt.show()
 # plt.plot(np.array(all_gps[idx]))
 # plt.show()
-#%%
+#%% progan debug log
 # sidenote:
 #
 # reminder before going over for debugging:
@@ -6927,6 +6928,7 @@ training_loop_progan(discriminator_progan,
 # additional 20 epochs, did that, lowered the lr to 0.00004 and 0.000042, but the same ossilications
 # exist and the convergence rate became really slow! so Im scrapping all of this and starting
 # new
+# 
 # update:
 # started with lr=0.001 just like the paper and see how it goes, we should see something different
 # cuase I have had a few bugs back when we initially used this. if this doesnt work, and discrimnator
@@ -6937,6 +6939,7 @@ training_loop_progan(discriminator_progan,
 # this time ramping both up to 23m and recheck for final time. currently we achieve good results
 # fid that previously we couldnt, and we can continue improving it with careful lr, but it takes too much time
 # and I cant have that! so we are going full beast after this!
+# 
 # update:(experiment 20250930091608)
 # thank God! so far as of epoch 5 of 32x32 (alpha=0.4) we are down to FID 35 which is pretty good!
 # the high learning rate that previously kept messing up, after using equalized learnng rate
@@ -6963,6 +6966,13 @@ training_loop_progan(discriminator_progan,
 # time and maybe a bit of lr tuning!)
 # I endted the training at the start of 128x128 and Im satisfied with t he resulys
 # it just took too much . 
+# 
+# update:
+# the reason ema didnt work was because I missed add_ and instead used add! this meant
+# we never updated the weights with the new information in the generator and ema_gen
+# would get multiplied by 0.999 each time, basically exponentially decaying to zero! 
+# and hence why we kept getting solid grays!
+#
 # the weights and logs are available here. jupyternotebook 11 are the ones having
 # training experiments weights and results: 
 # url: https://mega.nz/folder/zoRxRSbQ#5cvLQtlRHvnmk7oQo8BTlA
@@ -9548,7 +9558,7 @@ def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0
     # results will go back to the old version!
     # decay = min(1 - 1 / (warmup_images_seen / 1000 + 1), decay_rate)
     for ema_p,p in zip(g_ema.parameters(), g.parameters()):
-        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+        ema_p.data.mul_(decay).add_(p.data, alpha=1-decay)
     # copy the ema_w over
     g_ema.ema_w.copy_(g.ema_w)
    
@@ -9556,7 +9566,7 @@ def update_ema_generator(g:GeneratorStyleGAN1, g_ema:GeneratorStyleGAN1, decay=0
 def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:GeneratorStyleGAN1, disc_optimizer:torch.optim.Adam, 
                          gen_optimizer:torch.optim.Adam, epoch_list, batch_size_list, gen_update_interval, dataset_name,
                          split, data_augmentation=False, normalize=True, use_fp16=False, r1_penalty_interval=16, gamma=10, psi=0.7, gen_num_samples = 64, 
-                         use_ema_inference=False, ema_warmup_images_threshold=2000_000,
+                         use_ema_inference=False, ema_warmup_images_threshold=500_000,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda', resume=False,
                          decay_step=3, weights_save_dir='./weights/gan', images_save_dir='./results/gan', checkpoint_path=None,
                          decay_func = lambda step:0.5**(step-2)):
@@ -11645,7 +11655,7 @@ run_simple_gen_with_const_noise()
 # - a quick test on ffhq to affirm everything is working properly: faced nans in e10@4x4
 #   lowered the lr = 0.001 to get rid of it. his happenes probably because ffhq
 #   has a much more complex distirbution than cifar10, so earlyon we can get huge gradients
-#   even though we have semi large batches, however having large lr lick 0.003
+#   even though we have semi large batches, however having large lr like 0.003
 #   will cause issues as we said fp16 has quit limited range and can easily overflow
 #   add to that the adam optimizer.(sidenote cifar10 has more semantic complexity, i.e.
 #   more classes, but from pixel level complexity, ffhq is more complex.(the network 
@@ -12465,14 +12475,14 @@ def path_length_regularization_loss(fake_imgs,
 
 
 @torch.no_grad()
-def update_ema_generator(gen:GeneratorStyleGAN1, gen_ema:GeneratorStyleGAN1, images_seen, decay_rate=0.999):
+def update_ema_generator(gen:GeneratorStyleGAN2, gen_ema:GeneratorStyleGAN2, images_seen, decay_rate=0.999):
     # sidenote, we only update the parameters we dont touch buffers 
     # as it would have destroyed their stats!)
     # this dynamic decay is from stylegan2 if I dont get any better 
     # results will go back to the old version!
     decay = min(1 - 1 / (images_seen / 10000 + 1), decay_rate)
     for ema_p,p in zip(gen_ema.parameters(), gen.parameters()):
-        ema_p.data.mul_(decay).add(p.data, alpha=1-decay)
+        ema_p.data.mul_(decay).add_(p.data, alpha=1-decay)
     # copy the ema_w over
     gen_ema.ema_w.copy_(gen.ema_w)
 
@@ -12577,11 +12587,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         last_training_step_counter = checkpoint["training_step_counter"]
         epochs = checkpoint["epochs"]
         starting_epoch = checkpoint["epoch"]+1
-        batch_size_list = checkpoint["batch_size_list"]
-        gen_update_interval = checkpoint["gen_update_interval"]
+        batch_size = checkpoint["batch_size"]
+        path_length_interval = checkpoint["path_length_interval"]
         r1_penalty_interval = checkpoint["r1_penalty_interval"]
         gamma = checkpoint["gamma"]
-        # noise_addition = checkpoint["noise_addition"]
+
         
     # store training log
     all_training_losses = []
@@ -12660,7 +12670,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             
             imgs_real = imgs_real.to(device)
             imgs_real.requires_grad_(True)
-            # track how many real images the network has seen
+            # track how many real images the network has seen for ema_generator
             ema_warmup_images_seen += imgs_real.size(0)
 
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
@@ -12910,9 +12920,13 @@ r1_penalty_interval = 16
 style_mixing_prob = 0.9
 # truncation rate
 psi = 0.7
-#up to 128x128
-channels_d = [512,256,128,64,32,16]#,8]
-channels_g = [512,256,128,64,32,16]#,8]
+#up to 128x128 
+# with bs=32 [512,256,128,64,32,16] trains well 10/11m
+# it takes 13/14mins per epoch. 
+# for quick tests [256,128,64,32,16,8] should be good
+# it takes 4/5mins per epoch.
+channels_d = [256,128,64,32,16,8]
+channels_g = [256,128,64,32,16,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
@@ -12934,7 +12948,7 @@ lr_g = 0.003
 
 eps = 1e-5 if use_fp16 else 1e-8
 
-use_ema_inference = False
+use_ema_inference = True
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
@@ -12956,7 +12970,7 @@ training_loop_stylegan2(discriminator_stylegan2,
                      device=device,
                      resume=False,
                      use_ema_inference=use_ema_inference,
-                     ema_warmup_images_threshold=1_000_000,
+                     ema_warmup_images_threshold=600_000,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                     #  checkpoint_path="./weights/gan/stylegan1_ffhq_20251107210907/checkpoint_step_2_20251107210907.ckpt",
@@ -13326,9 +13340,9 @@ eigen_vecs = torch.svd(Ws).V.to("cpu")
 # svd or singular value decompision basically breaks down our input matrix into its fundamental/principal building blocks!
 # we want the V matrix, because its columns (or rows of Vᵀ) are the right singular vectors
 # i.e. these vectors form an orthonormal basis for the input space! that is in other words,
-# each of these vectors represent the principap directions of variations in our input! 
+# each of these vectors represent the principal directions of variations in our input! 
 # in our case, they are the directions in w latent space that cause the most significant and
-# and also independent changes in the final style of the image.
+# also independent changes in the final style of the image.
 # the first singular vector is the direction of maximum change, the second one is the next most
 # significant direction orthonormal to the first one and so on and so forth!
 # 
