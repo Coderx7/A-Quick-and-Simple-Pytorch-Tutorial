@@ -13103,7 +13103,12 @@ training_loop_stylegan2(discriminator_stylegan2,
 # much better this way, I still prefer the 11/10m version better!
 #
 # stylegan2_celeba_20251130203936:
-# - fixed FID cache bug, use [512,256,128,64,32,16] bs=32,use_upfirdn2d = True:
+# - fixed FID cache bug, use [512,256,128,64,32,16] bs=32,use_upfirdn2d = True:at e18 we are
+#   at FID:27 and everything looks good!I guess ourlr might be a bit too much using 1e-3 next time
+#   (after a few more epochs(i.e. 21) during which the loss seemed stagnant and not improving, we
+#   did improve, and loss dropped from 0.9376 down to 0.90! fid went to 26.10 in e24 but still
+#   fluctuating to 34 in following epochs(i.e.24/25).I ended the training at epoch 31. I guess its
+#   good enough!
 
 #%%
 #%% load_checkpoints
@@ -13137,7 +13142,7 @@ def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
     generator_st2 = generator_st2.to(device)
 
     print(f'Loading checkpoint for {dataset_name} [{res}x{res}] @ Epoch {epoch} FID={FID_score}')
-    return generator_st2, res
+    return generator_st2, res, dataset_name
 
 device = 'cuda'
 num_samples=6
@@ -13149,12 +13154,13 @@ use_ema = True
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446_e90.ckpt'
 # checkpoint_path = './weights/gan/stylegan2_ffhq_20251128162446/checkpoint_step_20251128162446.ckpt'
 # ffhq with ema -small model (4m)
-checkpoint_path = './weights/gan/stylegan2_ffhq_20251130084938/checkpoint_step_20251130084938.ckpt'
-
-generator_stylegan2, dim = load_checkpoints(checkpoint_path, device='cuda', use_ema=use_ema)
+# checkpoint_path = './weights/gan/stylegan2_ffhq_20251130084938/checkpoint_step_20251130084938.ckpt'
+# celeba with ema - 11m model
+checkpoint_path = './weights/gan/stylegan2_celeba_20251130203936/checkpoint_step_20251130203936.ckpt'
+generator_stylegan2, dim, dataset_name = load_checkpoints(checkpoint_path, device='cuda', use_ema=use_ema)
 
 z = torch.randn((num_samples, generator_stylegan2.z_size), device=device)
-res=f"{dim}x{dim}"
+res=f"{"EMA" if use_ema else ""} {dim}x{dim}"
 with torch.no_grad():
     imgs,ws = generator_stylegan2(z, psi=0.7)
     display_images(imgs, 
@@ -13269,8 +13275,7 @@ def interpolate_w(generator:GeneratorStyleGAN2, z1, z2, psi=None, constant_noise
 
 def run_interpolation_test(generator, constant_noise, psi_rates=None,
                            alphas=None, use_slerp=True, num_samples=36, make_gifs=False,
-                           gif_dir='./results/gan/stylegan2/gifs',interval=100,
-                           random_gen=None):
+                           gif_dir='./results/gan/stylegan2/gifs',interval=100,):
     
     if psi_rates is None:
         psi_rates = [0, 0.3, 0.7, 1]
@@ -13287,13 +13292,13 @@ def run_interpolation_test(generator, constant_noise, psi_rates=None,
                                             interp_steps=num_samples)
             
         if make_gifs:
-            fname =f"interpolation_psi_{rate}_const_noise_{constant_noise}_using_{mode}"
+            fname =f"interpolation_{dataset_name}_psi_{rate}_const_noise_{constant_noise}_using_{mode}"
             # make sure directory exists, if not create it
             os.makedirs(gif_dir, exist_ok=True)
             fpath = os.path.join(gif_dir, fname)
             create_interpolation_animation(interpolated_images, fpath, interval=interval)
         else:
-            display_images(interpolated_images, title=f'psi={rate} | constant_noise:{constant_noise} using {mode}', cols=cols, unnormalize=True)
+            display_images(interpolated_images, title=f'{dataset_name}_psi={rate} | constant_noise:{constant_noise} using {mode}', cols=cols, unnormalize=True)
 
 # now lets try 
 num_samples = 36
@@ -13309,16 +13314,14 @@ z2 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=
 run_interpolation_test(generator_stylegan2,
                        #psi_rates=[0,0.5,1.2,3,5],
                        constant_noise=True,
-                       num_samples=num_samples,
-                       random_gen=fixed_randg)
+                       num_samples=num_samples,)
 
 #%% run_interpolation_test
 # now lets do this with noise injection i.e. constant_noise=False
 run_interpolation_test(generator_stylegan2, 
                        #psi_rates=[0,0.5,1.2,3,5],
                        constant_noise=False,
-                       num_samples=num_samples,
-                       random_gen=fixed_randg)
+                       num_samples=num_samples,)
 #%% making some gifs
 # now lets also make some gifs as well!
 alphas = torch.linspace(-2,2,60)#-1,1
@@ -13331,8 +13334,7 @@ for noise_status in [True]:
                            num_samples=36,
                            make_gifs=True,
                            gif_dir='./results/gan/stylegan2/gifs',
-                           interval=100,
-                           random_gen=fixed_randg)
+                           interval=100,)
 #%%
 @torch.no_grad()
 def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_crossover,
@@ -13433,13 +13435,13 @@ change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
 # so we can use them to generate images along those directions
 # creating images with certain attributes.
 # for best performance the ema version of the generator weights are 
-# used, but since our ema hasnt been working properly weuse normal weights
+# used
 weights = []
 for k,v in generator_stylegan2.state_dict().items():
     # print(k)
     # grab only fc_style weights in blocks that deal with style
     if "fc_style.weight" in k and "blocks" in k:
-        print(f'{k}')
+        # print(f'{k}')
         weights.append(v)
 
 Ws = torch.cat(weights)
@@ -13463,17 +13465,28 @@ eigen_vecs = torch.svd(Ws).V.to("cpu")
 # and now we can apply these new directions to our latent vectors ws and get the result
 # lets test this
 @torch.no_grad()
-def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction, psi=None, constant_noise=False,
-                  alphas=None, interp_steps=60, device='cuda'):
+def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction,
+                                 psi=None, constant_noise=False,
+                                 alphas=None, interp_steps=60, device='cuda',
+                                 make_gifs=False, interval=100,
+                                 gifs_dir='./results/gan/stylegan2/gifs/',
+                                 msg=""):
     generator = generator.to(device)
     generator.eval()
     
     direction = direction.to(device) 
     w = generator.mapping_network(z1)
-        
+    # we apply the truncation to base w, initially I did it inside the loop
+    # this was wrong clearly as truncation moves the w toward the average
+    # so if we applied a direction on our w and then do truncation it would
+    # remove the said direction! having it here is as if we are making the
+    # canvas ready (start from average w/face) and then apply the direcion
+    w = generator.apply_truncation(w, psi)
+            
     # interpolate
     if alphas is None:
-        alphas = torch.linspace(0, 1, interp_steps).to(device)
+        # initially used 0-1, but -3,3 gives much more pronounced effects
+        alphas = torch.linspace(-3, 3, interp_steps).to(device)
     else:
         alphas = alphas.to(device)
     
@@ -13483,12 +13496,23 @@ def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction, ps
         
     imgs = []
     for a in alphas:
-        w = w+a*direction
-        w = generator.apply_truncation(w, psi)
-        img = generator.forward_from_w(w, noise).cpu()
+        w_new = w+a*direction
+        img = generator.forward_from_w(w_new, noise).cpu()
         imgs.append(img)
     
     output_imgs = torch.cat(imgs, dim=0)
+    
+    if make_gifs:
+        fname =f"{msg}_interpolation_{dataset_name}_psi_{psi}_const_noise_{constant_noise}"
+        # make sure directory exists, if not create it
+        os.makedirs(gifs_dir, exist_ok=True)
+        fpath = os.path.join(gifs_dir, fname)
+        create_interpolation_animation(output_imgs, fpath, interval=interval)
+    else:
+        display_images(output_imgs, 
+                       title=f'{msg}_{dataset_name}_psi_{psi}| constant_noise:{constant_noise}', 
+                       cols=math.ceil(math.sqrt(interp_steps)), 
+                       unnormalize=True)
     return output_imgs
 
 seed=66
@@ -13497,18 +13521,20 @@ torch.cuda.manual_seed_all(seed)
 fixed_randg = torch.Generator(device=device).manual_seed(seed)
 z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
 
-imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
-                                                    z1, 
-                                                    eigen_vecs[-6],
-                                                    psi=0.75,
-                                                    constant_noise=True,
-                                                    alphas=None,
-                                                    interp_steps=20,
-                                                    device='cuda')
-display_images(imgs_with_directions, 
-               title=f'direction applied',
-               cols=5, 
-               unnormalize=True)
+for i in range(eigen_vecs.size(0)):
+    imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
+                                                        z1, 
+                                                        eigen_vecs[i],
+                                                        psi=0.7,
+                                                        constant_noise=True,
+                                                        alphas=None,
+                                                        interp_steps=30,
+                                                        device='cuda',
+                                                        make_gifs=True,
+                                                        msg=f"dir_{i}")
+    # display_images(imgs_with_directions, 
+    #            title=f'direction {i} applied',
+    #            cols=5, 
+    #            unnormalize=True)
 #%%
 # a detour to something fun CycleGAN
-# 
