@@ -9524,6 +9524,10 @@ def discriminator_loss_stylegan1(d_preds_real, x_real, d_preds_fake, gamma):
     # update:
     #  after adding fp16, I noticed r1_penalty needs to be done 
     #  in full precision mode (i.e. fp32) otherwise we get nans
+    # 
+    # update2: this is not enough! see updates down below. this needs to
+    # done in fp16, the whole computational graph that is,(i.e. discriminator(imgs_real)
+    # must also be in fp32.see the updates ahead)
     with torch.amp.autocast(device_type="cuda", enabled=False):
         penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
     
@@ -9870,6 +9874,11 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
                 #   run in fp16 and give us a boost! and it wont pose a numerical instability
                 #   either. r1_penalty on the other hand needs to be in fp32 so we only
                 #   run that portion in fp32. 
+                # 
+                # update: this is wrong because the r1 penalty is being calculated using 
+                # fp16 computational graph and casting the tensors to float32 wouldnt be
+                # enough. the whole thing needs to be calculated in fp32. I fixed this in
+                # stylegan2 version. see that
                 disc_loss = discriminator_loss_stylegan1(preds_real, imgs_real, preds_fake, gamma)
                 
                 # for debugging purposes
