@@ -12466,19 +12466,29 @@ print(f'gen_out.shape:\nimgs:{tuple(gen_out.shape)} ws:{tuple(ws.shape)}')
 # the losses stay the same, we just need to apply the r1_penalty at some interval
 # we can still do it all the time, but its inefficient and we can get a little perf
 # boost by doing it intermittently!
-def discriminator_loss_stylegan2(d_preds_real, x_real, d_preds_fake, gamma, i, r1_penalty_interval):
+
+# update:
+# I separate the main loss and r1_penalty part 
+# so we can be more accurate and faster see training loop log ahead
+def discriminator_main_loss_stylegan2(d_preds_real,d_preds_fake):
     loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
-    penalty = 0
+    return loss
+
+# must run in a fp32 graph
+def discriminator_r1_penalty_loss_stylegan2(discriminator, x_real, gamma=10):
+    x_real.requires_grad_(True)
+    d_preds_real = discriminator(x_real)
     
-    # unlike stylegan1, we dont need to apply penalty all the time!
-    with torch.amp.autocast(device_type="cuda", enabled=False):
-        # only apply penalty every r1_penalty_interval
-        if (i%r1_penalty_interval)==0:
-            penalty = r1_penalty(d_preds_real.float(), x_real.float(), gamma)
-    
-    # remember to scale the penalty so on average 
-    # the same amount of regularization is applied at the end
-    return loss + (penalty*r1_penalty_interval)
+    grads = torch.autograd.grad(outputs=d_preds_real,
+                                inputs=x_real,
+                                grad_outputs=torch.ones_like(d_preds_real),
+                                retain_graph=True,
+                                create_graph=True)[0]
+    grads_l2norm_squared = grads.pow(2).view(d_preds_real.size(0),-1).sum(1).mean()
+    penalty = gamma/2 * grads_l2norm_squared
+
+    x_real.requires_grad_(False)
+    return penalty
 
 def generator_loss_stylegan2(d_preds_fake):
     # G_loss = E[softplus(-D(G(z)))]
@@ -12755,32 +12765,60 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         for i, (imgs_real, _) in enumerate(train_loader):
             
             imgs_real = imgs_real.to(device)
-            imgs_real.requires_grad_(True)
+            # we do it inside r1_penalty
+            # imgs_real.requires_grad_(True)
             # track how many real images the network has seen for ema_generator
             ema_warmup_images_seen += imgs_real.size(0)
 
+            # update: 
+            # I initially did this and calculate the main loss+r1_penalty in one go
+            # this was problematic as the r1penalty was done on a fp16 graph even doing
+            # casting to float doesnt change the fact that the whole graph was already 
+            # in fp16, so when we are calculating the gradients of gradients (what r1penalty
+            # is basically doning) it involves squaring and summing gradients and we can
+            # easily face numerical issues (we havent so far, but the fp16 experiments
+            # have been visibly way inferiro to the fp32, they objects malformed etc 
+            # if you see debug log for stylegan1 e.g.) I guess this could have likely caused it
+            # anyway, the other issue is that this diminshes the speedup we should get in fp16
+            # we cant do much about peak vram usage (nvidia-smi shows peack ram by the way)
+            # as the r1_penaty and later plr loss need to be calculated in fp32 anyway so that
+            # causes the vram to peak, but aside from that we should be able to get a modest speed boost!
+            # so we first calculate the main loss, do backward() so it frees the graph,vram
+            # then go for the r1_penalty, calculate it do a backward pass, the gradients will be
+            # accumulated with the previous/existing onces and then do a optimizer step!
+            #
+            # with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+            #     preds_real = discriminator(imgs_real)
+            #     z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+            #     imgs_fake = generator(z_vector)[0].detach()
+            #     preds_fake = discriminator(imgs_fake)
+            # disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
+            #
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 preds_real = discriminator(imgs_real)
                 z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
                 imgs_fake = generator(z_vector)[0].detach()
-                preds_fake = discriminator(imgs_fake)
-            
-            disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
-            
-            # for debugging purposes
-            disc_real_mean = preds_real.mean().item()
-            disc_fake_mean = preds_fake.mean().item()
-            
-            preds_detached = preds_fake.detach()
-            disc_fake_std = preds_detached.std()
-            disc_real_std = preds_real.detach().std()
-
-            epoch_scores.append((disc_real_mean, disc_fake_mean))
-            
-            disc_optimizer.zero_grad()
-            scaler.scale(disc_loss).backward()
+                d_preds_fake = discriminator(imgs_fake)
+                
+                disc_loss_main = discriminator_main_loss_stylegan2(preds_real, d_preds_fake)
+                
+                disc_optimizer.zero_grad()
+                # this frees the graph we can now go for r1_penalty part
+                scaler.scale(disc_loss_main).backward()
+                
+            # unlike stylegan1, we dont need to apply penalty all the time!
+            with torch.amp.autocast(device_type="cuda", enabled=False):
+                # only apply penalty intermittently
+                if (i%r1_penalty_interval)==0:
+                    r1_penalty_term = discriminator_r1_penalty_loss_stylegan2(discriminator, imgs_real)
+                    # remember to scale the penalty so on average 
+                    # the same amount of regularization is applied at the end
+                    r1_penalty_term *= r1_penalty_interval
+                    # add the gradients to existing ones from main loss
+                    scaler.scale(r1_penalty_term).backward()
+            # and finally we do take an optimizer step
             scaler_out_d = scaler.step(disc_optimizer)
-
+            
             # now train genertor to create images that look real
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
@@ -12796,49 +12834,62 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 gen_optimizer.zero_grad()
                 scaler.scale(gen_real_loss).backward()
                 
-                # apply path length regularization every 4 iterations
-                if i%path_length_interval==0: 
-                    # since we already did .backward()once, the computational graph is freed
-                    # we can do (backward(keep_graph=true)) but it takes vram so instead
-                    # we do a second foward pass and grab the fake_imgs, ws we want and a
-                    # active computational graph which we can use to calculate plr! 
-                    # also like r1_penalty we need to calculate this in fp32
-                    with torch.amp.autocast(device_type="cuda", enabled=False):
-                        fake_imgs,w_latents = generator(z_vector)
-                        plr_loss, path_length_mean = path_length_regularization_loss(fake_imgs,
-                                                                                 w_latents,
-                                                                                 path_length_mean)
-                        # scale the plr_loss so on average the regularization stays the same
-                        plr_loss*=path_length_interval
-                    # note since we havent done optimizer.step(), all backward()s
-                    # will accumulate the gradients as normal so we are ok!
-                    scaler.scale(plr_loss).backward()
+            # apply path length regularization every 4 iterations
+            if i%path_length_interval==0: 
+                # since we already did .backward()once, the computational graph is freed
+                # we can do (backward(keep_graph=true)) but it takes vram so instead
+                # we do a second foward pass and grab the fake_imgs, ws we want and a
+                # active computational graph which we can use to calculate plr! 
+                # also like r1_penalty we need to calculate this in fp32
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    fake_imgs,w_latents = generator(z_vector)
+                    plr_loss, path_length_mean = path_length_regularization_loss(fake_imgs,
+                                                                                w_latents,
+                                                                                path_length_mean)
+                    # scale the plr_loss so on average the regularization stays the same
+                    plr_loss*=path_length_interval
+                # note since we havent done optimizer.step(), all backward()s
+                # will accumulate the gradients as normal so we are ok!
+                scaler.scale(plr_loss).backward()
                 
-                # note: the unscaling part must be done at the very end,when we are done
-                # doing backward passes, just before we do step(), otherwise it will messup
-                # the gradient accumulation (some will be scaled and some will be unscaled)
-                # therefore when we take a step, it will result in a huge update, and either
-                # we diverge asap or get nans. (we diverged! cuz I added plr later, after 
-                # norm calculation and this made a whole mess. only after moving the norm calculation
-                # after it everything became ok!)
-                # monitor the norm (one of the params is enough)
-                mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
-                scaler.unscale_(gen_optimizer)
-                nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+            # note: the unscaling part must be done at the very end,when we are done
+            # doing backward passes, just before we do step(), otherwise it will messup
+            # the gradient accumulation (some will be scaled and some will be unscaled)
+            # therefore when we take a step, it will result in a huge update, and either
+            # we diverge asap or get nans. (we diverged! cuz I added plr later, after 
+            # norm calculation and this made a whole mess. only after moving the norm calculation
+            # after it everything became ok!)
+            # monitor the norm (one of the params is enough)
+            mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+            scaler.unscale_(gen_optimizer)
+            nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+            
+            # take optimizer step
+            scaler_out_g = scaler.step(gen_optimizer)
                 
-                # take optimizer step
-                scaler_out_g = scaler.step(gen_optimizer)
-                
-                if mn_grad_norm>100:
-                    print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
-                
-                update_ema_generator(generator,
-                                     ema_generator,
-                                     imgs_real.size(0),
-                                     ema_warmup_images_seen,
-                                     ema_kimg=kimg)
-
+            if mn_grad_norm>100:
+                print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
+            
+            update_ema_generator(generator,
+                                 ema_generator,
+                                 imgs_real.size(0),
+                                 ema_warmup_images_seen,
+                                 ema_kimg=kimg)
+            
+            # update the scaler for the next round
             scaler.update()
+
+            # for debugging purposes
+            disc_loss = disc_loss_main+r1_penalty_term
+            
+            disc_real_mean = preds_real.mean().item()
+            disc_fake_mean = d_preds_fake.mean().item()
+            
+            preds_detached = d_preds_fake.detach()
+            disc_fake_std = preds_detached.std().cpu()
+            disc_real_std = preds_real.detach().std().cpu()
+            
+            epoch_scores.append((disc_real_mean, disc_fake_mean))
                 
             status_r = get_status(disc_real_mean, higher_is_better=True)
             status_f = get_status(disc_fake_mean, higher_is_better=False)
@@ -13165,8 +13216,14 @@ torch.cuda.empty_cache()
 # 
 # stylegan2_cifar10_20251201203050:
 # with fp32 now.trains normally in epoch 15 ema shows very good result. fid is 48 at e16
+# 
 # stylegan2_cifar10_20251202064345:
-# training with lower lr=0.001 
+# training with lower lr=0.001 ok but it seems 0.003 initially speeds things up we can dial down
+# the lr later imho that would be better.
+# 
+# fp16 training fixed: 
+# vram wise fp16 doesnt benifit us at all, as crucial parts are still being done in fp32! so fp32
+# is much better
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
