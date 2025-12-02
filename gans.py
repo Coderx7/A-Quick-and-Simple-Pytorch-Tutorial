@@ -1052,7 +1052,11 @@ print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # playing with attributes by changing std/mean 
 # tldr this is hard this way see the next approach below
 np.random.seed(66)
-random_gen = torch.manual_seed(66)
+# update from future:
+# this uses the default random generator and is wrong!
+# see my update about random generator in stylegan2 experiment section at the end
+# todo: remove this and use a separate private generator
+torch.manual_seed(66)
 
 @torch.no_grad()
 def interpolate_latents(generator, z1, z2, steps=8, eps=1e-8, **kwargs):
@@ -12791,10 +12795,6 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 # update generator with a delay, sylegan1 uses 1:1 update ratio
                 gen_optimizer.zero_grad()
                 scaler.scale(gen_real_loss).backward()
-                # monitor the norm (one of the params is enough)
-                mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
-                scaler.unscale_(gen_optimizer)
-                nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                 
                 # apply path length regularization every 4 iterations
                 if i%path_length_interval==0: 
@@ -12813,6 +12813,18 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                     # note since we havent done optimizer.step(), all backward()s
                     # will accumulate the gradients as normal so we are ok!
                     scaler.scale(plr_loss).backward()
+                
+                # note: the unscaling part must be done at the very end,when we are done
+                # doing backward passes, just before we do step(), otherwise it will messup
+                # the gradient accumulation (some will be scaled and some will be unscaled)
+                # therefore when we take a step, it will result in a huge update, and either
+                # we diverge asap or get nans. (we diverged! cuz I added plr later, after 
+                # norm calculation and this made a whole mess. only after moving the norm calculation
+                # after it everything became ok!)
+                # monitor the norm (one of the params is enough)
+                mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+                scaler.unscale_(gen_optimizer)
+                nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
                 
                 # take optimizer step
                 scaler_out_g = scaler.step(gen_optimizer)
@@ -12984,17 +12996,17 @@ print(f'Training StyleGAN2')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
 gamma=10
-dataset_name = 'celeba'
+dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-use_fp16=False
+use_fp16=True
 
 # original paper uses 512
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZES = 128 if use_fp16 else 32
+BATCH_SIZES = 32 if use_fp16 else 32
 
 EPOCHS = 100
 
@@ -13010,9 +13022,13 @@ psi = 0.7
 # it takes 4/5mins per epoch.
 # channels_d = [256,128,64,32,16,8]
 # channels_g = [256,128,64,32,16,8]
+#celeba-ffhq
+# channels_d = [512,256,128,64,32,16]#,8]
+# channels_g = [512,256,128,64,32,16]#,8]
 
-channels_d = [512,256,128,64,32,16]#,8]
-channels_g = [512,256,128,64,32,16]#,8]
+#cifar10 32x32 only
+channels_d = [512,256,128,64]#32,#16]#,8]
+channels_g = channels_d
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
@@ -13029,8 +13045,9 @@ generator_stylegan2 = GeneratorStyleGAN2(z_size, w_size, mn_nlayer,
 generator_stylegan2 = generator_stylegan2.to(device)
 
 betas = [0, 0.99]
-lr_d = 0.003
-lr_g = 0.003
+# 0.003
+lr_d = 0.001 if not use_fp16 else 0.001
+lr_g = 0.001 if not use_fp16 else 0.001
 
 eps = 1e-5 if use_fp16 else 1e-8
 
@@ -13060,10 +13077,40 @@ training_loop_stylegan2(discriminator_stylegan2,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                      )
+#%% clear vram
+for m in [discriminator_stylegan2,
+          generator_stylegan2,
+          disc_optimizer,
+          gen_optimizer]:
+    m=None
 
-#todo use Closed-Form Factorization of Latent Semantics in GANs (https://arxiv.org/abs/2007.06600) 
-# stated in rosalin repo to search for directions
-# 
+def get_human_readable_size(size_byte):
+    unites = ["B","KiB","MiB","GiB"]
+    for unit in unites:
+        if size_byte <1024:
+            return f"{size_byte:,.2f} {unit}"
+        else:
+            size_byte/=1024
+    return f"{size_byte:,.2f} {unit[0]}"
+
+total_vram_usage_bytes = 0
+for obj in gc.get_objects():
+    try:
+        if torch.is_tensor(obj) and obj.device == torch.device("cuda:0"):
+            # get size in bytes
+            size_bytes = obj.nelement()*obj.element_size()
+            total_vram_usage_bytes += size_bytes
+            sz_str = get_human_readable_size(size_bytes)
+            print(f'{obj.__class__.__name__}({tuple(obj.size())}) takes {sz_str}')
+            obj=None
+    except Exception as ex:
+        print(f'{ex}')
+        
+print(f'in total {get_human_readable_size(total_vram_usage_bytes)} worth of tensor took up vram')
+
+gc.collect()
+torch.cuda.empty_cache()
+#%%
 # debug log:
 # stylegan2_ffhq_20251127152002:
 # - everything is going smoothly alhamdolelah! we are at epoch 53, with 2m/4m models
@@ -13110,6 +13157,16 @@ training_loop_stylegan2(discriminator_stylegan2,
 #   fluctuating to 34 in following epochs(i.e.24/25).I ended the training at epoch 31. I guess its
 #   good enough!
 
+# stylegan2_cifar10_20251201190515:
+# testing fp16:
+# test cifar10 with fp16 up to 32x32  model 11/10m- it seems fp16 is broken! in 13 epochs we got noise!
+# pure noise! generator loss shot up to 3 while discriminator 0.07! complete collapse right from the
+# begining!! the weird thing is the fp32 takes less vram than fp16!
+# 
+# stylegan2_cifar10_20251201203050:
+# with fp32 now.trains normally in epoch 15 ema shows very good result. fid is 48 at e16
+# stylegan2_cifar10_20251202064345:
+# training with lower lr=0.001 
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
@@ -13536,5 +13593,79 @@ for i in range(eigen_vecs.size(0)):
     #            title=f'direction {i} applied',
     #            cols=5, 
     #            unnormalize=True)
+    
+#%%
+#%%
+import cv2
+# define our simple gui 
+def onchange(x):
+    pass
+
+@torch.no_grad()
+def choose_meanstd(generator, num_samples,random_gen, ncols=8,**kwargs):
+    generator.eval()
+    
+    cv2.namedWindow('stylegan2 latent experiment ')
+    
+    # create trackbars for std and mean 
+    # opencv trackbar only supports ints, 
+    # so we specify our desired range as int
+    # and then in code divide them to get fractions
+    # alpha: -3 - 3
+    # mean: 0.0 - 1
+    # to be able to sample new values we use this
+    cv2.createTrackbar('low', 'low_finder', 1, 20, onchange)
+    cv2.createTrackbar('high', 'high_finder', 1, 20, onchange)
+    cv2.createTrackbar('alpha', 'alpha_selector', 500, 1000, onchange)
+    z = torch.randn(size=(num_samples, generator.z_size), generator=random_gen)
+    old_std, old_mean, old_minus,old_resample=None,None,None,None
+    imgs=None
+        
+    while True:
+        std = cv2.getTrackbarPos('std','std_mu_finder',)
+        mean = cv2.getTrackbarPos('mean','std_mu_finder')
+        resample = cv2.getTrackbarPos('resample','std_mu_finder')
+        
+        frac_std = std/1000
+        frac_mean = mean/1000
+        
+        if old_resample != resample:
+            z = torch.randn(size=(num_samples, generator.z_size),generator=random_gen)
+            print(f'New z sampled!')
+            
+        # only generate when values change so 
+        # we dont waste too much cpu and hug the system!
+        if old_std!=std or old_mean!=mean or old_resample!=resample:
+            new_z = frac_std * z + frac_mean
+            # update from future: added kwargs so
+            # this can be used for future gans as
+            # well which accept more arguments
+            imgs = generator(new_z, **kwargqs)
+                       
+            img = utils.make_grid(imgs, nrow=ncols, normalize=True, value_range=(-1, 1))
+            img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            img = cv2.resize(img, dsize=None, fx=2.0, fy=2.0)
+            
+            old_std, old_mean, old_resample = std, mean, resample
+            print(f'Generated using std:{frac_std:5f} mu:{frac_mean:.5f}')
+            
+        if img is not None:
+            cv2.imshow('std_mu_finder', img)
+            
+        # break loop when 'q' is pressed
+        # also note we dont need to check this every 1 ms!
+        # waiting every 30ms/90ms suffices, I chose 60ms
+        if cv2.waitKey(60) & 0xFF == ord('q'):
+            break
+    cv2.destroyAllWindows()
+    return z, frac_std, frac_mean
+
+seed=1
+np.random.seed(seed)
+random_gen = torch.manual_seed(seed)
+steps = 8
+num_samples=5
+generatorcnn.to('cpu')
 #%%
 # a detour to something fun CycleGAN
