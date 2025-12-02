@@ -12871,6 +12871,14 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             scaler.unscale_(gen_optimizer)
             nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
             
+            # has_nans = any(torch.isnan(p.grad).any() for p in generator.parameters() if p.grad is not None)
+            # if has_nans:
+            #     print(f'Warning: Nans detected in gradients, skipping update!')
+            #     gen_optimizer.zero_grad()
+            # else:
+            #     # take optimizer step
+            #     scaler_out_g = scaler.step(gen_optimizer)    
+            
             # take optimizer step
             scaler_out_g = scaler.step(gen_optimizer)
                 
@@ -13057,14 +13065,15 @@ gamma=10
 dataset_name = 'cifar10'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-use_fp16=True
+# fp16 doesnt yield any speed or vram improvements
+# as important parts are still done in fp32
+use_fp16=False
 
 # original paper uses 512
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZES = 32 if use_fp16 else 32
+BATCH_SIZE = 32 if use_fp16 else 32
 
 EPOCHS = 100
 
@@ -13119,7 +13128,7 @@ training_loop_stylegan2(discriminator_stylegan2,
                      disc_optimizer=disc_optimizer,
                      gen_optimizer=gen_optimizer, 
                      epochs=EPOCHS,
-                     batch_size=BATCH_SIZES,
+                     batch_size=BATCH_SIZE,
                      path_length_interval=path_length_interval,
                      r1_penalty_interval=r1_penalty_interval,
                      dataset_name=dataset_name,
@@ -13231,13 +13240,19 @@ torch.cuda.empty_cache()
 # fp16 training fixed: 
 # - vram wise fp16 doesnt benifit us at all, as crucial parts are still being done in fp32! so fp32
 #   is much better
-# 20251202094646:
+#
+# stylegan2_cifar10_20251202094646:
 # - rerganized the way discriminator loss is calculated and applied, especially the r1 so we can
 #   get a boost in speed and also more acucrate results in fp32.currently 6891MB vram is used
 #   the speed didnt change, the vram usage didnt change much expectedly as we do the heavy parts 
 #   in fp32 anyway. but it seems after the changes, and specifically calculating the whole computational
 #   graph in fp32 for r1 penalty we are getting more accurate gradients as it seems to me images are
-#   better formed compared to before. let it train more we are still at epoch 9!
+#   better formed compared to before. let it train more we are still at epoch 9!epoch 60 and results are much
+#   better. i guess going fp16 doesnt yield any good benifits this time!
+#
+# stylegan2_cifar10_20251202151815
+# - for final verification, one last run for cifar10 using fp32 lr=0.001:
+
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
