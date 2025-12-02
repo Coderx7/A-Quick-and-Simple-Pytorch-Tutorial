@@ -12873,12 +12873,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             
             # has_nans = any(torch.isnan(p.grad).any() for p in generator.parameters() if p.grad is not None)
             # if has_nans:
-            #     print(f'Warning: Nans detected in gradients, skipping update!')
-            #     gen_optimizer.zero_grad()
-            # else:
-            #     # take optimizer step
-            #     scaler_out_g = scaler.step(gen_optimizer)    
-            
+            #     print(f'Warning: Nans detected in gradients!')
+             
             # take optimizer step
             scaler_out_g = scaler.step(gen_optimizer)
                 
@@ -13113,8 +13109,8 @@ generator_stylegan2 = generator_stylegan2.to(device)
 
 betas = [0, 0.99]
 # 0.003
-lr_d = 0.001 if not use_fp16 else 0.001
-lr_g = 0.001 if not use_fp16 else 0.001
+lr_d = 0.003 if not use_fp16 else 0.001
+lr_g = 0.003 if not use_fp16 else 0.001
 
 eps = 1e-5 if use_fp16 else 1e-8
 
@@ -13243,15 +13239,18 @@ torch.cuda.empty_cache()
 #
 # stylegan2_cifar10_20251202094646:
 # - rerganized the way discriminator loss is calculated and applied, especially the r1 so we can
-#   get a boost in speed and also more acucrate results in fp32.currently 6891MB vram is used
+#   get a boost in speed and also more acucrate results in fp32.currently 8093MB vram is used
 #   the speed didnt change, the vram usage didnt change much expectedly as we do the heavy parts 
 #   in fp32 anyway. but it seems after the changes, and specifically calculating the whole computational
 #   graph in fp32 for r1 penalty we are getting more accurate gradients as it seems to me images are
-#   better formed compared to before. let it train more we are still at epoch 9!epoch 60 and results are much
-#   better. i guess going fp16 doesnt yield any good benifits this time!
+#   better formed compared to before.let it train more we are still at epoch 9! at e21 fid is 59 .
+#   at e28, fid is 51. at epoch 60 and results are much better and fid 47. I guess going fp16 doesnt yield any good benifits this time!
 #
 # stylegan2_cifar10_20251202151815
-# - for final verification, one last run for cifar10 using fp32 lr=0.001:
+# - for final verification, one last run for cifar10 using fp32 lr=0.001: takes about 8335MB vram
+#   (nvidia-smi shows peak vram usage), goes smoothly, achieves lower fid quite sooner (fid50#e21,
+#   fid 41@e28) but it fluctuates around, e.g. at epoch 24 fid becomes 48.33 at 30 its 45! so its
+#   close to fp16 which means fp16 is accurate enough but fp32 is defnitely converging faster.
 
 #%%
 #%% load_checkpoints
