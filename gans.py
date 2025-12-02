@@ -12841,6 +12841,13 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                 # we do a second foward pass and grab the fake_imgs, ws we want and a
                 # active computational graph which we can use to calculate plr! 
                 # also like r1_penalty we need to calculate this in fp32
+                # we could move the backward after this block and use w_latentx from
+                # the previous generator call, and then add the plr term to gen_real_loss
+                # and do the backward on the whole loss, but i believe doing backward
+                # for gen_real_loss once and then doing an extra generator() for plr loss
+                # is better as we free the computational graph that contains both generator
+                # and discriminator, and then do a forward only on generator which consumes
+                # less vram although we get slower because of second generator call here!
                 with torch.amp.autocast(device_type="cuda", enabled=False):
                     fake_imgs,w_latents = generator(z_vector)
                     plr_loss, path_length_mean = path_length_regularization_loss(fake_imgs,
@@ -13210,20 +13217,27 @@ torch.cuda.empty_cache()
 
 # stylegan2_cifar10_20251201190515:
 # testing fp16:
-# test cifar10 with fp16 up to 32x32  model 11/10m- it seems fp16 is broken! in 13 epochs we got noise!
-# pure noise! generator loss shot up to 3 while discriminator 0.07! complete collapse right from the
-# begining!! the weird thing is the fp32 takes less vram than fp16!
+# - test cifar10 with fp16 up to 32x32  model 11/10m- it seems fp16 is broken! in 13 epochs we got noise!
+#   pure noise! generator loss shot up to 3 while discriminator 0.07! complete collapse right from the
+#   begining!! the weird thing is the fp32 takes less vram than fp16!
 # 
 # stylegan2_cifar10_20251201203050:
-# with fp32 now.trains normally in epoch 15 ema shows very good result. fid is 48 at e16
+# - with fp32 now.trains normally in epoch 15 ema shows very good result. fid is 48 at e16
 # 
 # stylegan2_cifar10_20251202064345:
-# training with lower lr=0.001 ok but it seems 0.003 initially speeds things up we can dial down
-# the lr later imho that would be better.
+# - training with lower lr=0.001 ok but it seems 0.003 initially speeds things up we can dial down
+#   the lr later imho that would be better.
 # 
 # fp16 training fixed: 
-# vram wise fp16 doesnt benifit us at all, as crucial parts are still being done in fp32! so fp32
-# is much better
+# - vram wise fp16 doesnt benifit us at all, as crucial parts are still being done in fp32! so fp32
+#   is much better
+# 20251202094646:
+# - rerganized the way discriminator loss is calculated and applied, especially the r1 so we can
+#   get a boost in speed and also more acucrate results in fp32.currently 6891MB vram is used
+#   the speed didnt change, the vram usage didnt change much expectedly as we do the heavy parts 
+#   in fp32 anyway. but it seems after the changes, and specifically calculating the whole computational
+#   graph in fp32 for r1 penalty we are getting more accurate gradients as it seems to me images are
+#   better formed compared to before. let it train more we are still at epoch 9!
 #%%
 #%% load_checkpoints
 def load_checkpoints(checkpoint_path, device="cuda", use_ema=False):
