@@ -13597,13 +13597,23 @@ weights = []
 for k,v in generator_stylegan2.state_dict().items():
     # print(k)
     # grab only fc_style weights in blocks that deal with style
-    if "fc_style.weight" in k and "blocks" in k:
+    # if we choose blocks only, thatd mean we only grab the 
+    # structural features(blocks). the toImgs layers also play a role
+    # they control color distributions and how features translate to pixels
+    # I initially only included blocks but I changed it to grab all fc_styles
+    # both in blocks and toImgs alike
+    if "fc_style.weight" in k :#and "blocks" in k:
         # print(f'{k}')
         weights.append(v)
 
+# we could have also done this:
+# for n,m in generator_stylegan2.named_modules():
+    # if hasattr(m,"fc_style"):
+        # weights.append(m.fc_style.weight)
+
 Ws = torch.cat(weights)
 # now using svd we get eigen vectors(unique directions)
-eigen_vecs = torch.svd(Ws).V.to("cpu")
+eigen_vecs = torch.svd(Ws).V.cpu()
 #sidenote:reminder
 # svd or singular value decompision basically breaks down our input matrix into its fundamental/principal building blocks!
 # we want the V matrix, because its columns (or rows of Vᵀ) are the right singular vectors
@@ -13710,19 +13720,43 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     # we are going to have a slider that allows us to choose a direction
     # and a slider for alphas
     
-    direction_slider = widgets.IntSlider(value=0, min=0, max=eigen_vecs.size(0)-1, step=1,
-                                       description="directions")
-
-    alpha_slider = widgets.FloatSlider(value=0, min=-10, max=10, step=0.01,
+    direction_slider = widgets.IntSlider(value=0,
+                                         min=0,
+                                         max=eigen_vecs.size(0)-1,
+                                         step=1,
+                                         description="directions")
+    alpha_slider = widgets.FloatSlider(value=1,
+                                       min=-20,#20 may seem too much but for what we do its ok, some features require larger alpha to actualy show somethng!
+                                       max=20,
+                                       step=0.01,
                                        description="alphas",
                                        continuous_update=True)
-    
-    psi_slider = widgets.FloatSlider(value=0.7, min=0, max=1, step=0.05,
-                                     description="psi",continuous_update=True)
+    psi_slider = widgets.FloatSlider(value=0.7,
+                                     min=0,
+                                     max=1,
+                                     step=0.05,
+                                     description="psi",
+                                     continuous_update=True)
 
+    # simply using eigen vectors for directions isnt going to help us, I initially tried it
+    # and it just doesnt work that way. turns out these directions themselves
+    # are not that disentangled. so to actually be able to do have fine control over variations
+    # we apply these directions at certain levels. i.e. layers. if you remember depending on
+    # which layer(coarse/fine grained) we applied changes, certain features changed. 
+    # so now we are going to do just that, only apply the directions at certain levels in our w
+    # to see how it affects the image! this should do it
+    num_layers = len(generator.blocks)
+    layer_slider = widgets.IntRangeSlider(value=[0,num_layers],# by default apply the whole layers
+                                          min=0,
+                                          max=num_layers,
+                                          step=1,
+                                          description="layers",
+                                          continuous_update=True)
+        
     resample_z_btn = widgets.Button(description="resample z")
     
-    constant_noise_chkbx = widgets.Checkbox(value=False, description="constant_noise",
+    constant_noise_chkbx = widgets.Checkbox(value=False,
+                                            description="constant_noise",
                                             disabled=False)
     
     img_out = widgets.Output()
@@ -13731,18 +13765,28 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     w = generator.mapping_network(z1)
         
     def update(arg=None):
+        nonlocal w, z1
+        
         direction_idx = direction_slider.value
         alpha = alpha_slider.value
         psi = psi_slider.value
-
+        start_layer,end_layer = layer_slider.value
+        
         w_trunc = generator.apply_truncation(w, psi)
-                
+        # since we want to apply the direction on different layers
+        # we expand this here
+        w_trunc = w_trunc.unsqueeze(1).repeat(1, num_layers,1)
+
         noise=None
         if constant_noise_chkbx.value:
             noise = torch.zeros((z1.size(0),1,1,1),device=device)
                     
         direction = eigen_vecs[direction_idx].to(device)
-        w_new = w_trunc + alpha * direction
+        # since we are going to apply the direction at specific layers
+        # and keep the rest intact, we copy the base w which is w_trunc here
+        w_new = w_trunc.clone()
+        # and now we apply the directions! 
+        w_new[:,start_layer:end_layer,:] = w_trunc[:,start_layer:end_layer,:] + (alpha * direction)
         img = generator.forward_from_w(w_new, noise).cpu()
 
         with img_out:
@@ -13751,23 +13795,28 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
             display_images(img, cols=1, unnormalize=True)
 
     def btn_click(arg):
-        nonlocal w
+        nonlocal z1,w
         z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
         w = generator.mapping_network(z1)
         update()
 
+    # event binding
     direction_slider.observe(update, names='value')
     alpha_slider.observe(update, names='value')
+    layer_slider.observe(update, names='value')
     psi_slider.observe(update, names='value')
     constant_noise_chkbx.observe(update, names='value')
     resample_z_btn.on_click(btn_click)
     
     row = widgets.HBox([resample_z_btn,constant_noise_chkbx])
     # add ui elements and display them vertically
-    display(widgets.VBox([direction_slider, alpha_slider, img_out, psi_slider, row ]))
+    display(widgets.VBox([direction_slider, alpha_slider, img_out, psi_slider, layer_slider, row ]))
     # show initial image
     update()
 
+# 0-1 or 0-2 coars feature changes,rotation
+# 2-5 or 3-6 middle feature changes(smile,)
+# 5-12 fine details/colors changes
 run_test(generator_stylegan2,eigen_vecs, rand_rng=fixed_randg)
 
 #%%
