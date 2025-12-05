@@ -13638,7 +13638,7 @@ def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction,
     # so if we applied a direction on our w and then do truncation it would
     # remove the said direction! having it here is as if we are making the
     # canvas ready (start from average w/face) and then apply the direcion
-    w = generator.apply_truncation(w, psi)
+    w_trunct = generator.apply_truncation(w, psi)
             
     # interpolate
     if alphas is None:
@@ -13650,10 +13650,10 @@ def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction,
     noise = None
     if constant_noise:
         noise = torch.zeros((z1.size(0),1,1,1),device=device)    
-        
+
     imgs = []
     for a in alphas:
-        w_new = w+a*direction
+        w_new = w_trunct+a*direction
         img = generator.forward_from_w(w_new, noise).cpu()
         imgs.append(img)
     
@@ -13714,7 +13714,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
                                        description="directions",
                                        continuous_update=True)
 
-    alpha_slider = widgets.FloatSlider(value=0, min=-5, max=5, step=0.05,
+    alpha_slider = widgets.FloatSlider(value=0, min=-10, max=10, step=0.01,
                                        description="alphas:",
                                        continuous_update=True)
     
@@ -13733,7 +13733,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     psi = psi_slider.value
     
     w = generator.mapping_network(z1)
-    w = generator.apply_truncation(w, psi)
+    w_trunct = generator.apply_truncation(w, psi)
     
     def update(arg=None):
         nonlocal z1,w,noise
