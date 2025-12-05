@@ -13710,16 +13710,15 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     # we are going to have a slider that allows us to choose a direction
     # and a slider for alphas
     
-    direction_slider = widgets.FloatSlider(value=0, min=0, max=eigen_vecs.size(0)-1, step=1,
-                                       description="directions",
-                                       continuous_update=True)
+    direction_slider = widgets.IntSlider(value=0, min=0, max=eigen_vecs.size(0)-1, step=1,
+                                       description="directions")
 
     alpha_slider = widgets.FloatSlider(value=0, min=-10, max=10, step=0.01,
-                                       description="alphas:",
+                                       description="alphas",
                                        continuous_update=True)
     
     psi_slider = widgets.FloatSlider(value=0.7, min=0, max=1, step=0.05,
-                                     description="psi:",continuous_update=True)
+                                     description="psi",continuous_update=True)
 
     resample_z_btn = widgets.Button(description="resample z")
     
@@ -13728,37 +13727,31 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     
     img_out = widgets.Output()
     
-    noise = None
     z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
-    psi = psi_slider.value
-    
     w = generator.mapping_network(z1)
-    w_trunct = generator.apply_truncation(w, psi)
-    
-    def update(arg=None):
-        nonlocal z1,w,noise
         
-        direction_idx = int(direction_slider.value)
+    def update(arg=None):
+        direction_idx = direction_slider.value
         alpha = alpha_slider.value
         psi = psi_slider.value
 
         w_trunc = generator.apply_truncation(w, psi)
                 
+        noise=None
         if constant_noise_chkbx.value:
             noise = torch.zeros((z1.size(0),1,1,1),device=device)
-        else:
-            noise=None
-            
+                    
         direction = eigen_vecs[direction_idx].to(device)
-        w_new = w_trunc+alpha*direction
+        w_new = w_trunc + alpha * direction
         img = generator.forward_from_w(w_new, noise).cpu()
 
         with img_out:
+            # to prevent flickering wait=True
             clear_output(wait=True)
             display_images(img, cols=1, unnormalize=True)
 
     def btn_click(arg):
-        nonlocal z1,w
+        nonlocal w
         z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
         w = generator.mapping_network(z1)
         update()
@@ -13770,9 +13763,9 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     resample_z_btn.on_click(btn_click)
     
     row = widgets.HBox([resample_z_btn,constant_noise_chkbx])
+    # add ui elements and display them vertically
     display(widgets.VBox([direction_slider, alpha_slider, img_out, psi_slider, row ]))
-
-    # render initial image
+    # show initial image
     update()
 
 run_test(generator_stylegan2,eigen_vecs, rand_rng=fixed_randg)
