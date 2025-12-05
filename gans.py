@@ -13486,6 +13486,12 @@ for noise_status in [True]:
                            make_gifs=True,
                            gif_dir='./results/gan/stylegan2/gifs',
                            interval=100,)
+# now if you pay attention carefully, you can see we have a very smooth transition
+# the image stays nearly the same for several iterations(images) and gradually shifts
+# /morphs into another image. this shows good level of disentanglement, otherwise we
+# may very well jump from one image to a completely different one, that is see several 
+# features change all at the same time which denotes they are entangled!(cant change one
+# feature without a few others change as well!)
 #%%
 @torch.no_grad()
 def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_crossover,
@@ -13689,77 +13695,87 @@ for i in range(eigen_vecs.size(0)):
     #            unnormalize=True)
     
 #%%
-#%%
-import cv2
-# define our simple gui 
-def onchange(x):
-    pass
+# to be able to do this more easily we can use a GUI!
+# since we are in jupyter notebook lets use widgets
+
+import ipywidgets as widgets
+from IPython.display import display, clear_output
 
 @torch.no_grad()
-def choose_meanstd(generator, num_samples,random_gen, ncols=8,**kwargs):
-    generator.eval()
+def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',  
+             rand_rng=None):
     
-    cv2.namedWindow('stylegan2 latent experiment ')
+    generator = generator.to(device).eval()
     
-    # create trackbars for std and mean 
-    # opencv trackbar only supports ints, 
-    # so we specify our desired range as int
-    # and then in code divide them to get fractions
-    # alpha: -3 - 3
-    # mean: 0.0 - 1
-    # to be able to sample new values we use this
-    cv2.createTrackbar('low', 'low_finder', 1, 20, onchange)
-    cv2.createTrackbar('high', 'high_finder', 1, 20, onchange)
-    cv2.createTrackbar('alpha', 'alpha_selector', 500, 1000, onchange)
-    z = torch.randn(size=(num_samples, generator.z_size), generator=random_gen)
-    old_std, old_mean, old_minus,old_resample=None,None,None,None
-    imgs=None
-        
-    while True:
-        std = cv2.getTrackbarPos('std','std_mu_finder',)
-        mean = cv2.getTrackbarPos('mean','std_mu_finder')
-        resample = cv2.getTrackbarPos('resample','std_mu_finder')
-        
-        frac_std = std/1000
-        frac_mean = mean/1000
-        
-        if old_resample != resample:
-            z = torch.randn(size=(num_samples, generator.z_size),generator=random_gen)
-            print(f'New z sampled!')
-            
-        # only generate when values change so 
-        # we dont waste too much cpu and hug the system!
-        if old_std!=std or old_mean!=mean or old_resample!=resample:
-            new_z = frac_std * z + frac_mean
-            # update from future: added kwargs so
-            # this can be used for future gans as
-            # well which accept more arguments
-            imgs = generator(new_z, **kwargqs)
-                       
-            img = utils.make_grid(imgs, nrow=ncols, normalize=True, value_range=(-1, 1))
-            img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            img = cv2.resize(img, dsize=None, fx=2.0, fy=2.0)
-            
-            old_std, old_mean, old_resample = std, mean, resample
-            print(f'Generated using std:{frac_std:5f} mu:{frac_mean:.5f}')
-            
-        if img is not None:
-            cv2.imshow('std_mu_finder', img)
-            
-        # break loop when 'q' is pressed
-        # also note we dont need to check this every 1 ms!
-        # waiting every 30ms/90ms suffices, I chose 60ms
-        if cv2.waitKey(60) & 0xFF == ord('q'):
-            break
-    cv2.destroyAllWindows()
-    return z, frac_std, frac_mean
+    # we are going to have a slider that allows us to choose a direction
+    # and a slider for alphas
+    
+    direction_slider = widgets.FloatSlider(value=0, min=0, max=eigen_vecs.size(0)-1, step=1,
+                                       description="directions",
+                                       continuous_update=True)
 
-seed=1
-np.random.seed(seed)
-random_gen = torch.manual_seed(seed)
-steps = 8
-num_samples=5
-generatorcnn.to('cpu')
+    alpha_slider = widgets.FloatSlider(value=0, min=-5, max=5, step=0.05,
+                                       description="alphas:",
+                                       continuous_update=True)
+    
+    psi_slider = widgets.FloatSlider(value=0.7, min=0, max=1, step=0.05,
+                                     description="psi:",continuous_update=True)
+
+    resample_z_btn = widgets.Button(description="resample z")
+    
+    constant_noise_chkbx = widgets.Checkbox(value=False, description="constant_noise",
+                                            disabled=False)
+    
+    img_out = widgets.Output()
+    
+    noise = None
+    z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
+    psi = psi_slider.value
+    
+    w = generator.mapping_network(z1)
+    w = generator.apply_truncation(w, psi)
+    
+    def update(arg=None):
+        nonlocal z1,w,noise
+        
+        direction_idx = int(direction_slider.value)
+        alpha = alpha_slider.value
+        psi = psi_slider.value
+
+        w_trunc = generator.apply_truncation(w, psi)
+                
+        if constant_noise_chkbx.value:
+            noise = torch.zeros((z1.size(0),1,1,1),device=device)
+        else:
+            noise=None
+            
+        direction = eigen_vecs[direction_idx].to(device)
+        w_new = w_trunc+alpha*direction
+        img = generator.forward_from_w(w_new, noise).cpu()
+
+        with img_out:
+            clear_output(wait=True)
+            display_images(img, cols=1, unnormalize=True)
+
+    def btn_click(arg):
+        nonlocal z1,w
+        z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
+        w = generator.mapping_network(z1)
+        update()
+
+    direction_slider.observe(update, names='value')
+    alpha_slider.observe(update, names='value')
+    psi_slider.observe(update, names='value')
+    constant_noise_chkbx.observe(update, names='value')
+    resample_z_btn.on_click(btn_click)
+    
+    row = widgets.HBox([resample_z_btn,constant_noise_chkbx])
+    display(widgets.VBox([direction_slider, alpha_slider, img_out, psi_slider, row ]))
+
+    # render initial image
+    update()
+
+run_test(generator_stylegan2,eigen_vecs, rand_rng=fixed_randg)
+
 #%%
 # a detour to something fun CycleGAN
