@@ -1240,12 +1240,17 @@ imgs = latent_arithmetic_unconditional(generatorcnn, z_attr1, z_attr2, z_base[1]
 show_images(imgs, f'latent arithmatic using manually selected attributes',figsize=(12,6))
 # in order to get more accurate results we need more samples from each attribute
 # but I guess this suffices for now. we'll see a much better example below (see after conditional version)
-#%%
+#%% sefa 
 @torch.no_grad()
-def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
-    # first linear layer that maps z
-    W = generator.net[0].weight.data
-    gram_matrix = W.t() @ W
+def sefa_linear_eigenvectors(W:torch.Tensor, normalize=False, topk=10):
+    # we can normalize the weights 
+    if normalize:
+        norm = torch.linalg.norm(W,dim=1,keepdim=True)
+        Weights = W/(norm+1e-8)
+    else:
+        Weights = W.clone()
+        
+    gram_matrix = Weights.t() @ Weights
     eigen_vals, eigen_vecs = torch.linalg.eigh(gram_matrix)
     # by default the eigenvalues/vectors are orderer in an ascending manner
     # from smallest to the largest, however we flip the order to descending
@@ -1260,7 +1265,13 @@ def sefa_linear_eigenvectors(generator:GeneratorCNN, topk=10):
     # print(f'{eigen_vals[-3:]}=')
     # print(f'{eigen_vals.shape=}')#n
     # print(f'{eigen_vecs.shape=}')#nxn
-    return eigen_vals[:topk], eigen_vecs[:, :topk]
+    # 
+    # update:
+    # we want topk eigen 'vectors' so eigen_vecs.t() 
+    # is the right thing as it gives us [batch,vec_dim]
+    # previously I was getting [512,topk]! which is clearly wrong!
+    # I guess this is why I couldnt get much out of it before! silly me!
+    return eigen_vals[:topk], eigen_vecs.t()[:topk]
 
 @torch.no_grad()
 def traverse(generator, z, eigen_vec, alphas):
@@ -1270,8 +1281,10 @@ def traverse(generator, z, eigen_vec, alphas):
         imgs = generator(z_mod)
         outs.append(imgs)
     return torch.cat(outs, dim=0)
-
-eigen_vals, eigne_vectors = sefa_linear_eigenvectors(generatorcnn,topk=10)
+#%% sefa test
+# we want the weights for the first linear layer that maps z
+W = generator.net[0].weight.data
+eigen_vals, eigne_vectors = sefa_linear_eigenvectors(W,topk=10)
 # print(f'{eigne_vectors.shape=}') #(n,topk)
 topk = eigne_vectors.size(1)
 z = torch.randn(size=(8,generatorcnn.z_size),generator=random_gen)
@@ -13595,27 +13608,44 @@ change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
 # previously tried this early on. this is the same as sefa!
 # for best performance the ema version of the generator weights are 
 # used
-weights = []
-for k,v in generator_stylegan2.state_dict().items():
-    # print(k)
-    # grab only fc_style weights in blocks that deal with style
-    # if we choose blocks only, thatd mean we only grab the 
-    # structural features(blocks). the toImgs layers also play a role
-    # they control color distributions and how features translate to pixels
-    # I initially only included blocks but I changed it to grab all fc_styles
-    # both in blocks and toImgs alike
-    if "fc_style.weight" in k :#and "blocks" in k:
-        # print(f'{k}')
-        weights.append(v)
+def get_directions(use_sefa=False, normalize=False, topk=None):
+    weights = []
+    for k,v in generator_stylegan2.state_dict().items():
+        # print(k)
+        # grab only fc_style weights in blocks that deal with style
+        # if we choose blocks only, thatd mean we only grab the 
+        # structural features(blocks). the toImgs layers also play a role
+        # they control color distributions and how features translate to pixels
+        # I initially only included blocks but I changed it to grab all fc_styles
+        # both in blocks and toImgs alike
+        if "fc_style.weight" in k :#and "blocks" in k:
+            # print(f'{k}')
+            weights.append(v)
 
-# we could have also done this:
-# for n,m in generator_stylegan2.named_modules():
-    # if hasattr(m,"fc_style"):
-        # weights.append(m.fc_style.weight)
+    # we could have also done this:
+    # for n,m in generator_stylegan2.named_modules():
+        # if hasattr(m,"fc_style"):
+            # weights.append(m.fc_style.weight)
+    
+    Ws = torch.cat(weights,dim=0).cpu()
+    # update:
+    # I checked the sefa repository and noticed they get much better
+    # results, because they normalize the weights (our initial sefa impl didnt normalize)
+    # I thought the svd version which I also saw in rosinality implementation
+    # would work just well. they look roughly the same but I find sefa normalized 
+    # do a better job. (I updated our sefa imple to have normalization as well)
+    if not use_sefa:
+        # now using svd we get eigen vectors(unique directions)
+        U,S,V = torch.svd(Ws)
+        eigen_vals = (S**2).cpu()[:topk]
+        eigen_vecs = V.t().cpu()[:topk]
 
-Ws = torch.cat(weights)
-# now using svd we get eigen vectors(unique directions)
-eigen_vecs = torch.svd(Ws).V.cpu()
+    else:
+        # normalize the weights and then feed to sefa
+        eigen_vals, eigen_vecs = sefa_linear_eigenvectors(Ws,normalize=normalize,topk=topk)
+        
+    return eigen_vals, eigen_vecs
+
 #sidenote:reminder
 # svd or singular value decompision basically breaks down our input matrix into its fundamental/principal building blocks!
 # we want the V matrix, because its columns (or rows of Vᵀ) are the right singular vectors
@@ -13637,6 +13667,13 @@ eigen_vecs = torch.svd(Ws).V.cpu()
 # other things as well like change background, colors, as well. (they are not prefectly
 # disentangled). to actually localize the changes, we need to apply them at certain levels
 # as we learned at the begining (see the next example I explained this more)
+
+eigen_vals, eigen_vecs = get_directions(use_sefa=True,
+                                        normalize=True)
+print(f'{eigen_vecs.shape=}')
+# should be large numbers
+print(f"Top 5 Eigenvalues: {eigen_vals[:5]}")
+
 #%%
 # and now we can apply these new directions to our latent vectors ws and get the result
 # lets test this
@@ -13726,7 +13763,8 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
              rand_rng=None):
     
     generator = generator.to(device).eval()
-    
+    eigen_vecs = eigen_vecs.to(device)
+    print(f'{eigen_vecs.shape=}')
     # we are going to have a slider that allows us to choose a direction
     # and a slider for alphas
     
@@ -13737,8 +13775,8 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
                                          description="directions")
     
     alpha_slider = widgets.FloatSlider(value=1,
-                                       min=-20,#20 may seem too much but for what we do its ok, some features require larger alpha to actualy show somethng!
-                                       max=20,
+                                       min=-15,#20 may seem too much but for what we do its ok, some features require larger alpha to actualy show somethng!
+                                       max=15,
                                        step=0.01,
                                        description="alphas",
                                        continuous_update=True)
@@ -13831,11 +13869,17 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     # show initial image
     update()
 
+# dir3 (with 0-2 layers) seems to corospond to head rotation!
+# (in ffhq dataset at least/when i use normalized sefa eigen vectors)
+# 
 # 0-1 or 0-2 coars feature changes, e.g. rotation
 # 2-5 or 3-6 middle feature changes(smile,)
 # 5-12 fine details/colors changes
 # for different dataset its different test with ffhq weights and celeba
-run_test(generator_stylegan2,eigen_vecs, rand_rng=fixed_randg)
+_,eigen_vecs = get_directions(use_sefa=True,
+                             normalize=True,
+                             topk=None)
+run_test(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 
 #%%
 # a detour to something fun CycleGAN
