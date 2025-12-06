@@ -13632,11 +13632,19 @@ def get_directions(use_sefa=False, normalize=False, topk=None):
     # I checked the sefa repository and noticed they get much better
     # results, because they normalize the weights (our initial sefa impl didnt normalize)
     # I thought the svd version which I also saw in rosinality implementation
-    # would work just well. they look roughly the same but I find sefa normalized 
-    # do a better job. (I updated our sefa imple to have normalization as well)
+    # would work just well. this is the same thing, if we normalize it it'll be
+    # sefa we implemented before! but since I find sefa normalized 
+    # do a better job. I updated our imple to have normalization as well.
+    #
+    # todo: use our svd with normalization here and leave sefa for our previous tests?
     if not use_sefa:
+        if normalize:
+            norm = torch.linalg.norm(Ws,dim=1,keepdim=True)
+            weights = Ws/(norm+1e-8)
+        else:
+            weights = Ws
         # now using svd we get eigen vectors(unique directions)
-        U,S,V = torch.svd(Ws)
+        U,S,V = torch.svd(weights)
         eigen_vals = (S**2).cpu()[:topk]
         eigen_vecs = V.t().cpu()[:topk]
 
@@ -13668,7 +13676,7 @@ def get_directions(use_sefa=False, normalize=False, topk=None):
 # disentangled). to actually localize the changes, we need to apply them at certain levels
 # as we learned at the begining (see the next example I explained this more)
 
-eigen_vals, eigen_vecs = get_directions(use_sefa=True,
+eigen_vals, eigen_vecs = get_directions(use_sefa=False,
                                         normalize=True)
 print(f'{eigen_vecs.shape=}')
 # should be large numbers
@@ -13734,6 +13742,9 @@ torch.cuda.manual_seed_all(seed)
 fixed_randg = torch.Generator(device=device).manual_seed(seed)
 z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
 
+eigen_vals, eigen_vecs = get_directions(use_sefa=False,
+                                        # test with normalize=False as well
+                                        normalize=True)
 cnt = 10#eigen_vecs.size(0)
 for i in range(cnt):
     imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
@@ -13876,7 +13887,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
 # 2-5 or 3-6 middle feature changes(smile,)
 # 5-12 fine details/colors changes
 # for different dataset its different test with ffhq weights and celeba
-_,eigen_vecs = get_directions(use_sefa=True,
+_,eigen_vecs = get_directions(use_sefa=False,
                              normalize=True,
                              topk=None)
 run_test(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
