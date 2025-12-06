@@ -53,6 +53,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 %matplotlib inline
 
+# os.chdir("/media/hossein/SSD1/A-Quick-and-Simple-Pytorch-Tutorial/")
 #%%
 # TODO: 
 # an introduction to GANS and tricks here? or later after the initial exposure? 
@@ -13588,9 +13589,10 @@ def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
 change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
 #%%
 # grab the modulation weights for closed form factorization
-# we are trying to extract meaninful directions fromw eights
+# we are trying to extract meaninful directions from weights
 # so we can use them to generate images along those directions
-# creating images with certain attributes.
+# creating images with certain attributes. if you remember we 
+# previously tried this early on. this is the same as sefa!
 # for best performance the ema version of the generator weights are 
 # used
 weights = []
@@ -13628,6 +13630,13 @@ eigen_vecs = torch.svd(Ws).V.cpu()
 # this is obvious but im saying it anyway what we have here are singular vectors, 
 # (which are eigenvectors of WsᵀWs) but since its pretty common to call this eigenvector
 # I do this aswell. the important matter is we know the distinction!
+#
+# sidenote3-update:
+# simply using these directions wont give us clean disentangled interpolation, although
+# they may express a single prominent feature like smiling, they will usually also change
+# other things as well like change background, colors, as well. (they are not prefectly
+# disentangled). to actually localize the changes, we need to apply them at certain levels
+# as we learned at the begining (see the next example I explained this more)
 #%%
 # and now we can apply these new directions to our latent vectors ws and get the result
 # lets test this
@@ -13688,7 +13697,8 @@ torch.cuda.manual_seed_all(seed)
 fixed_randg = torch.Generator(device=device).manual_seed(seed)
 z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
 
-for i in range(eigen_vecs.size(0)):
+cnt = 10#eigen_vecs.size(0)
+for i in range(cnt):
     imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
                                                         z1, 
                                                         eigen_vecs[i],
@@ -13725,12 +13735,14 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
                                          max=eigen_vecs.size(0)-1,
                                          step=1,
                                          description="directions")
+    
     alpha_slider = widgets.FloatSlider(value=1,
                                        min=-20,#20 may seem too much but for what we do its ok, some features require larger alpha to actualy show somethng!
                                        max=20,
                                        step=0.01,
                                        description="alphas",
                                        continuous_update=True)
+    
     psi_slider = widgets.FloatSlider(value=0.7,
                                      min=0,
                                      max=1,
@@ -13758,7 +13770,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     constant_noise_chkbx = widgets.Checkbox(value=False,
                                             description="constant_noise",
                                             disabled=False)
-    
+    # output for displaying the image
     img_out = widgets.Output()
     
     z1 = torch.randn(size=(1, generator.z_size), device=device, generator=rand_rng)
@@ -13808,15 +13820,21 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     constant_noise_chkbx.observe(update, names='value')
     resample_z_btn.on_click(btn_click)
     
-    row = widgets.HBox([resample_z_btn,constant_noise_chkbx])
+    # neatly put each widget next to the other one
+    row1 = widgets.HBox([direction_slider, alpha_slider])
+    row2 = widgets.HBox([psi_slider, layer_slider])
+    row3 = widgets.HBox([resample_z_btn,constant_noise_chkbx])
     # add ui elements and display them vertically
-    display(widgets.VBox([direction_slider, alpha_slider, img_out, psi_slider, layer_slider, row ]))
+    ui_wigets = widgets.VBox([img_out, row1,row2,row3 ])
+    
+    display(ui_wigets)
     # show initial image
     update()
 
-# 0-1 or 0-2 coars feature changes,rotation
+# 0-1 or 0-2 coars feature changes, e.g. rotation
 # 2-5 or 3-6 middle feature changes(smile,)
 # 5-12 fine details/colors changes
+# for different dataset its different test with ffhq weights and celeba
 run_test(generator_stylegan2,eigen_vecs, rand_rng=fixed_randg)
 
 #%%
