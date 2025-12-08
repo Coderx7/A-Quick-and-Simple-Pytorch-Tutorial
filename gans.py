@@ -13360,7 +13360,7 @@ def create_interpolation_animation(imgs_tensor, filename='vis', interval=300, re
 # the most straight one is linear interpolation (i.e. lerp)
 # which means we move in a straight line in our latent space
 # from vector v1 to vector v2 each time taking a step from v1 toward v2.
-# basically v_out = (1-t)*v1 + t*v2 (t is a value between 0 and 1)
+# basically v_out = (1-t)*v1 + t*v2 (t is a value between 0 and 1 usually)
 # so when t=0 we are at v1 and when t=1 we are at v2 and all the other
 # values in between therefore give us points between these two ends. 
 # so far so good. the issue however is that, it sometimes results
@@ -13522,9 +13522,15 @@ def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_cr
     w_source = generator.mapping_network(z_source)
     w_style = generator.mapping_network(z_style)
     
-    # apply truncation
-    w_source = generator.apply_truncation(w_source, psi_src)
-    w_style = generator.apply_truncation(w_style, psi_sty)
+    # apply truncation - 
+    if psi_src:
+        w_source = generator.apply_truncation(w_source, psi_src)
+    # note: truncation means give us average! so
+    # if we are planning on using a style, we shouldnt apply it
+    # on our styles! I did this mistake and the results werent good!
+    # I leave this for experimentation
+    if psi_sty:
+        w_style = generator.apply_truncation(w_style, psi_sty)
     
     # expand to match shape
     w_source = w_source.unsqueeze(1).repeat(1,num_layers,1)
@@ -13555,21 +13561,22 @@ z_style = torch.randn(1, generator_stylegan2.z_size, device=device, generator=fi
 # the majority of values belong to second z, but starting
 # from 3,4, we can see the first image is structually there
 # and styles start to transfer.(skin tone, colors, are obvious) 
-layer_crossover = 5
+layer_crossover = 1#2#3
 img_src, img_style, img_mix = style_mix(generator_stylegan2,
                                         z_source, 
                                         z_style, 
                                         layer_crossover, 
-                                        psi_src=0.7,
-                                        psi_sty=0.8,
+                                        psi_src=None,
+                                        psi_sty=None,
                                         constant_noise=True)
 imgs = torch.cat([img_src,img_style,img_mix])
 display_images(imgs, title='images source|style|mix', unnormalize=True,figsize=(8,6))
 # as we can see, the structure of the source image stays the same, but the 
 # texture/style of the style image is transfered. lets see how each layer affects
-# the result 
+# the result differently. the iniital layers affect the coarse features (hairstyle,)
+# while the later layers affect fine details.
 #%% change styles
-def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
+def change_styles(z_source, z_style, psi_src=None, psi_sty=None):
     num_layers = 2*len(generator_stylegan2.channels)
     imgs_all = []
     for layer in range(1,num_layers):
@@ -13599,7 +13606,7 @@ def change_styles(z_source, z_style, psi_src=0.8, psi_sty=0.8):
                    cols=1,
                    figsize=(16,16))
 
-change_styles(z_source,z_style,psi_src=0.7, psi_sty=0.7)
+change_styles(z_source,z_style,psi_src=None, psi_sty=None)
 #%%
 # grab the modulation weights for closed form factorization
 # we are trying to extract meaninful directions from weights
@@ -13892,5 +13899,17 @@ _,eigen_vecs = get_directions(use_sefa=False,
                              topk=None)
 run_test(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 
+#%% stylegan3
+# so far so good.the stylegan2 really does a good job and the fact that we
+# ditched the progressive nature is a plus! the second version is more
+# vram hungry, but still managable. but the main issue of texture sticking
+# is not entirely fixed, this shows itself especially if we trained it on
+# videos, or tried animating the latent space, the features would swim! instead
+# of moving logically as the image morphed! 
+# The authors rechecked 
 #%%
-# a detour to something fun CycleGAN
+# a detour to something fun CycleGAN (PixelGAN, stargan)
+
+#
+#%%
+# name only some other important GANs and then lets call it a day and go diffusion!
