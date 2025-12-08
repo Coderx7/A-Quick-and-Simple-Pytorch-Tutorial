@@ -13706,8 +13706,8 @@ def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction,
     w = generator.mapping_network(z1)
     # we apply the truncation to base w, initially I did it inside the loop
     # this was wrong clearly as truncation moves the w toward the average
-    # so if we applied a direction on our w and then do truncation it would
-    # remove the said direction! having it here is as if we are making the
+    # so if we applied a direction on our w and then did truncation it 
+    # removed the said direction! having it here is as if we are making the
     # canvas ready (start from average w/face) and then apply the direcion
     w_trunct = generator.apply_truncation(w, psi)
             
@@ -13724,7 +13724,7 @@ def interpolate_w_with_direction(generator:GeneratorStyleGAN2, z1, direction,
 
     imgs = []
     for a in alphas:
-        w_new = w_trunct+a*direction
+        w_new = w_trunct+(a*direction)
         img = generator.forward_from_w(w_new, noise).cpu()
         imgs.append(img)
     
@@ -13748,18 +13748,18 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 fixed_randg = torch.Generator(device=device).manual_seed(seed)
 z1 = torch.randn(size=(1, generator_stylegan2.z_size), device=device, generator=fixed_randg)
-
-eigen_vals, eigen_vecs = get_directions(use_sefa=False,
-                                        # test with normalize=False as well
-                                        normalize=True)
-cnt = 10#eigen_vecs.size(0)
+# test with normalize=False as well
+normalize_weights = True
+eigen_vals, eigen_vecs = get_directions(use_sefa=False, normalize=normalize_weights)
+cnt = 6#eigen_vecs.size(0)
+alphas = torch.linspace(-1,1,steps=cnt) if normalize_weights else torch.linspace(-3,3,steps=cnt)
 for i in range(cnt):
     imgs_with_directions = interpolate_w_with_direction(generator_stylegan2, 
                                                         z1, 
                                                         eigen_vecs[i],
                                                         psi=0.7,
                                                         constant_noise=True,
-                                                        alphas=None,
+                                                        alphas=alphas,
                                                         interp_steps=30,
                                                         device='cuda',
                                                         make_gifs=True,
@@ -13770,14 +13770,16 @@ for i in range(cnt):
     #            unnormalize=True)
     
 #%%
-# to be able to do this more easily we can use a GUI!
-# since we are in jupyter notebook lets use widgets
+# to be able to do this more easily we need to write a GUI
+# since we are in jupyter notebook the easiest way is to
+# use ipywidgets that provide a minimal set of gui elements
+# like buttons, sliders, and stuff like that.
 
 import ipywidgets as widgets
 from IPython.display import display, clear_output
 
 @torch.no_grad()
-def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',  
+def run_latent_gui(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',  
              rand_rng=None):
     
     generator = generator.to(device).eval()
@@ -13792,9 +13794,22 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
                                          step=1,
                                          description="directions")
     
+    alphas_min_max_slider = widgets.IntSlider(value=3,
+                                         min=0,
+                                         max=20,
+                                         step=1,
+                                         description="α range")
+    
+    # -20,20 may seem too much but for what we do its ok, 
+    # especially when the eigens are applied on raw weights
+    # which makes some features require larger alpha to actualy 
+    # show somethng!
+    a_min = -alphas_min_max_slider.value
+    a_max = alphas_min_max_slider.value
+    
     alpha_slider = widgets.FloatSlider(value=1,
-                                       min=-15,#20 may seem too much but for what we do its ok, some features require larger alpha to actualy show somethng!
-                                       max=15,
+                                       min=a_min,
+                                       max=a_max,
                                        step=0.01,
                                        description="alphas",
                                        continuous_update=True)
@@ -13823,7 +13838,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
         
     resample_z_btn = widgets.Button(description="resample z")
     
-    constant_noise_chkbx = widgets.Checkbox(value=False,
+    constant_noise_chkbx = widgets.Checkbox(value=True,
                                             description="constant_noise",
                                             disabled=False)
     # output for displaying the image
@@ -13839,7 +13854,7 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
         alpha = alpha_slider.value
         psi = psi_slider.value
         start_layer,end_layer = layer_slider.value
-        
+ 
         w_trunc = generator.apply_truncation(w, psi)
         # since we want to apply the direction on different layers
         # we expand this here
@@ -13868,6 +13883,19 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
         w = generator.mapping_network(z1)
         update()
 
+    def update_alphas_range(arg):
+        a_min = -alphas_min_max_slider.value
+        a_max = alphas_min_max_slider.value
+        
+        alpha_slider.min = a_min
+        alpha_slider.max = a_max
+        
+        if alpha_slider.value<a_min:
+            alpha_slider.value = a_min
+        if alpha_slider.value>a_max:
+            alpha_slider.value = a_max
+
+
     # event binding
     direction_slider.observe(update, names='value')
     alpha_slider.observe(update, names='value')
@@ -13875,13 +13903,14 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
     psi_slider.observe(update, names='value')
     constant_noise_chkbx.observe(update, names='value')
     resample_z_btn.on_click(btn_click)
+    alphas_min_max_slider.observe(update_alphas_range, names='value')    
     
     # neatly put each widget next to the other one
-    row1 = widgets.HBox([direction_slider, alpha_slider])
+    row1 = widgets.HBox([alphas_min_max_slider, alpha_slider])
     row2 = widgets.HBox([psi_slider, layer_slider])
     row3 = widgets.HBox([resample_z_btn,constant_noise_chkbx])
     # add ui elements and display them vertically
-    ui_wigets = widgets.VBox([img_out, row1,row2,row3 ])
+    ui_wigets = widgets.VBox([img_out, direction_slider, row1,row2,row3 ])
     
     display(ui_wigets)
     # show initial image
@@ -13890,14 +13919,18 @@ def run_test(generator:GeneratorStyleGAN2, eigen_vecs, device='cuda',
 # dir3 (with 0-2 layers) seems to corospond to head rotation!
 # (in ffhq dataset at least/when i use normalized sefa eigen vectors)
 # 
-# 0-1 or 0-2 coars feature changes, e.g. rotation
+# 0-1 or 0-2 or 0-3 coars feature changes, e.g. rotation
 # 2-5 or 3-6 middle feature changes(smile,)
 # 5-12 fine details/colors changes
+# 
 # for different dataset its different test with ffhq weights and celeba
 _,eigen_vecs = get_directions(use_sefa=False,
                              normalize=True,
                              topk=None)
-run_test(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
+run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
+# our model is not trained very well, so its expected that the features are not
+# very well disentangled, but overall we can see how each direcion affects the 
+# image in a unique way.
 
 #%% stylegan3
 # so far so good.the stylegan2 really does a good job and the fact that we
