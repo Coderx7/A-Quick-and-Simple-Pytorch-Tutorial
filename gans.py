@@ -13939,22 +13939,22 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # instead of moving logically as the image morphed.(I havent seen it in our case
 # probably because we havent trained higher resolutions where this can become visible)
 # The authors subsequent experiments revealed that the issue of texture sticking
-# (features remaining inplace (i.e. being tied to pixel-grid)), is caused because of 
-# the alieasing produced by the generator itself! 
-# therefore to fix this issue they changed the generator architecture again
-# in the new architecture, we no more inject noise in each layer as a signal source, 
+# (features remaining inplace (i.e. being tied to pixel-grid i'll explain more in a moment)),
+# is caused because of the alieasing produced by the generator itself! 
+# therefore to fix this issue they changed the generator architecture once again
+# in the new architecture, we no more inject noise in each layer as a signal source(for stochastic variation i.e. hair,pores, etc), 
 # because that would tie the details to the pixel grid! therefore any stochastic variation
 # must be learned normally using the generator's internal operations.
 # moreover, we also dont use fixed upsampling(FIR filters) to control aliasing! as that
 # leads to unwanted frequency folding!(i.e. the frequencies that are higher than
-# the nyquist frequency/limit, get misinterpreted/wrapped back as lower frequency after sampling)
+# the nyquist frequency, get misinterpreted/wrapped back as lower frequency after sampling)
 # basically we have overflow in frequency domain! (i.e. frequencies that are too high 
 # and cant be prepresented on the grid, fold back into the valid range as incorrect low 
 # frequency patterns)
 #
 # reminder:
 # the Nyquist frequency is the highest frequency that can be represented accurately when
-# we sample a signal. its equal to half of the sampling rate. 
+# we sample a signal. its equal to half of the sampling rate.
 # for example imagine we have a pixel grid, where the sampling rate is 1 sample per pixel.
 # (i.e. each pixel can only store/give us one value (so rgb 3 values)). that means this grid
 # can only capture frequencies up to 0.5 cycles/pixel(i.e.the nyquest frquency). any pattern/wave
@@ -13966,26 +13966,26 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # into the 0.5 cycles/pixel)
 #
 # quicknote: 
-# a cycle is a full ossicilation of a pattern. one full form from start to finish basically. 
+# a cycle is a full ossicilation of a pattern. one full pattern from start to finish basically. 
 # for example suppose we have this pattern: white->black->white->black(checkerboard pattern basically)
 # now if we repeat this pattern faster than every 2 pixels, we exceed the nyquist frequency!
 # and cant capture that pattern, instead we would e.g. get sth like white->white->black->black
 # 
 # or suppose we have a grid of pixels (bunch of pixels) that has the sampling rate of 
-# 0.25 cycles/pixel it means we have 1 full cycle every 4 pixels! (our previous example)
+# 0.25 cycles/pixel so it means we have 1 full cycle every 4 pixels! (our previous example)
 # pixel indexes: 0 1 2 3 4 5 6 7 
 # value        : ↑   ↓   ↑   ↓
 # if we say we have 1 cycle/pixel, then its impossible! because a pixel can only have 1 value
 # at a time! (unless its sth constant like white only, black only, otherwise if it was anything else
-# e.g. either white(↑) or black(↓) a single pixel cant represent white->black transition!) 
+# e.g. either white(↑) or black(↓) a single pixel cant represent white->black transition/pattern!)
 # we need at least 2 pixels to have a half cycle like that (white->black) hence the nyquist frequency 
 # would be 0.25 cycles/pixel for the full cycle/pattern (white-black-white-black).
 # 
 # so because white/black pattern changes too fast for every pixel, the aliasing happens 
 # (e.g. suppose the actual signal (too fast) is : W B W B W B W B W B  but since we cant capture as fast
-# we miss many and instead capture sth like this: WW BB WW BB WW BB (a false lower frqequency!)
+# we miss many and instead capture sth like this: WW BB WW BB WW BB (a false lower frqequency that is!)
 # 
-# heres another example:
+# heres another example might be better visually:
 # suppose, our true wave is (too fast) :  ↑↓↑↓↑↓↑↓↑↓↑↓↑ 
 # but the sampling points looks like   :  *    *   *   * 
 # and our sampled values turn out to be:  ↑    ↓   ↓   ↑ 
@@ -14008,19 +14008,19 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # it cant be represented properly and the system can not encode it properly so it gets wrapped back,
 # we get nonsene/artifacts down the line!
 #
-# so in stylegan3, the whole upsampling/downsampling stack is therefore replaced with low-pass filtered convolutions
-# and filters are designed to maintain strict signal integrity. the anti-aliasing constrints are 
-# also built into the conv layers themseleves so the generator can no longer produce frequencies above
-# nyquist limit of the feature grid! the way they did that was to simply add a fixed low pass filter
-# into the convolution kernel after modulation and before sampling because the modulated convolution
-# in the previous version along with the scale demodulation with weight scaling and other non-shift 
-# invariant operations caused aliasing! after these changes, the style modulation can no more break
-# shift equivarence.
+# so in stylegan3, the whole upsampling/downsampling stack is therefore replaced with low-pass filtered
+# convolutions and they are designed specifically to maintain strict signal integrity. 
+# the anti-aliasing constrints are also built into the conv layers themseleves so the generator can
+# no longer produce frequencies above nyquist limit of the feature grid! 
+# the way they did that was to simply add a fixed low pass filter into the convolution kernel after 
+# modulation and before sampling because the modulated convolution in the previous version along 
+# with the scale demodulation with weight scaling and other non-shift invariant operations caused 
+# aliasing! after these changes, the style modulation can no more break shift equivarence.
 # 
 # the authors created two variants, Stylegan3-T and stylegan3-R. 
 # the first version(T) was translation eqinvariant only and produces more realistic images with
 # more fine details because the authords relaxed the constraints a bit but in the second variant
-# they didnt do that and instead got a rotaion/translation equivarency with less sharpness. this
+# they didnt do that and instead got rotaion/translation equivarency with less sharpness. this
 # was great for video generations, or basically anything that requires strict rotation/translation
 # equivarency! but it looks a bit softer than t he T version. (the T version looks identical to 
 # stylegan2 minus the texture sticking problem)
@@ -14033,7 +14033,7 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # so the problem in stylegan1 and 2 was we had aliasing everywhere
 # this meant that details depended on the pixel grid not the image content
 # when models where animated(either latent space animation / or traiing on videos),
-# textures would stick to screen as image morphed/change(swam in place?) instead of moving rigidly
+# textures would stick to screen as image morphed/change(swam in place?) instead of moving rigidly/naturally
 # geometry and texture were entangled in non-physical ways even adding anti-aliasing filters
 # in stylegan2 wasnt enough the architecture itself kept creating new aliasing internally!
 # 
@@ -14046,6 +14046,483 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # all of this to solve texture sticking issue and allow stable video generation
 # (and produece a continous signal processing interpertation of the generator)
 #
+#%% stylegan3
+#
+# before we dive in immediately into implementation we need to understand a few important
+# things. stylegan3 relies heavily on digital signal processing and I had a lot of issues 
+# understanding it initially. hopefully after the following explanation we get a firm understanding
+# of whats actually going on and implement it more easily.
+# 
+# in stylegan3 we have some fundamental changes compared to previous version. while the architectural
+# changes are obvious, the reasons behind them do not seem intuitive at first we need to understand it.
+# In StyleGAN2 pixels are discrete squares but in StyleGAN3 pixels are samples of a continuous signal.
+# so to have a faithful implementation, we must strictly follow the sampling theorm (Nyquist-Shannon).
+
+# Here are the strict constraints we need to address/implemenet:
+# 
+# Continuous Signal Interpretation: 
+#   All upsampling/downsampling uses windowed Sinc filters (Kaiser-Bessel), not simple 
+#   bilinear/nearest interpolation.
+# 
+# Geometric Transformation: 
+#   The 4x4 learned input is replaced with Fourier Features to allow infinite resolution coordinate
+#   definition.
+# 
+# Equivariance: 
+#   All layers must be translation equivariant. We remove Noise Injection (which is fixed to screen coordinates)
+#   and PixelNorm/InstanceNorm (which rely on absolute statistics).
+# 
+# Non-Linearity Sandwich: 
+#   ReLU creates infinite high frequencies. We must wrap every LeakyReLU in an 
+#   Upsample -> LeakyReLU -> Downsample sandwich to filter out the aliasing frequencies generated 
+#   by the activation.
+#
+# Strict Cutoffs: 
+#   Filters are generated dynamically based on the bandwidth limit of the current layer.
+
+# ==============================================================================
+# 1. SIGNAL PROCESSING UTILITIES
+# ==============================================================================
+# StyleGAN3 relies heavily on DSP. We need to generate Kaiser-Bessel Sinc filters
+# on the fly. These filters allow us to upsample/downsample while strictly
+# controlling the frequency content (bandwidth).
+
+# why design_kaiser_filter?
+# In standard GANs, when we verify a model, we might see "texture sticking". 
+# If we generate a face and pan the camera, the stubble on the beard might stay
+# fixed to the screen pixels while the face moves. This is aliasing.
+# StyleGAN3 treats the image as a continuous signal. To resize a continuous signal,
+# we must convolve it with a Sinc function. The Kaiser window makes the infinite Sinc
+# function practical. Every time we change resolution (up or down), we apply this filter.
+
+# why FourierInput instead of const?
+# StyleGAN2 starts with a 4x4 learned block. This block has no concept of "where" it is in space.
+# StyleGAN3 starts with coordinate grids (x=−1 to 1). By passing these coordinates through sine waves,
+# we give the network a "GPS system". If we want to shift the image, we just add a value to the input
+# coordinates. This is how SG3 achieves translation equivariance.
+
+# why the LeakyReLU sandwich?
+# Imagine a sine wave (pure frequency). if we apply ReLU (clip negative values), the sharp corner
+# at zero introduces infinite high frequencies (harmonics).
+# In a digital grid, frequencies higher than the Nyquist limit (0.5 * sampling rate) turn into alias
+# noise (moire patterns). To fix this, SG3 does this:
+# Upsample x2: Creates "headroom" for the new frequencies.
+# ReLU: Generates high frequencies (safe now because we have headroom).
+# Filter: Kills the frequencies that would cause aliasing when we go back down.
+# Downsample x2: Returns to original size, clean and alias-free.
+# 
+# why no noise injection then?
+# In SG2, we added random noise to simulate skin pores/hair. But random noise is generated per pixel
+# (0,0),(0,1)... If the face moves, the noise at (0,0) stays at (0,0). The pores detach from the skin!
+# SG3 removes this. The texture details must be generated by the network itself using the coordinate
+# system (Fourier features) so they stick to the object.
+
+def design_kaiser_filter(num_taps=12, f_c=0.5, beta=6.0, device=None):
+    """
+    Generates a 2D Kaiser-windowed Sinc filter.
+    
+    Args:
+        num_taps (int): Size of the kernel (e.g., 12x12). Larger = sharper cutoff but slower.
+        f_c (float): Cutoff frequency relative to sampling rate (0.0 to 0.5).
+        beta (float): Parameter for Kaiser window. Controls leakage vs main lobe width.
+    """
+    # 1. Construct the time/coordinate grid centered at 0
+    # Range: -(M-1)/2 to (M-1)/2
+    t = torch.arange(num_taps, device=device, dtype=torch.float32) - (num_taps - 1) / 2
+    
+    # 2. Sinc function: sin(2*pi*f_c*x) / (pi*x)
+    # Ideally represents a brick-wall low-pass filter.
+    h = torch.sinc(2 * f_c * t)
+    
+    # 3. Kaiser Window: Smooths the Sinc to make it finite (removes ringing).
+    w = torch.kaiser_window(num_taps, periodic=False, beta=beta, device=device)
+    
+    # 4. Combine and Normalize
+    # We want gain=1 at DC (0 frequency).
+    k = h * w
+    k = k / k.sum()
+    
+    # 5. Make it 2D (Separable) -> (1, 1, H, W)
+    # The filter is symmetric in X and Y.
+    k = k[:, None] * k[None, :] 
+    return k.unsqueeze(0).unsqueeze(0)
+
+def upfirdn2d(input, kernel, up=1, down=1, pad='valid'):
+    """
+    Standard UpFirDn2d (Upsample-Filter-Downsample) implementation.
+    The crucial difference in SG3 is strictly managing padding to avoid
+    edge artifacts rippling into the image.
+    """
+    out = input
+    
+    # Kernel setup: (B, C, H, W) -> need to broadcast kernel to C
+    batch, channels, in_h, in_w = input.shape
+    kernel = kernel.to(input.device, dtype=input.dtype)
+    
+    # === FIX: Handle 2D kernels (compatibility with SG2 Discriminator) ===
+    # The SG2 Discriminator uses FIR_KERNEL which is [H, W].
+    # We need to make it [1, 1, H, W] to work with the rest of the logic.
+    if kernel.ndim == 2:
+        kernel = kernel.unsqueeze(0).unsqueeze(0)
+    
+    # 1. Upsampling (Insert zeros)
+    if up > 1:
+        # Reshape to (B, C, H, 1, W, 1) and pad with zeros
+        out = out.view(batch, channels, in_h, 1, in_w, 1)
+        out = F.pad(out, (0, up - 1, 0, 0, 0, up - 1))
+        out = out.view(batch, channels, in_h * up, in_w * up)
+    
+    # 2. Convolution (Filtering)
+    # We must maintain the "center" of the signal.
+    # Pytorch's conv2d padding doesn't always handle 'same' convolution 
+    # for even-sized kernels correctly without manual calc.
+    kH, kW = kernel.shape[2], kernel.shape[3]
+    
+    # Calculate padding to keep output size consistent (Same mode logic)
+    p_x = (kW - 1) // 2
+    p_y = (kH - 1) // 2
+    
+    # Broadcast kernel to depthwise conv
+    w = kernel.repeat(channels, 1, 1, 1)
+    
+    # We explicitly pad the input based on kernel size
+    # In strict SG3, we might crop 'valid' regions, but here we use padding
+    # to maintain resolution flow for readability.
+    out = F.pad(out, (p_x, kW - 1 - p_x, p_y, kH - 1 - p_y))
+    out = F.conv2d(out, w, groups=channels)
+
+    # 3. Downsampling
+    if down > 1:
+        out = out[:, :, ::down, ::down]
+        
+    return out
+
+# Fourier Features
+# In SG2, we learned a 4x4x512 constant tensor. 
+# In SG3, we use a coordinate grid projected into high-freq sine waves.
+# This allows the generator to be "continuous" and translation equivariant.
+# If we shift the grid inputs, the output image shifts exactly.
+class FourierInput(nn.Module):
+    def __init__(self, channels, dim_size=4):
+        super().__init__()
+        self.dim_size = dim_size
+        self.channels = channels
+        
+        # We initialize random frequencies that act as 
+        # the "basis" for our texture shape: (channels/2, 2)
+        # and 2 represents (x, y)
+        freqs = torch.randn(size=(channels//2, 2))
+        self.register_buffer('freqs', freqs)
+
+    def forward(self, batch_size, device):
+        # 1. Create continuous grid [-1, 1]
+        t = torch.linspace(-1, 1, self.dim_size, device=device)
+        y, x = torch.meshgrid(t, t, indexing='ij')
+        coords = torch.stack([x, y], dim=-1).unsqueeze(0) # (1, H, W, 2)
+        
+        # 2. Project coords via frequencies
+        # (1, H, W, 2) @ (2, C/2) -> (1, H, W, C/2)
+        w_coords = coords @ self.freqs.T 
+        w_coords = 2 * np.pi * w_coords
+        
+        # 3. Apply Sin/Cos to get Fourier features
+        # Concatenate sin and cos to get full channel depth
+        emb = torch.cat([torch.sin(w_coords), torch.cos(w_coords)], dim=-1)
+        
+        # 4. Reshape to image format (B, C, H, W)
+        emb = emb.permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
+        return emb
+
+class StyleConvBlock3(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
+                 w_size=512, up=1, eps=1e-8, use_upfirdn2d=True ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.bias = bias
+        self.w_size = w_size
+        self.up = up
+        self.eps = eps
+        # we dont do demodulation anymore!
+        # self.demodulate = False
+        # whether to choose upfirdn2d or normal interpolate to upsample
+        self.use_upfirdn2d = use_upfirdn2d
+
+        # hard constraint 1: Cutoff Frequencies
+        # in order to prevent aliasing, we need to respect nyquist limit
+        # so if we are upsampling(up=2) the valid bandwidth is determined by
+        # the input (lowe) resolution.
+        # we calculate the cutoff based on the "output" sampling rate
+        # f_c =0.5 means full bandwidth(nyquist)
+        # in stylegan3 we usually preserve a bit of margin (i.e. f_c<0.5) to allow
+        # the filter transition band to drop to zero before hitting hyquist limit.
+        # we treat the layer as input->upsample(if needed)->conv->act>downsample(if needed)               
+        # but optimized stylegan3 versions do modulate->1x1conv->upfirdn(with filter)
+        
+        # stylegan3 typically uses 1x1 conv for the transformation
+        # and depthwise convolutions or just filters for spatial mixing.
+        # we could simply use the modulated conv2d and filter strictly after
+        # or simply decompose the ops, and do input-conv-upsample
+        # i.e. do themodulation here! we use the first method and upsample
+        # and then apply the modulation!
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding,
+                                    w_size, demodulate=False, eps=eps)
+        self.bias = nn.Parameter(torch.zeros(out_channels,))
+        
+        # we need to create specific filters for the upsampling and the activation sandwich
+        # sidenote:
+        # in actual production grade impl, these need to be calculated dynamically based on
+        # cutoff args, but for now we use defaults!
+        
+        # Filter for the geometric upsampling (if up=2)
+        self.register_buffer("filter_resample",design_kaiser_filter(num_taps=12, f_c=0.5, beta=6.0))
+        # we need a separate upsample for the nonlinearity sandwich (upsample->relu->downsample)
+        # so we allow for high frequencies to appear and then low-pass filter them, and 
+        # then downsample back to get the original res
+        # upsample before act
+        self.register_buffer("filter_act_up",design_kaiser_filter(num_taps=12, f_c=0.5, beta=6.0))
+        # downsample after act
+        self.register_buffer("filter_act_dn",design_kaiser_filter(num_taps=12, f_c=0.5, beta=6.0))
+                
+        self.blur = Blur()
+        
+        if use_upfirdn2d:
+            self.upsample_fn = lambda x: upfirdn2d(x, self.filter_resample, up=self.up)
+        else:
+            interp = partial(F.interpolate, scale_factor=2, mode="bilinear", align_corners=False)
+            self.upsample_fn = interp
+            #or use blur like stylegan1?
+            # self.upsample_fn = lambda x : self.blur(interp(x))
+
+
+    def forward(self, x, w):
+        # upsample and then apply conv-modulation
+        if self.up>1:
+            # we can now experiment with the old method as well     
+            x = self.upsample_fn(x)
+
+        # apply modulation and conv
+        out = self.conv(x, w)
+        # apply bias 
+        if out.ndim==2:
+            out += self.bias
+        else:
+            out += self.bias.view(1,-1,1,1)
+            
+        # apply nonlinearity sandwich upsample-relu-downsample
+        out = upfirdn2d(out, self.filter_act_up, up=2)
+        out = F.leaky_relu(out, negative_slope=0.2)
+        out = upfirdn2d(out, self.filter_act_dn, up=2)
+        return out
+
+# for the generator we swap the const_input with a fourior based one!
+# and apply the stric upsampling/downsampling the rest stays the same
+class GeneratorStyleGAN3(nn.Module):
+    def __init__(self, z_size=512, w_size=512, mn_num_layers=8, 
+                 channels=[512,512,512,256,128,64,32], 
+                 style_mixing_prob=0.9, ema_w_beta=0.995, 
+                 use_upfirdn2d=True):
+        super().__init__()
+        
+        self.setup_layers(z_size, w_size, mn_num_layers,channels,
+                          style_mixing_prob, ema_w_beta, use_upfirdn2d)
+                
+    def setup_layers(self, z_size, w_size, mn_num_layers, channels,
+                     style_mixing_prob, ema_w_beta, use_upfirdn2d):
+        
+        self.z_size = z_size
+        self.w_size = w_size
+        self.mn_num_layers = mn_num_layers
+        
+        self.style_mixing_prob = style_mixing_prob
+        self.ema_w_beta = ema_w_beta
+        self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
+        
+        # whether to use the upfirdn2d for upsampling or not
+        self.use_upfirdn2d = use_upfirdn2d
+        
+        self.channels = channels
+        
+        # in the second version we use randn instead of just ones still 4x4
+        self.fourier_input = FourierInput(self.channels[0],dim_size=4)
+        
+        self.mapping_network = MappingNetwork2(z_size, w_size, self.mn_num_layers)
+        
+        self.blocks = nn.ModuleList()
+        self.toImgs = nn.ModuleList()
+        
+        self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
+        self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
+        self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False))
+        for i in range(1, len(channels)):
+            self.blocks.append(StyleConvBlock3(self.channels[i-1], self.channels[i], w_size=w_size, up=2, use_upfirdn2d=use_upfirdn2d))
+            self.blocks.append(StyleConvBlock3(self.channels[i], self.channels[i], w_size=w_size, up=1,use_upfirdn2d=use_upfirdn2d))
+            self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False))
+
+    @torch.no_grad()
+    def _update_ema_w(self, w_batch):
+         if self.training:
+             self.ema_w.mul_(self.ema_w_beta).add_(w_batch.mean(0), alpha=1-self.ema_w_beta)
+    
+    def forward(self, z, psi=None):
+        num_layers = len(self.blocks)
+        w = self.mapping_network(z)
+        
+        if self.training:
+            self._update_ema_w(w)
+
+        w = self.apply_truncation(w, psi)
+        
+        if self.training and random.random() <self.style_mixing_prob:
+            # grab a second z, calculate the w
+            z2 = torch.randn(size=z.size(), device=z.device)
+            w2 = self.mapping_network(z2)
+            # in stylegan2 we use all the layers,as
+            # theres no steps!/prograssive growing!
+            crossover_point = random.randint(1, num_layers-1)
+            w = w.unsqueeze(1).repeat(1, num_layers,1)# (b,num_styles,w_dim)
+            w[:, crossover_point:,:] = w2.unsqueeze(1).repeat(1, num_layers-crossover_point,1)
+        else:
+            w = w.unsqueeze(1).repeat(1, num_layers,1)
+
+        img = self.forward_from_w(w)
+        # since we want to calculate path length regularization,
+        # we need w for each generated image so we can see how much
+        # an image changes when w changes (calculate its gradient with
+        # respect to w so aside from making our forward to work with w
+        # we can simply return w with the generated images as well and
+        # make our life easier!)
+        return img, w
+
+    def forward_from_w(self, w):
+        if w.ndim==2:
+            w = w.unsqueeze(1).repeat(1, len(self.blocks),1)
+
+        # pure coordinates transformed by fourier 
+        x = self.fourier_input(w.size(0), w.device) #shape:(b,512,4,4)
+        
+        #4x4
+        x = self.blocks[0](x, w[:,0,:])
+        x = self.blocks[1](x, w[:,1,:])
+        # grab the first image(i.e old image )
+        img = self.toImgs[0](x, w[:,1,:])
+        
+        # main loop, skip connections
+        # We need a filter to upsample the RGB image for the skip connection
+        # Creating it on the fly or registering it in init is fine.
+        # Strict SG3 uses a specific filter for RGB aggregation.
+        up_filter = design_kaiser_filter(device=x.device)
+        
+        for i in range(1, len(self.channels)):
+            idx1 = 2*i
+            
+            # upsample the previous img so we can add it to the new image(current resolution)
+            # img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
+            # STRICT: Must use Sinc interpolation, not bilinear
+            img = upfirdn2d(img, up_filter, up=2)
+            
+            #process the input for this resolution
+            x = self.blocks[idx1](x, w[:, idx1,:])
+            x = self.blocks[idx1+1](x, w[:, idx1+1,:])
+            # create the image for current resolution and add it to the previous one
+            img = img + self.toImgs[i](x, w[:, idx1+1,:])
+            
+        return img
+
+    def apply_truncation(self, w, psi):
+        if not self.training and psi is not None:
+            ema_w_batch = self.ema_w.repeat(w.size(0),1)
+            w = ema_w_batch + psi * (w - ema_w_batch)
+        return w
+
+class DiscBlockStyleGAN3(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 stride=1, padding=1, bias=False, use_upfirdn2d=True):
+        super().__init__()
+        self.use_upfirdn2d = use_upfirdn2d
+        self.blur = Blur()
+        self.block = nn.Sequential(EqualizedConv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedConv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
+                                   nn.LeakyReLU(0.2),
+                                   # instead of blur and downsample we use the new downsample_2d
+                                   # in forward
+                                   # Blur(),
+                                   #nn.AvgPool2d(2),
+                                  )
+        # for residual connection we can simply downsample the input and add it to output
+        # but having a linear transformation like conv doesnt hurt and usually is usuful
+        # nonetheless
+        self.skip = EqualizedConv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        
+        if use_upfirdn2d:
+            self.downsample_fn = downsample_2d
+        else:
+            avg_pool = partial(F.avg_pool2d, kernel_size=2, stride=2)
+            self.downsample_fn = avg_pool
+            #or use blur like stylegan1?
+            # self.downsample_fn = lambda x : avg_pool(self.blur(x))
+        
+    def forward(self, x):
+        skip = self.skip(x)
+        # skip = F.avg_pool2d(skip,2,2)
+        skip = self.downsample_fn(skip)
+        out = self.block(x)
+        out = self.downsample_fn(out)
+        return out+skip
+
+class DiscriminatorStyleGAN3(nn.Module):
+    def __init__(self, channels=[512,512,512,256,128,64,32], use_upfirdn2d=True):
+        super().__init__()
+
+        self.setup_layers(channels,use_upfirdn2d)
+    
+    def setup_layers(self, channels, use_upfirdn2d):
+        self.channels = channels
+        # whether to use the upfrdn2d or normal avgpool for downsampling
+        self.use_upfirdn2d = use_upfirdn2d
+        
+        self.fromImgs = nn.Sequential(EqualizedConv2d(3, self.channels[-1], kernel_size=1),
+                                      nn.LeakyReLU(0.2))
+        
+        blocks = []
+        for i in range(len(self.channels)-1,0,-1):
+            blocks.append(DiscBlockStyleGAN3(self.channels[i],self.channels[i-1], use_upfirdn2d=use_upfirdn2d))
+            
+        self.blocks = nn.Sequential(*blocks)
+        
+        self.final = nn.Sequential(AddBatchStdDev(),
+                                   EqualizedConv2d(self.channels[0]+1, self.channels[0], kernel_size=3, padding=1),
+                                   nn.LeakyReLU(0.2),
+                                   nn.Flatten(),
+                                   EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
+                                   nn.LeakyReLU(0.2),
+                                   EqualizedLinear(self.channels[0],1))
+
+    
+    def forward(self, x):
+        out = self.fromImgs(x)
+        out = self.blocks(out)
+        out = self.final(out)
+        return out.view(-1,1)
+ 
+  
+channels=[512,256,128,64,32,16,8]
+use_upfirdn2d=True
+disc = DiscriminatorStyleGAN3(channels=channels,use_upfirdn2d=use_upfirdn2d)
+gen = GeneratorStyleGAN3(100,100)
+
+H=W=2**(len(channels)+1)
+x = torch.randn(size=(5,3,H,W))
+z = torch.randn(size=(5,100))
+disc_out = disc(x)
+print(f'disc_out.shape: {tuple(disc_out.shape)}')
+gen_out,ws = gen(z)
+print(f'gen_out.shape:\nimgs:{tuple(gen_out.shape)} ws:{tuple(ws.shape)}')
+
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
 
