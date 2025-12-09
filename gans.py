@@ -13936,19 +13936,21 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # so far so good. the main issue of texture sticking is not entirely fixed though 
 # this shows itself especially if we trained it on videos, or tried animating the
 # latent space, the features (high frequency ones teeth,beard,etc) would stick inplace
-# instead of moving logically as the image morphed.
-# The authors subsequent experiments revealed that the issue of "texture sticking"
-# (features being tied to pixel-grid), is caused because of alieasing produced by the
-# generator! therefore to fix this issue they changed the generator arfchitecture again
+# instead of moving logically as the image morphed.(I havent seen it in our case
+# probably because we havent trained higher resolutions where this can become visible)
+# The authors subsequent experiments revealed that the issue of texture sticking
+# (features remaining inplace (i.e. being tied to pixel-grid)), is caused because of 
+# the alieasing produced by the generator itself! 
+# therefore to fix this issue they changed the generator architecture again
 # in the new architecture, we no more inject noise in each layer as a signal source, 
-# because that would tie the details to the pixel grid therefore, any stochastic variation
-# must be learned via internal operations. 
+# because that would tie the details to the pixel grid! therefore any stochastic variation
+# must be learned normally using the generator's internal operations.
 # moreover, we also dont use fixed upsampling(FIR filters) to control aliasing! as that
-# leads unwanted frequency folding!(i.e. the frequencies that are higher than
-# the nyquist frequency/limit, get misinterpreted/wrapped-back as lower frequency after sampling)
+# leads to unwanted frequency folding!(i.e. the frequencies that are higher than
+# the nyquist frequency/limit, get misinterpreted/wrapped back as lower frequency after sampling)
 # basically we have overflow in frequency domain! (i.e. frequencies that are too high 
-# and cant be prepresented on the grid, "fold back" into the valid range as incorrect low 
-# frequency patterns.)
+# and cant be prepresented on the grid, fold back into the valid range as incorrect low 
+# frequency patterns)
 #
 # reminder:
 # the Nyquist frequency is the highest frequency that can be represented accurately when
@@ -13957,30 +13959,33 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # (i.e. each pixel can only store/give us one value (so rgb 3 values)). that means this grid
 # can only capture frequencies up to 0.5 cycles/pixel(i.e.the nyquest frquency). any pattern/wave
 # that ocilliates faster than 0.5 cycles/pixel can not be represented correctly and those frequencies
-# will then get aliased i.e. they will be misinterpreted as lower frequencies! this wraping-around
-# high frequencies as lower frequenceis is called/known as frequency folding!
+# will then get aliased i.e. they will be misinterpreted as lower frequencies! 
+# we call this (wraping-around high frequencies as lower frequenceis) frequency folding!
 # (in other words, we need at least 2 pixels per cycle to represent a wave without ambiguity!)
 # so the maximum representable frequency will be 0.5 cycles/pixel. anything faster folds back 
 # into the 0.5 cycles/pixel)
 #
 # quicknote: 
-# a cycle is a full ossicilation of a pattern. one full form basically. 
-# for example suppose we have this pattern: white -> black -> white -> black
+# a cycle is a full ossicilation of a pattern. one full form from start to finish basically. 
+# for example suppose we have this pattern: white->black->white->black(checkerboard pattern basically)
 # now if we repeat this pattern faster than every 2 pixels, we exceed the nyquist frequency!
-# and obviously cant capture that pattern, e.g. we would get white-> white->black->black instead
-# or suppose we have a grid of pixels (bunc of pixels) that has the sampling rate of 
-# 0.25 cycles/pixel it means we have 1 full cycle every 4 pixels! (our previous case)
+# and cant capture that pattern, instead we would e.g. get sth like white->white->black->black
+# 
+# or suppose we have a grid of pixels (bunch of pixels) that has the sampling rate of 
+# 0.25 cycles/pixel it means we have 1 full cycle every 4 pixels! (our previous example)
 # pixel indexes: 0 1 2 3 4 5 6 7 
 # value        : ↑   ↓   ↑   ↓
-# now if we say we have 1 cycles/pixel, then its impossible! because our pixel can only have 1 value
-# at one time! (unless its sth cnstant like white only, black only, otherwise if it was anything else
-# e.g. its either white(↑) or black(↓) a single pixel cant represent white->black cycle!) we need 
-# at least 2 pixels to have a full cycle (white-black) hence the nyquist frequency would be 0.5! 
-# it would be 0.25 cycles/pixel if the pattern is white-black-white-black just like our example). 
-# so because black/white pattern changes too fast for every pixel, the aliasing happens 
-# (actual signal (too fast) is: B W B W B W B W B W but since we cant capture as fast, we miss many
-# and instead capture BB WW BB WW BB WW (a false lower frqequency!)
-# or heres another example:
+# if we say we have 1 cycle/pixel, then its impossible! because a pixel can only have 1 value
+# at a time! (unless its sth constant like white only, black only, otherwise if it was anything else
+# e.g. either white(↑) or black(↓) a single pixel cant represent white->black transition!) 
+# we need at least 2 pixels to have a half cycle like that (white->black) hence the nyquist frequency 
+# would be 0.25 cycles/pixel for the full cycle/pattern (white-black-white-black).
+# 
+# so because white/black pattern changes too fast for every pixel, the aliasing happens 
+# (e.g. suppose the actual signal (too fast) is : W B W B W B W B W B  but since we cant capture as fast
+# we miss many and instead capture sth like this: WW BB WW BB WW BB (a false lower frqequency!)
+# 
+# heres another example:
 # suppose, our true wave is (too fast) :  ↑↓↑↓↑↓↑↓↑↓↑↓↑ 
 # but the sampling points looks like   :  *    *   *   * 
 # and our sampled values turn out to be:  ↑    ↓   ↓   ↑ 
@@ -13991,10 +13996,10 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # 
 # (recap2:
 # nyquist frequenct = 0.5 cycles per pixel for standard pixel sampling
-# we need >=2 samples per cycle to avoid alising
-# faster patterns(faster than 0.5 cycles/pixel) -> they falsly appear as lower frequency (get aliased into lower frequency (frequency folding))
+# we need >=2 samples per cycle to avoid aliasing
+# faster patterns(faster than 0.5 cycles/pixel) and they falsely appear as lower frequency (get aliased into lower frequency (frequency folding))
 # checkerboard pattern (bwbw...) is at nyquist, highest frequency without aliasing
-# subpixel ossiliations or in other words, finer textures -> get aliased (moire patterns, wagon-wheel effect etc)  
+# subpixel ossiliations or in other words, finer textures therefore get aliased (moire patterns, wagon-wheel effect etc)  
 #  
 # sidenote:
 # in frequency domain, the representable range is limited by Nyquist frequency, any thng
@@ -14003,13 +14008,14 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # it cant be represented properly and the system can not encode it properly so it gets wrapped back,
 # we get nonsene/artifacts down the line!
 #
-# so in stylegan3, the whole upsampling/downsampling stack is replaced with low-pass filtered convolutions
+# so in stylegan3, the whole upsampling/downsampling stack is therefore replaced with low-pass filtered convolutions
 # and filters are designed to maintain strict signal integrity. the anti-aliasing constrints are 
 # also built into the conv layers themseleves so the generator can no longer produce frequencies above
 # nyquist limit of the feature grid! the way they did that was to simply add a fixed low pass filter
 # into the convolution kernel after modulation and before sampling because the modulated convolution
-# in previous version, the scale demodulation with weight scaling and other non-shift invariant operations
-# caused aliasing! after these changes, the style modulation can no more break shift equivarence.
+# in the previous version along with the scale demodulation with weight scaling and other non-shift 
+# invariant operations caused aliasing! after these changes, the style modulation can no more break
+# shift equivarence.
 # 
 # the authors created two variants, Stylegan3-T and stylegan3-R. 
 # the first version(T) was translation eqinvariant only and produces more realistic images with
