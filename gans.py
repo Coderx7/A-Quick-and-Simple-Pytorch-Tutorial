@@ -14185,6 +14185,11 @@ def upfirdn2d(input, kernel, up=1, down=1, pad='valid'):
     # Broadcast kernel to depthwise conv
     w = kernel.repeat(channels, 1, 1, 1)
     
+    # When upsampling (inserting zeros), signal energy drops.
+    # We must scale the filter by up^2 to preserve magnitude.
+    if up > 1:
+        w = w * (up ** 2)
+    
     # We explicitly pad the input based on kernel size
     # In strict SG3, we might crop 'valid' regions, but here we use padding
     # to maintain resolution flow for readability.
@@ -14269,7 +14274,7 @@ class StyleConvBlock3(nn.Module):
         # i.e. do themodulation here! we use the first method and upsample
         # and then apply the modulation!
         self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding,
-                                    w_size, demodulate=False, eps=eps)
+                                    w_size, demodulate=True, eps=eps)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
@@ -14927,7 +14932,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                     "gen_use_upfirdn2d":generator.use_upfirdn2d,
                     "style_mixing_prob":generator.style_mixing_prob,
                     "ema_w_beta":generator.ema_w_beta,
-                    "eps":generator.eps,
+                    # "eps":generator.eps,
                     "use_fp16":use_fp16,
                     "lr_d":lr_d,
                     "lr_g":lr_g,
@@ -15012,7 +15017,12 @@ use_fp16=False
 z_size = 512
 w_size = 512
 # with 128x128, fp32 with 64 bs -> vram 6033mb
-BATCH_SIZE = 32 if use_fp16 else 32
+# stylegan3 needs larger batchsizes for stable training
+# we cant use larger batchsizes, so smaller lr like 0.002
+# might be good to prevent instability(with 0.003 and 32
+# early on we faced large norms but after 10 iters it got 
+# below 100)
+BATCH_SIZE = 32 if use_fp16 else 64
 
 EPOCHS = 100
 
@@ -15086,7 +15096,13 @@ training_loop_stylegan3(discriminator_stylegan2,
 
 # debug log:
 # started with celeba_hq, with default config (4-5 min config) but faced gradnorm>60k going down
-# to 173 after 10 iterations in the first epoch!
+# to 173 after 10 iterations in the first epoch!: ok we had a bug, I disabled demulation thinking
+# it wasnt needed! it seems that caused our generator loss to explode (started from 535 and went to
+# 96 at epoch 1 and 2, lowering the lr to 0.002 didnt help either) reenabled it also fixed a missing
+# snippet from upfirdn2d 
+# 
+# 20251210173718:
+# 
 
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
