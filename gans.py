@@ -14522,6 +14522,572 @@ print(f'disc_out.shape: {tuple(disc_out.shape)}')
 gen_out,ws = gen(z)
 print(f'gen_out.shape:\nimgs:{tuple(gen_out.shape)} ws:{tuple(ws.shape)}')
 
+#%%training STyleGAN3: 
+
+# we can resue stylegan2 training loop! 
+def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:GeneratorStyleGAN3, disc_optimizer:torch.optim.Adam, 
+                         gen_optimizer:torch.optim.Adam, epochs, batch_size, dataset_name,
+                         split, data_augmentation=False, normalize=True, use_fp16=False, 
+                         path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
+                         gen_num_samples = 64, use_ema_inference=False, kimg=10,
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
+                         resume=False, eps=1e-8, weights_save_dir='./weights/gan',
+                         images_save_dir='./results/gan', checkpoint_path=None, ):
+    
+    experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
+    current_experiment_name = f"stylegan2_{dataset_name}_{experiment_date}"
+
+    lr_d = disc_optimizer.param_groups[0]["lr"]
+    lr_g = gen_optimizer.param_groups[0]["lr"]
+    # print(f'{lr_g=}')
+    betas_d = disc_optimizer.defaults["betas"]
+    betas_g = gen_optimizer.defaults["betas"]
+    
+    ema_generator = copy.deepcopy(generator).requires_grad_(False).eval()
+    
+    # real images seen so far during training
+    ema_warmup_images_seen = 0
+    
+    metric = IS_FID_Calculator(device)
+
+    fixed_z = torch.randn((gen_num_samples, generator.z_size)).to(device)
+
+    starting_step = 0
+    starting_epoch = 0
+    last_training_step_counter = 0
+    z_size = generator.z_size
+    
+    scaler = torch.amp.grad_scaler.GradScaler(device, enabled=use_fp16)
+    
+    # check for resuming from a checkpoint
+    if resume:
+        if checkpoint_path:
+            checkpoint_filename = os.path.split(checkpoint_path)[-1]
+        else:
+            checkpoints_dirs = sorted([subdir for subdir in os.listdir(weights_save_dir)\
+                                       if os.path.isdir(os.path.join(weights_save_dir, subdir))])
+            #grab the last checkpoint/most recent one
+            checkpoint_dirpath = os.path.join(weights_save_dir, checkpoints_dirs[-1])
+            # grab the latest checkpoint 
+            checkpoint_files = sorted([f for f in os.listdir(checkpoint_dirpath) if f.endswith(".ckpt")])
+            checkpoint_filename = checkpoint_files[-1]
+            checkpoint_path = os.path.join(checkpoint_dirpath, checkpoint_filename)
+        
+        if not os.path.exists(checkpoint_path):
+            raise ValueError("The Path is not valid")
+        
+        # load the stuff
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        
+        channels_d = checkpoint["channels_d"]
+        disc_use_upfirdn2d = checkpoint.get("disc_use_upfirdn2d",True)
+        discriminator.setup_layers(channels_d, disc_use_upfirdn2d)
+        discriminator.load_state_dict(checkpoint["disc_state_dict"])
+        discriminator = discriminator.to(device)
+        
+        z_size = checkpoint["z_size"]
+        w_size = checkpoint["w_size"]
+        mn_nlayer = checkpoint["mn_nlayer"]
+        channels_g = checkpoint["channels_g"]
+        style_mixing_prob = checkpoint["style_mixing_prob"]
+        ema_w_beta = checkpoint["ema_w_beta"]
+        gen_use_upfirdn2d = checkpoint.get("gen_use_upfirdn2d",True)
+        
+        generator.setup_layers(z_size, w_size, mn_nlayer, channels_g,
+                               style_mixing_prob=style_mixing_prob,
+                               ema_w_beta=ema_w_beta,
+                               use_upfirdn2d=gen_use_upfirdn2d,
+                               eps=eps)
+        generator.load_state_dict(checkpoint["gen_state_dict"])
+        generator = generator.to(device)
+        
+        scaler.load_state_dict(checkpoint.get("scaler_state_dict", scaler.state_dict()))
+        
+        # load the ema version, dont forget to also load the images seen so far!
+        kimg = checkpoint["kimg"]
+        ema_warmup_images_seen = checkpoint["ema_warmup_images_seen"]
+        if use_ema_inference:
+            ema_generator.load_state_dict(checkpoint["gen_ema_state_dict"])
+            ema_generator = ema_generator.to(device)
+        
+        disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
+        gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
+
+        # grab the initial lrs
+        lr_d = checkpoint["lr_d"]
+        lr_g = checkpoint["lr_g"]
+        betas_d = disc_optimizer.defaults["betas"]
+        betas_g = gen_optimizer.defaults["betas"]
+
+        data_augmentation = checkpoint["data_augmentation"]
+        normalize = checkpoint["normalize"]
+        use_fp16 = checkpoint["use_fp16"]
+        last_training_step_counter = checkpoint["training_step_counter"]
+        epochs = checkpoint["epochs"]
+        starting_epoch = checkpoint["epoch"]+1
+        batch_size = checkpoint["batch_size"]
+        path_length_interval = checkpoint["path_length_interval"]
+        r1_penalty_interval = checkpoint["r1_penalty_interval"]
+        gamma = checkpoint["gamma"]
+
+        
+    # store training log
+    all_training_losses = []
+  
+    print(f'StyleGAN3 Training on {dataset_name} in {experiment_date}')
+        
+    if resume:
+        print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
+            f'\n  --From Step:             {starting_step}'
+            f'\n  --From Epoch:            {starting_epoch}'
+            f'\n  --Checkpoint Path:       {checkpoint_path}'
+            f'\n  --Last FID:              {checkpoint["FID"]}'
+            f'\n  --Last IS:               {checkpoint["IS"][0]:.4f} ± {checkpoint["IS"][1]:.4f}')
+          
+    print(f'--Disc Param Count:          {sum([p.numel() for p in discriminator.parameters()]):,}')
+    print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
+    print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
+    print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
+    print(f'--Disc use_upfirdn2d:        {discriminator.use_upfirdn2d}')
+    print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
+    print(f'--Dataset:                   {dataset_name}-{split}')
+    print(f'--DataAugmentation:          {data_augmentation}')
+    print(f'--Normalize[-1,1]:           {normalize}')
+    print(f'--Use F16:                   {use_fp16}')
+    print(f'--Discriminator LR:          {lr_d}')
+    print(f'--Generator LR:              {lr_g}')
+    print(f'--Epochs:                    {epochs}')
+    print(f'--Batch-Size:                {batch_size}')
+    print(f'--ema_kimage:                {kimg:,} ')
+    print(f'--ema_real_images_seen:      {ema_warmup_images_seen:,} ')
+    print(f'--Path Length Reg interval:  {path_length_interval}')
+    print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
+    print(f'--Gama factor:               {gamma}')
+    print(f'--PSI:                       {psi}')
+    print(f'--gen_num_samples:           {gen_num_samples}')
+    print(f'--Checkpoint Directory:      {weights_save_dir}')
+    print(f'--Images Directory:          {images_save_dir}')
+    
+    if (use_fp16 and (lr_d>0.001 or lr_g>0.001)):
+        print(f"⚠️ Warning! ⚠️ Large LR({lr_d},{lr_g}) for FP16 can lead to Nan! Decrease it for a stable training!")
+    
+    res = 2<<len(generator.channels)    
+    train_loader = get_dataloader(dataset_name, split=split, 
+                                  resize_dims=(res,res),
+                                  batch_size=batch_size, 
+                                  data_augmentation=data_augmentation,
+                                  normalize=normalize)
+    num_batches = len(train_loader)
+    interval = num_batches//2+1
+    training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
+
+    current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
+    current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
+
+    print(f'Training StyleGAN3 on [{res}x{res}]')
+    print(f'  --Epochs:                      {epochs}')
+    print(f'  --BatchSize:                   {batch_size}')
+    print(f'  --Number of Batches:           {num_batches}')
+    print(f'  --Interval:                    {interval}')
+    print(f'  --Path Length Interval:        {path_length_interval}')
+    print(f'  --R1-Penalty Interval:         {r1_penalty_interval}')
+    print(f'  --Last training Step taken:    {training_step_counter}')
+    print(f'  --Current Discriminator LRs:   {current_lr_d}')
+    print(f'  --Current Generator LRs:       {current_lr_g}')
+    print(f'  --Current Discriminator Betas: {betas_d}')
+    print(f'  --Current Generator Betas:     {betas_g}')
+
+    path_length_mean = 0
+    for epoch in range(starting_epoch, epochs):
+        discriminator.train()
+        generator.train()
+
+        losses = []
+        epoch_scores = []
+        for i, (imgs_real, _) in enumerate(train_loader):
+            
+            imgs_real = imgs_real.to(device)
+            # we do it inside r1_penalty
+            # imgs_real.requires_grad_(True)
+            # track how many real images the network has seen for ema_generator
+            ema_warmup_images_seen += imgs_real.size(0)
+
+            # update: 
+            # I initially did this and calculate the main loss+r1_penalty in one go
+            # this was problematic as the r1penalty was done on a fp16 graph even doing
+            # casting to float doesnt change the fact that the whole graph was already 
+            # in fp16, so when we are calculating the gradients of gradients (what r1penalty
+            # is basically doning) it involves squaring and summing gradients and we can
+            # easily face numerical issues (we havent so far, but the fp16 experiments
+            # have been visibly way inferiro to the fp32, they objects malformed etc 
+            # if you see debug log for stylegan1 e.g.) I guess this could have likely caused it
+            # anyway, the other issue is that this diminshes the speedup we should get in fp16
+            # we cant do much about peak vram usage (nvidia-smi shows peack ram by the way)
+            # as the r1_penaty and later plr loss need to be calculated in fp32 anyway so that
+            # causes the vram to peak, but aside from that we should be able to get a modest speed boost!
+            # so we first calculate the main loss, do backward() so it frees the graph,vram
+            # then go for the r1_penalty, calculate it do a backward pass, the gradients will be
+            # accumulated with the previous/existing onces and then do a optimizer step!
+            #
+            # with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+            #     preds_real = discriminator(imgs_real)
+            #     z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+            #     imgs_fake = generator(z_vector)[0].detach()
+            #     preds_fake = discriminator(imgs_fake)
+            # disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
+            #
+            with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                preds_real = discriminator(imgs_real)
+                z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
+                imgs_fake = generator(z_vector)[0].detach()
+                d_preds_fake = discriminator(imgs_fake)
+                
+                disc_loss_main = discriminator_main_loss_stylegan2(preds_real, d_preds_fake)
+                
+                disc_optimizer.zero_grad()
+                # this frees the graph we can now go for r1_penalty part
+                scaler.scale(disc_loss_main).backward()
+                
+            # unlike stylegan1, we dont need to apply penalty all the time!
+            with torch.amp.autocast(device_type="cuda", enabled=False):
+                # only apply penalty intermittently
+                if (i%r1_penalty_interval)==0:
+                    r1_penalty_term = discriminator_r1_penalty_loss_stylegan2(discriminator, imgs_real)
+                    # remember to scale the penalty so on average 
+                    # the same amount of regularization is applied at the end
+                    r1_penalty_term *= r1_penalty_interval
+                    # add the gradients to existing ones from main loss
+                    scaler.scale(r1_penalty_term).backward()
+            # and finally we do take an optimizer step
+            scaler_out_d = scaler.step(disc_optimizer)
+            
+            # now train genertor to create images that look real
+            with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
+                z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
+                fake_imgs,_ = generator(z_vector)
+                preds_fake = discriminator(fake_imgs)
+            
+                # generator loss
+                # swap loss! treat fake images as real images
+                gen_real_loss = generator_loss_stylegan2(preds_fake)
+
+                # optimize generator
+                # update generator with a delay, sylegan1 uses 1:1 update ratio
+                gen_optimizer.zero_grad()
+                scaler.scale(gen_real_loss).backward()
+                
+            # apply path length regularization every 4 iterations
+            if i%path_length_interval==0: 
+                # since we already did .backward()once, the computational graph is freed
+                # we can do (backward(keep_graph=true)) but it takes vram so instead
+                # we do a second foward pass and grab the fake_imgs, ws we want and a
+                # active computational graph which we can use to calculate plr! 
+                # also like r1_penalty we need to calculate this in fp32
+                # we could move the backward after this block and use w_latentx from
+                # the previous generator call, and then add the plr term to gen_real_loss
+                # and do the backward on the whole loss, but i believe doing backward
+                # for gen_real_loss once and then doing an extra generator() for plr loss
+                # is better as we free the computational graph that contains both generator
+                # and discriminator, and then do a forward only on generator which consumes
+                # less vram although we get slower because of second generator call here!
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    fake_imgs,w_latents = generator(z_vector)
+                    plr_loss, path_length_mean = path_length_regularization_loss(fake_imgs,
+                                                                                w_latents,
+                                                                                path_length_mean)
+                    # scale the plr_loss so on average the regularization stays the same
+                    plr_loss*=path_length_interval
+                # note since we havent done optimizer.step(), all backward()s
+                # will accumulate the gradients as normal so we are ok!
+                scaler.scale(plr_loss).backward()
+                
+            # note: the unscaling part must be done at the very end,when we are done
+            # doing backward passes, just before we do step(), otherwise it will messup
+            # the gradient accumulation (some will be scaled and some will be unscaled)
+            # therefore when we take a step, it will result in a huge update, and either
+            # we diverge asap or get nans. (we diverged! cuz I added plr later, after 
+            # norm calculation and this made a whole mess. only after moving the norm calculation
+            # after it everything became ok!)
+            # monitor the norm (one of the params is enough)
+            mn_grad_norm = torch.norm(next(generator.mapping_network.parameters()).grad)
+            scaler.unscale_(gen_optimizer)
+            nn.utils.clip_grad_norm_(generator.parameters(), max_norm=10)
+            
+            # has_nans = any(torch.isnan(p.grad).any() for p in generator.parameters() if p.grad is not None)
+            # if has_nans:
+            #     print(f'Warning: Nans detected in gradients!')
+             
+            # take optimizer step
+            scaler_out_g = scaler.step(gen_optimizer)
+                
+            if mn_grad_norm>100:
+                print(f'Warning! mapping_network_grad_norm={mn_grad_norm.item():.4f}')# '{scaler_out_g=}')
+            
+            update_ema_generator(generator,
+                                 ema_generator,
+                                 imgs_real.size(0),
+                                 ema_warmup_images_seen,
+                                 ema_kimg=kimg)
+            
+            # update the scaler for the next round
+            scaler.update()
+
+            # for debugging purposes
+            disc_loss = disc_loss_main+r1_penalty_term
+            
+            disc_real_mean = preds_real.mean().item()
+            disc_fake_mean = d_preds_fake.mean().item()
+            
+            preds_detached = d_preds_fake.detach()
+            disc_fake_std = preds_detached.std().cpu()
+            disc_real_std = preds_real.detach().std().cpu()
+            
+            epoch_scores.append((disc_real_mean, disc_fake_mean))
+                
+            status_r = get_status(disc_real_mean, higher_is_better=True)
+            status_f = get_status(disc_fake_mean, higher_is_better=False)
+            status_o = get_overall_status(disc_real_mean, disc_fake_mean)
+
+            d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
+            d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
+
+            if (i+1)%interval==0:
+                print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f} | PLR: {plr_loss.item():.4f}')
+                print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
+                
+            losses.append((disc_loss.item(), gen_real_loss.item()))
+            
+            # update the training steps
+            training_step_counter += 1
+    
+        d_loss_mean = np.mean(np.array(losses)[:,0])
+        g_loss_mean = np.mean(np.array(losses)[:,1])
+
+        all_training_losses.append((d_loss_mean, g_loss_mean))
+        
+        # real
+        average_score_real_mean = np.mean(np.array(epoch_scores)[:,0])
+        average_score_real_std = np.mean(np.array(epoch_scores)[:,0])
+        # fake
+        average_score_fake_mean = np.mean(np.array(epoch_scores)[:,1])
+        average_score_fake_std = np.std(np.array(epoch_scores)[:,1])
+        
+        if quick_and_noisy_IS_FID:
+            IS_score = metric.compute_IS(imgs_fake)
+            FID_score = metric.compute_FID(imgs_real, imgs_fake)
+        else:
+            IS_score, FID_score = get_IS_FID_score(metric, generator, train_loader, dataset_name, split)
+
+        status_avg_r = get_status(average_score_real_mean, higher_is_better=True)
+        status_avg_f = get_status(average_score_fake_mean, higher_is_better=False)
+        status_avg_o = get_overall_status(average_score_real_mean,
+                                            average_score_fake_mean,
+                                            IS_score=IS_score,
+                                            min_mu=1.2)
+        
+        real_stats_avg_str = f"D_real_avg: {status_avg_r} {average_score_real_mean:>+.4f} ± {average_score_real_std:<+.4f} 📈"
+        fake_stats_avg_str = f"D_fake_avg: {status_avg_f} {average_score_fake_mean:>+.4f} ± {average_score_fake_std:<+.4f} 📉"
+
+        dloss_avg_str = f"DLoss(Avg): {d_loss_mean:.4f}"
+        gloss_avg_str = f"GLoss(Avg): {g_loss_mean:.4f}"
+
+        is_score_str = f"IS: {IS_score[0]:.4f} ± {IS_score[1]:.4f})"
+        fid_score_str = f"FID: {FID_score:.2f}"
+        
+        # mintor gradient norm for mapping_network to better
+        # tune hyper parameters, epsecially when it comes to fp16!
+        mn_grad_norm_str = f"GradNorm: {mn_grad_norm:.4f}"
+        
+        plr_mean_str = f"Path Length mean: {path_length_mean.item():.4f}"
+        
+        summary = f"{dloss_avg_str} | {gloss_avg_str} | {is_score_str} | {fid_score_str} | {mn_grad_norm_str} | {plr_mean_str}"
+        
+        print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
+        print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
+        print(f'[Epoch {epoch}/{epochs}] {summary}')
+        
+        #save model weights at each epoch
+        checkpoint_dir = f"{weights_save_dir}/{current_experiment_name}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        state_dicts = {"disc_state_dict":discriminator.state_dict(),
+                        "gen_state_dict":generator.state_dict(),
+                        "gen_ema_state_dict":ema_generator.state_dict() if use_ema_inference else None,
+                        "disc_optimizer":disc_optimizer.state_dict(),
+                        "gen_optimizer":gen_optimizer.state_dict(),
+                        "scaler_state_dict":scaler.state_dict()
+                        }
+        settings = {
+                    "z_size":generator.z_size,
+                    "w_size":generator.w_size,
+                    "mn_nlayer":generator.mn_num_layers,
+                    "channels_d":discriminator.channels,
+                    "channels_g":generator.channels,
+                    "disc_use_upfirdn2d":discriminator.use_upfirdn2d,
+                    "gen_use_upfirdn2d":generator.use_upfirdn2d,
+                    "style_mixing_prob":generator.style_mixing_prob,
+                    "ema_w_beta":generator.ema_w_beta,
+                    "eps":generator.eps,
+                    "use_fp16":use_fp16,
+                    "lr_d":lr_d,
+                    "lr_g":lr_g,
+                    "training_step_counter":training_step_counter,
+                    "kimg":kimg,
+                    "ema_warmup_images_seen":ema_warmup_images_seen,
+                    "epoch":epoch,
+                    "epochs":epochs,
+                    "batch_size":batch_size,
+                    "gamma":gamma,
+                    "psi":psi,
+                    "path_length_interval":path_length_interval,
+                    "r1_penalty_interval":r1_penalty_interval,
+                    "FID":FID_score,
+                    "IS":IS_score,
+                    "dataset_name":dataset_name,
+                    "data_augmentation":data_augmentation,
+                    "normalize":normalize,
+                    "split":split,
+                }
+        loss_dicts = {"d_loss_mean":d_loss_mean,
+                        "g_loss_mean":g_loss_mean,
+                        "all_training_losses":all_training_losses
+                        }
+        # all_settings = {**state_dicts,**settings}
+        all_settings = state_dicts | settings | loss_dicts
+        torch.save(all_settings, f"{checkpoint_dir}/checkpoint_step_{experiment_date}.ckpt")
+        
+        # generate some images mid training to evaluate our model's performance 
+        with torch.no_grad():
+            gen = ema_generator.eval() if use_ema_inference else generator.eval()
+            
+            generated_images,_ = gen(fixed_z, psi=psi)
+            
+            ema_marker_str = "[EMA]_" if use_ema_inference else ""
+            loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
+            lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e}"
+            title_str = f"Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
+            img_store_dir_path = f'{images_save_dir}/stylegan3/{dataset_name}_{experiment_date}'
+            img_filename = f'{ema_marker_str}epoch_{epoch}.jpg'
+            save_path= os.path.join(img_store_dir_path, img_filename)
+                            
+            display_images(generated_images, 
+                            cols=gen_num_samples//8,
+                            title=f"{ema_marker_str}{title_str}",
+                            unnormalize=True,
+                            save_path=save_path,
+                            figsize=(16,8))
+            
+            # save the original images only when ema is enable, 
+            # otherwise its already being saved/displayed
+            if keep_raw_generations and use_ema_inference:
+                generated_images,_ = generator(fixed_z, psi=psi)
+                display_images(generated_images, 
+                                cols=gen_num_samples//8,
+                                title=title_str,
+                                unnormalize=True,
+                                save_path=save_path.replace(ema_marker_str,""),
+                                figsize=(16,8))
+
+            # save the settings that achieved this aswell
+            settings_path = os.path.join(img_store_dir_path,'settings.yaml')
+            with open(settings_path, "w") as f:
+                yaml.dump(settings,f, sort_keys=False)
+
+    print("SttyleGAN3 training is complete!")
+
+
+#%% training stylegan3
+print(f'Training StyleGAN3')
+# gamma value can change from dataset to dataste
+# for ffhq I guess they used 10 but for lsun they used 100!
+gamma=10
+dataset_name = 'celeba_hq'
+split = 'train'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# fp16 doesnt yield any speed or vram improvements
+# as important parts are still done in fp32
+use_fp16=False
+
+# original paper uses 512
+z_size = 512
+w_size = 512
+# with 128x128, fp32 with 64 bs -> vram 6033mb
+BATCH_SIZE = 32 if use_fp16 else 32
+
+EPOCHS = 100
+
+path_length_interval = 4
+r1_penalty_interval = 16
+style_mixing_prob = 0.9
+# truncation rate
+psi = 0.7
+#up to 128x128 
+# with bs=32 [512,256,128,64,32,16] trains well 10/11m
+# it takes 13/14mins per epoch. 
+# for quick tests [256,128,64,32,16,8] should be good
+# it takes 4/5mins per epoch.
+channels_d = [256,128,64,32,16,8]
+channels_g = [256,128,64,32,16,8]
+#celeba-ffhq
+# channels_d = [512,256,128,64,32,16]#,8]
+# channels_g = [512,256,128,64,32,16]#,8]
+
+#cifar10 32x32 only
+# channels_d = [512,256,128,64]#32,#16]#,8]
+# channels_g = channels_d
+
+# whether to use upfirdn2d or normal upsample/downsample
+use_upfirdn2d = True # True
+
+#discriminator
+discriminator_stylegan2 = DiscriminatorStyleGAN3(channels=channels_d,
+                                                 use_upfirdn2d=use_upfirdn2d)
+discriminator_stylegan2 = discriminator_stylegan2.to(device)
+#generator
+mn_nlayer = 8
+generator_stylegan2 = GeneratorStyleGAN3(z_size, w_size, mn_nlayer,
+                                         channels_g, style_mixing_prob, 
+                                         use_upfirdn2d=use_upfirdn2d)
+generator_stylegan2 = generator_stylegan2.to(device)
+
+betas = [0, 0.99]
+# 0.003
+lr_d = 0.003 if not use_fp16 else 0.001
+lr_g = 0.003 if not use_fp16 else 0.001
+
+eps = 1e-5 if use_fp16 else 1e-8
+
+use_ema_inference = True
+
+disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
+
+training_loop_stylegan3(discriminator_stylegan2,
+                     generator_stylegan2,
+                     disc_optimizer=disc_optimizer,
+                     gen_optimizer=gen_optimizer, 
+                     epochs=EPOCHS,
+                     batch_size=BATCH_SIZE,
+                     path_length_interval=path_length_interval,
+                     r1_penalty_interval=r1_penalty_interval,
+                     dataset_name=dataset_name,
+                     split=split,
+                     data_augmentation=True,
+                     gamma=gamma,
+                     psi=psi,
+                     use_fp16=use_fp16,
+                     device=device,
+                     resume=False,
+                     use_ema_inference=use_ema_inference,
+                     kimg=10,
+                     keep_raw_generations=True,
+                     quick_and_noisy_IS_FID=False,
+                     )
+
+# debug log:
+# started with celeba_hq, with default config (4-5 min config) but faced gradnorm>60k going down
+# to 173 after 10 iterations in the first epoch!
+
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
 
