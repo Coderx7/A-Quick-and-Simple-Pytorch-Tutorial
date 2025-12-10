@@ -15095,15 +15095,23 @@ training_loop_stylegan3(discriminator_stylegan2,
                      )
 
 # debug log:
-# started with celeba_hq, with default config (4-5 min config) but faced gradnorm>60k going down
+# started with celeba_hq, with default config ([256,128,64,32,16,8] config) but faced gradnorm>60k going down
 # to 173 after 10 iterations in the first epoch!: ok we had a bug, I disabled demulation thinking
 # it wasnt needed! it seems that caused our generator loss to explode (started from 535 and went to
 # 96 at epoch 1 and 2, lowering the lr to 0.002 didnt help either) reenabled it also fixed a missing
-# snippet from upfirdn2d 
+# snippet from upfirdn2d that fixed the issue. also each epoch takes 20min! thats 4x more than stylegan2! 
 # 
-# 20251210173718:
-# 
-
+# stylegan3_celeba_hq_20251210173718:
+# retrain after fixing previous bug: training seems to now be going smoothly. ok after several(8) epochs we have not yet gotten any semi
+# prefect images! usually by the first few epochs a good chunk of face is developed! but in this case
+# it seems as if we have mode collapse! lets let it train for a few more epochs and see if its ok!
+# vram usage 9029MB @21:23-with bs=64. it could be because we are using a very simple architecture
+# and need to beef it up! we are using [256,128,64,32,16,8] config which is 2.8m/4.7m models!
+# also our cutoff may need serious checks cuz we went with k=12!f_c=0.5 (should use smaller f_c I guess aswell) 
+#
+#
+#
+#
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
 
