@@ -14315,7 +14315,7 @@ class StyleConvBlock3(nn.Module):
         # apply nonlinearity sandwich upsample-relu-downsample
         out = upfirdn2d(out, self.filter_act_up, up=2)
         out = F.leaky_relu(out, negative_slope=0.2)
-        out = upfirdn2d(out, self.filter_act_dn, up=2)
+        out = upfirdn2d(out, self.filter_act_dn, down=2)
         return out
 
 # for the generator we swap the const_input with a fourior based one!
@@ -14508,8 +14508,7 @@ class DiscriminatorStyleGAN3(nn.Module):
         out = self.blocks(out)
         out = self.final(out)
         return out.view(-1,1)
- 
-  
+   
 channels=[512,256,128,64,32,16,8]
 use_upfirdn2d=True
 disc = DiscriminatorStyleGAN3(channels=channels,use_upfirdn2d=use_upfirdn2d)
