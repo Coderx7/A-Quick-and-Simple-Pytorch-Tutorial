@@ -14208,15 +14208,26 @@ def upfirdn2d(input, kernel, up=1, down=1, pad='valid'):
 # This allows the generator to be "continuous" and translation equivariant.
 # If we shift the grid inputs, the output image shifts exactly.
 class FourierInput(nn.Module):
-    def __init__(self, channels, dim_size=4):
+    def __init__(self, channels, dim_size=4, scale=10):
         super().__init__()
         self.dim_size = dim_size
         self.channels = channels
+        self.scale = scale
         
         # We initialize random frequencies that act as 
         # the "basis" for our texture shape: (channels/2, 2)
         # and 2 represents (x, y)
-        freqs = torch.randn(size=(channels//2, 2))
+        # update: 
+        # initially I didnt set any scale, this gave us only low frequencies
+        # which in turn messed up our generation. the network couldnt generate
+        # any high frequency detail(sharp details).
+        # in stylegan2 our input was a 4x4 const tensor that was learned during
+        # training but here, the input is just fixed coordinates! if the frequency
+        #  of our fourier featrurees is too low, then the network literally can not
+        # generate sharp details (i.e. high frequency details!) because it doesnt
+        # have the vocabulary (i.e. high frequencies) to define them! 
+        # we need to increase the scale of random frequencies here to fix that 
+        freqs = torch.randn(size=(channels//2, 2)) * self.scale
         self.register_buffer('freqs', freqs)
 
     def forward(self, batch_size, device):
@@ -14329,14 +14340,14 @@ class GeneratorStyleGAN3(nn.Module):
     def __init__(self, z_size=512, w_size=512, mn_num_layers=8, 
                  channels=[512,512,512,256,128,64,32], 
                  style_mixing_prob=0.9, ema_w_beta=0.995, 
-                 use_upfirdn2d=True):
+                 use_upfirdn2d=True,scale=10.0):
         super().__init__()
         
         self.setup_layers(z_size, w_size, mn_num_layers,channels,
-                          style_mixing_prob, ema_w_beta, use_upfirdn2d)
+                          style_mixing_prob, ema_w_beta, use_upfirdn2d,scale)
                 
     def setup_layers(self, z_size, w_size, mn_num_layers, channels,
-                     style_mixing_prob, ema_w_beta, use_upfirdn2d):
+                     style_mixing_prob, ema_w_beta, use_upfirdn2d,scale):
         
         self.z_size = z_size
         self.w_size = w_size
@@ -14348,11 +14359,15 @@ class GeneratorStyleGAN3(nn.Module):
         
         # whether to use the upfirdn2d for upsampling or not
         self.use_upfirdn2d = use_upfirdn2d
+        self.scale = scale
         
         self.channels = channels
         
-        # in the second version we use randn instead of just ones still 4x4
-        self.fourier_input = FourierInput(self.channels[0],dim_size=4)
+        # in this version we use fourier input to generate fixed coordinates that the
+        # network uses to generate the images. getting this to work properly is crucial
+        # otherwise if it only generates low frequencies the network cant generate fine details!
+        # so scale is very important here
+        self.fourier_input = FourierInput(self.channels[0],dim_size=4, scale=self.scale)
         
         self.mapping_network = MappingNetwork2(z_size, w_size, self.mn_num_layers)
         
@@ -14540,7 +14555,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-    current_experiment_name = f"stylegan2_{dataset_name}_{experiment_date}"
+    current_experiment_name = f"stylegan3_{dataset_name}_{experiment_date}"
 
     lr_d = disc_optimizer.param_groups[0]["lr"]
     lr_g = gen_optimizer.param_groups[0]["lr"]
@@ -14596,13 +14611,14 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
         ema_w_beta = checkpoint["ema_w_beta"]
-        gen_use_upfirdn2d = checkpoint.get("gen_use_upfirdn2d",True)
+        gen_use_upfirdn2d = checkpoint["gen_use_upfirdn2d"]
+        scale = checkpoint["scale"]
         
         generator.setup_layers(z_size, w_size, mn_nlayer, channels_g,
                                style_mixing_prob=style_mixing_prob,
                                ema_w_beta=ema_w_beta,
                                use_upfirdn2d=gen_use_upfirdn2d,
-                               eps=eps)
+                               scale=scale)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
@@ -14655,6 +14671,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
     print(f'--Disc use_upfirdn2d:        {discriminator.use_upfirdn2d}')
     print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
+    print(f'--Genr Fourier scale:        {generator.scale}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--DataAugmentation:          {data_augmentation}')
     print(f'--Normalize[-1,1]:           {normalize}')
@@ -14930,9 +14947,9 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                     "channels_g":generator.channels,
                     "disc_use_upfirdn2d":discriminator.use_upfirdn2d,
                     "gen_use_upfirdn2d":generator.use_upfirdn2d,
+                    "scale":generator.scale,
                     "style_mixing_prob":generator.style_mixing_prob,
                     "ema_w_beta":generator.ema_w_beta,
-                    # "eps":generator.eps,
                     "use_fp16":use_fp16,
                     "lr_d":lr_d,
                     "lr_g":lr_g,
@@ -15048,17 +15065,23 @@ channels_g = [256,128,64,32,16,8]
 
 # whether to use upfirdn2d or normal upsample/downsample
 use_upfirdn2d = True # True
+# fourier input scale so we dont get just low frequencies
+# if this is not properly set (e.g. set low!) generator
+# cant generate high frequency details(sharp details)
+# and we get blurry outputs
+fourier_scale=10.0
 
 #discriminator
-discriminator_stylegan2 = DiscriminatorStyleGAN3(channels=channels_d,
+discriminator_stylegan3 = DiscriminatorStyleGAN3(channels=channels_d,
                                                  use_upfirdn2d=use_upfirdn2d)
-discriminator_stylegan2 = discriminator_stylegan2.to(device)
+discriminator_stylegan3 = discriminator_stylegan3.to(device)
 #generator
 mn_nlayer = 8
-generator_stylegan2 = GeneratorStyleGAN3(z_size, w_size, mn_nlayer,
+generator_stylegan3 = GeneratorStyleGAN3(z_size, w_size, mn_nlayer,
                                          channels_g, style_mixing_prob, 
-                                         use_upfirdn2d=use_upfirdn2d)
-generator_stylegan2 = generator_stylegan2.to(device)
+                                         use_upfirdn2d=use_upfirdn2d,
+                                         scale=fourier_scale)
+generator_stylegan3 = generator_stylegan3.to(device)
 
 betas = [0, 0.99]
 # 0.003
@@ -15069,11 +15092,11 @@ eps = 1e-5 if use_fp16 else 1e-8
 
 use_ema_inference = True
 
-disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
-gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
+disc_optimizer = torch.optim.Adam(discriminator_stylegan3.parameters(), lr=lr_d, betas=betas)
+gen_optimizer = torch.optim.Adam(generator_stylegan3.parameters(), lr=lr_g, betas=betas, eps=eps)
 
-training_loop_stylegan3(discriminator_stylegan2,
-                     generator_stylegan2,
+training_loop_stylegan3(discriminator_stylegan3,
+                     generator_stylegan3,
                      disc_optimizer=disc_optimizer,
                      gen_optimizer=gen_optimizer, 
                      epochs=EPOCHS,
@@ -15107,8 +15130,18 @@ training_loop_stylegan3(discriminator_stylegan2,
 # it seems as if we have mode collapse! lets let it train for a few more epochs and see if its ok!
 # vram usage 9029MB @21:23-with bs=64. it could be because we are using a very simple architecture
 # and need to beef it up! we are using [256,128,64,32,16,8] config which is 2.8m/4.7m models!
+# ok at epoch 11 we are seeing images that resemle human faces, the facial features are comming togethernow!
+# but they look the same. the mode collapse feeling still exists here!
 # also our cutoff may need serious checks cuz we went with k=12!f_c=0.5 (should use smaller f_c I guess aswell) 
-#
+# ended the training at epoch 12! 
+# 
+# update:
+#  there were a few issues, regarding the fourier input our suspicion was on point, as it
+#  it seems fourier input frequencies were too low. in stylegan2 our input was a 4x4 const tensor
+#  that was learned during training but here, the input is just fixed coordinates! if the frequency
+#  of our fourier featrurees is too low, then the network literally can not generate sharp details
+#  (i.e. high frequency details!) because it doesnt have the vocabulary (i.e. high frequencies) to
+#  define them! we had to increase the scale of random frequencies in our fourier input 
 #
 #
 #
