@@ -14260,8 +14260,9 @@ class FourierInput(nn.Module):
         emb = emb.permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
         return emb
 
+# the stylegan3 uses conv1x1 I initially used 3x3!
 class StyleConvBlock3(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True,
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=True,
                  w_size=512, up=1, eps=1e-8, use_upfirdn2d=True ):
         super().__init__()
         self.in_channels = in_channels
