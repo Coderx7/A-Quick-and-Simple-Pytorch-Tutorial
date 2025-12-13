@@ -12544,6 +12544,222 @@ def path_length_regularization_loss(fake_imgs,
     
     return path_penalty, path_mean.detach()
 
+# update: stylegan2 ada
+# before we continue with stylegan2 training loop Id like to also include a variant of
+# stylegan2 that is as important and allowss us to train on much smaller datasets. 
+# the only new thing here is a tunable training time data-augmentation! that we add 
+# to our training loop so both real and fake images go through an augmentation step to
+# fight overfitting discriminator. since one of the biggest issues is that discriminator
+# quickly outpowers the generator in smaller datasets.
+# for that we need to create a module that allows us to augment our input, we cant use torchvision transforms
+# since they are not diffrentiable (we can backprop)! so we have to implement all the augmentations 
+# the old fashion way using matrix multiplications.
+# we also need to track the discriminator's overfitting status that is we need a function that
+# looks at the discrimnator's output(real_preds) for real images and adjust the augmentation probablity
+# accordingly.  the intuition behind it is simple, if the discriminator is predicting real images
+# with very high confidence(values vaery far from 0), we can say its probably overfitting!
+# in practice we aim for a fixed overfitting heuristic usually 0.6. 
+# ( not so much relevent sidenote abut heuristic :
+# by heuristic we mean we found this usuing trial and error, found it imperically, not that its a hard condition!
+# its a rule of  thumb! if it works good, if not play with it and found your heuristic!
+# (it comes from latin word heuriskein which means to discrover which interestingly has the same
+# root as eureka! I thought that was interesting so I want to keep it))
+# 
+
+class AdaAugment(nn.Module):
+    def __init__(self, p=0):
+        super().__init__()
+        self.p = p
+        # we need to create a transformation matrix 
+        # since we want to do both translation and rotation
+        # a 3x3 matrix is needed we can do a simple torch.zeros(3,3)
+        # and then fill the individual entries, but using eye(identity matrix) 
+        # helps us type less to create the needed transformation matrix
+        # we then use this to create individual transformation matrixes 
+        # for each transformation and then combine them all 
+        # we also use a buffer so its saved during checkpoints
+        # but is added to computational graph so dosnt get optimzied
+        # we dont want any of this to change
+        self.register_buffer('eye',torch.eye(3))
+    
+    def forward(self, x):
+        # if we are not training dont augment anything
+        if self.p == 0 or not self.training:
+            return x
+        
+        device = x.device
+        batch_size = x.size(0)    
+        # for geometric transformations like translation or flipping
+        # we need a transformation matrix for each sample in the batch
+        # so we reapeat it make it [batch,3,3]
+        F_matrix = self.eye.repeat(batch_size, 1,1).to(device)
+        # flip horizontal with the probablity of p/2, 
+        # in transformation matrix if we want to flip the image, 
+        # we need to set the first matrix entry[0,0] to -1
+        should_flip = (torch.rand(batch_size,device=device)<self.p/2).float()
+        # to flip horizontally we use [-1,0], for vertical we would [1, 0],
+        #                             [ 0,1]                        [0,-1]
+        # but since we are dealing with images, we have translation and flipping
+        # we rotate the image about its center, so for horiziontal flipping 
+        # we can use the identity matrix like this: 
+        # [-1 0 w]
+        # [ 0 1 0] 
+        # [ 0 0 1]
+        # if we were to flip vertically, then it'd be 
+        # [1  0 0]
+        # [0 -1 h] 
+        # [0  0 1]
+        # so since we already are using identity matrix, we can simply
+        # flip [0,0] entry to -1 and get a horizontal flip or 1 otherwise
+        # 1-2 is there so we get -1 if we should flip, or 1 if not
+        F_matrix[:,0,0] = 1-2*should_flip
+        
+        # rotation and scale and translation 
+        # we can do rotation with scale and then do translation
+        should_affine_rst = (torch.rand(batch_size,device=device)<self.p).float()
+        # random rotation (papers around -+15/30 deg), we grab a random number 
+        # convert to degree by multiplying by 15 degrees 
+        theta = torch.rand(batch_size,device=device) * (15*torch.pi/180) * should_affine_rst
+        cos_theta = torch.cos(theta)
+        sin_theta = torch.sin(theta)
+        
+        # for scaling we can do 2^x with x being between 0-0.2 that should giveus 
+        # mild scaling like around 1~1.148 (2^0=1, 2^0.2=1.15)
+        scale = torch.exp2(torch.randn(batch_size,device=device) * 0.2 * should_affine_rst)
+        # the transformation matrix for rotation and scaling is 
+        # [scale*cosθ -scale*sinθ  0]
+        # [scale*sinθ  scale*cosθ  0]
+        # [   0          0         1]
+        R = self.eye.repeat(batch_size, 1,1).to(device)
+        R[:,0,0] = scale * cos_theta
+        R[:,0,1] = -scale * sin_theta
+        R[:,1,0] = scale * sin_theta
+        R[:,1,1] = scale * cos_theta            
+    
+        # now for translation we can simply do
+        # [ 1 0 tx]
+        # [ 0 1 ty] 
+        # [ 0 0 1 ]
+        tx = torch.randn(batch_size,device=device)*0.125 * should_affine_rst
+        ty = torch.randn(batch_size,device=device)*0.125 * should_affine_rst
+    
+        T = self.eye.repeat(batch_size,1,1).to(device)
+        T[:,0,2] = tx
+        T[:,1,2] = ty
+        
+        # now we can finally combine all these transformation matrixes
+        # get the final combination and apply it on our images
+        # note that the order which we multiply them is important
+        # flip @ translation @ rotation/scale
+        transform_matrix = torch.bmm(T, torch.bmm(R,F_matrix))
+
+        # we can use pytorch's affine_grid and apply this matrix
+        # however it expects a shape (b,2,3)
+        affine = transform_matrix[:,:2,:]
+        grid = F.affine_grid(affine, x.size(), align_corners=False)
+        x = F.grid_sample(x, grid, mode='bilinear', padding_mode='reflection', align_corners=False)
+        
+        # cutout transformation /hide some parts of the image
+        # we apply cutout after all geometric transformations are applied so the black box
+        # remains prefect recangle otherwise it would get rotated/scaled which is not what we want!
+        # the goal here is to hide/occlude some parts of the final view so to force the discriminator
+        # to look else wehre! keeping it rectangular like that is the norm (standard)
+        # we multiply the cutout area by 0 since the generator outputs are unbounded (raw network outputs/logits)
+        # but usually in -1,1 range as the network learns to produce in that range, 0 represents 
+        # gray in a normalized [−1,1] image, or black in a [0,1] image.
+        x= self.apply_cutout(x)
+        
+        # after we have don all the geometric transformations/cutout we can apply the color transformations
+        # 
+        should_brighten = (torch.rand(batch_size,device=device)<self.p).float() 
+        bias = torch.randn(batch_size,device=device)*0.2 * should_brighten
+        # apply the constant brightness on he whole image
+        x = x+bias.view(-1,1,1,1)
+        
+        # we can do contrast adjustment aswell in the same fashion 
+        should_contrast = (torch.rand(batch_size,device=device)<self.p).float() 
+        # 2^(0)~ 2^(0.5) seems like a good range to keep the mean roughly centered at 0 ( remember our images are -1,1 range)
+        contrast_scale = torch.exp2(torch.randn(batch_size,device=device)*0.5 * should_contrast)
+        # apply the constant brightness on he whole image
+        x = x*contrast_scale.view(-1,1,1,1)
+        return x
+            
+    def apply_cutout(self, x):
+
+        b,c,H,W = x.shape
+        device=x.device
+        # we start by deciding which samples in the batch
+        # get to get cutout! 
+        # note we need to either provide the shape here properly
+        # or reshape it afterward otherwise broadcasting wouldnt
+        # be successful. i decided to create the right shape here
+        should_cutout = (torch.rand(size=(b,1,1,1),device=device)<self.p).float()
+        # if we dont have any samples for cutout then return early
+        if should_cutout.sum() ==0:
+            return x
+        
+        # how much should we cutout? 0~50% of image 
+        w_ratio = torch.rand(size=(b,1,1,1),device=device) * 0.5 
+        h_ratio = torch.rand(size=(b,1,1,1),device=device) * 0.5
+        
+        # grab random x,y for center of our cutout area 
+        # we grab random numbers between 0-1 and then normalize
+        # the image coordinates to be in 0-1 as well for easier
+        # handling
+        cx = torch.rand(size=(b,1,1,1),device=device)
+        cy = torch.rand(size=(b,1,1,1),device=device)
+        
+        # create normalized coordinates between 0-1
+        nx = torch.linspace(0,1,W).view(1,1,1,W).expand(b,1,H,W).to(device)
+        ny = torch.linspace(0,1,H).view(1,1,H,1).expand(b,1,H,W).to(device)
+
+        # now we build a mask where pixels inside the cutout area
+        # are 1 and outside are 0 i.e. abs(coord-center)<size/2 -> 1 else 0
+        mask_x = (torch.abs(nx-cx) < w_ratio/2)
+        mask_y = (torch.abs(ny-cy) < h_ratio/2)   
+        
+        # print(f'{mask_x.shape=}')
+        # print(f'{mask_y.shape=}')
+        # display_images(mask_x,1,'mask_x',unnormalize=True)
+        # display_images(mask_y,1,'mask_y',unnormalize=True)
+            # we bitwise and the two masks to get one mask
+        mask_xy = mask_x & mask_y
+        # display_images(mask_xy,1,'mask_xy',unnormalize=True)
+        # now the we want to set the cutout area to 0 in the 
+        # actual image and keep the rest as is so the rest should
+        # be 1 so when we apply the mask on the image, only the 
+        # cutout area is black/gray and the rest of the image 
+        # is intact
+        mask_xy_inv = ~mask_xy
+        # display_images(mask_xy_inv,1,'mask_xy_inv',unnormalize=True)
+        # and finally we apply the mask on the samples that need to do cutout
+        effective_mask = (should_cutout * mask_xy_inv) + (1-should_cutout)
+        # apply the mask
+        x = x * effective_mask
+        return x
+    
+# # x = torch.randn(4,3,128,128)
+# x = next(iter(get_dataloader('celeba',resize_dims=128,batch_size=4)))[0]
+# ada = AdaAugment(p=0.5)
+# # xout = ada.apply_cutout(x)
+# xout = ada(x)
+# display_images(xout,4,'cutout applied')
+
+# now for discriminator outputs we need to see how many are larger than 0
+# we want the ratio be close to our target threshold and prevent it from
+# being 1
+def update_ada_p(p, d_preds_real, target_threshold=0.6,speed=500):
+    batch_size = d_preds_real.size(0)
+    # we can use torch.sign to know if x>0 or not. 
+    # for x>0 sign(x) is 1 otherwise its -1. to map this to 
+    # 0-1 range we do (sign(x)+1)/2 
+    avg_sign = (torch.sign(d_preds_real).mean().item() +1)/2
+    # now we calculate the step size, speed is how fast the p should change (usually 500k images)
+    adjust = np.sign(avg_sign - target_threshold) * (batch_size*4)/(speed*1000)
+    p += adjust
+    # clip between 0-1
+    p = min(max(p,0),1)
+    return p, avg_sign
 
 @torch.no_grad()
 def update_ema_generator(gen:GeneratorStyleGAN2, 
@@ -12611,12 +12827,14 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                          split, data_augmentation=False, normalize=True, use_fp16=False, 
                          path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
                          gen_num_samples = 64, use_ema_inference=False, kimg=10,
-                         keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
-                         resume=False, eps=1e-8, weights_save_dir='./weights/gan',
+                         keep_raw_generations=True, quick_and_noisy_IS_FID=False,
+                         enable_ada=False, ada_interval=4, ada_speed_kimg=500, ada_target=0.6,
+                         device='cuda', resume=False, eps=1e-8, weights_save_dir='./weights/gan',
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-    current_experiment_name = f"stylegan2_{dataset_name}_{experiment_date}"
+    arch_name = "stylegan2_ada" if enable_ada else "stylegan2"
+    current_experiment_name = f"{arch_name}_{dataset_name}_{experiment_date}"
 
     lr_d = disc_optimizer.param_groups[0]["lr"]
     lr_g = gen_optimizer.param_groups[0]["lr"]
@@ -12639,6 +12857,13 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     z_size = generator.z_size
     
     scaler = torch.amp.grad_scaler.GradScaler(device, enabled=use_fp16)
+    
+    #adaptive data augmentation ada, we start with no augmentation
+    # and during the course of training update the value of p
+    ada_aug = AdaAugment(p=0)
+    # this is to track the p during training
+    ada_p=0
+    ada_avg_sign=0
     
     # check for resuming from a checkpoint
     if resume:
@@ -12701,6 +12926,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         betas_g = gen_optimizer.defaults["betas"]
 
         data_augmentation = checkpoint["data_augmentation"]
+        enable_ada = checkpoint["enable_ada"]
+        ada_interval = checkpoint["ada_interval"]
+        ada_target = checkpoint["ada_target"]
+        ada_speed_kimg = checkpoint["ada_speed_kimg"]
+        
         normalize = checkpoint["normalize"]
         use_fp16 = checkpoint["use_fp16"]
         last_training_step_counter = checkpoint["training_step_counter"]
@@ -12715,7 +12945,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     # store training log
     all_training_losses = []
   
-    print(f'StyleGAN1 Training on {dataset_name} in {experiment_date}')
+    print(f'{arch_name.title()} Training on {dataset_name} in {experiment_date}')
         
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
@@ -12733,6 +12963,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--DataAugmentation:          {data_augmentation}')
+    print(f'--ADA enabled:               {enable_ada}')
     print(f'--Normalize[-1,1]:           {normalize}')
     print(f'--Use F16:                   {use_fp16}')
     print(f'--Discriminator LR:          {lr_d}')
@@ -12745,6 +12976,9 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     print(f'--R1 Penalty Interval:       {r1_penalty_interval}')
     print(f'--Gama factor:               {gamma}')
     print(f'--PSI:                       {psi}')
+    print(f'--Ada Prob:                  {ada_p}')
+    print(f'--Ada target:                {ada_target}')
+    print(f'--Ada speed kimage:          {ada_speed_kimg}')
     print(f'--gen_num_samples:           {gen_num_samples}')
     print(f'--Checkpoint Directory:      {weights_save_dir}')
     print(f'--Images Directory:          {images_save_dir}')
@@ -12765,7 +12999,7 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
     current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
     current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
 
-    print(f'Training StyleGAN2 on [{res}x{res}]')
+    print(f'Training {arch_name.title()} on [{res}x{res}]')
     print(f'  --Epochs:                      {epochs}')
     print(f'  --BatchSize:                   {batch_size}')
     print(f'  --Number of Batches:           {num_batches}')
@@ -12793,6 +13027,9 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             # track how many real images the network has seen for ema_generator
             ema_warmup_images_seen += imgs_real.size(0)
 
+            # for stylegan2-ada variant
+            ada_aug.p = ada_p
+                        
             # update: 
             # I initially did this and calculate the main loss+r1_penalty in one go
             # this was problematic as the r1penalty was done on a fp16 graph even doing
@@ -12818,10 +13055,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             # disc_loss = discriminator_loss_stylegan2(preds_real, imgs_real, preds_fake, gamma, i, r1_penalty_interval)
             #
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
-                preds_real = discriminator(imgs_real)
+                
+                preds_real = discriminator(imgs_real) if not enable_ada else discriminator(ada_aug(imgs_real))
                 z_vector = torch.randn((imgs_real.size(0), z_size)).to(device)
                 imgs_fake = generator(z_vector)[0].detach()
-                d_preds_fake = discriminator(imgs_fake)
+                d_preds_fake = discriminator(imgs_fake) if not enable_ada else discriminator(ada_aug(imgs_fake))
                 
                 disc_loss_main = discriminator_main_loss_stylegan2(preds_real, d_preds_fake)
                 
@@ -12833,6 +13071,10 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             with torch.amp.autocast(device_type="cuda", enabled=False):
                 # only apply penalty intermittently
                 if (i%r1_penalty_interval)==0:
+                    #sidenote:
+                    # the stylegan2ada paper used the augmented version, but since it might introduce 
+                    # the agumentation's distortion and affect the r1 penalty lets not add it
+                    # todo if it didnt work comeback and do ada_aug(imgs_real) instead 
                     r1_penalty_term = discriminator_r1_penalty_loss_stylegan2(discriminator, imgs_real)
                     # remember to scale the penalty so on average 
                     # the same amount of regularization is applied at the end
@@ -12842,11 +13084,15 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             # and finally we do take an optimizer step
             scaler_out_d = scaler.step(disc_optimizer)
             
+            if enable_ada and (i%ada_interval)==0:
+                ada_p , ada_avg_sign = update_ada_p(ada_p, preds_real.detach(), ada_target, ada_speed_kimg)
+                # print(f'Ada prob: {ada_p:.4f} avg_sign: {ada_avg_sign:.4f}')
+            
             # now train genertor to create images that look real
             with torch.amp.autocast(device_type="cuda", enabled=use_fp16):
                 z_vector = torch.randn((imgs_real.size(0),z_size)).to(device)
                 fake_imgs,_ = generator(z_vector)
-                preds_fake = discriminator(fake_imgs)
+                preds_fake = discriminator(fake_imgs) if not enable_ada else discriminator(ada_aug(fake_imgs))
             
                 # generator loss
                 # swap loss! treat fake images as real images
@@ -12931,9 +13177,13 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
 
             d_real_stat_str = f"D_real_avg: {status_r} {disc_real_mean:+.4f} ± {disc_real_std:+.4f} 📈"
             d_fake_stat_str = f"D_fake_avg: {status_f} {disc_fake_mean:+.4f} ± {disc_fake_std:+.4f} 📉"
-
+            
+            ada_str = f" | Ada prob: {ada_p:.4f} avg_sign: {ada_avg_sign:.4f}" if enable_ada else ""
+            
             if (i+1)%interval==0:
                 print(f'[Epoch {epoch}/{epochs} | Iter: {i}/{len(train_loader)}] Disc Loss: {disc_loss:.4f} | Gen Loss: {gen_real_loss:.4f} | PLR: {plr_loss.item():.4f}')
+                if enable_ada:
+                    print(f" -- {ada_str}")
                 print(f" -- {status_o} Batch-{i}:  {d_real_stat_str}| {d_fake_stat_str}")
                 
             losses.append((disc_loss.item(), gen_real_loss.item()))
@@ -12985,6 +13235,8 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
         
         print(f" -- {status_o} Last Batch : {d_real_stat_str} | {d_fake_stat_str}")
         print(f" -- {status_avg_o} Epoch's Avg: {real_stats_avg_str} | {fake_stats_avg_str}")
+        if enable_ada: 
+            print(f" -- {ada_str}")
         print(f'[Epoch {epoch}/{epochs}] {summary}')
         
         #save model weights at each epoch
@@ -13026,6 +13278,11 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
                     "IS":IS_score,
                     "dataset_name":dataset_name,
                     "data_augmentation":data_augmentation,
+                    "enable_ada":enable_ada,
+                    "ada_p":ada_p,
+                    "ada_target":ada_target,
+                    "ada_speed_kimg":ada_speed_kimg,
+                    "ada_interval":ada_interval,
                     "normalize":normalize,
                     "split":split,
                 }
@@ -13047,10 +13304,10 @@ def training_loop_stylegan2(discriminator:DiscriminatorStyleGAN2, generator:Gene
             loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
             lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e}"
             title_str = f"Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
-            img_store_dir_path = f'{images_save_dir}/stylegan2/{dataset_name}_{experiment_date}'
+            img_store_dir_path = f'{images_save_dir}/{arch_name}/{dataset_name}_{experiment_date}'
             img_filename = f'{ema_marker_str}epoch_{epoch}.jpg'
             save_path= os.path.join(img_store_dir_path, img_filename)
-                            
+
             display_images(generated_images, 
                             cols=gen_num_samples//8,
                             title=f"{ema_marker_str}{title_str}",
@@ -13138,6 +13395,10 @@ lr_g = 0.003 if not use_fp16 else 0.001
 eps = 1e-5 if use_fp16 else 1e-8
 
 use_ema_inference = True
+# enable stylegan2-ada for small datasets
+enable_ada = False
+ada_target=0.6
+
 
 disc_optimizer = torch.optim.Adam(discriminator_stylegan2.parameters(), lr=lr_d, betas=betas)
 gen_optimizer = torch.optim.Adam(generator_stylegan2.parameters(), lr=lr_g, betas=betas, eps=eps)
@@ -13162,6 +13423,8 @@ training_loop_stylegan2(discriminator_stylegan2,
                      kimg=10,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
+                     enable_ada=enable_ada,
+                     ada_target=ada_target,
                      )
 #%% clear vram
 for m in [discriminator_stylegan2,
@@ -13506,7 +13769,7 @@ for noise_status in [True]:
 # may very well jump from one image to a completely different one, that is see several 
 # features change all at the same time which denotes they are entangled!(cant change one
 # feature without a few others change as well!)
-#%%
+#%% stylemix
 @torch.no_grad()
 def style_mix(generator:GeneratorStyleGAN2, z_source, z_style, layer_indx_for_crossover,
               psi_src=None, psi_sty=None, constant_noise=True):
@@ -13607,7 +13870,7 @@ def change_styles(z_source, z_style, psi_src=None, psi_sty=None):
                    figsize=(16,16))
 
 change_styles(z_source,z_style,psi_src=None, psi_sty=None)
-#%%
+#%% get directions (eigen vectors)
 # grab the modulation weights for closed form factorization
 # we are trying to extract meaninful directions from weights
 # so we can use them to generate images along those directions
@@ -13689,7 +13952,7 @@ print(f'{eigen_vecs.shape=}')
 # should be large numbers
 print(f"Top 5 Eigenvalues: {eigen_vals[:5]}")
 
-#%%
+#%% interpolate with direction
 # and now we can apply these new directions to our latent vectors ws and get the result
 # lets test this
 @torch.no_grad()
@@ -13769,7 +14032,7 @@ for i in range(cnt):
     #            cols=5, 
     #            unnormalize=True)
     
-#%%
+#%% interpolation explorer gui
 # to be able to do this more easily we need to write a GUI
 # since we are in jupyter notebook the easiest way is to
 # use ipywidgets that provide a minimal set of gui elements
@@ -13932,7 +14195,11 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # very well disentangled, but overall we can see how each direcion affects the 
 # image in a unique way. 
 
-#%% stylegan3
+#%% 
+
+
+# %%
+# stylegan3
 # so far so good. the main issue of texture sticking is not entirely fixed though 
 # this shows itself especially if we trained it on videos, or tried animating the
 # latent space, the features (high frequency ones teeth,beard,etc) would stick inplace
@@ -14117,8 +14384,9 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # SG3 removes this. The texture details must be generated by the network itself using the coordinate
 # system (Fourier features) so they stick to the object.
 
-# the initial version of this filter was coded by gemini, I later updated the parameters to
-# get a better geneation
+# the initial version of this filter was coded by gemini, 
+# I later updated the parameters to get a better geneation
+# 
 #update:
 # I initially used num_taps=12,fc_=0.5, but 12 was too small for high quality kaiser
 # window it seems! it didnt dampen the stopband enough and caused ringing(weird halos/ghosts)
@@ -14309,7 +14577,9 @@ class StyleConvBlock3(nn.Module):
         self.register_buffer("filter_resample",design_kaiser_filter(beta=6.0))
         # we need a separate upsample for the nonlinearity sandwich (upsample->relu->downsample)
         # so we allow for high frequencies to appear and then low-pass filter them, and 
-        # then downsample back to get the original res
+        # then downsample back to get the original res (
+        # nonlinearities introduce high frequencies, so we must upsample to make room for them,
+        # apply the non-linearity, and then low-pass filter (downsample) to remove aliasing)
         # upsample before act
         self.register_buffer("filter_act_up",design_kaiser_filter(beta=6.0))
         # downsample after act
@@ -14470,6 +14740,7 @@ class GeneratorStyleGAN3(nn.Module):
             w = ema_w_batch + psi * (w - ema_w_batch)
         return w
 
+#! todo use k=1/0 for disc as well?
 class DiscBlockStyleGAN3(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3,
                  stride=1, padding=1, bias=False, use_upfirdn2d=True):
@@ -14563,7 +14834,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                          path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
                          gen_num_samples = 64, use_ema_inference=False, kimg=10,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
-                         resume=False, eps=1e-8, weights_save_dir='./weights/gan',
+                         resume=False, weights_save_dir='./weights/gan',
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -15031,11 +15302,16 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
 
 
 #%% training stylegan3
+# the configs from official impl: https://github.com/NVlabs/stylegan3/blob/main/docs/configs.md
+# gamma is considerably smaller than stylegan2. for 128x128 they used gamma=0.5
+# for any higher resolution, they multiply it by 4, i.e. for 256x256 res gamma=2
+# for 512x512 gamma becomes=8e.g. 
+# 
 print(f'Training StyleGAN3')
 # gamma value can change from dataset to dataste
 # for ffhq I guess they used 10 but for lsun they used 100!
-gamma=10
-dataset_name = 'celeba_hq'
+gamma=0.5
+dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # fp16 doesnt yield any speed or vram improvements
@@ -15051,9 +15327,11 @@ w_size = 512
 # might be good to prevent instability(with 0.003 and 32
 # early on we faced large norms but after 10 iters it got 
 # below 100)
-BATCH_SIZE = 32 if use_fp16 else 64
-
+BATCH_SIZE = 32 if use_fp16 else 32
 EPOCHS = 100
+# for 128x128 res its 73 kimgs for single gpu training 
+# according to official impl for 256x256 res its 89 
+kimg=73 
 
 path_length_interval = 4
 r1_penalty_interval = 16
@@ -15124,7 +15402,7 @@ training_loop_stylegan3(discriminator_stylegan3,
                      device=device,
                      resume=False,
                      use_ema_inference=use_ema_inference,
-                     kimg=10,
+                     kimg=kimg,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
                      )
@@ -15147,15 +15425,26 @@ training_loop_stylegan3(discriminator_stylegan3,
 # also our cutoff may need serious checks cuz we went with k=12!f_c=0.5 (should use smaller f_c I guess aswell) 
 # ended the training at epoch 12! 
 # 
-# update:
+# 20251211101611:
 #  there were a few issues, regarding the fourier input our suspicion was on point, as it
 #  it seems fourier input frequencies were too low. in stylegan2 our input was a 4x4 const tensor
 #  that was learned during training but here, the input is just fixed coordinates! if the frequency
 #  of our fourier featrurees is too low, then the network literally can not generate sharp details
 #  (i.e. high frequency details!) because it doesnt have the vocabulary (i.e. high frequencies) to
-#  define them! we had to increase the scale of random frequencies in our fourier input 
-#
-#
+#  define them! we had to increase the scale of random frequencies in our fourier input .
+#  I also had to change kaiser_filter defaults to use larger num_taps=24 to get more high frequency
+#  details and prevent riniging(halo/ghosting) artifacts. also used a smaller f_c=0.4 to prevent aliasing
+# I also found the stylegan3 used conv1x1 throughout the generator, while I used 3. changed back to use
+# kernel_size=1,padding=0. this made our network to be 2.8/3.2m with the same exact configas before
+# (discriminator stays the same so it didnt change). ended the training at epoch 7. the dloss vsgloss
+# was 2.5 vs 3.39 and I guess this was caused becaused of disc/gen difference (conv3x3 vsconv1x1)
+# 
+#20251211123422:
+# disc convblock also uses conv1x1 this makes the model 1.8/3.2 I guess this is worse now! ended it
+# changed a few params per official impl.reverted back the disc ksize to 3 and pad=1.
+# 
+# ffhq_20251211131218:
+# used gamma=0.5, kimg=73,bs=32, for 128x128 res to see how it does!
 #
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
