@@ -14405,7 +14405,7 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # fix this noise it blurs the image as a result. thats why I choce 0.4 of f_c
 # !still not sure if it makes sense cause the rest of the network is not a 100% faithful implementation
 # !so I need to come back to this. first I need to make this dynamic 
-def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device=None):
+def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device="cuda"):
     # num_taps=12 is standard for SG3-T. f_c=0.3 prevents aliasing.
     t = torch.arange(num_taps, device=device, dtype=torch.float32) - (num_taps - 1) / 2
     h = torch.sinc(2 * f_c * t)
@@ -14517,7 +14517,7 @@ class FourierInput(nn.Module):
 
 # we dont do demodulation, so in order to keep grads from exploding
 # we need o scale them like equalizedconv2d!
-class ModulatedConv2d(nn.Module):
+class ModulatedConv2d3(nn.Module):
     def __init__(self, in_channels, out_channels, w_dim=512, activation_gain=math.sqrt(2)):
         super().__init__()
 
@@ -14593,25 +14593,25 @@ class StyleConvBlock3(nn.Module):
         # or simply decompose the ops, and do input-conv-upsample
         # i.e. do themodulation here! we use the first method and upsample
         # and then apply the modulation!
-        self.conv = ModulatedConv2d(in_channels, out_channels, w_dim=w_size)
+        self.conv = ModulatedConv2d3(in_channels, out_channels, w_dim=w_size)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
         # sidenote:
         # in actual production grade impl, these need to be calculated dynamically based on
         # cutoff args, but for now we use defaults!
-        
+        device = next(self.parameters()).device
         # Filter for the geometric upsampling (if up=2)
-        self.register_buffer("filter_resample",design_kaiser_filter(beta=6.0))
+        self.register_buffer("filter_resample",design_kaiser_filter(beta=6.0,device=device))
         # we need a separate upsample for the nonlinearity sandwich (upsample->relu->downsample)
         # so we allow for high frequencies to appear and then low-pass filter them, and 
         # then downsample back to get the original res (
         # nonlinearities introduce high frequencies, so we must upsample to make room for them,
         # apply the non-linearity, and then low-pass filter (downsample) to remove aliasing)
         # upsample before act
-        self.register_buffer("filter_act_up",design_kaiser_filter(beta=6.0))
+        self.register_buffer("filter_act_up",design_kaiser_filter(beta=6.0,device=device))
         # downsample after act
-        self.register_buffer("filter_act_dn",design_kaiser_filter(beta=6.0))
+        self.register_buffer("filter_act_dn",design_kaiser_filter(beta=6.0,device=device))
                 
         self.blur = Blur()
         
@@ -14622,7 +14622,6 @@ class StyleConvBlock3(nn.Module):
             self.upsample_fn = interp
             #or use blur like stylegan1?
             # self.upsample_fn = lambda x : self.blur(interp(x))
-
 
     def forward(self, x, w):
         # we apply conv first then upsample in stylegan3
@@ -14694,7 +14693,7 @@ class GeneratorStyleGAN3(nn.Module):
         # we dont add imgs together as it causes aliasing! in stylegan3 we just convert the final
         # high res output to image! since we dont have any activations(lrelu) for toImgs, we
         # use activation_gain=1
-        self.toImgs = ModulatedConv2d(self.channels[-1], 3, w_dim=w_size, activation_gain=1)
+        self.toImgs = ModulatedConv2d3(self.channels[-1], 3, w_dim=w_size, activation_gain=1)
         
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
@@ -14741,7 +14740,7 @@ class GeneratorStyleGAN3(nn.Module):
         for i, block in enumerate(self.blocks):
             x= block(x, w[:, i,:])
         
-        # Note: In strict SG3, even the ToRGB has a specific filtered path,
+        # sidenote: the toImgs in paper(toRgb) has a specific filtered path
         # but a simple modulated conv is the standard approx.
         img = self.toImgs(x, w[:,-1,:])
 
@@ -15322,7 +15321,8 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
 # 
 print(f'Training StyleGAN3')
 # gamma value can change from dataset to dataste
-gamma=10
+# gamma=10 is too much it seems for bs=32/ffhq using 0.5 per official impl
+gamma=0.5
 dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -15456,7 +15456,42 @@ training_loop_stylegan3(discriminator_stylegan3,
 # changed a few params per official impl.reverted back the disc ksize to 3 and pad=1.
 # 
 # ffhq_20251211131218:
-# used gamma=0.5, kimg=73,bs=32, for 128x128 res to see how it does!
+# used gamma=0.5, kimg=73,bs=32, for 128x128 res to see how it does! stopped it! the implementation
+# is probably very very wrong!
+# 
+# stylegan3_ffhq_20251215145104:
+# I came back today and started fresh, found out we had a few critical bugs. for 1 the main forward
+# loop was completely wrong. in stylegan3, we only use a single toImgs layer, and its basically a 
+# very straight forward feed foward manner! just send the input through all layers! get the final output
+# convert to rgb and thats it! no need for weird upsampling of images and adding it at each level!
+# that in itself causes aliasing noise! after that I found out the styleconvblock was wrong as well
+# we had to first do conv-bias and then upsample! I did this the other way around like stylegan2!
+# I also had to remove demodulate because it wold also cause aliasing noise! the issue is I initially
+# had it disabled, but since I noticed the gradients would explode, reenabled it thinking I was wrong!
+# turns out the demodulation needs to be disabled and to keep the variance in check we simply scale
+# the weights by 2/srrt(fanin) just like what we did in equalizedconv2d! since stylegan3 only uses conv1x1
+# cuz conv 3x3 introduces aliasing noise!! I simplified the styleconvblock3 and modulatedconv2d to
+# address this. I also reverted back the kaiser_filter num_taps and f_c to 12 and 0.3 24 was just too
+# large it seems. the network is now 1.8/2.9m. with scale=10, gamma=10,bs=32,kimg=73 and res 128x128
+# I didnt use gamma=0.5 because I wasnt sure if it was too low! cuz initially the d_loss and g_loss
+# very very close aroud 2.87 vs 3.05 e0 but it quickly changed! at e2 it became 3.09 vs 1.65,(FID 289)
+# so gamma=0.5 may have been the right choice. but for now im going to let thsi train for more. its extremeley slow 
+# by the way, this takes around 5.68GB of vram but each epoch takes 46 minutes!!basically an hour!
+# the images look liquidy/melted wax (but sharp) at the begining!they dont look like human faces at this
+# point, a tiny bit maybe, but no thats a strech it looks like one-eyed-monster factory character like kind of a thing!
+# adn I believe its because unlike stylegan2 that we learned from coarse features/pixelated low res
+# into something high detailes, here we are dealing with sine waves, they represent details, but since
+# they are applied on a coordinate system thats not yet developed it looks weird and wavy/melty/waxy!
+# if everythin goes well it should get much better sooner or later! I guess I need to end this test and
+# lower the gamma back to 0.5 so generator doesnt overpower the discriminator like now! 
+# at epoch3 FID is 301 and loss is 3.10 vs 1.54 so things are going downhill! still waiting for e4, ok
+# at e4 we got 2.78 vs 1.59. end it so we can start with gamma=0.5:
+# 
+# stylegan3_ffhq_20251215182813:
+# everything like the previous experiment, except gamma=0.5 and I also set design_kaiser_filter to use cuda
+# previously it was set to None, thus it worked on cpu!! lets see if that speeds things up a bit!
+# ok it seems each epoch now takes around 45mins! so essentially nothing changed! the loss @ e0 is 2.97 vs 3.08
+# @e1 FID304 2.99vs1.93 @e2 FID283 3.12vs1.72 
 #
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
