@@ -14199,17 +14199,30 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 
 
 # %%
-# stylegan3
-# so far so good. the main issue of texture sticking is not entirely fixed though 
-# this shows itself especially if we trained it on videos, or tried animating the
+# stylegan3 
+# paper: https://arxiv.org/pdf/2106.12423
+# (read this as well its quite interesting : https://arxiv.org/pdf/2006.09661)
+# leave it for later! 
+# I really dont feel like reading the paper, I gave up half way through!
+# my implementation is not accurate and I dont feel like reading the paper again!
+# im too exausted rn!
+#
+# the main issue of texture sticking is not entirely fixed though this shows itself 
+# especially if we trained it on videos, or tried animating the
 # latent space, the features (high frequency ones teeth,beard,etc) would stick inplace
 # instead of moving logically as the image morphed.(I havent seen it in our case
 # probably because we havent trained higher resolutions where this can become visible)
+# (there are other signs that the paper talks about like the figs in page 2 where it shows
+# the hair strands differences between stylegan2 and 3 where in stylegan2 it looks like noodles!
+# or streaks vs the actual hair strands in stylegan3 when interpolating and the cat eye images
+# on the left, clearly shows how prefect the stylegan3 images look compared to stylegan2)
 # The authors subsequent experiments revealed that the issue of texture sticking
 # (features remaining inplace (i.e. being tied to pixel-grid i'll explain more in a moment)),
 # is caused because of the alieasing produced by the generator itself! 
 # therefore to fix this issue they changed the generator architecture once again
-# in the new architecture, we no more inject noise in each layer as a signal source(for stochastic variation i.e. hair,pores, etc), 
+# in the new architecture, they go in depth about the implications of their design choices
+# and why they had to do what they did. (it went over my head honestly!) to cut a long story short
+# we no more inject noise in each layer as a signal source(for stochastic variation i.e. hair,pores, etc), 
 # because that would tie the details to the pixel grid! therefore any stochastic variation
 # must be learned normally using the generator's internal operations.
 # moreover, we also dont use fixed upsampling(FIR filters) to control aliasing! as that
@@ -14220,6 +14233,7 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # frequency patterns)
 #
 # reminder:
+# they talk about nyquest limit in the paper, but for a quick refresher, 
 # the Nyquist frequency is the highest frequency that can be represented accurately when
 # we sample a signal. its equal to half of the sampling rate.
 # for example imagine we have a pixel grid, where the sampling rate is 1 sample per pixel.
@@ -14278,7 +14292,9 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # so in stylegan3, the whole upsampling/downsampling stack is therefore replaced with low-pass filtered
 # convolutions and they are designed specifically to maintain strict signal integrity. 
 # the anti-aliasing constrints are also built into the conv layers themseleves so the generator can
-# no longer produce frequencies above nyquist limit of the feature grid! 
+# no longer produce frequencies above nyquist limit of the feature grid! basically they treat the
+# (whole thing as a continues signal now instead of looking at tit as a discrete grid/pixel thing!
+# and everything is built/designed around this continuous signal processing nature!)
 # the way they did that was to simply add a fixed low pass filter into the convolution kernel after 
 # modulation and before sampling because the modulated convolution in the previous version along 
 # with the scale demodulation with weight scaling and other non-shift invariant operations caused 
@@ -14325,75 +14341,70 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # In StyleGAN2 pixels are discrete squares but in StyleGAN3 pixels are samples of a continuous signal.
 # so to have a faithful implementation, we must strictly follow the sampling theorm (Nyquist-Shannon).
 
-# Here are the strict constraints we need to address/implemenet:
-# 
-# Continuous Signal Interpretation: 
-#   All upsampling/downsampling uses windowed Sinc filters (Kaiser-Bessel), not simple 
-#   bilinear/nearest interpolation.
-# 
-# Geometric Transformation: 
-#   The 4x4 learned input is replaced with Fourier Features to allow infinite resolution coordinate
-#   definition.
-# 
-# Equivariance: 
-#   All layers must be translation equivariant. We remove Noise Injection (which is fixed to screen coordinates)
-#   and PixelNorm/InstanceNorm (which rely on absolute statistics).
-# 
-# Non-Linearity Sandwich: 
-#   ReLU creates infinite high frequencies. We must wrap every LeakyReLU in an 
-#   Upsample -> LeakyReLU -> Downsample sandwich to filter out the aliasing frequencies generated 
-#   by the activation.
-#
-# Strict Cutoffs: 
-#   Filters are generated dynamically based on the bandwidth limit of the current layer.
+# there a few strict constraints that we need to address/implemenet, they all come from the continuous 
+# signal mindset/interpretation: 
+# - all upsampling/downsampling need to use windowed Sinc filters (Kaiser-Bessel) not simple bilinear/nearest interpolation.
+# - the const 4x4 learned input is therefore needs to be replaced with Fourier Features to allow infinite resolution
+#   coordinate definition.
+# - we need equivarance, so all layers must be translation equivariant. we need to remove noise injection 
+#   (which is fixed to screen coordinates) and PixelNorm/InstanceNorm (which rely on absolute statistics).
+# - relu/leakyrelu creates finifit high frequencies, so to filter out the aliasing frequencies it creates 
+#   we must wrap it between an upsampling and downsampling sandwich i.e. Upsample -> LeakyReLU -> Downsample 
+# - we need to have strict cutoff policy, basically filters must be generated dynamically based on the 
+#   bandwidth limit of the current layer.
 
-# ==============================================================================
-# 1. SIGNAL PROCESSING UTILITIES
-# ==============================================================================
-# StyleGAN3 relies heavily on DSP. We need to generate Kaiser-Bessel Sinc filters
-# on the fly. These filters allow us to upsample/downsample while strictly
-# controlling the frequency content (bandwidth).
+# so we need to generate kaiser-bessel sinc filters on the fly, these filters allow us to 
+# upsample/downsample while strictly controlling the frequency content (bandwidth).
 
 # why design_kaiser_filter?
-# In standard GANs, when we verify a model, we might see "texture sticking". 
-# If we generate a face and pan the camera, the stubble on the beard might stay
-# fixed to the screen pixels while the face moves. This is aliasing.
-# StyleGAN3 treats the image as a continuous signal. To resize a continuous signal,
+# this is to solve the sticking texture/aliasing problem we talked about, to fix that
+# we need to replace ordinary upsample/downsample functions with something equiavalent
+# that goes well with our continuous signal interpertation! so to resize a continuous signal,
 # we must convolve it with a Sinc function. The Kaiser window makes the infinite Sinc
 # function practical. Every time we change resolution (up or down), we apply this filter.
 
 # why FourierInput instead of const?
-# StyleGAN2 starts with a 4x4 learned block. This block has no concept of "where" it is in space.
-# StyleGAN3 starts with coordinate grids (x=−1 to 1). By passing these coordinates through sine waves,
-# we give the network a "GPS system". If we want to shift the image, we just add a value to the input
-# coordinates. This is how SG3 achieves translation equivariance.
+# back in stylegan2 we started with a 4x4 learned block. This block has no concept of 
+# "where" it is in space. and it didnt matter because of how the image was beiing built
+# there were multiple hiearchies and each went from coarse to fine details. but in stylegan3
+# we dont do that anymore, instead we start with coordinate grids (x=−1 to 1). by passing these
+# coordinagtes through the sine waves, we give the network a mapping scheme, a coordinate system,
+# a GPS system! if you will, if we wnat to shift the image then we just add a value to the input
+# coordinates, this is how we achieve equivarence in stylegan3. (this kind of works like attention
+# mechanism and time embedding)
 
 # why the LeakyReLU sandwich?
-# Imagine a sine wave (pure frequency). if we apply ReLU (clip negative values), the sharp corner
-# at zero introduces infinite high frequencies (harmonics).
-# In a digital grid, frequencies higher than the Nyquist limit (0.5 * sampling rate) turn into alias
-# noise (moire patterns). To fix this, SG3 does this:
-# Upsample x2: Creates "headroom" for the new frequencies.
-# ReLU: Generates high frequencies (safe now because we have headroom).
-# Filter: Kills the frequencies that would cause aliasing when we go back down.
-# Downsample x2: Returns to original size, clean and alias-free.
+# to understand why this is needed, again remember we are viewing everything as a continuous signal 
+# now, so imagine we have a sige wave (pure frequency). if we apply relu (leaky relu applies as well)
+# we clip the negative values, therefore the sharp corner at zero introduces infinite high frequencies
+# (i.e. harmonics). 
+# therefore in a digital grid, frequencies higher than the nyquist limit (0.5 * sampling rate) turn into
+# alias noise (e.g. moire patterns). 
+# to fix that we can upsample the image 2x to create headroom for new frequencies and then apply the
+# relu/leakyrelu activation function so it can generate high frequencies safely now (because we have sapce!)
+# we then filterout/kill the frequencies that would cause aliasing noise when we go back down and then
+# downsample 2x so we return to the original size, this time clean and without any alias noise!
 # 
 # why no noise injection then?
-# In SG2, we added random noise to simulate skin pores/hair. But random noise is generated per pixel
-# (0,0),(0,1)... If the face moves, the noise at (0,0) stays at (0,0). The pores detach from the skin!
-# SG3 removes this. The texture details must be generated by the network itself using the coordinate
-# system (Fourier features) so they stick to the object.
+# in stylegan2 the random noise was to simulate skin pores/hair(i.e. stochastic variation) but 
+# random noise is generated per pixel (0,0),(0,1)... if the face moves, the noise at (0,0) stays
+# at (0,0) and the pores detach from the skin!! in stylegan3 we dont do this anymore, the texture details
+# instead are generated by the network itself using the coordinate system (fourier input/features)
+# so they stick to the object.
 
 # the initial version of this filter was coded by gemini, 
 # I later updated the parameters to get a better geneation
 # 
 #update:
 # I initially used num_taps=12,fc_=0.5, but 12 was too small for high quality kaiser
-# window it seems! it didnt dampen the stopband enough and caused ringing(weird halos/ghosts)
-# artifacts in the generated images. so I decided to use larger size (24x24) for sharper outputs.
+# window it seems! it didnt dampen the stopband enough and caused ringing(weird halos/ghosts though
+# it could also be caused by wrong beta!) artifacts in the generated images. 
+# so I decided to use larger size (24x24) for sharper outputs.
 # the cutoff 0.5 is the nyquist limit, but with a finite filter like ours(12/24 taps) the filters
 # transition band extends past 0.5 leading to alias noise therefore when the network tries to 
 # fix this noise it blurs the image as a result. thats why I choce 0.4 of f_c
+# !still not sure if it makes sense cause the rest of the network is not a 100% faithful implementation
+# !so I need to come back to this. first I need to make this dynamic 
 def design_kaiser_filter(num_taps=24, f_c=0.4, beta=6.0, device=None):
     """
     Generates a 2D Kaiser-windowed Sinc filter.
@@ -14482,10 +14493,9 @@ def upfirdn2d(input, kernel, up=1, down=1, pad='valid'):
     return out
 
 # Fourier Features
-# In SG2, we learned a 4x4x512 constant tensor. 
-# In SG3, we use a coordinate grid projected into high-freq sine waves.
-# This allows the generator to be "continuous" and translation equivariant.
-# If we shift the grid inputs, the output image shifts exactly.
+# we use a coordinate grid projected into high-freq sine waves.
+# this allows the generator to be "continuous" and translation equivariant.
+# if we shift the grid inputs, the output image shifts exactly.
 class FourierInput(nn.Module):
     def __init__(self, channels, dim_size=4, scale=10):
         super().__init__()
@@ -14510,12 +14520,25 @@ class FourierInput(nn.Module):
         self.register_buffer('freqs', freqs)
 
     def forward(self, batch_size, device):
-        # 1. Create continuous grid [-1, 1]
+        # sidenote:
+        # 
+        # note that we want the coords to be changed by transformation matrix
+        # during the training. that is we dont want to feed a static grid!
+        # we want to feed the network a grid thats transformed by a matrix each time
+        # (i.e. affine transformations rotation, translation, scaling applied
+        # before the network starts so we get the alias free translation/rotation!)
+        # each batch can therefore have different transformation matrix 
+        # (rotated/translated differently) thats why we dont cache this
+        # (i.e. define it in the constructor) aside from that, its really a 4x4
+        # matrix, its too small to make a difference compared to all other parts
+        # of the network! so we are good here!
+        # create a continuous grid from [-1, 1]
         t = torch.linspace(-1, 1, self.dim_size, device=device)
         y, x = torch.meshgrid(t, t, indexing='ij')
-        coords = torch.stack([x, y], dim=-1).unsqueeze(0) # (1, H, W, 2)
+        # now lets trun that tuple into actual tensor with shape (1, H, W, 2)
+        coords = torch.stack([x, y], dim=-1).unsqueeze(0)
         
-        # 2. Project coords via frequencies
+        # project coords via frequencies
         # (1, H, W, 2) @ (2, C/2) -> (1, H, W, C/2)
         w_coords = coords @ self.freqs.T 
         w_coords = 2 * np.pi * w_coords
@@ -15301,7 +15324,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     print("SttyleGAN3 training is complete!")
 
 
-#%% training stylegan3
+#%% training stylegan3 
 # the configs from official impl: https://github.com/NVlabs/stylegan3/blob/main/docs/configs.md
 # gamma is considerably smaller than stylegan2. for 128x128 they used gamma=0.5
 # for any higher resolution, they multiply it by 4, i.e. for 256x256 res gamma=2
