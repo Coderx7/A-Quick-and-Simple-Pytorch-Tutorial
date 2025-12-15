@@ -14405,93 +14405,57 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 # fix this noise it blurs the image as a result. thats why I choce 0.4 of f_c
 # !still not sure if it makes sense cause the rest of the network is not a 100% faithful implementation
 # !so I need to come back to this. first I need to make this dynamic 
-def design_kaiser_filter(num_taps=24, f_c=0.4, beta=6.0, device=None):
-    """
-    Generates a 2D Kaiser-windowed Sinc filter.
-    
-    Args:
-        num_taps (int): Size of the kernel (e.g., 12x12). Larger = sharper cutoff but slower.
-        24x24 seems like a better choice as 12x12 gave us ringing artifact initially!
-        f_c (float): Cutoff frequency relative to sampling rate (0.0 to 0.5).0.4/0.35 might be 
-        the good spot that doesnt lead to aliasing.
-        beta (float): Parameter for Kaiser window. Controls leakage vs main lobe width.
-    """
-    # 1. Construct the time/coordinate grid centered at 0
-    # Range: -(M-1)/2 to (M-1)/2
+def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device=None):
+    # num_taps=12 is standard for SG3-T. f_c=0.3 prevents aliasing.
     t = torch.arange(num_taps, device=device, dtype=torch.float32) - (num_taps - 1) / 2
-    
-    # 2. Sinc function: sin(2*pi*f_c*x) / (pi*x)
-    # Ideally represents a brick-wall low-pass filter.
     h = torch.sinc(2 * f_c * t)
-    
-    # 3. Kaiser Window: Smooths the Sinc to make it finite (removes ringing).
     w = torch.kaiser_window(num_taps, periodic=False, beta=beta, device=device)
-    
-    # 4. Combine and Normalize
-    # We want gain=1 at DC (0 frequency).
     k = h * w
     k = k / k.sum()
-    
-    # 5. Make it 2D (Separable) -> (1, 1, H, W)
-    # The filter is symmetric in X and Y.
     k = k[:, None] * k[None, :] 
     return k.unsqueeze(0).unsqueeze(0)
 
-def upfirdn2d(input, kernel, up=1, down=1, pad='valid'):
-    """
-    Standard UpFirDn2d (Upsample-Filter-Downsample) implementation.
-    The crucial difference in SG3 is strictly managing padding to avoid
-    edge artifacts rippling into the image.
-    """
-    out = input
-    
-    # Kernel setup: (B, C, H, W) -> need to broadcast kernel to C
+def upfirdn2d(input, kernel, up=1, down=1):
     batch, channels, in_h, in_w = input.shape
     kernel = kernel.to(input.device, dtype=input.dtype)
     
-    # === FIX: Handle 2D kernels (compatibility with SG2 Discriminator) ===
-    # The SG2 Discriminator uses FIR_KERNEL which is [H, W].
-    # We need to make it [1, 1, H, W] to work with the rest of the logic.
     if kernel.ndim == 2:
         kernel = kernel.unsqueeze(0).unsqueeze(0)
     
-    # 1. Upsampling (Insert zeros)
+    # 1. Upsampling
     if up > 1:
-        # Reshape to (B, C, H, 1, W, 1) and pad with zeros
-        out = out.view(batch, channels, in_h, 1, in_w, 1)
-        out = F.pad(out, (0, up - 1, 0, 0, 0, up - 1))
-        out = out.view(batch, channels, in_h * up, in_w * up)
+        input = input.view(batch, channels, in_h, 1, in_w, 1)
+        input = F.pad(input, (0, up - 1, 0, 0, 0, up - 1))
+        input = input.view(batch, channels, in_h * up, in_w * up)
     
-    # 2. Convolution (Filtering)
-    # We must maintain the "center" of the signal.
-    # Pytorch's conv2d padding doesn't always handle 'same' convolution 
-    # for even-sized kernels correctly without manual calc.
+    # 2. Filtering with ASYMMETRIC PADDING fix
     kH, kW = kernel.shape[2], kernel.shape[3]
     
-    # Calculate padding to keep output size consistent (Same mode logic)
-    p_x = (kW - 1) // 2
-    p_y = (kH - 1) // 2
+    # Calculate total padding needed to maintain size
+    pad_w = kW - 1
+    p_x0 = pad_w // 2
+    p_x1 = pad_w - p_x0 # Handles odd/even correctly
+
+    pad_h = kH - 1
+    p_y0 = pad_h // 2
+    p_y1 = pad_h - p_y0
     
-    # Broadcast kernel to depthwise conv
+    # Broadcast kernel
     w = kernel.repeat(channels, 1, 1, 1)
     
-    # When upsampling (inserting zeros), signal energy drops.
-    # We must scale the filter by up^2 to preserve magnitude.
+    # Gain correction for upsampling
     if up > 1:
         w = w * (up ** 2)
     
-    # We explicitly pad the input based on kernel size
-    # In strict SG3, we might crop 'valid' regions, but here we use padding
-    # to maintain resolution flow for readability.
-    out = F.pad(out, (p_x, kW - 1 - p_x, p_y, kH - 1 - p_y))
-    out = F.conv2d(out, w, groups=channels)
+    # Pad and Conv
+    input = F.pad(input, (p_x0, p_x1, p_y0, p_y1))
+    out = F.conv2d(input, w, groups=channels)
 
     # 3. Downsampling
     if down > 1:
         out = out[:, :, ::down, ::down]
         
     return out
-
 # Fourier Features
 # we use a coordinate grid projected into high-freq sine waves.
 # this allows the generator to be "continuous" and translation equivariant.
@@ -14553,20 +14517,21 @@ class FourierInput(nn.Module):
 
 # the stylegan3 uses conv1x1 I initially used 3x3!
 class StyleConvBlock3(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=True,
+    def __init__(self, in_channels, out_channels, bias=True,
                  w_size=512, up=1, eps=1e-8, use_upfirdn2d=True ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
+        # stylegan3 specifically uses conv1x1!
+        self.kernel_size = 1
+        self.stride = 1
+        self.padding = 0
+        # we also dont do demodulation anymore!
+        self.demodulate = False
         self.bias = bias
         self.w_size = w_size
         self.up = up
         self.eps = eps
-        # we dont do demodulation anymore!
-        # self.demodulate = False
         # whether to choose upfirdn2d or normal interpolate to upsample
         self.use_upfirdn2d = use_upfirdn2d
 
@@ -14587,8 +14552,8 @@ class StyleConvBlock3(nn.Module):
         # or simply decompose the ops, and do input-conv-upsample
         # i.e. do themodulation here! we use the first method and upsample
         # and then apply the modulation!
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, stride, padding,
-                                    w_size, demodulate=True, eps=eps)
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size=1,stride=1, padding=0,
+                                    w_dim=w_size, demodulate=False, eps=eps)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
@@ -14620,18 +14585,18 @@ class StyleConvBlock3(nn.Module):
 
 
     def forward(self, x, w):
-        # upsample and then apply conv-modulation
-        if self.up>1:
-            # we can now experiment with the old method as well     
-            x = self.upsample_fn(x)
-
-        # apply modulation and conv
+        # we apply conv first then upsample in stylegan3
         out = self.conv(x, w)
         # apply bias 
         if out.ndim==2:
             out += self.bias
         else:
             out += self.bias.view(1,-1,1,1)
+            
+        # upsample
+        if self.up>1:
+            # we can now experiment with the old method as well     
+            out = self.upsample_fn(out)
             
         # apply nonlinearity sandwich upsample-relu-downsample
         out = upfirdn2d(out, self.filter_act_up, up=2)
@@ -14681,12 +14646,15 @@ class GeneratorStyleGAN3(nn.Module):
         
         self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
         self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
-        self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False))
+        # self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False))
         for i in range(1, len(channels)):
             self.blocks.append(StyleConvBlock3(self.channels[i-1], self.channels[i], w_size=w_size, up=2, use_upfirdn2d=use_upfirdn2d))
-            self.blocks.append(StyleConvBlock3(self.channels[i], self.channels[i], w_size=w_size, up=1,use_upfirdn2d=use_upfirdn2d))
-            self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False))
-
+            self.blocks.append(StyleConvBlock3(self.channels[i], self.channels[i], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
+            # self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False))
+        # we dont add imgs together as it causes aliasing! in stylegan3 we just convert the final
+        # high res output to image!    
+        self.toImgs = ModulatedConv2d(self.channels[-1], 3, kernel_size=1, w_dim=w_size, demodulate=False)
+        
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
          if self.training:
@@ -14729,32 +14697,13 @@ class GeneratorStyleGAN3(nn.Module):
         # pure coordinates transformed by fourier 
         x = self.fourier_input(w.size(0), w.device) #shape:(b,512,4,4)
         
-        #4x4
-        x = self.blocks[0](x, w[:,0,:])
-        x = self.blocks[1](x, w[:,1,:])
-        # grab the first image(i.e old image )
-        img = self.toImgs[0](x, w[:,1,:])
+        for i, block in enumerate(self.blocks):
+            x= block(x, w[:, i,:])
         
-        # main loop, skip connections
-        # We need a filter to upsample the RGB image for the skip connection
-        # Creating it on the fly or registering it in init is fine.
-        # Strict SG3 uses a specific filter for RGB aggregation.
-        up_filter = design_kaiser_filter(device=x.device)
-        
-        for i in range(1, len(self.channels)):
-            idx1 = 2*i
-            
-            # upsample the previous img so we can add it to the new image(current resolution)
-            # img = F.interpolate(img, scale_factor=2, mode='bilinear', align_corners=False)
-            # STRICT: Must use Sinc interpolation, not bilinear
-            img = upfirdn2d(img, up_filter, up=2)
-            
-            #process the input for this resolution
-            x = self.blocks[idx1](x, w[:, idx1,:])
-            x = self.blocks[idx1+1](x, w[:, idx1+1,:])
-            # create the image for current resolution and add it to the previous one
-            img = img + self.toImgs[i](x, w[:, idx1+1,:])
-            
+        # Note: In strict SG3, even the ToRGB has a specific filtered path,
+        # but a simple modulated conv is the standard approx.
+        img = self.toImgs(x, w[:,-1,:])
+
         return img
 
     def apply_truncation(self, w, psi):
@@ -14765,8 +14714,8 @@ class GeneratorStyleGAN3(nn.Module):
 
 #! todo use k=1/0 for disc as well?
 class DiscBlockStyleGAN3(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3,
-                 stride=1, padding=1, bias=False, use_upfirdn2d=True):
+    def __init__(self, in_channels, out_channels, kernel_size=1,
+                 stride=1, padding=0, bias=False, use_upfirdn2d=True):
         super().__init__()
         self.use_upfirdn2d = use_upfirdn2d
         self.blur = Blur()
@@ -14827,20 +14776,20 @@ class DiscriminatorStyleGAN3(nn.Module):
                                    EqualizedLinear(self.channels[0]*4*4, self.channels[0]),
                                    nn.LeakyReLU(0.2),
                                    EqualizedLinear(self.channels[0],1))
-
     
     def forward(self, x):
         out = self.fromImgs(x)
         out = self.blocks(out)
         out = self.final(out)
         return out.view(-1,1)
-   
+
+#%%   
 channels=[512,256,128,64,32,16,8]
 use_upfirdn2d=True
 disc = DiscriminatorStyleGAN3(channels=channels,use_upfirdn2d=use_upfirdn2d)
 gen = GeneratorStyleGAN3(100,100)
 
-H=W=2**(len(channels)+1)
+H=W=2**(len(gen.channels)+1)
 x = torch.randn(size=(5,3,H,W))
 z = torch.randn(size=(5,100))
 disc_out = disc(x)
@@ -15332,7 +15281,6 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
 # 
 print(f'Training StyleGAN3')
 # gamma value can change from dataset to dataste
-# for ffhq I guess they used 10 but for lsun they used 100!
 gamma=0.5
 dataset_name = 'ffhq'
 split = 'train'
