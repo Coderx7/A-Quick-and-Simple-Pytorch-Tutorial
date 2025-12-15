@@ -14515,23 +14515,64 @@ class FourierInput(nn.Module):
         emb = emb.permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
         return emb
 
+# we dont do demodulation, so in order to keep grads from exploding
+# we need o scale them like equalizedconv2d!
+class ModulatedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, w_dim=512, activation_gain=math.sqrt(2)):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.w_dim = w_dim
+               
+        self.weight = torch.nn.Parameter(torch.randn(size=(1,out_channels, in_channels, 1, 1)))
+        # weight modulation is simply fc layer transforming w and acts as a scale
+        self.fc_style = EqualizedLinear(w_dim, in_channels)
+        # initialize the bias/scale to 1
+        self.fc_style.bias.data.fill_(1)
+        
+        # we need to divide by sqrt(fan_in) to keep variance constant after summation.
+        # we use sqrt(2) / sqrt(fan_in) to account for ReLU killing half the signal.
+        fan_in = in_channels*1*1
+        # for toImgs that we dont use any activations we need to pass 1 for activation_gain
+        self.scale = activation_gain / math.sqrt(fan_in)
+
+    def forward(self, x, w):
+        b,c,img_h,img_w = x.shape
+        # shape:(batch,1,in_channel,1,1)
+        style = self.fc_style(w).view(-1,1,c,1,1)
+        # since we dont do demodulation, we have to keep the scales intact
+        # so we need to scale the weights accordingly
+        weights = (self.weight*self.scale) * style 
+        
+        # reshape x for group convolution trick
+        # to handle different weighst for each batch sample,
+        # we put the batch dim into output channels and use groups=batch
+        x = x.view(1, b*c,img_h,img_w)
+        weights = weights.view(b*self.out_channels, c, 1, 1)
+        
+        # apply the conv operationg using the weights
+        out = F.conv2d(x, weights, stride=1, padding=0, groups=b)
+        # reshape back to original shape
+        out = out.view(b, self.out_channels, img_h, img_w)
+        return out
+
 # the stylegan3 uses conv1x1 I initially used 3x3!
 class StyleConvBlock3(nn.Module):
     def __init__(self, in_channels, out_channels, bias=True,
-                 w_size=512, up=1, eps=1e-8, use_upfirdn2d=True ):
+                 w_size=512, up=1, use_upfirdn2d=True ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         # stylegan3 specifically uses conv1x1!
-        self.kernel_size = 1
-        self.stride = 1
-        self.padding = 0
+        # self.kernel_size = 1
+        # self.stride = 1
+        # self.padding = 0
         # we also dont do demodulation anymore!
-        self.demodulate = False
+        # self.demodulate = False
         self.bias = bias
         self.w_size = w_size
         self.up = up
-        self.eps = eps
         # whether to choose upfirdn2d or normal interpolate to upsample
         self.use_upfirdn2d = use_upfirdn2d
 
@@ -14552,8 +14593,7 @@ class StyleConvBlock3(nn.Module):
         # or simply decompose the ops, and do input-conv-upsample
         # i.e. do themodulation here! we use the first method and upsample
         # and then apply the modulation!
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size=1,stride=1, padding=0,
-                                    w_dim=w_size, demodulate=False, eps=eps)
+        self.conv = ModulatedConv2d(in_channels, out_channels, w_dim=w_size)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
@@ -14652,8 +14692,9 @@ class GeneratorStyleGAN3(nn.Module):
             self.blocks.append(StyleConvBlock3(self.channels[i], self.channels[i], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
             # self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False))
         # we dont add imgs together as it causes aliasing! in stylegan3 we just convert the final
-        # high res output to image!    
-        self.toImgs = ModulatedConv2d(self.channels[-1], 3, kernel_size=1, w_dim=w_size, demodulate=False)
+        # high res output to image! since we dont have any activations(lrelu) for toImgs, we
+        # use activation_gain=1
+        self.toImgs = ModulatedConv2d(self.channels[-1], 3, w_dim=w_size, activation_gain=1)
         
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
@@ -15281,7 +15322,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
 # 
 print(f'Training StyleGAN3')
 # gamma value can change from dataset to dataste
-gamma=0.5
+gamma=10
 dataset_name = 'ffhq'
 split = 'train'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
