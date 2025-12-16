@@ -11948,41 +11948,39 @@ def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
         
     # If the kernel is small (like [1,3,3,1]), flipping doesn't matter much 
     # as it is symmetric, but strictly speaking StyleGAN flips it.
+    # for ConvTranspose2d, we need to flip the kernel (correlation vs convolution)
+    # and reshape it to (in_channels, out_channels/groups, kH, kW)
+    # since we use groups=channels, shape is (channels, 1, kH, kW)
+    ##w = kernel.flip(2, 3).repeat(channels, 1, 1, 1)
     kernel = torch.flip(kernel, [2, 3])
-
-    # input_height = input.shape[2]
-    # input_width = input.shape[3]
-    
+   
     # --------------------------------------
     # 1. UPSAMPLE (using ConvTranspose2d)
     # --------------------------------------
     if up > 1:
-        # Reshape kernel for Grouped ConvTranspose: (C, 1, kH, kW)
-        # We repeat the kernel for every channel, and use groups=C
-        # This keeps channels independent.
+        # reshape kernel for Grouped ConvTranspose: (C, 1, kH, kW)
+        # we repeat the kernel for every channel, and use groups=C
+        # this keeps channels independent.
         w = kernel.repeat(input.shape[1], 1, 1, 1)
         
         # Scaling factor is required because conv_transpose spreads energy
         w = w * (up ** 2) 
         
-        # Calculate padding
-        # Standard StyleGAN2 padding logic for upsampling:
-        # pad_x0 = (kW - up) // 2
-        # pad_x1 = (kW - up + 1) // 2
-        # pad_y0 = (kH - up) // 2
-        # pad_y1 = (kH - up + 1) // 2
-        
-        # However, ConvTranspose2d output size logic is:
+        # in conv_transpose, padding removes pixels from the outside. 
+        # we can handle padding manually via F.pad on input or output
+        # to be precise but here is a robust way matching stylegan3 
+        # padding logic which is also the standard stylegan2 padding
+        # logic for upsampling.
+        # however since ConvTranspose2d output size logic is:
         # H_out = (H_in - 1) * stride - 2 * padding + kernel_size
-        # We manipulate F.pad on the input to achieve exact alignment.
-        
-        # Simply pad input to simulate the "valid" region
+        # we manipulate F.pad on the input to achieve exact alignment.
+        # padding input to simulate the "valid" region
         p_x0 = (kernel.shape[3] - up) // 2
         p_x1 = (kernel.shape[3] - up + 1) // 2
         p_y0 = (kernel.shape[2] - up) // 2
         p_y1 = (kernel.shape[2] - up + 1) // 2
         
-        # Apply user supplied pad if it exists (StyleGAN2 passes pad args)
+        # apply user supplied pad if it exists (StyleGAN2 passes pad args)
         if len(pad) == 4:
             p_x0 += pad[0]
             p_x1 += pad[1]
@@ -11994,23 +11992,20 @@ def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
             p_y0 += pad[1]
             p_y1 += pad[1]
 
-        # In ConvTranspose, 'padding' argument crops the output. 
-        # But it's easier to verify by using F.conv_transpose2d with padding=0
+        # in ConvTranspose, 'padding' argument crops the output. 
+        # but its easier to verify by using F.conv_transpose2d with padding=0
         # and cropping manually or padding input carefully.
-        
-        # Let's use the standard "Rosinality" approach which is robust:
-        # 1. Pad input manually
+        # lets use the standard "Rosinality" approach which is robust:
+        # 1. pad input manually
         out = F.pad(out, (0, 0, 0, 0)) # Placeholder if we needed pre-padding
-        
-        # 2. Run Transpose Conv
-        # We let the conv expand it, then we crop the edges to match StyleGAN math
+        # 2. run Transpose Conv
+        # we let the conv expand it, then we crop the edges to match StyleGAN math
+        # using stride=up we skip processing zeros and get a speed boost
         out = F.conv_transpose2d(out, w, stride=up, padding=0, groups=out.shape[1])
         
         # 3. Crop to remove the extra pixels introduced by kernel width
-        # The output of conv_transpose is larger than we want.
-        # We need to crop (p_x0, p_x1, p_y0, p_y1) from the edges.
-        
-        # Compute dimensions
+        # the output of conv_transpose is larger than we want.
+        # we need to crop (p_x0, p_x1, p_y0, p_y1) from the edges.
         h_new = out.shape[2]
         w_new = out.shape[3]
         
@@ -14429,6 +14424,9 @@ def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device="cuda"):
 # the issues only popup if we were to use the ordinary/wrong
 # low-pass filter which we obviously arent! so we should be
 # fine and have a good boost in speed!
+# update: it seems it has somekind of a bug as well cuz after the
+# change we are getting much better results much faster!
+# maybe the way padding was done is problematic? need to check it!
 def upfirdn2d_slow(input, kernel, up=1, down=1):
     batch, channels, in_h, in_w = input.shape
     kernel = kernel.to(input.device, dtype=input.dtype)
@@ -14565,7 +14563,7 @@ def upfirdn2d_slow(input, kernel, up=1, down=1):
 # this allows the generator to be "continuous" and translation equivariant.
 # if we shift the grid inputs, the output image shifts exactly.
 class FourierInput(nn.Module):
-    def __init__(self, channels, dim_size=4, scale=10):
+    def __init__(self, channels, dim_size=4, scale=2):
         super().__init__()
         self.dim_size = dim_size
         self.channels = channels
@@ -14584,6 +14582,8 @@ class FourierInput(nn.Module):
         # generate sharp details (i.e. high frequency details!) because it doesnt
         # have the vocabulary (i.e. high frequencies) to define them! 
         # we need to increase the scale of random frequencies here to fix that 
+        # update 2: the issue was something else entirely, but I kept it anyway
+        # using scale=2 seems ok! see debug log for future update
         freqs = torch.randn(size=(channels//2, 2)) * self.scale
         self.register_buffer('freqs', freqs)
 
@@ -15475,8 +15475,14 @@ use_upfirdn2d = True # True
 # fourier input scale so we dont get just low frequencies
 # if this is not properly set (e.g. set low!) generator
 # cant generate high frequency details(sharp details)
-# and we get blurry outputs
-fourier_scale=10.0
+# and we get blurry outputs, initially I added this because
+# I though this was the issue, however my upfirdn2d was buggy
+# there were other issues as well with the architecture, anyway
+# I went with it, but after the fixes, it seems scale=10 is too much
+# at least I think so, so lets decrease it down near the original
+# value, (scale=1) and see how that works
+# 
+fourier_scale=2
 
 #discriminator
 discriminator_stylegan3 = DiscriminatorStyleGAN3(channels=channels_d,
@@ -15619,6 +15625,21 @@ training_loop_stylegan3(discriminator_stylegan3,
 # currently each epoch takes around 18mins! so we got a bit faster(2.5x)! FID=384 loss=2.60vs2.33
 # this time, you can make the faces much better, the outline/general form shows its a face. this might
 # actually be the correct way of doing it!
+# at e1 FID=331 and the loss is 2.68 vs 1.41 much lower than the previous experiment! by epoch 5 images
+# have become way better formed, but its as if they are behind a patterned/checkerboard glass. we can
+# clearly see the face structures, the rectangles seem to have merged at some parts but still not everywehre
+# giving the feeling someone is behind a glass or better its a broken frame of an mage kind of !but
+# its clean and sharp! e5 FID=312, loss=2.38vs1.06.at epoch 14 images seem to be getting worse imho but
+# the ema version is getting better im conflicted mainly because the gloss is much lower than dloss
+# I guess we have to wait and see . ok epoch 20 and we are still not improved as much FID is 292 and
+# loss is 2.34vs0.944. we get the melty/waxy textures as well, but images still look checkerboardy/cubisty!
+# maybe we are forcing too much high frequency at the begining? lets try to lower that first (I hope
+# the rest of the implementation is correct and its just the scaleing issue! the dloss/gloss is also my
+# other worry which we may attack by going conv3 for discriminator discconvblock as we are currently
+# using conv1x1 for both disc and gen.gen is a must have but not for discriminator! as far as I understand it)
+# 
+# stylegan3_ffhq_20251216153849:
+# the previous experiment but thistime with scale=2:
 # 
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
