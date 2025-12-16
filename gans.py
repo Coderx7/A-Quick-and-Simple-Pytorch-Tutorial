@@ -3230,7 +3230,9 @@ def get_transforms(resize_dims, data_augmentation, normalize):
     
     return transforms.Compose(trans_list)
     
-def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, num_workers=8, store_path="./data/", data_augmentation=False, normalize=False):
+def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, 
+                   num_workers=8, store_path="./data/", data_augmentation=False,
+                   normalize=False, experimental_size=None):
     dataset_name = dataset_name.lower()
     transform = get_transforms(resize_dims, data_augmentation, normalize)
     dataset=None
@@ -3274,8 +3276,20 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     else:
         raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
     
-    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                             num_workers=num_workers, pin_memory=True)
+    # for experiments with limited samples, we can define a size here
+    # I wrote this mainly for overfitting checks, to see if my implementation
+    # is correct without spending a lot of time on the whole dataset split!
+    sampler = None
+    shuffle = True
+    if experimental_size is not None:
+        # grab the whole indexes, shuffle them and choose bunch of them!
+        indexes = torch.randperm(len(dataset))[:experimental_size]
+        sampler = torch.utils.data.SubsetRandomSampler(indexes)
+        # when sampler is enabled, shuffle must be disabled
+        shuffle=None
+
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
+                             sampler=sampler, num_workers=num_workers, pin_memory=True)
     
     return data_loader
 
@@ -14562,7 +14576,7 @@ def upfirdn2d_slow(input, kernel, up=1, down=1):
 # we use a coordinate grid projected into high-freq sine waves.
 # this allows the generator to be "continuous" and translation equivariant.
 # if we shift the grid inputs, the output image shifts exactly.
-class FourierInput(nn.Module):
+class FourierInput0(nn.Module):
     def __init__(self, channels, dim_size=4, scale=2):
         super().__init__()
         self.dim_size = dim_size
@@ -14619,6 +14633,215 @@ class FourierInput(nn.Module):
         emb = emb.permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
         return emb
 
+# previous one seems to be wrong! 
+class FourierInput1(nn.Module):
+    def __init__(self, channels, dim_size=4, scale=1.0):
+        super().__init__()
+        self.dim_size = dim_size
+        self.channels = channels
+        # In SG3, the input domain is typically cutoff at pi (Nyquist)
+        # scale=1.0 ensures we cover the base period [-pi, pi]
+        self.scale = scale 
+        
+        # --- FAITHFUL IMPLEMENTATION ---
+        # Instead of Random Noise, we use Geometric Frequencies (Powers of 2).
+        # This guarantees strict phase alignment between pixels.
+        
+        # We divide channels by 4:
+        # 1. sin(x_freqs)
+        # 2. cos(x_freqs)
+        # 3. sin(y_freqs)
+        # 4. cos(y_freqs)
+        # if 512 channels then we will have 512/4=128
+        num_bands = self.channels // 4
+
+        # Generate frequencies: 2^0, 2^1, ... up to 2^num_bands
+        # For a 4x4 grid, we need low frequencies to define the "blob" of the head.
+        freq_bands = 2.0 ** torch.arange(num_bands, dtype=torch.float32)
+        
+        # Create the frequency matrix (channels/2, 2)
+        # We map the bands to X and Y axes explicitly
+        freqs = torch.zeros(2 * num_bands, 2)
+        
+        # Assign X frequencies (Active on dim 0, Zero on dim 1)
+        freqs[:num_bands, 0] = freq_bands
+        
+        # Assign Y frequencies (Zero on dim 0, Active on dim 1)
+        freqs[num_bands:, 1] = freq_bands
+        
+        self.register_buffer('freqs', freqs)
+
+    def forward(self, batch_size, device):
+        # 1. Create continuous grid [-1, 1]
+        t = torch.linspace(-1, 1, self.dim_size, device=device)
+        y, x = torch.meshgrid(t, t, indexing='ij')
+        
+        # (1, H, W, 2)
+        coords = torch.stack([x, y], dim=-1).unsqueeze(0)
+        
+        # 2. Project via Frequencies
+        # (1, H, W, 2) @ (2, C/2) -> (1, H, W, C/2)
+        w_coords = coords @ self.freqs.T 
+        
+        # 3. Scale to Radians
+        # We multiply by PI so that [-1, 1] maps to [-pi, pi] (one full cycle for freq=1)
+        w_coords = w_coords * np.pi * self.scale
+        
+        # 4. Apply Sin/Cos (Fourier Features)
+        emb = torch.cat([torch.sin(w_coords), torch.cos(w_coords)], dim=-1)
+        
+        # 5. Reshape to (B, C, H, W)
+        emb = emb.permute(0, 3, 1, 2).repeat(batch_size, 1, 1, 1)
+        
+        return emb
+
+class FourierInput2(nn.Module):
+    def __init__(self, channels, w_size, dim_size=4, scale=1.0):
+        super().__init__()
+        self.dim_size = dim_size
+        self.channels = channels
+        self.scale = scale
+        
+        # 1. Learned Affine Transform (w -> [r0, r1, tx, ty])
+        # This allows the network to learn Rotation and Translation of the grid
+        self.affine = EqualizedLinear(w_size, 4)
+        # Initialize to Identity (no rotation, no translation)
+        self.affine.weight.data.zero_()
+        self.affine.bias.data.copy_(torch.tensor([1, 0, 0, 0], dtype=torch.float32))
+
+        # 2. Faithful Geometric Frequencies
+        # We cap the max frequency to match the output resolution (approx 2^8 = 256)
+        # This prevents the "Float32 Overflow" bug.
+        num_bands = self.channels // 4
+        
+        # Create frequencies evenly spaced in Log2 domain: 2^0 ... to ... 2^8
+        cutoff_freq = 8.0 # log2(256)
+        exponents = torch.linspace(0, cutoff_freq, num_bands) 
+        freq_bands = 2.0 ** exponents
+        
+        # Construct the frequency matrix
+        freqs = torch.zeros(2 * num_bands, 2)
+        freqs[:num_bands, 0] = freq_bands # X frequencies
+        freqs[num_bands:, 1] = freq_bands # Y frequencies
+        
+        self.register_buffer('freqs', freqs)
+
+    def forward(self, w):
+        batch_size = w.shape[0]
+        device = w.device
+        
+        # 1. Create Base Grid [-1, 1]
+        t = torch.linspace(-1, 1, self.dim_size, device=device)
+        y, x = torch.meshgrid(t, t, indexing='ij') # (H, W)
+        # Stack to (H, W, 3) for affine math: [x, y, 1]
+        grid = torch.stack([x, y, torch.ones_like(x)], dim=-1).unsqueeze(0).repeat(batch_size, 1, 1, 1)
+
+        # 2. Get Transformation Matrix from w
+        # params: (B, 4) -> [Scale*Cos, Scale*-Sin, Tx, Ty] approx
+        params = self.affine(w) 
+        
+        # Construct 2x3 Affine Matrix:
+        # [ p0  -p1  p2 ]
+        # [ p1   p0  p3 ]
+        # This enforces rotation/scaling constraints 
+        theta = torch.zeros(batch_size, 2, 3, device=device)
+        theta[:, 0, 0] = params[:, 0]
+        theta[:, 0, 1] = -params[:, 1]
+        theta[:, 0, 2] = params[:, 2]
+        theta[:, 1, 0] = params[:, 1]
+        theta[:, 1, 1] = params[:, 0]
+        theta[:, 1, 2] = params[:, 3]
+
+        # 3. Apply Affine Transform to the Grid
+        # (B, H, W, 3) @ (B, 3, 2) -> (B, H, W, 2)
+        # We permute theta to (B, 3, 2) for multiplication
+        grid_transformed = grid @ theta.permute(0, 2, 1)
+        
+        # 4. Project Frequencies
+        # (B, H, W, 2) @ (2, C/2) -> (B, H, W, C/2)
+        w_coords = grid_transformed @ self.freqs.T 
+        
+        # 5. Scale to Radians
+        w_coords = w_coords * np.pi * self.scale
+        
+        # 6. Sin/Cos Embeddings
+        emb = torch.cat([torch.sin(w_coords), torch.cos(w_coords)], dim=-1)
+        
+        # Reshape to (B, C, H, W)
+        emb = emb.permute(0, 3, 1, 2)
+        
+        return emb
+
+class FourierInput(nn.Module):
+    def __init__(self, channels, w_size, dim_size=4, scale=1.0):
+        super().__init__()
+        self.dim_size = dim_size
+        self.channels = channels
+        self.scale = scale
+        
+        # 1. THE AFFINE TRANSFORM (Crucial for StyleGAN3)
+        # The network learns to Rotate/Translate/Scale the grid via 'w'.
+        # We output 4 values: [a, b, tx, ty] to form a similarity matrix.
+        self.affine = EqualizedLinear(w_size, 4)
+        # Initialize to Identity matrix (no rotation/translation)
+        self.affine.weight.data.zero_()
+        self.affine.bias.data.copy_(torch.tensor([1, 0, 0, 0], dtype=torch.float32))
+
+        # 2. BAND-LIMITED FREQUENCIES (Fixes the Noise)
+        # We cap frequencies at the Nyquist limit of the output resolution (128px).
+        # log2(128) = 7. We go to 8 to be safe.
+        # This prevents 2^127 float overflows.
+        num_bands = self.channels // 4
+        #! make this dynamic for larger res as well, we may want to do larger res
+        #! later like 256,512 or even 1024x1024
+        cutoff_freq = 8.0 
+        exponents = torch.linspace(0, cutoff_freq, num_bands) 
+        freq_bands = 2.0 ** exponents
+        
+        # Construct frequency matrix
+        freqs = torch.zeros(2 * num_bands, 2)
+        freqs[:num_bands, 0] = freq_bands # X
+        freqs[num_bands:, 1] = freq_bands # Y
+        
+        self.register_buffer('freqs', freqs)
+
+    def forward(self, w):
+        batch_size = w.shape[0]
+        device = w.device
+        
+        # 1. Create Base Grid (B, H, W, 3) -> [x, y, 1]
+        t = torch.linspace(-1, 1, self.dim_size, device=device)
+        y, x = torch.meshgrid(t, t, indexing='ij')
+        grid = torch.stack([x, y, torch.ones_like(x)], dim=-1).unsqueeze(0).repeat(batch_size, 1, 1, 1)
+
+        # 2. Calculate Affine Matrix from w
+        params = self.affine(w) # (B, 4)
+        
+        # Construct transformation matrix [ [a, -b, tx], [b, a, ty] ]
+        theta = torch.zeros(batch_size, 2, 3, device=device)
+        theta[:, 0, 0] = params[:, 0]
+        theta[:, 0, 1] = -params[:, 1]
+        theta[:, 0, 2] = params[:, 2]
+        theta[:, 1, 0] = params[:, 1]
+        theta[:, 1, 1] = params[:, 0]
+        theta[:, 1, 2] = params[:, 3]
+
+        # 3. Apply Transform
+        # (B, H, W, 3) @ (B, 3, 2) -> (B, H, W, 2)
+        # Theta becomes (B, 1, 3, 2) to broadcast against Grid (B, 4, 4, 3)
+        theta = theta.permute(0, 2, 1).unsqueeze(1) 
+        grid_transformed = grid @ theta
+        
+        # 4. Fourier Features
+        w_coords = grid_transformed @ self.freqs.T 
+        w_coords = w_coords * np.pi * self.scale
+        
+        emb = torch.cat([torch.sin(w_coords), torch.cos(w_coords)], dim=-1)
+        emb = emb.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+        
+        return emb
+
+
 # we dont do demodulation, so in order to keep grads from exploding
 # we need o scale them like equalizedconv2d!
 class ModulatedConv2d3(nn.Module):
@@ -14652,7 +14875,7 @@ class ModulatedConv2d3(nn.Module):
         # reshape x for group convolution trick
         # to handle different weighst for each batch sample,
         # we put the batch dim into output channels and use groups=batch
-        x = x.view(1, b*c,img_h,img_w)
+        x = x.reshape(1, b*c,img_h,img_w)
         weights = weights.view(b*self.out_channels, c, 1, 1)
         
         # apply the conv operationg using the weights
@@ -14701,21 +14924,32 @@ class StyleConvBlock3(nn.Module):
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
+        
+        # --- FAITHFUL CUTOFF LOGIC ---
+        # If upsampling (up=2), we must cut frequencies > pi/2 (0.25 in normalized freq)
+        # If pass-through (up=1), we can keep frequencies up to pi (0.5 in normalized freq)
+        if up>1:
+            # Faithful anti-aliasing
+            self.f_c = 0.25
+        else:
+            # Faithful pass-through (0.5 is ideal, 0.4 is safer/smoother)
+            self.f_c = 0.4
+        
         # sidenote:
         # in actual production grade impl, these need to be calculated dynamically based on
         # cutoff args, but for now we use defaults!
         device = next(self.parameters()).device
         # Filter for the geometric upsampling (if up=2)
-        self.register_buffer("filter_resample",design_kaiser_filter(beta=6.0,device=device))
+        self.register_buffer("filter_resample",design_kaiser_filter(f_c=self.f_c, beta=6.0, device=device))
         # we need a separate upsample for the nonlinearity sandwich (upsample->relu->downsample)
         # so we allow for high frequencies to appear and then low-pass filter them, and 
         # then downsample back to get the original res (
         # nonlinearities introduce high frequencies, so we must upsample to make room for them,
         # apply the non-linearity, and then low-pass filter (downsample) to remove aliasing)
         # upsample before act
-        self.register_buffer("filter_act_up",design_kaiser_filter(beta=6.0,device=device))
+        self.register_buffer("filter_act_up",design_kaiser_filter(f_c=0.25,beta=6.0,device=device))
         # downsample after act
-        self.register_buffer("filter_act_dn",design_kaiser_filter(beta=6.0,device=device))
+        self.register_buffer("filter_act_dn",design_kaiser_filter(f_c=0.25,beta=6.0,device=device))
                 
         self.blur = Blur()
         
@@ -14780,7 +15014,7 @@ class GeneratorStyleGAN3(nn.Module):
         # network uses to generate the images. getting this to work properly is crucial
         # otherwise if it only generates low frequencies the network cant generate fine details!
         # so scale is very important here
-        self.fourier_input = FourierInput(self.channels[0],dim_size=4, scale=self.scale)
+        self.fourier_input = FourierInput(self.channels[0],w_size=w_size, dim_size=4, scale=self.scale)
         
         self.mapping_network = MappingNetwork2(z_size, w_size, self.mn_num_layers)
         
@@ -14839,7 +15073,7 @@ class GeneratorStyleGAN3(nn.Module):
             w = w.unsqueeze(1).repeat(1, len(self.blocks),1)
 
         # pure coordinates transformed by fourier 
-        x = self.fourier_input(w.size(0), w.device) #shape:(b,512,4,4)
+        x = self.fourier_input(w[:,0,:]) #shape:(b,512,4,4)
         
         for i, block in enumerate(self.blocks):
             x= block(x, w[:, i,:])
@@ -14926,8 +15160,7 @@ class DiscriminatorStyleGAN3(nn.Module):
         out = self.blocks(out)
         out = self.final(out)
         return out.view(-1,1)
-
-#%%   
+  
 channels=[512,256,128,64,32,16,8]
 use_upfirdn2d=True
 disc = DiscriminatorStyleGAN3(channels=channels,use_upfirdn2d=use_upfirdn2d)
@@ -14950,7 +15183,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                          path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
                          gen_num_samples = 64, use_ema_inference=False, kimg=10,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
-                         resume=False, weights_save_dir='./weights/gan',
+                         style_mix_epoch_start=0, resume=False, weights_save_dir='./weights/gan',
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -15069,6 +15302,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     print(f'--Genr Param Count:          {sum([p.numel() for p in generator.parameters()]):,}')
     print(f'--MNetwork numlayers:        {generator.mn_num_layers}')    
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
+    print(f'--style_mix_epoch_start:     {style_mix_epoch_start}')
     print(f'--Disc use_upfirdn2d:        {discriminator.use_upfirdn2d}')
     print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
     print(f'--Genr Fourier scale:        {generator.scale}')
@@ -15120,10 +15354,17 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     print(f'  --Current Generator Betas:     {betas_g}')
 
     path_length_mean = 0
+    style_mixing_prob = generator.style_mixing_prob
     for epoch in range(starting_epoch, epochs):
         discriminator.train()
         generator.train()
 
+        # enable stylemixing after specific number of epochs first
+        if epoch<style_mix_epoch_start:
+            generator.style_mixing_prob=0
+        else:
+            generator.style_mixing_prob = style_mixing_prob 
+        
         losses = []
         epoch_scores = []
         for i, (imgs_real, _) in enumerate(train_loader):
@@ -15452,7 +15693,11 @@ kimg=73
 
 path_length_interval = 4
 r1_penalty_interval = 16
+#0.9 for the beggining lets disable it 
+# for the first 10-20 epochs to see if our impl works!
 style_mixing_prob = 0.9
+# bythis we wont start applying stylemixing until after epoch 20+
+style_mix_epoch_start=20
 # truncation rate
 psi = 0.7
 #up to 128x128 
@@ -15481,8 +15726,8 @@ use_upfirdn2d = True # True
 # I went with it, but after the fixes, it seems scale=10 is too much
 # at least I think so, so lets decrease it down near the original
 # value, (scale=1) and see how that works
-# 
-fourier_scale=2
+# update:changed fourier input completely, we now test with scale=1
+fourier_scale=1
 
 #discriminator
 discriminator_stylegan3 = DiscriminatorStyleGAN3(channels=channels_d,
@@ -15639,7 +15884,18 @@ training_loop_stylegan3(discriminator_stylegan3,
 # using conv1x1 for both disc and gen.gen is a must have but not for discriminator! as far as I understand it)
 # 
 # stylegan3_ffhq_20251216153849:
-# the previous experiment but thistime with scale=2:
+# the previous experiment but thistime with scale=2:didnt change much. the issue must be somewhere else!
+# 
+# stylegan3_ffhq_20251216211817:
+# couldnt figure anything out by myself, asked gemini, and it said its probably your fourier impl which
+# is not a faithful implementation, you are using random freqs and that with conv1x1, cant learn the
+# spatial structures it needs to learn. so change the fourier impl, and also disable stylemixing for
+# the initial 10-20 epochs and see if that works! so we do just that!
+#
+# stylegan3_ffhq_20251217071948:
+# two bugs in fourier input: fixed overflow in freqs, also needed to add affine transform to freqs aswell
+# for rotation/trnaslation, otherwise the features wouldnt be placed properly at their rightful place!
+# after fixes, now the checkerboard patterns are gone again! we have wavy/blurry blobs now!
 # 
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
