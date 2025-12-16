@@ -11938,8 +11938,14 @@ def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
     
     # Prepare kernel
     # (kH, kW) -> (1, 1, kH, kW)
-    kernel = kernel.to(input.device, dtype=input.dtype).unsqueeze(0).unsqueeze(0)
-    
+    # update for stylegan3 ahead: 
+    kernel = kernel.to(input.device, dtype=input.dtype)
+    # if input is (H, W), make it (1, 1, H, W)
+    # if input is already (1, 1, H, W), leave it alone.
+    # our design_kaiser_filter returns 4D, so this prevents the 6D error.
+    if kernel.ndim == 2:
+        kernel = kernel.unsqueeze(0).unsqueeze(0)
+        
     # If the kernel is small (like [1,3,3,1]), flipping doesn't matter much 
     # as it is symmetric, but strictly speaking StyleGAN flips it.
     kernel = torch.flip(kernel, [2, 3])
@@ -14415,7 +14421,15 @@ def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device="cuda"):
     k = k[:, None] * k[None, :] 
     return k.unsqueeze(0).unsqueeze(0)
 
-def upfirdn2d(input, kernel, up=1, down=1):
+# this version was extremely slow due to using padding
+# so I'll be using the older version which uses convtranspose2d
+# for upsampling and stride for downsampling. contrary to my
+# previous thought using convtranspose wont introduce alias 
+# noise because we are using the kaiser weights for kernels, 
+# the issues only popup if we were to use the ordinary/wrong
+# low-pass filter which we obviously arent! so we should be
+# fine and have a good boost in speed!
+def upfirdn2d_slow(input, kernel, up=1, down=1):
     batch, channels, in_h, in_w = input.shape
     kernel = kernel.to(input.device, dtype=input.dtype)
     
@@ -14456,6 +14470,96 @@ def upfirdn2d(input, kernel, up=1, down=1):
         out = out[:, :, ::down, ::down]
         
     return out
+
+# this is the same as our previous impl, but lets use our previous
+# version - comment the original version andremve this later
+# def upfirdn2d(input, kernel, up=1, down=1):
+#     batch, channels, in_h, in_w = input.shape
+#     kernel = kernel.to(input.device, dtype=input.dtype)
+    
+#     # Prepare Kernel
+#     if kernel.ndim == 2:
+#         kernel = kernel.unsqueeze(0).unsqueeze(0)
+    
+#     # 1. Upsampling (use ConvTranspose2d)
+#     if up > 1:
+#         # For ConvTranspose2d, we need to flip the kernel (correlation vs convolution)
+#         # and reshape it to (in_channels, out_channels/groups, kH, kW)
+#         # Since we use groups=channels, shape is (channels, 1, kH, kW)
+#         w = kernel.flip(2, 3).repeat(channels, 1, 1, 1)
+        
+#         # Calculate padding
+#         # In conv_transpose, padding removes pixels from the outside. 
+#         # We handle padding manually via F.pad on input or output to be precise.
+#         # But here is a robust way matching SG3 padding logic:
+#         kH, kW = kernel.shape[2], kernel.shape[3]
+#         pad_w0 = (kW - up + (kW % up)) // 2
+#         pad_w1 = (kW - up) - pad_w0
+#         pad_h0 = (kH - up + (kH % up)) // 2
+#         pad_h1 = (kH - up) - pad_h0
+
+#         # We need to adjust padding because we are switching ops
+#         # Simplest way: Pad input, then Valid ConvTranspose
+#         # (This math can get tricky, simplified approach below):
+        
+#         # --- Simpler approach for PyTorch Transpose speedup ---
+#         # 1. Expand kernel weights
+#         w = w * (up ** 2) 
+        
+#         # 2. Pad input to handle border conditions
+#         # (p_x0, p_x1) calculated relative to input
+#         p_x0 = (kW - up + 1) // 2
+#         p_x1 = (kW - up) // 2
+#         p_y0 = (kH - up + 1) // 2
+#         p_y1 = (kH - up) // 2
+        
+#         input = F.pad(input, (p_x0, p_x1, p_y0, p_y1))
+        
+#         # 3. Apply Transposed Conv with stride=up
+#         # This skips processing zeros!
+#         out = F.conv_transpose2d(input, w, stride=up, groups=channels)
+        
+#         # 4. Crop to remove extra pixels resulting from valid padding math
+#         # The output size might be slightly off depending on kernel size/padding, 
+#         # simple center crop is usually required here for Kaiser filters.
+#         out_h = in_h * up
+#         out_w = in_w * up
+#         if out.shape[2] != out_h or out.shape[3] != out_w:
+#              out = out[:, :, :out_h, :out_w] # Simplification for standard SG3 sizes
+             
+#     else:
+#         out = input
+
+#     # 2. Downsampling (Use Stride)
+#     if down > 1:
+#         w = kernel.repeat(channels, 1, 1, 1)
+        
+#         kH, kW = kernel.shape[2], kernel.shape[3]
+        
+#         # Calculate padding to maintain size before decimation
+#         pad_w = kW - down + (down % 2) # adjustment for even/odd
+#         p_x0 = pad_w // 2
+#         p_x1 = pad_w - p_x0
+
+#         pad_h = kH - down + (down % 2)
+#         p_y0 = pad_h // 2
+#         p_y1 = pad_h - p_y0
+        
+#         # Pad input
+#         out = F.pad(out, (p_x0, p_x1, p_y0, p_y1))
+        
+#         # Apply Conv with STRIDE=down
+#         # This skips calculating pixels we would throw away!
+#         out = F.conv2d(out, w, stride=down, groups=channels)
+
+#     elif up == 1 and down == 1:
+#         # Standard filtering case
+#         p = (kernel.shape[2] - 1) // 2
+#         w = kernel.repeat(channels, 1, 1, 1)
+#         out = F.conv2d(input, w, padding=p, groups=channels)
+        
+#     return out
+
 # Fourier Features
 # we use a coordinate grid projected into high-freq sine waves.
 # this allows the generator to be "continuous" and translation equivariant.
@@ -14850,7 +14954,8 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-    current_experiment_name = f"stylegan3_{dataset_name}_{experiment_date}"
+    arch_name = "StyleGAN3"
+    current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
 
     lr_d = disc_optimizer.param_groups[0]["lr"]
     lr_g = gen_optimizer.param_groups[0]["lr"]
@@ -14950,7 +15055,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     # store training log
     all_training_losses = []
   
-    print(f'StyleGAN3 Training on {dataset_name} in {experiment_date}')
+    print(f'{arch_name} Training on {dataset_name} in {experiment_date}')
         
     if resume:
         print(f'--Resume:                  {"N/A" if not resume else checkpoint_filename}'
@@ -15001,7 +15106,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     current_lr_d = [g['lr'] for g in disc_optimizer.param_groups]
     current_lr_g = [g['lr'] for g in gen_optimizer.param_groups]
 
-    print(f'Training StyleGAN3 on [{res}x{res}]')
+    print(f'Training {arch_name} on [{res}x{res}]')
     print(f'  --Epochs:                      {epochs}')
     print(f'  --BatchSize:                   {batch_size}')
     print(f'  --Number of Batches:           {num_batches}')
@@ -15283,7 +15388,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
             loss_str = f"(dLoss:{d_loss_mean:.6f} | gLoss:{g_loss_mean:.6f}"
             lrs_str = f"{current_lr_d[0]:.0e},{current_lr_g[0]:.0e}"
             title_str = f"Epoch {epoch} FID:{FID_score:.2f} {loss_str} [{lrs_str}]"
-            img_store_dir_path = f'{images_save_dir}/stylegan3/{dataset_name}_{experiment_date}'
+            img_store_dir_path = f'{images_save_dir}/{arch_name.lower()}/{dataset_name}_{experiment_date}'
             img_filename = f'{ema_marker_str}epoch_{epoch}.jpg'
             save_path= os.path.join(img_store_dir_path, img_filename)
                             
@@ -15499,8 +15604,22 @@ training_loop_stylegan3(discriminator_stylegan3,
 # @e15 FID 297 loss 3.10vs1.30 I'm a bit worried about generator dominating as our discriminator seems
 # struggling while geneator keeps going down! our generator has around 1m parameters more despite both
 # having the same channel config.if we dont see any improvements til e20, im going to end this and do sth
-# about the discriminator capacity!
-#
+# about the discriminator capacity! ended the training at epoch17 FID 284, 3.1 vs 1.30 so I can change afewthings
+# 
+# stylegan3_ffhq_20251216082301/20251216084857:
+# the slow down was caused by our upfirdn2d! because we used padding and conv which made it extremely slow
+# switched to the previous version we used for stylegan2, updated it so the kernel size mismatch is fixed
+# and we should be able to have much faster training. also since we are using kaiser weights there wont
+# be alias noise because of using convtranspse2d! its safe. 
+# one obvious change is that we can see checkerbox (big squares) in the early images, whereas before 
+# we saw smooth wavy/melty/waxy textures! it seems either our previous filter didnt use highfrequncies
+# enough! because if you think about it our fourier features are applied in 4x4 blocks! so seeing 
+# large squares may be the right thing to see as it shows the coordinate system is working, previously
+# something may have messed this up! or its the otherway around! lets continue and see how it turns out!
+# currently each epoch takes around 18mins! so we got a bit faster(2.5x)! FID=384 loss=2.60vs2.33
+# this time, you can make the faces much better, the outline/general form shows its a face. this might
+# actually be the correct way of doing it!
+# 
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
 
