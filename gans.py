@@ -15491,7 +15491,15 @@ training_loop_stylegan3(discriminator_stylegan3,
 # everything like the previous experiment, except gamma=0.5 and I also set design_kaiser_filter to use cuda
 # previously it was set to None, thus it worked on cpu!! lets see if that speeds things up a bit!
 # ok it seems each epoch now takes around 45mins! so essentially nothing changed! the loss @ e0 is 2.97 vs 3.08
-# @e1 FID304 2.99vs1.93 @e2 FID283 3.12vs1.72 
+# @e1 FID304 2.99vs1.93 @e2 FID283 3.12vs1.72 , at epoch 4, images start to get the form of human head
+# sillohet, still waxy,wavy, the ema version does a way better job at showing waxy melty human faces,
+# its much more obvious.at epoch 5, images are more like human faces, but God they look monsterous!
+# weird bulgy, sunken  eyes(actually black/dark circles for eyes), mouth, its really crazy! but it shows
+# each face attribute is slowly getting developed and moved into the right place!@e5FID=283,loss 3.0vs1.43
+# @e15 FID 297 loss 3.10vs1.30 I'm a bit worried about generator dominating as our discriminator seems
+# struggling while geneator keeps going down! our generator has around 1m parameters more despite both
+# having the same channel config.if we dont see any improvements til e20, im going to end this and do sth
+# about the discriminator capacity!
 #
 #%%
 # a detour to something fun CycleGAN (PixelGAN, stargan)
