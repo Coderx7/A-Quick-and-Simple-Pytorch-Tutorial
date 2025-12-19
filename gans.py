@@ -39,6 +39,7 @@ from functools import partial
 
 
 import numpy as np 
+import scipy
 
 import torch 
 import torch.nn as nn 
@@ -1299,7 +1300,7 @@ for i in range(topk):
     imgs = traverse(generatorcnn, z, eigen_vec, alphas)
     show_images(imgs,f'direction {i}/{topk}',figsize=(12,6))
    
-#%%
+#%% clip experiment
 # clip experiment
 import math
 import clip  # pip install ftfy regex tqdm && pip install git+https://github.com/openai/CLIP.git
@@ -1877,7 +1878,7 @@ print(f'z_size: {z_size}')
 print(f'hidden_size: {hidden_size}')
 print(f'epoch: {epoch}')
 print(f'DLoss: {losses[:,0].mean():.4f} | GLoss: {losses[:1].mean():.4f}')
-#%%
+#%% celeba-classifier
 # to do some latent space arithmetic on a conditional version, we need to
 # have the latent vectors that have specific attributes, simply having labels 
 # wouldnt do us any favor, as we are after the vector z, for calculating the 
@@ -3287,18 +3288,20 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         sampler = torch.utils.data.SubsetRandomSampler(indexes)
         # when sampler is enabled, shuffle must be disabled
         shuffle=None
+        print(f'Warning⚠️ Experimental size configured! Warning⚠️\nThe dataset size is now limited to {experimental_size} images only!')
 
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
                              sampler=sampler, num_workers=num_workers, pin_memory=True)
     
     return data_loader
 
-# dataset_name = 'celeba'
-# train_loader = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
-#                               batch_size=16, data_augmentation=True,normalize=False)
-# #visualize 
-# (imgs, labels) = next(iter(train_loader))
-# display_images(imgs, title=f'{dataset_name} samples',cols=4)
+dataset_name = 'celeba'
+train_loader = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
+                              batch_size=16, data_augmentation=True,normalize=False,
+                              experimental_size=14)
+#visualize 
+(imgs, labels) = next(iter(train_loader))
+display_images(imgs, title=f'{dataset_name} samples',cols=4)
 
 #%%
 def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.optim.Adam, gen_optimizer,
@@ -11957,8 +11960,19 @@ def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
     # if input is (H, W), make it (1, 1, H, W)
     # if input is already (1, 1, H, W), leave it alone.
     # our design_kaiser_filter returns 4D, so this prevents the 6D error.
-    if kernel.ndim == 2:
+    # if kernel.ndim == 2:
+    #     kernel = kernel.unsqueeze(0).unsqueeze(0)
+    
+    if kernel.ndim == 1:# for scipy firwin
+        # convert separable 1D filter to 2D
+        kernel = kernel[:, None] * kernel[None, :]
         kernel = kernel.unsqueeze(0).unsqueeze(0)
+    elif kernel.ndim == 2:
+        kernel = kernel.unsqueeze(0).unsqueeze(0)
+    elif kernel.ndim == 4:
+        pass
+    else:
+        raise ValueError(f"Unsupported kernel shape: {kernel.shape}")
         
     # If the kernel is small (like [1,3,3,1]), flipping doesn't matter much 
     # as it is symmetric, but strictly speaking StyleGAN flips it.
@@ -14427,7 +14441,7 @@ def design_kaiser_filter(num_taps=12, f_c=0.3, beta=6.0, device="cuda"):
     w = torch.kaiser_window(num_taps, periodic=False, beta=beta, device=device)
     k = h * w
     k = k / k.sum()
-    k = k[:, None] * k[None, :] 
+    k = k[:, None] * k[None, :]
     return k.unsqueeze(0).unsqueeze(0)
 
 # this version was extremely slow due to using padding
@@ -14483,94 +14497,32 @@ def upfirdn2d_slow(input, kernel, up=1, down=1):
         
     return out
 
-# this is the same as our previous impl, but lets use our previous
-# version - comment the original version andremve this later
-# def upfirdn2d(input, kernel, up=1, down=1):
-#     batch, channels, in_h, in_w = input.shape
-#     kernel = kernel.to(input.device, dtype=input.dtype)
-    
-#     # Prepare Kernel
-#     if kernel.ndim == 2:
-#         kernel = kernel.unsqueeze(0).unsqueeze(0)
-    
-#     # 1. Upsampling (use ConvTranspose2d)
-#     if up > 1:
-#         # For ConvTranspose2d, we need to flip the kernel (correlation vs convolution)
-#         # and reshape it to (in_channels, out_channels/groups, kH, kW)
-#         # Since we use groups=channels, shape is (channels, 1, kH, kW)
-#         w = kernel.flip(2, 3).repeat(channels, 1, 1, 1)
-        
-#         # Calculate padding
-#         # In conv_transpose, padding removes pixels from the outside. 
-#         # We handle padding manually via F.pad on input or output to be precise.
-#         # But here is a robust way matching SG3 padding logic:
-#         kH, kW = kernel.shape[2], kernel.shape[3]
-#         pad_w0 = (kW - up + (kW % up)) // 2
-#         pad_w1 = (kW - up) - pad_w0
-#         pad_h0 = (kH - up + (kH % up)) // 2
-#         pad_h1 = (kH - up) - pad_h0
 
-#         # We need to adjust padding because we are switching ops
-#         # Simplest way: Pad input, then Valid ConvTranspose
-#         # (This math can get tricky, simplified approach below):
-        
-#         # --- Simpler approach for PyTorch Transpose speedup ---
-#         # 1. Expand kernel weights
-#         w = w * (up ** 2) 
-        
-#         # 2. Pad input to handle border conditions
-#         # (p_x0, p_x1) calculated relative to input
-#         p_x0 = (kW - up + 1) // 2
-#         p_x1 = (kW - up) // 2
-#         p_y0 = (kH - up + 1) // 2
-#         p_y1 = (kH - up) // 2
-        
-#         input = F.pad(input, (p_x0, p_x1, p_y0, p_y1))
-        
-#         # 3. Apply Transposed Conv with stride=up
-#         # This skips processing zeros!
-#         out = F.conv_transpose2d(input, w, stride=up, groups=channels)
-        
-#         # 4. Crop to remove extra pixels resulting from valid padding math
-#         # The output size might be slightly off depending on kernel size/padding, 
-#         # simple center crop is usually required here for Kaiser filters.
-#         out_h = in_h * up
-#         out_w = in_w * up
-#         if out.shape[2] != out_h or out.shape[3] != out_w:
-#              out = out[:, :, :out_h, :out_w] # Simplification for standard SG3 sizes
-             
-#     else:
-#         out = input
+def design_lowpass_filter(numtaps, cutoff, width, fs, radial=False):
+    assert numtaps >= 1
 
-#     # 2. Downsampling (Use Stride)
-#     if down > 1:
-#         w = kernel.repeat(channels, 1, 1, 1)
-        
-#         kH, kW = kernel.shape[2], kernel.shape[3]
-        
-#         # Calculate padding to maintain size before decimation
-#         pad_w = kW - down + (down % 2) # adjustment for even/odd
-#         p_x0 = pad_w // 2
-#         p_x1 = pad_w - p_x0
+    # Identity filter.
+    if numtaps == 1:
+        return None
 
-#         pad_h = kH - down + (down % 2)
-#         p_y0 = pad_h // 2
-#         p_y1 = pad_h - p_y0
-        
-#         # Pad input
-#         out = F.pad(out, (p_x0, p_x1, p_y0, p_y1))
-        
-#         # Apply Conv with STRIDE=down
-#         # This skips calculating pixels we would throw away!
-#         out = F.conv2d(out, w, stride=down, groups=channels)
+    # Separable Kaiser low-pass filter.
+    if not radial:
+        f = scipy.signal.firwin(numtaps=numtaps, cutoff=cutoff, width=width, fs=fs)
+        return torch.as_tensor(f, dtype=torch.float32)
 
-#     elif up == 1 and down == 1:
-#         # Standard filtering case
-#         p = (kernel.shape[2] - 1) // 2
-#         w = kernel.repeat(channels, 1, 1, 1)
-#         out = F.conv2d(input, w, padding=p, groups=channels)
-        
-#     return out
+    # Radially symmetric jinc-based filter.
+    x = (np.arange(numtaps) - (numtaps - 1) / 2) / fs
+    r = np.hypot(*np.meshgrid(x, x))
+    f = scipy.special.j1(2 * cutoff * (np.pi * r)) / (np.pi * r)
+    beta = scipy.signal.kaiser_beta(scipy.signal.kaiser_atten(numtaps, width / (fs / 2)))
+    w = np.kaiser(numtaps, beta)
+    f *= np.outer(w, w)
+    f /= np.sum(f)
+    # update: I added this so its compatible with our existing upfirdn2d!
+    # f = f[:, None] * f[None, :]
+    # f = torch.as_tensor(f, dtype=torch.float32)
+    # print(f'{f.shape=}')
+    return f
 
 # Fourier Features
 # we use a coordinate grid projected into high-freq sine waves.
@@ -14772,7 +14724,7 @@ class FourierInput2(nn.Module):
         
         return emb
 
-class FourierInput(nn.Module):
+class FourierInput3(nn.Module):
     def __init__(self, channels, w_size, dim_size=4, scale=1.0):
         super().__init__()
         self.dim_size = dim_size
@@ -14782,7 +14734,11 @@ class FourierInput(nn.Module):
         # 1. THE AFFINE TRANSFORM (Crucial for StyleGAN3)
         # The network learns to Rotate/Translate/Scale the grid via 'w'.
         # We output 4 values: [a, b, tx, ty] to form a similarity matrix.
-        self.affine = EqualizedLinear(w_size, 4)
+        #update:
+        # we use lr_mul=0.1 or similar to make the grid movement learn SLOWLY.
+        # this prevents the PLR 52 explosion at epoch 3 where the head spins 
+        # too fast to learn!
+        self.affine = EqualizedLinear(w_size, 4,lr_mult=0.05)
         # Initialize to Identity matrix (no rotation/translation)
         self.affine.weight.data.zero_()
         self.affine.bias.data.copy_(torch.tensor([1, 0, 0, 0], dtype=torch.float32))
@@ -14792,9 +14748,16 @@ class FourierInput(nn.Module):
         # log2(128) = 7. We go to 8 to be safe.
         # This prevents 2^127 float overflows.
         num_bands = self.channels // 4
+        # update:
+        # the input tensor is 4x4. The Nyquist frequency is 2.
+        # we cannot use frequencies like 256 or 128 here. They will alias.
+        # we set the limit to match the grid size.
+        # log2(dim_size / 2) -> log2(2) = 1. 
+        # we stretch it slightly to 1.5 to provide some high-freq variance, 
+        # but NOT 8.0.
         #! make this dynamic for larger res as well, we may want to do larger res
         #! later like 256,512 or even 1024x1024
-        cutoff_freq = 8.0 
+        cutoff_freq = 8
         exponents = torch.linspace(0, cutoff_freq, num_bands) 
         freq_bands = 2.0 ** exponents
         
@@ -14842,16 +14805,190 @@ class FourierInput(nn.Module):
         return emb
 
 
+class FourierInput(nn.Module):
+    def __init__(self, channels, w_size, dim_size=4):
+        super().__init__()
+        assert channels % 4 == 0
+        self.channels = channels
+        self.resolution = dim_size #dim_size
+
+        # Learned similarity transform
+        self.affine = EqualizedLinear(w_size, 4, lr_mult=0.05)
+        self.affine.weight.data.zero_()
+        self.affine.bias.data[:] = torch.tensor([1, 0, 0, 0])
+
+        # Nyquist-limited frequencies
+        num_bands = channels // 4
+        max_freq = self.resolution // 2
+        freqs = torch.linspace(1, max_freq, num_bands)
+
+        fx = torch.stack([freqs, torch.zeros_like(freqs)], dim=1)
+        fy = torch.stack([torch.zeros_like(freqs), freqs], dim=1)
+        self.register_buffer("freqs", torch.cat([fx, fy], dim=0))  # (C/2, 2)
+
+    def forward(self, w):
+        B = w.shape[0]
+        device = w.device
+
+        t = torch.linspace(-1, 1, self.resolution, device=device)
+        y, x = torch.meshgrid(t, t, indexing="ij")
+        grid = torch.stack([x, y], dim=-1)  # (H, W, 2)
+        grid = grid.unsqueeze(0).repeat(B, 1, 1, 1)
+
+        # Affine params
+        a, b, tx, ty = self.affine(w).unbind(dim=1)
+
+        # Apply transform in frequency space
+        A = torch.stack([
+            torch.stack([a, -b], dim=1),
+            torch.stack([b,  a], dim=1),
+        ], dim=1)  # (B, 2, 2)
+
+        freqs = self.freqs @ A.transpose(1, 2)  # (B, C/2, 2)
+        phase = freqs[..., 0] * tx[:, None] + freqs[..., 1] * ty[:, None]
+        # print(f'{grid.shape=} {freqs.shape=}')
+        coords = torch.einsum('bhwq,bcq->bhwc', grid, freqs)
+        coords = coords + phase[:, None, None, :]
+        coords = 2 * math.pi * coords
+
+        emb = torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
+        return emb.permute(0, 3, 1, 2)
+
+
+class FourierInput(torch.nn.Module):
+    def __init__(self,
+        channels,       # Number of output channels.
+        w_size,         # Intermediate latent (W) dimensionality.
+        dim_size,       # Output spatial size: int or [width, height].
+        sampling_rate,  # Output sampling rate.
+        bandwidth,      # Output bandwidth.
+    ):
+        super().__init__()
+        self.w_dim = w_size
+        self.channels = channels
+        self.size = [dim_size,dim_size]
+        # print(f'{self.size=}')
+        self.sampling_rate = sampling_rate
+        self.bandwidth = bandwidth
+
+        # Draw random frequencies from uniform 2D disc.
+        freqs = torch.randn([self.channels, 2])
+        radii = freqs.square().sum(dim=1, keepdim=True).sqrt()
+        freqs /= radii * radii.square().exp().pow(0.25)
+        freqs *= bandwidth
+        phases = torch.rand([self.channels]) - 0.5
+
+        # Setup parameters and buffers.
+        self.weight = torch.nn.Parameter(torch.randn([self.channels, self.channels]))
+        self.affine = EqualizedLinear(w_size, 4)
+        self.register_buffer('transform', torch.eye(3, 3)) # User-specified inverse transform wrt. resulting image.
+        self.register_buffer('freqs', freqs)
+        self.register_buffer('phases', phases)
+
+    def forward(self, w):
+        # Introduce batch dimension.
+        transforms = self.transform.unsqueeze(0) # [batch, row, col]
+        freqs = self.freqs.unsqueeze(0) # [batch, channel, xy]
+        phases = self.phases.unsqueeze(0) # [batch, channel]
+
+        # Apply learned transformation.
+        t = self.affine(w) # t = (r_c, r_s, t_x, t_y)
+        t = t / t[:, :2].norm(dim=1, keepdim=True) # t' = (r'_c, r'_s, t'_x, t'_y)
+        m_r = torch.eye(3, device=w.device).unsqueeze(0).repeat([w.shape[0], 1, 1]) # Inverse rotation wrt. resulting image.
+        m_r[:, 0, 0] = t[:, 0]  # r'_c
+        m_r[:, 0, 1] = -t[:, 1] # r'_s
+        m_r[:, 1, 0] = t[:, 1]  # r'_s
+        m_r[:, 1, 1] = t[:, 0]  # r'_c
+        m_t = torch.eye(3, device=w.device).unsqueeze(0).repeat([w.shape[0], 1, 1]) # Inverse translation wrt. resulting image.
+        m_t[:, 0, 2] = -t[:, 2] # t'_x
+        m_t[:, 1, 2] = -t[:, 3] # t'_y
+        transforms = m_r @ m_t @ transforms # First rotate resulting image, then translate, and finally apply user-specified transform.
+
+        # Transform frequencies.
+        phases = phases + (freqs @ transforms[:, :2, 2:]).squeeze(2)
+        freqs = freqs @ transforms[:, :2, :2]
+
+        # Dampen out-of-band frequencies that may occur due to the user-specified transform.
+        amplitudes = (1 - (freqs.norm(dim=2) - self.bandwidth) / (self.sampling_rate / 2 - self.bandwidth)).clamp(0, 1)
+
+        # Construct sampling grid.
+        theta = torch.eye(2, 3, device=w.device)
+        theta[0, 0] = 0.5 * self.size[0] / self.sampling_rate
+        theta[1, 1] = 0.5 * self.size[1] / self.sampling_rate
+        grids = torch.nn.functional.affine_grid(theta.unsqueeze(0), [1, 1, self.size[1], self.size[0]], align_corners=False)
+
+        # Compute Fourier features.
+        x = (grids.unsqueeze(3) @ freqs.permute(0, 2, 1).unsqueeze(1).unsqueeze(2)).squeeze(3) # [batch, height, width, channel]
+        x = x + phases.unsqueeze(1).unsqueeze(2)
+        x = torch.sin(x * (np.pi * 2))
+        x = x * amplitudes.unsqueeze(1).unsqueeze(2)
+
+        # Apply trainable mapping.
+        weight = self.weight / np.sqrt(self.channels)
+        x = x @ weight.t()
+
+        # Ensure correct shape.
+        x = x.permute(0, 3, 1, 2) # [batch, channel, height, width]
+        # misc.assert_shape(x, [w.shape[0], self.channels, int(self.size[1]), int(self.size[0])])
+        return x
+
+class ModulatedConv2d0(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, w_dim=512, demodulate=True, eps=1e-8):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size= kernel_size
+        self.padding = padding
+        self.stride = stride
+        self.w_dim = w_dim
+        self.demodulate = demodulate
+        self.eps = eps
+        
+        self.weight = torch.nn.Parameter(torch.randn(size=(1,out_channels, in_channels, kernel_size, kernel_size)))
+        # weight modulation is simply fc layer transforming w and acts as a scale
+        self.fc_style = EqualizedLinear(w_dim, in_channels)
+        # initialize the bias/scale to 1
+        self.fc_style.bias.data.fill_(1)
+
+    def forward(self, x, w):
+        b,c,img_h,img_w = x.shape
+        # shape:(batch,1,in_channel,1,1)
+        style = self.fc_style(w).view(-1,1,c,1,1)
+        weights = self.weight * style 
+        
+        if self.demodulate:        
+            # weight demodulation.(remember sqrt/rsqrt accept only positive numbers, any negatives results in nan!)
+            demod = torch.rsqrt(weights.pow(2).sum((2,3,4))+self.eps)
+            weights = weights * demod.view(-1,self.out_channels,1,1,1)
+
+        # reshape x for group convolution trick
+        # to handle different weighst for each batch sample,
+        # we put the batch dim into output channels and use groups=batch
+        x = x.view(1, b*c,img_h,img_w)
+        weights = weights.view(b*self.out_channels, c, self.kernel_size, self.kernel_size)
+        
+        # apply the conv operationg using the weights
+        out = F.conv2d(x, weights, stride=self.stride, padding=self.padding, groups=b)
+        # reshape back to original shape
+        out = out.view(b, self.out_channels, img_h, img_w)
+        return out
+        
+
+
 # we dont do demodulation, so in order to keep grads from exploding
 # we need o scale them like equalizedconv2d!
 class ModulatedConv2d3(nn.Module):
-    def __init__(self, in_channels, out_channels, w_dim=512, activation_gain=math.sqrt(2)):
+    def __init__(self, in_channels, out_channels, w_dim=512, is_img=False):
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.w_dim = w_dim
-               
+        self.eps = 1e-8
+        # disable demodulate for img else its always enabled
+        self.demodulate = not is_img 
+        
         self.weight = torch.nn.Parameter(torch.randn(size=(1,out_channels, in_channels, 1, 1)))
         # weight modulation is simply fc layer transforming w and acts as a scale
         self.fc_style = EqualizedLinear(w_dim, in_channels)
@@ -14861,16 +14998,23 @@ class ModulatedConv2d3(nn.Module):
         # we need to divide by sqrt(fan_in) to keep variance constant after summation.
         # we use sqrt(2) / sqrt(fan_in) to account for ReLU killing half the signal.
         fan_in = in_channels*1*1
+        gain = 1 if is_img else math.sqrt(2)
         # for toImgs that we dont use any activations we need to pass 1 for activation_gain
-        self.scale = activation_gain / math.sqrt(fan_in)
+        self.scale = gain / math.sqrt(fan_in)
 
     def forward(self, x, w):
         b,c,img_h,img_w = x.shape
         # shape:(batch,1,in_channel,1,1)
         style = self.fc_style(w).view(-1,1,c,1,1)
-        # since we dont do demodulation, we have to keep the scales intact
-        # so we need to scale the weights accordingly
-        weights = (self.weight*self.scale) * style 
+        weights = self.weight*style
+        
+        if self.demodulate:        
+            demod = torch.rsqrt(weights.pow(2).sum((2,3,4))+self.eps)
+            weights = weights * demod.view(-1,self.out_channels,1,1,1)
+        else:
+            # since we dont do demodulation, we have to keep the scales intact
+            # so we need to scale the weights accordingly
+            weights *= self.scale
         
         # reshape x for group convolution trick
         # to handle different weighst for each batch sample,
@@ -14886,152 +15030,237 @@ class ModulatedConv2d3(nn.Module):
 
 # the stylegan3 uses conv1x1 I initially used 3x3!
 class StyleConvBlock3(nn.Module):
-    def __init__(self, in_channels, out_channels, bias=True,
-                 w_size=512, up=1, use_upfirdn2d=True ):
+    def __init__(self, in_channels, 
+                 out_channels, 
+                 in_size,                        # Input spatial size: int or [width, height].
+                 out_size,                       # Output spatial size: int or [width, height].
+                 in_sampling_rate,               # Input sampling rate (s).
+                 out_sampling_rate,              # Output sampling rate (s).
+                 in_cutoff,                      # Input cutoff frequency (f_c).
+                 out_cutoff,                     # Output cutoff frequency (f_c).
+                 in_half_width,                  # Input transition band half-width (f_h).
+                 out_half_width,                 # Output Transition band half-width (f_h)
+                 is_critically_sampled,
+                 bias=True, 
+                 w_size=512,
+                 up=1
+                 ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        # stylegan3 specifically uses conv1x1!
-        # self.kernel_size = 1
-        # self.stride = 1
-        # self.padding = 0
-        # we also dont do demodulation anymore!
-        # self.demodulate = False
         self.bias = bias
         self.w_size = w_size
         self.up = up
-        # whether to choose upfirdn2d or normal interpolate to upsample
-        self.use_upfirdn2d = use_upfirdn2d
 
-        # hard constraint 1: Cutoff Frequencies
-        # in order to prevent aliasing, we need to respect nyquist limit
-        # so if we are upsampling(up=2) the valid bandwidth is determined by
-        # the input (lowe) resolution.
-        # we calculate the cutoff based on the "output" sampling rate
-        # f_c =0.5 means full bandwidth(nyquist)
-        # in stylegan3 we usually preserve a bit of margin (i.e. f_c<0.5) to allow
-        # the filter transition band to drop to zero before hitting hyquist limit.
-        # we treat the layer as input->upsample(if needed)->conv->act>downsample(if needed)               
-        # but optimized stylegan3 versions do modulate->1x1conv->upfirdn(with filter)
+        ###############
+        # Hyperparameters.
+        self.is_torgb = is_torgb = False
+        conv_kernel         = 1#3        # Convolution kernel size. Ignored for final the ToRGB layer.
+        filter_size         = 6        # Low-pass filter size relative to the lower resolution when up/downsampling.
+        lrelu_upsampling    = 2        # Relative sampling rate for leaky ReLU. Ignored for final the ToRGB layer.
+        use_radial_filters  = False    # Use radially symmetric downsampling filter? Ignored for critically sampled layers.
+        conv_clamp          = 256      # Clamp the output to [-X, +X], None = disable clamping.
+        magnitude_ema_beta  = 0.999    # Decay rate for the moving average of input magnitudes.
+        
+        
+        self.in_size = torch.tensor([in_size, in_size])
+        self.out_size = torch.tensor([out_size, out_size])
+        self.in_sampling_rate = in_sampling_rate
+        self.out_sampling_rate = out_sampling_rate
+        self.tmp_sampling_rate = max(in_sampling_rate, out_sampling_rate) * (1 if is_torgb else lrelu_upsampling)
+        self.in_cutoff = in_cutoff
+        self.out_cutoff = out_cutoff
+        self.in_half_width = in_half_width
+        self.out_half_width = out_half_width
+        self.conv_kernel = 1 if is_torgb else conv_kernel
+        self.conv_clamp = conv_clamp
+        self.magnitude_ema_beta = magnitude_ema_beta
+        
+        self.is_critically_sampled = is_critically_sampled
+        
+        
+        # Design upsampling filter.
+        self.up_factor = int(np.rint(self.tmp_sampling_rate / self.in_sampling_rate))
+        assert self.in_sampling_rate * self.up_factor == self.tmp_sampling_rate
+        self.up_taps = filter_size * self.up_factor if self.up_factor > 1 and not self.is_torgb else 1
+        self.register_buffer('filter_act_up', design_lowpass_filter(numtaps=self.up_taps, 
+                                                                cutoff=self.in_cutoff, 
+                                                                width=self.in_half_width*2, 
+                                                                fs=self.tmp_sampling_rate))
+
+        # Design downsampling filter.
+        self.down_factor = int(np.rint(self.tmp_sampling_rate / self.out_sampling_rate))
+        assert self.out_sampling_rate * self.down_factor == self.tmp_sampling_rate
+        self.down_taps = filter_size * self.down_factor if self.down_factor > 1 and not self.is_torgb else 1
+        self.down_radial = use_radial_filters and not self.is_critically_sampled
+        self.register_buffer('filter_act_dn', design_lowpass_filter(numtaps=self.down_taps, 
+                                                                  cutoff=self.out_cutoff, 
+                                                                  width=self.out_half_width*2, 
+                                                                  fs=self.tmp_sampling_rate, 
+                                                                  radial=self.down_radial))
+
+        # Compute padding.
+        pad_total = (self.out_size - 1) * self.down_factor + 1 # Desired output size before downsampling.
+        pad_total -= (self.in_size + self.conv_kernel - 1) * self.up_factor # Input size after upsampling.
+        pad_total += self.up_taps + self.down_taps - 2 # Size reduction caused by the filters.
+        pad_lo = (pad_total + self.up_factor) // 2 # Shift sample locations according to the symmetric interpretation (Appendix C.3).
+        pad_hi = pad_total - pad_lo
+        self.padding = [int(pad_lo[0]), int(pad_hi[0]), int(pad_lo[1]), int(pad_hi[1])]
+        ##########
         
         # stylegan3 typically uses 1x1 conv for the transformation
-        # and depthwise convolutions or just filters for spatial mixing.
-        # we could simply use the modulated conv2d and filter strictly after
-        # or simply decompose the ops, and do input-conv-upsample
-        # i.e. do themodulation here! we use the first method and upsample
-        # and then apply the modulation!
         self.conv = ModulatedConv2d3(in_channels, out_channels, w_dim=w_size)
         self.bias = nn.Parameter(torch.zeros(out_channels,))
         
         # we need to create specific filters for the upsampling and the activation sandwich
+        self.f_c = 0.25 if up>1 else 0.4
         
-        # --- FAITHFUL CUTOFF LOGIC ---
-        # If upsampling (up=2), we must cut frequencies > pi/2 (0.25 in normalized freq)
-        # If pass-through (up=1), we can keep frequencies up to pi (0.5 in normalized freq)
-        if up>1:
-            # Faithful anti-aliasing
-            self.f_c = 0.25
-        else:
-            # Faithful pass-through (0.5 is ideal, 0.4 is safer/smoother)
-            self.f_c = 0.4
-        
-        # sidenote:
-        # in actual production grade impl, these need to be calculated dynamically based on
-        # cutoff args, but for now we use defaults!
         device = next(self.parameters()).device
-        # Filter for the geometric upsampling (if up=2)
         self.register_buffer("filter_resample",design_kaiser_filter(f_c=self.f_c, beta=6.0, device=device))
+        
         # we need a separate upsample for the nonlinearity sandwich (upsample->relu->downsample)
         # so we allow for high frequencies to appear and then low-pass filter them, and 
-        # then downsample back to get the original res (
-        # nonlinearities introduce high frequencies, so we must upsample to make room for them,
-        # apply the non-linearity, and then low-pass filter (downsample) to remove aliasing)
-        # upsample before act
-        self.register_buffer("filter_act_up",design_kaiser_filter(f_c=0.25,beta=6.0,device=device))
-        # downsample after act
-        self.register_buffer("filter_act_dn",design_kaiser_filter(f_c=0.25,beta=6.0,device=device))
-                
-        self.blur = Blur()
-        
-        if use_upfirdn2d:
-            self.upsample_fn = lambda x: upfirdn2d(x, self.filter_resample, up=self.up)
-        else:
-            interp = partial(F.interpolate, scale_factor=2, mode="bilinear", align_corners=False)
-            self.upsample_fn = interp
-            #or use blur like stylegan1?
-            # self.upsample_fn = lambda x : self.blur(interp(x))
+        # then downsample back to get the original res( nonlinearities introduce high frequencies,
+        # so we must upsample to make room for them, apply the non-linearity, and then low-pass filter
+        # (downsample) to remove aliasing)
+        self.upsample_fn = lambda x: upfirdn2d(x, self.filter_resample, up=self.up)
+
 
     def forward(self, x, w):
-        # we apply conv first then upsample in stylegan3
+        # we apply conv first then upsample in stylegan3?
         out = self.conv(x, w)
         # apply bias 
-        if out.ndim==2:
-            out += self.bias
-        else:
-            out += self.bias.view(1,-1,1,1)
-            
-        # upsample
-        if self.up>1:
-            # we can now experiment with the old method as well     
-            out = self.upsample_fn(out)
-            
+        out += self.bias.view(1,-1,1,1)
+        
         # apply nonlinearity sandwich upsample-relu-downsample
         out = upfirdn2d(out, self.filter_act_up, up=2)
         out = F.leaky_relu(out, negative_slope=0.2)
         out = upfirdn2d(out, self.filter_act_dn, down=2)
+        
+        # upsample
+        if self.up>1:
+            # we can now experiment with the old method as well     
+            out = self.upsample_fn(out)
+        
         return out
 
-# for the generator we swap the const_input with a fourior based one!
-# and apply the stric upsampling/downsampling the rest stays the same
 class GeneratorStyleGAN3(nn.Module):
     def __init__(self, z_size=512, w_size=512, mn_num_layers=8, 
-                 channels=[512,512,512,256,128,64,32], 
+                 img_resolution=128,channel_base=512*64*64,channel_max=512,
                  style_mixing_prob=0.9, ema_w_beta=0.995, 
-                 use_upfirdn2d=True,scale=10.0):
+                 num_critical=2,
+                 ):
         super().__init__()
         
-        self.setup_layers(z_size, w_size, mn_num_layers,channels,
-                          style_mixing_prob, ema_w_beta, use_upfirdn2d,scale)
+        self.setup_layers(z_size, w_size, mn_num_layers,
+                          img_resolution, channel_base, channel_max,
+                          style_mixing_prob, ema_w_beta, num_critical)
                 
-    def setup_layers(self, z_size, w_size, mn_num_layers, channels,
-                     style_mixing_prob, ema_w_beta, use_upfirdn2d,scale):
+    def setup_layers(self, z_size, w_size, mn_num_layers, 
+                     img_resolution,channel_base,channel_max,
+                     style_mixing_prob, ema_w_beta, num_critical):
         
         self.z_size = z_size
         self.w_size = w_size
         self.mn_num_layers = mn_num_layers
+        self.num_critical = num_critical
         
         self.style_mixing_prob = style_mixing_prob
         self.ema_w_beta = ema_w_beta
         self.register_buffer("ema_w",torch.zeros(size=(1,w_size)))
         
-        # whether to use the upfirdn2d for upsampling or not
-        self.use_upfirdn2d = use_upfirdn2d
-        self.scale = scale
+        self.channel_base = channel_base
+        self.channel_max = channel_max
+        self.img_resolution = img_resolution
+        self.log2_res = int(np.log2(img_resolution))
+        assert 2 ** self.log2_res == img_resolution
+        num_layers = self.log2_res - 2   # 4x4 → R
+        self.num_layers = num_layers
         
+        num_channels = lambda stage: min(channel_base // (2 ** (2+stage)), (2 ** (2+stage))*2)
+        # num_channels = lambda stage: min(channel_base // (2 ** stage), channel_max)
+        channels = [num_channels(i) for i in range(self.num_layers)][::-1]
         self.channels = channels
-        
-        # in this version we use fourier input to generate fixed coordinates that the
-        # network uses to generate the images. getting this to work properly is crucial
-        # otherwise if it only generates low frequencies the network cant generate fine details!
-        # so scale is very important here
-        self.fourier_input = FourierInput(self.channels[0],w_size=w_size, dim_size=4, scale=self.scale)
+        print(f'{channel_base=}')
+        print(f'{num_layers=}')
+        print(f'{channels=}')
+    
+        assert 4 * (2 ** self.num_layers) == self.img_resolution, \
+        f"Resolution mismatch: 4 * 2^{self.num_layers} != {self.img_resolution}"
+
         
         self.mapping_network = MappingNetwork2(z_size, w_size, self.mn_num_layers)
+        
+        ###################################
+        img_channels = 3                    # Number of color channels
+        #num_layers          = len(channels) # 14 Total number of layers, excluding Fourier features and ToRGB.
+        num_critical        = 2             # Number of critically sampled layers at the end.
+        first_cutoff        = 2             # Cutoff frequency of the first layer (f_{c,0}).
+        first_stopband      = 2**2.1        # Minimum stopband of the first layer (f_{t,0}).
+        last_stopband_rel   = 2**0.3        # Minimum stopband of the last layer, expressed relative to the cutoff.
+        margin_size         = 10            # Number of additional pixels outside the image.
+        output_scale        = 0.25          # Scale factor for the output image.
+        num_fp16_res        = 4             # Use FP16 for the N highest resolutions.
+                
+        self.num_ws = num_layers
+        self.img_resolution = img_resolution
+        self.img_channels = img_channels
+
+        self.num_critical = num_critical
+        self.margin_size = margin_size
+        self.output_scale = output_scale
+        self.num_fp16_res = num_fp16_res
+
+        # Geometric progression of layer cutoffs and min. stopbands.
+        last_cutoff = self.img_resolution / 2 # f_{c,N}
+        last_stopband = last_cutoff * last_stopband_rel # f_{t,N}
+        exponents = np.minimum(np.arange(self.num_layers + 1) / (self.num_layers - self.num_critical), 1)
+        cutoffs = first_cutoff * (last_cutoff / first_cutoff) ** exponents # f_c[i]
+        stopbands = first_stopband * (last_stopband / first_stopband) ** exponents # f_t[i]
+        # Compute remaining layer parameters.
+        sampling_rates = np.exp2(np.ceil(np.log2(np.minimum(stopbands * 2, self.img_resolution)))) # s[i]
+        half_widths = np.maximum(stopbands, sampling_rates / 2) - cutoffs # f_h[i]
+        sizes = sampling_rates + self.margin_size * 2
+        sizes[-2:] = self.img_resolution
+        
+        # sizes = [4 * (2 ** i) for i in range(self.num_layers)]
+        # sizes[-1] = self.img_resolution
+        # sampling_rates = sizes
+        # half_widths = [s / 2 for s in sizes]
+        
         
         self.blocks = nn.ModuleList()
         self.toImgs = nn.ModuleList()
         
-        self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
-        self.blocks.append(StyleConvBlock3(self.channels[0], self.channels[0], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
-        # self.toImgs.append(ModulatedConv2d(self.channels[0], 3, kernel_size=1, w_dim=w_size, demodulate=False))
-        for i in range(1, len(channels)):
-            self.blocks.append(StyleConvBlock3(self.channels[i-1], self.channels[i], w_size=w_size, up=2, use_upfirdn2d=use_upfirdn2d))
-            self.blocks.append(StyleConvBlock3(self.channels[i], self.channels[i], w_size=w_size, up=1, use_upfirdn2d=use_upfirdn2d))
-            # self.toImgs.append(ModulatedConv2d(self.channels[i], 3, kernel_size=1, w_dim=w_size, demodulate=False))
+        for idx in range(self.num_layers):
+            prev = max(idx - 1, 0)
+            is_critically_sampled = (idx >= self.num_layers - self.num_critical)
+            # print(f'layer {idx}: ({channels[prev]},{channels[idx]})')
+            layer = StyleConvBlock3(in_channels=channels[prev], 
+                                    out_channels= channels[idx],
+                                    in_size=sizes[prev], 
+                                    out_size=sizes[idx],
+                                    in_sampling_rate=sampling_rates[prev], 
+                                    out_sampling_rate=sampling_rates[idx],
+                                    in_cutoff=cutoffs[prev],
+                                    out_cutoff=cutoffs[idx],
+                                    in_half_width=half_widths[prev],
+                                    out_half_width=half_widths[idx],
+                                    is_critically_sampled=is_critically_sampled,
+                                    w_size=self.w_size,
+                                    up= 1 if idx == 0 else 2,
+                                    )
+            self.blocks.append(layer)
+        
         # we dont add imgs together as it causes aliasing! in stylegan3 we just convert the final
         # high res output to image! since we dont have any activations(lrelu) for toImgs, we
         # use activation_gain=1
-        self.toImgs = ModulatedConv2d3(self.channels[-1], 3, w_dim=w_size, activation_gain=1)
+        self.toImgs = ModulatedConv2d3(self.channels[-1], 3, w_dim=w_size, is_img=True)
+
+        self.fourier_input = FourierInput(self.channels[0], w_size=w_size, dim_size=4,
+                                          sampling_rate=sampling_rates[0],
+                                          bandwidth=cutoffs[0])
+
         
     @torch.no_grad()
     def _update_ema_w(self, w_batch):
@@ -15048,38 +15277,26 @@ class GeneratorStyleGAN3(nn.Module):
         w = self.apply_truncation(w, psi)
         
         if self.training and random.random() <self.style_mixing_prob:
-            # grab a second z, calculate the w
             z2 = torch.randn(size=z.size(), device=z.device)
             w2 = self.mapping_network(z2)
-            # in stylegan2 we use all the layers,as
-            # theres no steps!/prograssive growing!
             crossover_point = random.randint(1, num_layers-1)
-            w = w.unsqueeze(1).repeat(1, num_layers,1)# (b,num_styles,w_dim)
+            w = w.unsqueeze(1).repeat(1, num_layers,1)
             w[:, crossover_point:,:] = w2.unsqueeze(1).repeat(1, num_layers-crossover_point,1)
         else:
             w = w.unsqueeze(1).repeat(1, num_layers,1)
 
         img = self.forward_from_w(w)
-        # since we want to calculate path length regularization,
-        # we need w for each generated image so we can see how much
-        # an image changes when w changes (calculate its gradient with
-        # respect to w so aside from making our forward to work with w
-        # we can simply return w with the generated images as well and
-        # make our life easier!)
         return img, w
 
     def forward_from_w(self, w):
         if w.ndim==2:
             w = w.unsqueeze(1).repeat(1, len(self.blocks),1)
 
-        # pure coordinates transformed by fourier 
-        x = self.fourier_input(w[:,0,:]) #shape:(b,512,4,4)
-        
+        x = self.fourier_input(w[:,0,:])
+
         for i, block in enumerate(self.blocks):
             x= block(x, w[:, i,:])
-        
-        # sidenote: the toImgs in paper(toRgb) has a specific filtered path
-        # but a simple modulated conv is the standard approx.
+
         img = self.toImgs(x, w[:,-1,:])
 
         return img
@@ -15090,6 +15307,7 @@ class GeneratorStyleGAN3(nn.Module):
             w = ema_w_batch + psi * (w - ema_w_batch)
         return w
 
+    
 #! todo use k=1/0 for disc as well?
 class DiscBlockStyleGAN3(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=1,
@@ -15163,8 +15381,8 @@ class DiscriminatorStyleGAN3(nn.Module):
   
 channels=[512,256,128,64,32,16,8]
 use_upfirdn2d=True
-disc = DiscriminatorStyleGAN3(channels=channels,use_upfirdn2d=use_upfirdn2d)
-gen = GeneratorStyleGAN3(100,100)
+disc = DiscriminatorStyleGAN3(use_upfirdn2d=use_upfirdn2d)
+gen = GeneratorStyleGAN3(100,100,img_resolution=512)
 
 H=W=2**(len(gen.channels)+1)
 x = torch.randn(size=(5,3,H,W))
@@ -15183,7 +15401,7 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                          path_length_interval=4, r1_penalty_interval=16, gamma=10, psi=0.7,
                          gen_num_samples = 64, use_ema_inference=False, kimg=10,
                          keep_raw_generations=True, quick_and_noisy_IS_FID=False, device='cuda',
-                         style_mix_epoch_start=0, resume=False, weights_save_dir='./weights/gan',
+                         style_mix_epoch_start=0, experimental_size=None, resume=False, weights_save_dir='./weights/gan',
                          images_save_dir='./results/gan', checkpoint_path=None, ):
     
     experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -15244,14 +15462,12 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
         channels_g = checkpoint["channels_g"]
         style_mixing_prob = checkpoint["style_mixing_prob"]
         ema_w_beta = checkpoint["ema_w_beta"]
-        gen_use_upfirdn2d = checkpoint["gen_use_upfirdn2d"]
-        scale = checkpoint["scale"]
+        # gen_use_upfirdn2d = checkpoint["gen_use_upfirdn2d"]
+        # scale = checkpoint["scale"]
         
         generator.setup_layers(z_size, w_size, mn_nlayer, channels_g,
                                style_mixing_prob=style_mixing_prob,
-                               ema_w_beta=ema_w_beta,
-                               use_upfirdn2d=gen_use_upfirdn2d,
-                               scale=scale)
+                               ema_w_beta=ema_w_beta)
         generator.load_state_dict(checkpoint["gen_state_dict"])
         generator = generator.to(device)
         
@@ -15304,8 +15520,8 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
     print(f'--style_mixing_prob:         {generator.style_mixing_prob}')
     print(f'--style_mix_epoch_start:     {style_mix_epoch_start}')
     print(f'--Disc use_upfirdn2d:        {discriminator.use_upfirdn2d}')
-    print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
-    print(f'--Genr Fourier scale:        {generator.scale}')
+    # print(f'--Genr use_upfirdn2d:        {generator.use_upfirdn2d}')
+    # print(f'--Genr Fourier scale:        {generator.scale}')
     print(f'--Dataset:                   {dataset_name}-{split}')
     print(f'--DataAugmentation:          {data_augmentation}')
     print(f'--Normalize[-1,1]:           {normalize}')
@@ -15332,7 +15548,8 @@ def training_loop_stylegan3(discriminator:DiscriminatorStyleGAN3, generator:Gene
                                   resize_dims=(res,res),
                                   batch_size=batch_size, 
                                   data_augmentation=data_augmentation,
-                                  normalize=normalize)
+                                  normalize=normalize,
+                                  experimental_size=experimental_size)
     num_batches = len(train_loader)
     interval = num_batches//2+1
     training_step_counter = 0 if starting_epoch==0 else last_training_step_counter
@@ -15690,6 +15907,9 @@ EPOCHS = 100
 # for 128x128 res its 73 kimgs for single gpu training 
 # according to official impl for 256x256 res its 89 
 kimg=73 
+# for checking implementation, 
+# set to None for actual training
+experimental_size=None #None
 
 path_length_interval = 4
 r1_penalty_interval = 16
@@ -15697,7 +15917,7 @@ r1_penalty_interval = 16
 # for the first 10-20 epochs to see if our impl works!
 style_mixing_prob = 0.9
 # bythis we wont start applying stylemixing until after epoch 20+
-style_mix_epoch_start=20
+style_mix_epoch_start=0
 # truncation rate
 psi = 0.7
 #up to 128x128 
@@ -15727,7 +15947,7 @@ use_upfirdn2d = True # True
 # at least I think so, so lets decrease it down near the original
 # value, (scale=1) and see how that works
 # update:changed fourier input completely, we now test with scale=1
-fourier_scale=1
+# fourier_scale=1
 
 #discriminator
 discriminator_stylegan3 = DiscriminatorStyleGAN3(channels=channels_d,
@@ -15736,9 +15956,10 @@ discriminator_stylegan3 = discriminator_stylegan3.to(device)
 #generator
 mn_nlayer = 8
 generator_stylegan3 = GeneratorStyleGAN3(z_size, w_size, mn_nlayer,
-                                         channels_g, style_mixing_prob, 
-                                         use_upfirdn2d=use_upfirdn2d,
-                                         scale=fourier_scale)
+                                         img_resolution=256,
+                                         channel_base=512*64*64,
+                                         channel_max=256,
+                                         style_mixing_prob=style_mixing_prob,)
 generator_stylegan3 = generator_stylegan3.to(device)
 
 betas = [0, 0.99]
@@ -15773,6 +15994,7 @@ training_loop_stylegan3(discriminator_stylegan3,
                      kimg=kimg,
                      keep_raw_generations=True,
                      quick_and_noisy_IS_FID=False,
+                     experimental_size=experimental_size,
                      )
 
 # debug log:
