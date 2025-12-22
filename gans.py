@@ -3237,16 +3237,17 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     dataset_name = dataset_name.lower()
     transform = get_transforms(resize_dims, data_augmentation, normalize)
     dataset=None
+    dataset_names = ['mnist','cifar','svhn','celeba','celeba_hq','ffhq','yosemite']
     
     if isinstance(split, str):
         split = split.lower()
     
-    if dataset_name.lower() == 'mnist':
+    if dataset_name == 'mnist':
         is_train = split in [None, True, 'train']
         dataset = datasets.MNIST(os.path.join(store_path, dataset_name.upper()),
                                  train=is_train,transform=transform,download=True)
             
-    elif 'cifar' in dataset_name.lower():
+    elif 'cifar' in dataset_name:
         is_train = split in [None, True, 'train']
         dataset = datasets.CIFAR10(os.path.join(store_path, dataset_name.upper()),
                                    train=is_train, transform=transform, download=True)
@@ -3273,9 +3274,24 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         # since we dont need labels, so we can treat all images as one class to use iwth Imagefolder
         dataset = datasets.ImageFolder(root=f'{store_path}/{dataset_name}',
                                        transform=transform)
-
+        
+    elif 'yosemite' in dataset_name:
+        is_train = split in [None, True, 'train']
+        dir_name = 'summer2winter-yosemite'
+        
+        # datasetname should be yosemite-summer or yosemite-winter
+        season = dataset_name.split('-')[-1]
+        if season not in ['winter','summer']:
+            raise ValueError(f"dataset name must be either 'yosemite-winter' or 'yosemite-summer'. recieved datasetname is {dataset_name}")
+        
+        season = season if is_train else f'test_{season}'
+        
+        data_dir = os.path.join(store_path, dir_name, season)
+        
+        dataset = datasets.ImageFolder(data_dir, transform=transform)
+        
     else:
-        raise ValueError(f"'{dataset_name}' is not a valid dataset name!")
+        raise ValueError(f"'{dataset_name}' is not a valid dataset name!(supported datasets: {dataset_names})")
     
     # for experiments with limited samples, we can define a size here
     # I wrote this mainly for overfitting checks, to see if my implementation
@@ -4764,7 +4780,7 @@ run_latent_arithmatic(attr_name='Eyeglasses',
                       device='cpu')
 
 
-#%%
+#%% progan
 # we improved our results but we had a lot of issues dealing with wgan and to a lesser degress lsgan
 # wgangp proved to be a really great addition to our gan architecture. 
 # we saw that using carefully tuned hyperparameters we can achieve really good looking images.
@@ -8340,7 +8356,7 @@ with torch.no_grad():
                    unnormalize=True, 
                    figsize=(16,8))
 
-#%%
+#%% stylegan1
 # good now lets implement stylegan architectures.
 # the authors of progan introduced stylegan in 2019 and followed it up with the second and third
 # versions in the following years each improving upon the previous one and becoming the sota of
@@ -9483,7 +9499,7 @@ for i in range(0,max_steps):
     gen_out = gen(z, alpha=1, step=i,noise=n)
     print(f'gen_out.shape : {tuple(gen_out.shape)}')
 
-#%%
+#%% stylegan1 loss and training loop definitions
 # now for training the loop stays the same with minor changes
 # before we go for training we need a few more things to implement.
 # the mixing regularization and the loss function
@@ -11904,7 +11920,7 @@ run_simple_gen_with_const_noise()
 # as well as LSUN CHURCH and LSUN HORSE in Table 3, where we use γ = 100."
 #
 
-#%%
+#%%stylegan2 definitions
 # blur() is not used in this version and instead the authors used a cuda kernel
 # for the upsample/downsample called upfirdn2d!
 # I initially was going to stick to simple upsample/downsample and not
@@ -12514,7 +12530,7 @@ print(f'disc_out.shape: {tuple(disc_out.shape)}')
 gen_out,ws = gen(z, noise=n)
 print(f'gen_out.shape:\nimgs:{tuple(gen_out.shape)} ws:{tuple(ws.shape)}')
     
-#%%
+#%% stylegan2 loss and training loop definitions
 # the losses stay the same, we just need to apply the r1_penalty at some interval
 # we can still do it all the time, but its inefficient and we can get a little perf
 # boost by doing it intermittently!
@@ -14227,8 +14243,8 @@ run_latent_gui(generator_stylegan2, eigen_vecs, rand_rng=fixed_randg)
 #%% 
 
 
-# %%
-# stylegan3 
+# %%stylegan3 
+# 
 # paper: https://arxiv.org/pdf/2106.12423
 # (read this as well its quite interesting : https://arxiv.org/pdf/2006.09661)
 # leave it for later! 
@@ -14992,7 +15008,7 @@ class ModulatedConv2d0(nn.Module):
         out = out.view(b, self.out_channels, img_h, img_w)
         return out
 
-#%%
+#%% styelagn3-broken/wrong impl-explanation needs correction
 ############################
 
 # the initial version of this filter was coded by gemini, 
@@ -16267,8 +16283,497 @@ training_loop_stylegan3(discriminator_stylegan3,
 # so we can continue working on diffusion models(since 2022 there have been a lot of updates!
 # we need to cover!)
 #%%
-# a detour to something fun CycleGAN (PixelGAN, stargan)
-
+# a detour to something fun CycleGAN (PixelGAN, stargan) 
+# Cyclegan paper (https://arxiv.org/abs/1703.10593) came out in 2017 and is the successor to 
+# another similar paper called pix2pix where allowed us to have image to image translation.
+# that is it allowed us to turn an image from one domain into another. we could for example input
+# the image of a sceneray in winter and get back the same scenary as if it was summer, or turn a photo
+# into a picaso painting! or turn horses into zebras, or draw a sketch and get the realistic image of it, or grab satelite images
+# and turn them into google map style images etc the list goes on!
+# Previously, before Cyclegan that is, we could use pix2pix for that, if we wanted to train a model 
+# to e.g. turn a sketch into a photo, we had to have maching pairs! that is a dataset containing
+# thousands of sketches with their corrosponding photos. 
+# For sketches you might say this could be done relatively easily (we got the real images, and would convert
+# them to binary and then get edges and use that as sketechs e.g.) so whats the big deal! thats correct
+# however for other domains, like converting the styles, or anything more involved as we named a few
+# it would be really hard to create such datasets (e.g. turning zebras to horses, we have a lot of images
+# for horses, but we dont have exact matches(same shape with the same pose,etc for zebras!) for some 
+# tasks it would be impossible obviously.
+# this is where cyclegan comes into play. instead of having matching paires of data in pix2pix, we can 
+# translate between two domains (e.g. zebras->horses, summer->winter)! we just need lots of images of
+# the two domains and they do not need to match ! that is lots of horses and lots of zebras!
+# thats all! and the network will learn a mapping between the two and turn one into the other!
+# 
+# to achieve this, we need to modify both the architecture and the way we calculate the loss. 
+# cyclegan uses a specific loss called cycle consistency. the idea is like translating from one 
+# language to another, to see if our translation is correct we translate from one 
+# language to another and then back to the original one, if our initial translation is 
+# correct then we must get the same original sentence! cyclegan does just that! the image needs 
+# to survie that round-trip translation to be considered valid!
+# 
+# as we said to pull this off, we need more than two netoworks in our typical gan architecture! 
+# in fact we need 4! two generators and two discriminators! because we need to be able to go both ways!
+# the way the architecture works is also different. we dont start from a random vector like before
+# we start with an input image and get an ouput image. this is in fact an autoencoder that trains 
+# adversrially!
+# Generator1 takes image from domain a (horse e.g.) and turns it into domain b (e.g. zebra)
+# Generator2 does the opposite, takes image from domain b (zebra) and turns it into domain a (horse)
+# likewise we have two discriminators, one for each domain to tell which one looks real and which one doesnt!
+# discriminator1 looks and decides if the generated image is a real image from domain a(horse)
+# or a fake one generated by generator2! likewise discriminator2 looks at the generated images 
+# of domain b(zebra) to see if they are real or are fakes comming from generator1!
+# 
+# the loss function we just talked about, is a combination of 2 main losses in total(with an additional
+# one we get to in a moment).
+# the first loss is the standard/normal gan loss we see in a typical gan architecture. this to check for
+# realism in our outputs. the generator1 tries to create realistic images from domain a(horses->zebras) 
+# that discriminator2 thinks is real(zebras).
+# the discriminator2 on the other hand tries to catch the fakes!(mark generator1 outputs as fake)
+# this will result in the generated images to look like domain b (zebras), however they may not look like 
+# the original domain a(horse!) cuz they could be random zebras with any pose/shape!
+# so a new loss is added to the main loss to deal with that. this is what we call cycle constinency loss.
+# this loss's job is to check the content of the image that is to ensure the conent of the generated image 
+# remains strictly tied to the input i..e they are the same thing under the hood! a running horse 
+# becomes running zebra! we measure this loss in two cycles.
+# one in forward cycle where we go a->G1(a) -> G2(G1(a))=a (horse to zebra to back to horse again)
+# and the second(backward) cycle where we go b->G2(b) -> G1(G2(b))=b (zebra to horse to back to zebra again)
+# we do this by calculating the difference between the original image and the reconstructed image(L1 error)
+# if the generator turns a standing horse into a running zebra, the reconstruction fails!
+# this forces the generator to change only the texture(stripes) but keep the structure(pose) of the input intact.
+# the last part which is usually skipped, deals with the fact that we shouldnt try to turn an existing
+# image back to what it is! i.e. zebrafy a zebra! so in other words, if we feed a zebra to generator1
+# it should leave it be as is! not try to zebrify it again! i.e. G(b)=b! this is called as indentity loss
+# also known as color check by some. its called that way because it prevents the model from changing 
+# the colors weirdly when its coming from the same domain. its identity as it outputs the input without
+# any change! if we dont apply it and try that for example with a daytime photo it might turn it upside down 
+# or shift the color pallete unnecessarily! basically messes everything up!)
 #
+# recap:
+# cyclegan allows us to do image to image translation without matching pairs. 
+# there are a lot of applications we can think of for this. like style transfer which we talkd about
+# in form of turning a photo to a picaso painting e.g. or object transfiguration like horse to zebra,
+# cat to dog, etc season transfer which is another example for style transfer really, or sim to real
+# like training self driving cars in video games (sim) and translating/turning those images/frames to
+# look real or in medical imaging like turning mri to ct scane or vice veras! allows using data from 
+# one modality that is scares/rare to help train models from another for example.
+# 
+# having all of this said, cyclegan comes with certain issues as well. itsnot prefect!
+# its is great at changing textures (colors, patterns) but it sucks at changing geometry!
+# it cant easily turn a dog into a cat beause the face shape changes too much!(there are better ways to do that!) 
+# also sometimes the generator leanrs to hide information inside image noise to satisfy 
+# the cycle constitency loss instead of just learning the true translation,basically cheating
+# hence the loss decreases but the image quality is bad! 
+#
+# %%
+# ok now lets implement this. 
+# the generator is a simple resnet , nothing special (there are newer variants but we are going to 
+# stick to the paper). the discriminator on the other hand uses something called PatchGAN,
+# instead of outputing a single real/fake score, we output a grid(e.g. 30x0). so each cell/element
+# in the grid predicts if a specific 70x70 pixel patch of the image is real/fake. the normal discriminator
+# works as well, but the good thing about this method is that, it forces the generator to be much sharper
+# on details. 
+# also to stablize the training, instead of simply feeding the images as they are generated, the authors
+# used an image buffer where the store the last 50 something generated images and the discriminator
+# is trained on a mix of newly generated images and the old ones from the buffer.
+# 
+
+# read images ( we use yosmite dataset! its in the current director!)
+# we have winter and summer subfolders and another folder for test which
+# is prefixed with test_. lets create a function for easily reading them
+# and making dataloaders we need for our trainings 
+
+#test
+dataset_name = 'yosemite-summer'
+train_dataloader_summer = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
+                                         batch_size=16, data_augmentation=True, normalize=False,)
+#visualize 
+(imgs, labels) = next(iter(train_dataloader_summer))
+display_images(imgs, title=f'{dataset_name} samples',cols=4)
+
+#%%
+def conv(in_, out_, k_size, stride, pad, batchnorm=True):
+    # we can use [] (normal list), but modulelist is a much better choice
+    # since all modules will have their attributes and one can use them!!
+    layers = nn.ModuleList()
+
+    conv = nn.Conv2d(in_, out_, k_size, stride, pad)
+    layers.append(conv)
+
+    if batchnorm:
+        layers.append(nn.BatchNorm2d(num_features=out_))
+        
+    return nn.Sequential(*layers)
+
+class Discriminator(nn.Module):
+    def __init__(self, conv_depth, out_dim=1):
+        super().__init__()
+
+        self.conv_depth = conv_depth 
+        # our input image is 128x128. and the output fmap is calculated like this:
+        #(w-k)+2p/s + 1 = (128-4)+2/2 +1 = 64
+        self.conv1 = conv(3, conv_depth, k_size=4, stride=2, pad=1, batchnorm=False)#65x65
+        #(w-k)+2p/s + 1 = (65-4)+2/2 +1 = 32
+        self.conv2 = conv(conv_depth, conv_depth*2, k_size=4, stride=2, pad=1, batchnorm=True)#32x32
+        #(w-k)+2p/s + 1 = (32-4)+2/2 +1 = 16
+        self.conv3 = conv(conv_depth*2, conv_depth*4, k_size=4, stride=2, pad=1, batchnorm=True)#16x16
+        #(w-k)+2p/s + 1 = (16-4)+2/2 +1 = 8
+        self.conv4 = conv(conv_depth*4, conv_depth*8, k_size=4, stride=2, pad=1, batchnorm=True)#8x8
+        #(w-k)+2p/s + 1 = (8-4)+2/1 +1 = 4
+        self.conv5 = conv(conv_depth*8, out_dim, k_size=4, stride=1, pad=1, batchnorm=False)
+    
+    def forward(self, input):
+
+        output = F.relu(self.conv1(input))
+        output = F.relu(self.conv2(output))
+        output = F.relu(self.conv3(output))
+        output = F.relu(self.conv4(output))
+        #used for classification!
+        output = self.conv5(output)
+        # print(f'{output.shape=}')
+        return output
+
+x = torch.randn(5,3,128,128)
+d = Discriminator(4)
+out = d(x)
+#%%
+class ResBlock(nn.Module):
+    def __init__(self, conv_dim):
+        super().__init__()
+        self.conv1 = conv( conv_dim,  conv_dim,  3,  1,  1, True)
+        self.conv2 = conv( conv_dim,  conv_dim,  3,  1,  1, True)
+    
+    def forward(self, input): 
+        output = F.relu(self.conv1(input))
+        output = input + F.relu(output)
+        return output
+
+def conv_transpose(in_, out_, k_size, stride=2, pad=1, batchnorm=True):
+    layers=nn.ModuleList()
+    layers.append(nn.ConvTranspose2d(in_, out_,k_size, stride, pad))
+    if batchnorm: 
+        layers.append(nn.BatchNorm2d(out_))
+    return nn.Sequential(*layers)
+
+class CycleGenerator(nn.Module):
+    def __init__(self, conv_fmap=64, n_resblock=6):
+        super().__init__()
+        # here we have an encoder, couple of n_resblocks and then a decoder
+        # which is a made of several deconv layer(transpose conv layers)
+        self.conv1 = conv(3, conv_fmap, 4, 2, 1, False) #64
+        self.conv2 = conv(conv_fmap, conv_fmap*2, 4,2,1)#32
+        self.conv3 = conv(conv_fmap*2, conv_fmap*4, 4,2,1)#16
+
+        layers=[]
+        for i in range(n_resblock):
+            layers.append(ResBlock(conv_fmap*4))
+
+        self.resblocks = nn.Sequential(*layers)
+
+        self.deconv1 = conv_transpose(conv_fmap*4, conv_fmap*2, k_size=4)#32
+        self.deconv2 = conv_transpose(conv_fmap*2, conv_fmap, k_size=4)#64
+        self.deconv3 = conv_transpose(conv_fmap, 3, k_size=4)#128
+
+    def forward(self, input):
+        #encoder
+        output = F.relu(self.conv1(input))
+        output = F.relu(self.conv2(output))
+        output = F.relu(self.conv3(output))
+
+        output = F.relu(self.resblocks(output))
+        #decoder 
+        output = F.relu(self.deconv1(output))
+        output = F.relu(self.deconv2(output))
+        # final image!
+        output = F.tanh(self.deconv3(output))
+        return output
+
+def create_models(conv_fmap_g=64, conv_fmap_d=64,
+                 n_resblocks=6,
+                 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+
+
+    G_XtoY = CycleGenerator(conv_fmap=conv_fmap_g,n_resblock=n_resblocks).to(device)
+    G_YtoX = CycleGenerator(conv_fmap=conv_fmap_g,n_resblock=n_resblocks).to(device)
+
+    D_X = Discriminator(conv_depth=conv_fmap_d).to(device)
+    D_Y = Discriminator(conv_depth=conv_fmap_d).to(device)
+
+    return  G_XtoY, G_YtoX, D_X, D_Y
+
+G_XtoY, G_YtoX, D_X, D_Y = create_models()
+print(G_XtoY)
+print('-'*40)
+print(G_YtoX)
+print('\n'+'-'*40)
+print(D_X)
+print('-'*10)
+print(D_Y)
+
+#%%
+# Ok, before we go on, lets explain something. 
+# we have two networks for each network type. i.e two generators and two discriminators
+# what is different here is the way our generators work, previously, we would feed a random
+# vector and upsample it until we reach to the image size we desire and then change it so it 
+# would resemble our real images. 
+# Here, as you can see, our generators accept images rather than a simple vector of random value!
+# in fact they are an autoencoder which reconstruct the input image!. What they are doing is actually
+# getting an image for winter, down sample it until they reach a feature vector , and then reconstruct it@
+# the important thing here is, we feed a winter image, and ask to reconstruct it as if it was a summer image
+# our next generator does exactly the opposite, it will recieve a summer picture and reconstruct the winter version
+# of it! the dicriminators therefore are for this very task! 
+# after the images are reconstructed, we need to know if they are similar/close to the actual real image
+# so we have a cyclic loss that checks if a reconstructed image is the same as the real one. 
+# apart from that, for our discriminators, we no longer use sigmoid, this time we will be using simle least squared
+# error as it is shown to perform better. 
+# for exaample for calculating the real loss (label is 1 or close to 1),
+# we would do (torch.mean(output_d2 - 1)**2) and 
+# for the fake one we would do (torch.mean(output_d - 0)**)
+# so in total we will have 3 lossses. lets write them down: 
+def real_loss(output_d):
+    return torch.mean(output_d - 1 ) **2
+
+def fake_loss(output_d):
+    return torch.mean(output_d)**2 
+
+def cyclic_loos(real_image, reconstructed_image, lamda_weight):
+    loss = torch.mean(torch.abs(real_image - reconstructed_image) )
+    return loss* lamda_weight
+
+#%%
+# optimizers 
+# since we want to train generators, together, we 
+# combine the parameters of these networks together and train them with one optimizer
+# we said earlier, that these generators are going to work together, so it makes sense
+# the parameters are trained together
+
+lr = 0.0002
+beta1 = 0.5
+beta2 = 0.999
+
+g_pramas = list(G_XtoY.parameters()) + list(G_YtoX.parameters())
+optimizer_g = torch.optim.Adam(g_pramas, lr=lr, betas=[beta1, beta2])
+
+optimizer_d_x = torch.optim.Adam(D_X.parameters(), lr=lr, betas=[beta1, beta2])
+optimizer_d_y = torch.optim.Adam(D_Y.parameters(), lr=lr, betas=[beta1, beta2])
+
+# before goingto the training lets write a save/snapshot function that
+# saves our models (generators) to the disk
+
+def checkpoint(iteration, G_XtoY, G_YtoX, D_X, D_Y, checkpoint_dir='checkpoints_cyclegan'):
+    """Saves the parameters of both generators G_YtoX, G_XtoY and discriminators D_X, D_Y.
+        """
+    G_XtoY_path = os.path.join(checkpoint_dir, 'G_XtoY.pkl')
+    G_YtoX_path = os.path.join(checkpoint_dir, 'G_YtoX.pkl')
+    D_X_path = os.path.join(checkpoint_dir, 'D_X.pkl')
+    D_Y_path = os.path.join(checkpoint_dir, 'D_Y.pkl')
+    torch.save(G_XtoY.state_dict(), G_XtoY_path)
+    torch.save(G_YtoX.state_dict(), G_YtoX_path)
+    torch.save(D_X.state_dict(), D_X_path)
+    torch.save(D_Y.state_dict(), D_Y_path)
+
+
+def merge_images(sources, targets, batch_size=16):
+    """Creates a grid consisting of pairs of columns, where the first column in
+        each pair contains images source images and the second column in each pair
+        contains images generated by the CycleGAN from the corresponding images in
+        the first column.
+        """
+    _, _, h, w = sources.shape
+    row = int(np.sqrt(batch_size))
+    merged = np.zeros([3, row*h, row*w*2])
+    for idx, (s, t) in enumerate(zip(sources, targets)):
+        i = idx // row
+        j = idx % row
+        merged[:, i*h:(i+1)*h, (j*2)*h:(j*2+1)*h] = s
+        merged[:, i*h:(i+1)*h, (j*2+1)*h:(j*2+2)*h] = t
+    merged = merged.transpose(1, 2, 0)
+    return merged
+    
+
+def to_data(x):
+    """Converts variable to numpy."""
+    if torch.cuda.is_available():
+        x = x.cpu()
+    x = x.data.numpy()
+    x = ((x +1)*255 / (2)).astype(np.uint8) # rescale to 0-255
+    return x
+
+import PIL.Image as Image
+
+def show_samples(iteration, fixed_Y, fixed_X, G_YtoX, G_XtoY, batch_size=16, sample_dir='samples_cyclegan'):
+    device = next(G_YtoX.parameters()).device
+    fake_X = G_YtoX(fixed_Y.to(device))
+    fake_Y = G_XtoY(fixed_X.to(device))
+    
+    X, fake_X = to_data(fixed_X), to_data(fake_X)
+    Y, fake_Y = to_data(fixed_Y), to_data(fake_Y)
+    
+    merged = merge_images(X, fake_Y, batch_size)
+
+    path = os.path.join(sample_dir, 'sample-{:06d}-X-Y.png'.format(iteration))
+    
+    os.makedirs(sample_dir, exist_ok=True)
+    
+    Image.fromarray(merged.astype(np.uint8)).save(path)
+    # scipy.misc.imsave(path, merged)
+    
+    print('Saved {}'.format(path))
+    
+    merged = merge_images(Y, fake_X, batch_size)
+
+    path = os.path.join(sample_dir, 'sample-{:06d}-Y-X.png'.format(iteration))
+
+    # scipy.misc.imsave(path, merged)
+    # Image.save(merged,path)
+    Image.fromarray(merged.astype(np.uint8)).save(path)
+    print('Saved {}'.format(path))
+
+#%%
+# training 
+epochs = 8000 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+batch_size = 16
+resize_dim = (128,128)
+#scale them between -1 , 1 
+normalize =True
+
+train_dataloader_summer = get_dataloader(dataset_name='yosemite-summer', 
+                                         resize_dims=resize_dim,
+                                         batch_size=batch_size, 
+                                         data_augmentation=True,
+                                         normalize=normalize,)
+train_dataloader_winter = get_dataloader(dataset_name='yosemite-winter',
+                                         resize_dims=resize_dim,
+                                        batch_size=batch_size, 
+                                        data_augmentation=True,
+                                        normalize=normalize,)
+
+
+# testset
+test_dataloader_summer =  get_dataloader(dataset_name='yosemite-summer', split='test',
+                                         resize_dims=resize_dim, 
+                                         batch_size=batch_size, 
+                                         data_augmentation=False,
+                                         normalize=normalize,)
+test_dataloader_winter = get_dataloader(dataset_name='yosemite-winter', split='test',
+                                        resize_dims=resize_dim, 
+                                        batch_size=batch_size, 
+                                        data_augmentation=False,
+                                        normalize=normalize,)
+
+# lets read some test images and use them for testing our network
+test_iter_x = iter(test_dataloader_summer)
+test_iter_y = iter(test_dataloader_winter)
+# we specify a fixed image so we can see how our network is performing
+fixed_image_x = next(test_iter_x)[0].to(device)
+fixed_image_y = next(test_iter_y)[0].to(device)
+
+iter_x = iter(train_dataloader_summer)
+iter_y = iter(train_dataloader_winter)
+
+print(f'summer pics number: {len(train_dataloader_summer.dataset)}')
+print(f'winter pics number:: {len(train_dataloader_winter.dataset)}')
+# in case the length is not the same, use the smaller batchsize
+# and see howmany batches we can get for the specified epochs
+batch_per_epoch = min(len(iter_x),len(iter_y))
+
+
+print_interval = 10
+snapshot_interval = 100
+losses=[]
+for e in range(epochs):
+
+    G_XtoY.train()
+    G_YtoX.train()
+    # this means, if we run out of images, lets start again from the beginnig
+    if e%batch_per_epoch == 0:
+        iter_x = iter(train_dataloader_summer)
+        iter_y = iter(train_dataloader_winter)
+        
+    Images_X = next(iter_x)[0].to(device)
+    Images_Y = next(iter_y)[0].to(device)
+
+    # Images_X = scale(Images_X).to(device)
+    # Images_Y = scale(Images_Y).to(device)
+
+    if e==0:
+        print(Images_Y.shape)
+
+    # D_X, here we are going to make D_X identify fake images from real ones
+    # D_X must identify which image is a real X image, and which one is fake (reconstructed)
+    # the real loss means, D_X identifies real image_x 
+    # and the fake loss means, D_X identifies reconstructed image (using YtoX(image_y)) is 
+    # fake x (reconstructed form image_y) 
+    output_x = D_X(Images_X)
+    real_loss_dx = real_loss(output_x)
+    # now we generate an x image and D_X should recognize its fake! 
+    fake_x = G_YtoX(Images_Y).to(device)
+    if e ==0:
+        print(fake_x.shape)
+    output_fake_dx = D_X(fake_x)
+    fake_loss_dx = fake_loss(output_fake_dx)
+    loss_dx = fake_loss_dx + real_loss_dx 
+
+    optimizer_d_x.zero_grad()
+    loss_dx.backward()
+    optimizer_d_x.step()
+
+    # D_Y, now we will do this the opposite way we work with images_y here but generate x images!
+    output_dy = D_Y(Images_Y)
+    real_loss_dy = real_loss(output_dy)
+    # now generate a Y image using XtoY generator and and X (After all we want to get x and make it look like y)
+    # and vice versa!
+    fake_y = G_XtoY(Images_X).to(device)
+    output_dy = D_Y(fake_y)
+    fake_loss_dy = fake_loss(output_dy)
+    loss_dy = real_loss_dy + fake_loss_dy
+
+    optimizer_d_y.zero_grad()
+    loss_dy.backward()
+    optimizer_d_y.step()
+
+
+    # now its time for the generators to be trained. 
+    # we simply feed each generator the oposite image and make them act as if they are real!
+    optimizer_g.zero_grad()
+    
+    g_fake_image_x = G_YtoX(Images_Y).to(device)
+    fake_image_output_x = D_X(g_fake_image_x)
+    loss_gytox = real_loss(fake_image_output_x)
+    #recostruct from fake image 
+    reconstructed_y = G_XtoY(g_fake_image_x).to(device)
+    cycle_reconstructed_loss_y = cyclic_loos(Images_Y, reconstructed_y, lamda_weight=10)
+
+    # X_image ro begir bego in Y_image e!!
+    g_fake_image_y = G_XtoY(Images_X).to(device)
+    fake_image_output_y = D_Y(g_fake_image_y)
+    loss_gxtoy = real_loss(fake_image_output_y)
+    #reconstruct x!
+    reconstructed_x = G_YtoX(g_fake_image_y).to(device)
+    cycle_reconstructed_loss_x = cyclic_loos(Images_X, reconstructed_x, 10)
+
+    loss_total_g = loss_gxtoy + loss_gytox + cycle_reconstructed_loss_x + cycle_reconstructed_loss_y
+
+    loss_total_g.backward()
+    optimizer_g.step()
+
+    if e%print_interval == 0:
+        losses.append((loss_dx.item(), loss_dy.item(), loss_total_g.item()))
+        print('epochs: [{:5d}/{:5d}]\tloss_dx: {:6.4f}\t loss_dy: {:6.4f}\t loss_g: {:6.4f} '.format(e,
+                                                                                              epochs,
+                                                                                              loss_dx.item(),
+                                                                                              loss_dy.item(),
+                                                                                              loss_total_g.item()))
+
+    if e % snapshot_interval == 0:
+
+        G_XtoY.eval()
+        G_YtoX.eval()
+        with torch.no_grad():
+            samples_Y = G_XtoY(fixed_image_x).to(device)
+            samples_X = G_YtoX(fixed_image_y).to(device)
+            show_samples(e, fixed_image_x, fixed_image_y, G_XtoY, G_YtoX, batch_size=16)
+
+
 #%%
 # name only some other important GANs and then lets call it a day and go diffusion!
