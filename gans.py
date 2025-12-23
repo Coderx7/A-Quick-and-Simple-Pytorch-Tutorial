@@ -16587,21 +16587,21 @@ dataloader_summer, dataloader_winter = get_yosemite_dataloaders(is_test=False, b
 
 # lets read some test images and use them for testing our network
 test_dataloader_summer, test_dataloader_winter = get_yosemite_dataloaders(is_test=True, batch_size=batch_size, resize_dim=resize_dim)
-test_iter_x = iter(test_dataloader_summer)
-test_iter_y = iter(test_dataloader_winter)
+test_iter_s = iter(test_dataloader_summer)
+test_iter_w = iter(test_dataloader_winter)
 # we specify a fixed batch of images so we can see how our network is performing
-fixed_image_x = next(test_iter_x)[0].to(device)
-fixed_image_y = next(test_iter_y)[0].to(device)
+fixed_image_s = next(test_iter_s)[0].to(device)
+fixed_image_w = next(test_iter_w)[0].to(device)
 
 conv_fmap_d=64
 conv_fmap_g=64
 n_resblocks=6
 
-D_X = Discriminator(base_num_channels=conv_fmap_d).to(device)
-D_Y = Discriminator(base_num_channels=conv_fmap_d).to(device)
+D_S = Discriminator(base_num_channels=conv_fmap_d).to(device)
+D_W = Discriminator(base_num_channels=conv_fmap_d).to(device)
 
-G_XtoY = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
-G_YtoX = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
+G_S2W = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
+G_W2S = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
 
 # optimizers 
 # since we want to train generators together, we 
@@ -16611,146 +16611,160 @@ G_YtoX = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device
 lr = 0.0002
 betas = [0.5, 0.999]
 
-g_pramas = list(G_XtoY.parameters()) + list(G_YtoX.parameters())
+g_pramas = list(G_S2W.parameters()) + list(G_W2S.parameters())
 optimizer_g = torch.optim.Adam(g_pramas, lr=lr, betas=betas)
 
-optimizer_d_x = torch.optim.Adam(D_X.parameters(), lr=lr, betas=betas)
-optimizer_d_y = torch.optim.Adam(D_Y.parameters(), lr=lr, betas=betas)
+optimizer_ds = torch.optim.Adam(D_S.parameters(), lr=lr, betas=betas)
+optimizer_dw = torch.optim.Adam(D_W.parameters(), lr=lr, betas=betas)
 
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 arch_name = "cyclegan"
 current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
 
 losses=[]
-dloss_x_list = []
-dloss_y_list = []
-g_loss_list = []
-x_recons_loss_list = []
-y_recons_loss_list = []
+ds_loss_list = []
+dw_loss_list = []
+gloss_list = []
+s_recons_loss_list = []
+w_recons_loss_list = []
 
 for epoch in range(epochs):
-    G_XtoY.train()
-    G_YtoX.train()
+    G_S2W.train()
+    G_W2S.train()
     
-    for i, ((Images_X,_), (Images_Y,_)) in enumerate(zip(dataloader_summer, dataloader_winter)):
+    for i, ((imgs_summer,_), (imgs_winter,_)) in enumerate(zip(dataloader_summer, dataloader_winter)):
     
-        Images_X = Images_X.to(device)
-        Images_Y = Images_Y.to(device)
-
-        # D_X, here we are going to make D_X identify fake images from real ones
-        # D_X must identify which image is a real X image, and which one is fake (reconstructed)
-        # the real loss means, D_X identifies real image_x 
-        # and the fake loss means, D_X identifies reconstructed image (using YtoX(image_y)) is 
-        # fake x (reconstructed form image_y) 
-        dx_output_real = D_X(Images_X)
-        dx_real_loss = real_loss(dx_output_real)
-        # now we generate an x image and D_X should recognize its fake! 
-        # note during discriminator update, we dont wantgenerator to be updated
-        # so we detach()
-        fake_x = G_YtoX(Images_Y).detach()
+        imgs_summer = imgs_summer.to(device)
+        imgs_winter = imgs_winter.to(device)
         
-        dx_output_fake = D_X(fake_x)
-        dx_fake_loss = fake_loss(dx_output_fake)
-        loss_dx = (dx_fake_loss + dx_real_loss) * 0.5
+        # D_S section
+        # here we are going to make D_S identify fake images from real ones
+        # D_S must identify which image is a real summer image, and which one is 
+        # fake (reconstructed).
+        # the real loss means, D_S identifies real imgs_summer and the fake loss means,
+        # D_S identifies reconstructed image (using W2S(img_winter)) is 
+        # fake summer (reconstructed form img_winter) 
+        ds_preds_real = D_S(imgs_summer)
+        ds_loss_real = real_loss(ds_preds_real)
+        # now we generate a summer image and D_S should recognize as fake! 
+        # note during discriminator update, we dont want generator to be updated so we detach()
+        imgs_summer_fake = G_W2S(imgs_winter).detach()
+        ds_preds_fake = D_S(imgs_summer_fake)
+        ds_loss_fake = fake_loss(ds_preds_fake)
+        # 0.5 to make discriminator slow down a bit so generator can catch up
+        loss_ds = (ds_loss_fake + ds_loss_real) * 0.5
+                
+        optimizer_ds.zero_grad()
+        loss_ds.backward()
+        optimizer_ds.step()
 
-        dloss_x_list.append(loss_dx.item())
+        # D_W section
+        # now we will do the same with D_W. that is the imgs_winter are real, the opposite 
+        # way we work with imgs_winter here but generate summer images!
+        dw_preds_real = D_W(imgs_winter)
+        dw_loss_real = real_loss(dw_preds_real)
         
-        optimizer_d_x.zero_grad()
-        loss_dx.backward()
-        optimizer_d_x.step()
-
-        # D_Y, now we will do this the opposite way we work with
-        # images_y here but generate x images!
-        dy_output_real = D_Y(Images_Y)
-        dy_real_loss = real_loss(dy_output_real)
+        # now generate a winter image using S2W generator and imgs_summer (After all we want to
+        # get summer and make it look like winter and vice versa!
+        imgs_winter_fake = G_S2W(imgs_summer).detach()
+        dw_preds_fake = D_W(imgs_winter_fake)
+        dw_loss_fake = fake_loss(dw_preds_fake)
+        # slow down the discriminator a bit so generator can catch up!
+        loss_dw = (dw_loss_real + dw_loss_fake) * 0.5
         
-        # now generate a Y image using XtoY generator and
-        # X (After all we want to get x and make it look like y)
-        # and vice versa!
-        fake_y = G_XtoY(Images_X).detach()
-        dy_output_fake = D_Y(fake_y)
-        fake_loss_dy = fake_loss(dy_output_fake)
-        loss_dy = (dy_real_loss + fake_loss_dy) * 0.5
+        optimizer_dw.zero_grad()
+        loss_dw.backward()
+        optimizer_dw.step()
 
-        dloss_y_list.append(loss_dy.item())
-
-        optimizer_d_y.zero_grad()
-        loss_dy.backward()
-        optimizer_d_y.step()
-
-        # now its time for the generators to be trained. 
+        # Generator optimization stage
+        # now its time for the generators to be trained.
         # we simply feed each generator the oposite image
         # and make them act as if they are real!
         optimizer_g.zero_grad()
         
-        g_fake_image_x = G_YtoX(Images_Y)
-        fake_image_output_x = D_X(g_fake_image_x)
-        loss_g_ytox = real_loss(fake_image_output_x)
+        # Winter to Summer 
+        # we turn winter to sumer and treat fake summer imgs as real
+        g_imgs_summer_fake = G_W2S(imgs_winter)
+        g_preds_fake_summer = D_S(g_imgs_summer_fake)
+        gloss_w2s = real_loss(g_preds_fake_summer)
         
-        #reconstruct from fake image 
-        reconstructed_y = G_XtoY(g_fake_image_x).to(device)
-        cycle_reconstructed_loss_y = cyclic_loss(Images_Y, reconstructed_y, lambda_weight=10)
-        y_recons_loss_list.append(cycle_reconstructed_loss_y.item())
-
-        # X_image ro begir bego in Y_image e!!
-        g_fake_image_y = G_XtoY(Images_X).to(device)
-        fake_image_output_y = D_Y(g_fake_image_y)
-        loss_g_xtoy = real_loss(fake_image_output_y)
-
+        # reconstruct the image back to winter using fake image
+        recons_imgs_winter = G_S2W(g_imgs_summer_fake).to(device)
+        cycle_recons_loss_w = cyclic_loss(imgs_winter, recons_imgs_winter, lambda_weight=10)
+        
+        # Summer to Winter
+        # now do this with summer images and turn to winter and treat fake winter imgs as real
+        g_imgs_winter_fake = G_S2W(imgs_summer)
+        g_preds_fake_winter = D_W(g_imgs_winter_fake)
+        gloss_s2w = real_loss(g_preds_fake_winter)
+               
+        # reconstruct the image back to summer
+        recons_imgs_summer = G_W2S(g_imgs_winter_fake)
+        cycle_recons_loss_s = cyclic_loss(imgs_summer, recons_imgs_summer, 10)
+                
         # identity loss this increases the image quality
-        g_image_x = G_YtoX(Images_X)
-        g_image_y = G_XtoY(Images_Y)
-        loss_id_x = identity_loss(Images_X, g_image_x,10)
-        loss_id_y = identity_loss(Images_Y, g_image_y,10)
+        # shouldnt touch the images, cuz the input is alreay in the target domain!
+        g_idt_imgs_summer = G_W2S(imgs_summer)
+        g_idt_imgs_winter = G_S2W(imgs_winter)
         
-        #reconstruct x!
-        reconstructed_x = G_YtoX(g_fake_image_y).to(device)
-        cycle_reconstructed_loss_x = cyclic_loss(Images_X, reconstructed_x, 10)
-        x_recons_loss_list.append(cycle_reconstructed_loss_x.item())
-        
-        loss_total_g = loss_g_xtoy + loss_g_ytox + cycle_reconstructed_loss_x + cycle_reconstructed_loss_y +loss_id_x+loss_id_y
+        loss_idt_s = identity_loss(imgs_summer, g_idt_imgs_summer,10)
+        loss_idt_w = identity_loss(imgs_winter, g_idt_imgs_winter,10)
 
-        g_loss_list.append(loss_total_g.item())
-        
-        loss_total_g.backward()
+        # now calculate the total loss
+        gloss_total = gloss_s2w + gloss_w2s + cycle_recons_loss_s + cycle_recons_loss_w + loss_idt_s + loss_idt_w
+
+        gloss_total.backward()
         optimizer_g.step()
-
+        
+        ds_loss_list.append(loss_ds.item())
+        dw_loss_list.append(loss_dw.item())
+        w_recons_loss_list.append(cycle_recons_loss_w.item())
+        s_recons_loss_list.append(cycle_recons_loss_s.item())
+        gloss_list.append(gloss_total.item())
+       
         if i%print_interval == 0:
-            losses.append((loss_dx.item(), loss_dy.item(), loss_total_g.item()))
-            print(f'Epoch: {epoch} | iter: {i} | Dloss_x: {loss_dx:.4f} | Dloss_y: {loss_dy:.4f} | Gloss: {loss_total_g:.4f} | YRecons: {cycle_reconstructed_loss_y:.4f} | XRecons: {cycle_reconstructed_loss_x:.4f}')
-
-    print(f'Epoch[Avg]: {epoch} | Dloss_x: {np.mean(dloss_x_list):.4f} | Dloss_y: {np.mean(dloss_y_list):.4f} | Gloss: {np.mean(g_loss_list):.4f} | YRecons: {np.mean(y_recons_loss_list):.4f} | XRecons: {np.mean(x_recons_loss_list):.4f}')
+            losses.append((loss_ds.item(), loss_dw.item(), gloss_total.item()))
+            print(f'Epoch: {epoch} | iter: {i} | dloss_s: {loss_ds:.4f} | dloss_w: {loss_dw:.4f} | gloss: {gloss_total:.4f} | WRecons: {cycle_recons_loss_w:.4f} | SRecons: {cycle_recons_loss_s:.4f}')
+    
+    dsloss_mean = np.mean(ds_loss_list)
+    dwloss_mean = np.mean(dw_loss_list)
+    gloss_mean = np.mean(gloss_list)
+    wrecon_mean = np.mean(w_recons_loss_list)
+    srecon_mean = np.mean(s_recons_loss_list)
+    print(f'Epoch[Avg]: {epoch} | dloss_s: {dsloss_mean:.4f} | dloss_w: {dwloss_mean:.4f} | gloss: {gloss_mean:.4f} | WRecons: {wrecon_mean:.4f} | SRecons: {srecon_mean:.4f}')
     
     # save checkpoints 
     save_dir = f'./weights/gan/cyclegan/{current_experiment_name}'
     os.makedirs(save_dir, exist_ok=True)
     
-    torch.save({"G_XtoY_state_dict":G_XtoY.state_dict(),
-                "G_YtoX_state_dict":G_YtoX.state_dict(),
+    torch.save({"G_S2W_state_dict":G_S2W.state_dict(),
+                "G_W2S_state_dict":G_W2S.state_dict(),
                 "epoch":epoch,
-                "dloss_x_list":dloss_x_list,
-                "dloss_y_list":dloss_y_list,
-                "g_loss_list":g_loss_list,
-                "x_recons_loss_list":x_recons_loss_list,
-                "y_recons_loss_list":y_recons_loss_list,
+                "ds_loss_list":ds_loss_list,
+                "dw_loss_list":dw_loss_list,
+                "gloss_list":gloss_list,
+                "s_recons_loss_list":s_recons_loss_list,
+                "w_recons_loss_list":w_recons_loss_list,
                 }
                ,os.path.join(save_dir,'cyclegan_checkpoint.pth'))
-            
-    with torch.no_grad():
-        G_XtoY.eval()
-        G_YtoX.eval()
 
-        fake_x = G_XtoY(fixed_image_x)
-        fake_y = G_YtoX(fixed_image_y)
+    with torch.no_grad():
+        G_S2W.eval()
+        G_W2S.eval()
+
+        imgs_summer_fake = G_S2W(fixed_image_s)
+        imgs_winter_fake = G_W2S(fixed_image_w)
 
         save_dir = f'./results/gan/cyclegan/{current_experiment_name}'
         os.makedirs(save_dir, exist_ok=True)
         
+        loss_str = f'ds_{dsloss_mean:.4f}_dw_{dwloss_mean:.4f}_gloss_{gloss_mean:.4f}_wrec_{wrecon_mean:.4f}_srec_{srecon_mean:.4f}'
+        
         fname_xtoy = os.path.join(save_dir, f'SummerToWinter_Epoch_{epoch}.jpg') 
-        display_image_grid(fixed_image_x, fake_x, title=f'Summer to Winter(XtoY) [Epoch {epoch}]',save_path=fname_xtoy)
+        display_image_grid(fixed_image_s, imgs_summer_fake, title=f'Summer to Winter [Epoch {epoch}] ({loss_str})',save_path=fname_xtoy)
 
         fname_ytox = os.path.join(save_dir, f'WinterToSummer_Epoch_{epoch}.jpg') 
-        display_image_grid(fixed_image_y, fake_y, title=f'Winter to Summer(YtoX) [Epoch {epoch}]',save_path=fname_ytox)
+        display_image_grid(fixed_image_w, imgs_winter_fake, title=f'Winter to Summer [Epoch {epoch}] ({loss_str})',save_path=fname_ytox)
 
 print(f'CycleGAN training Completed!')
 #%%
@@ -16760,17 +16774,17 @@ sample_winter,_ = next(iter(test_dataloader_winter ))
 
 @torch.no_grad()
 def convert(img, winter_to_summer):
-    G_YtoX.eval()
-    G_XtoY.eval()
+    G_W2S.eval()
+    G_S2W.eval()
     
-    device = next(G_YtoX.parameters()).device
+    device = next(G_W2S.parameters()).device
     
     img = img.to(device)
     
     if winter_to_summer:
-        out = G_YtoX(img)
+        out = G_W2S(img)
     else:
-        out = G_XtoY(img)
+        out = G_S2W(img)
     
     display_image_grid(img, out,title=f'{"Winter2Summer" if winter_to_summer else "Summer2Winter"}')
 
