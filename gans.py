@@ -3311,6 +3311,10 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
     
     return data_loader
 
+def get_dataset_size(name, split='train'):
+    dl = get_dataloader(name,split,batch_size=1)
+    return len(dl)
+
 dataset_name = 'celeba'
 train_loader = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
                               batch_size=16, data_augmentation=True,normalize=False,
@@ -10282,10 +10286,6 @@ def training_loop_stylegan(discriminator:DiscriminatorStyleGAN1, generator:Gener
 
     print("SttyleGAN1 training is complete!")
 
-def get_dataset_size(name,split='train'):
-    dl = get_dataloader(name,split,batch_size=1)
-    return len(dl)
-
 #%% training stylegan1
 print(f'Training StyleGAN1')
 gamma=10#10
@@ -16282,7 +16282,7 @@ training_loop_stylegan3(discriminator_stylegan3,
 # I explained above with that I end this and go for cyclegan to ultimately end the gan section for g ood
 # so we can continue working on diffusion models(since 2022 there have been a lot of updates!
 # we need to cover!)
-#%%
+#%% CycleGAN
 # a detour to something fun CycleGAN (PixelGAN, stargan) 
 # Cyclegan paper (https://arxiv.org/abs/1703.10593) came out in 2017 and is the successor to 
 # another similar paper called pix2pix where allowed us to have image to image translation.
@@ -16391,45 +16391,38 @@ train_dataloader_summer = get_dataloader(dataset_name=dataset_name, resize_dims=
 display_images(imgs, title=f'{dataset_name} samples',cols=4)
 
 #%%
-def conv(in_, out_, k_size, stride, pad, batchnorm=True):
-    # we can use [] (normal list), but modulelist is a much better choice
-    # since all modules will have their attributes and one can use them!!
-    layers = nn.ModuleList()
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, norm, act=nn.Identity()):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=not norm)
+        self.act = act
+        self.norm = nn.InstanceNorm2d(out_channels) if norm else nn.Identity()
+    
+    def forward(self, x):
+        return self.act(self.norm(self.conv(x)))
 
-    conv = nn.Conv2d(in_, out_, k_size, stride, pad)
-    layers.append(conv)
-
-    if batchnorm:
-        layers.append(nn.BatchNorm2d(num_features=out_))
-        
-    return nn.Sequential(*layers)
-
+# the discriminator is nothing special, just ordinary classifier with the exception we
+# dont downsample to 1x1 at the end! i.e. the output of the network is a nxn matrix of 
+# logits thats what the authors called patchgan!
 class Discriminator(nn.Module):
-    def __init__(self, conv_depth, out_dim=1):
+    def __init__(self, base_num_channels):
         super().__init__()
 
-        self.conv_depth = conv_depth 
-        # our input image is 128x128. and the output fmap is calculated like this:
+        self.nchannels = base_num_channels 
+        # our input image is 128x128. and the output fmap
+        # is calculated like this:
         #(w-k)+2p/s + 1 = (128-4)+2/2 +1 = 64
-        self.conv1 = conv(3, conv_depth, k_size=4, stride=2, pad=1, batchnorm=False)#65x65
-        #(w-k)+2p/s + 1 = (65-4)+2/2 +1 = 32
-        self.conv2 = conv(conv_depth, conv_depth*2, k_size=4, stride=2, pad=1, batchnorm=True)#32x32
-        #(w-k)+2p/s + 1 = (32-4)+2/2 +1 = 16
-        self.conv3 = conv(conv_depth*2, conv_depth*4, k_size=4, stride=2, pad=1, batchnorm=True)#16x16
-        #(w-k)+2p/s + 1 = (16-4)+2/2 +1 = 8
-        self.conv4 = conv(conv_depth*4, conv_depth*8, k_size=4, stride=2, pad=1, batchnorm=True)#8x8
-        #(w-k)+2p/s + 1 = (8-4)+2/1 +1 = 4
-        self.conv5 = conv(conv_depth*8, out_dim, k_size=4, stride=1, pad=1, batchnorm=False)
+        # note we dont normalize the first layer so we get acurate input statistics
+        # likewise we dont normalize the final logits either to retain the real statistics
+        # since we want a single output at the end, we assing 1 for the last out_channels.
+        self.net = nn.Sequential(ConvBlock(3, self.nchannels, 4, 2, 1, False, act=nn.LeakyReLU(0.2)),
+                                 ConvBlock(self.nchannels, self.nchannels*2, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
+                                 ConvBlock(self.nchannels*2, self.nchannels*4, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
+                                 ConvBlock(self.nchannels*4, self.nchannels*8, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
+                                 ConvBlock(self.nchannels*8, 1, 4, 1, 1, False, act=nn.LeakyReLU(0.2)),)
     
-    def forward(self, input):
-
-        output = F.relu(self.conv1(input))
-        output = F.relu(self.conv2(output))
-        output = F.relu(self.conv3(output))
-        output = F.relu(self.conv4(output))
-        #used for classification!
-        output = self.conv5(output)
-        # print(f'{output.shape=}')
+    def forward(self, x):
+        output = self.net(x)
         return output
 
 x = torch.randn(5,3,128,128)
@@ -16440,53 +16433,55 @@ print(f'{out.shape=}')
 class ResBlock(nn.Module):
     def __init__(self, conv_dim):
         super().__init__()
-        self.conv1 = conv( conv_dim,  conv_dim,  3,  1,  1, True)
-        self.conv2 = conv( conv_dim,  conv_dim,  3,  1,  1, True)
-    
-    def forward(self, input): 
-        output = F.relu(self.conv1(input))
-        output = input + F.relu(output)
+        # the paper uses reflectionpad to reduce checkerboard in edges
+        # (we could also use upsample!)
+        self.conv = nn.Sequential(nn.ReflectionPad2d(1),
+                                  ConvBlock(conv_dim, conv_dim, 3, 1, 0, True, nn.ReLU(True)),
+                                  nn.ReflectionPad2d(1),
+                                  ConvBlock(conv_dim, conv_dim, 3, 1, 0, True))
+    def forward(self, x): 
+        output = x + self.conv(x)
         return output
 
-def conv_transpose(in_, out_, k_size, stride=2, pad=1, batchnorm=True):
-    layers=nn.ModuleList()
-    layers.append(nn.ConvTranspose2d(in_, out_,k_size, stride, pad))
-    if batchnorm: 
-        layers.append(nn.BatchNorm2d(out_))
-    return nn.Sequential(*layers)
+class ConvTransposeBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, 
+                 stride=2, padding=1, norm=True, act=nn.Identity()):
+        super().__init__()
+        self.conv_trans = nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
+                                             stride, padding, bias=not norm)
+        self.act = act
+        
+    def forward(self, x):
+        return self.act(self.conv_trans(x))
 
 class CycleGenerator(nn.Module):
     def __init__(self, conv_fmap=64, n_resblock=6):
         super().__init__()
         # here we have an encoder, couple of n_resblocks and then a decoder
         # which is a made of several deconv layer(transpose conv layers)
-        self.conv1 = conv(3, conv_fmap, 4, 2, 1, False) #64
-        self.conv2 = conv(conv_fmap, conv_fmap*2, 4,2,1)#32
-        self.conv3 = conv(conv_fmap*2, conv_fmap*4, 4,2,1)#16
-
+        self.encoder = nn.Sequential(ConvBlock(3,conv_fmap, 4,2,1,False,nn.LeakyReLU(0.2)),
+                                     ConvBlock(conv_fmap*1,conv_fmap*2, 4,2,1,True,nn.LeakyReLU(0.2)),
+                                     ConvBlock(conv_fmap*2,conv_fmap*4, 4,2,1,True,nn.LeakyReLU(0.2)),
+                                    )
         layers=[]
         for i in range(n_resblock):
             layers.append(ResBlock(conv_fmap*4))
 
         self.resblocks = nn.Sequential(*layers)
+        self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 4,2,1,True,act=nn.LeakyReLU(0.2)),
+                                     ConvTransposeBlock(conv_fmap*2, conv_fmap, 4,2,1,True,act=nn.LeakyReLU(0.2)),
+                                     ConvTransposeBlock(conv_fmap, 3, 4,2,1,True,act=nn.Tanh()),)
 
-        self.deconv1 = conv_transpose(conv_fmap*4, conv_fmap*2, k_size=4)#32
-        self.deconv2 = conv_transpose(conv_fmap*2, conv_fmap, k_size=4)#64
-        self.deconv3 = conv_transpose(conv_fmap, 3, k_size=4)#128
-
-    def forward(self, input):
-        #encoder
-        output = F.relu(self.conv1(input))
-        output = F.relu(self.conv2(output))
-        output = F.relu(self.conv3(output))
-
-        output = F.relu(self.resblocks(output))
-        #decoder 
-        output = F.relu(self.deconv1(output))
-        output = F.relu(self.deconv2(output))
-        # final image!
-        output = F.tanh(self.deconv3(output))
-        return output
+    def forward(self, x):
+        out = self.encoder(x)
+        out = F.relu(self.resblocks(out))
+        out = self.decoder(out)
+        return out
+    
+x = torch.randn(5,3,128,128)
+g = CycleGenerator()
+out = g(x)
+print(f'{out.shape=}')
 
 #%%
 # Ok, before we go on, lets explain something. 
@@ -16517,6 +16512,10 @@ def fake_loss(output_d):
 def cyclic_loss(real_image, reconstructed_image, lambda_weight):
     loss = torch.mean(torch.abs(real_image - reconstructed_image) )
     return loss* lambda_weight
+
+def identity_loss(real_image, fake_image, lambda_weight):
+    loss = torch.mean(torch.abs(real_image - fake_image) )
+    return loss * 0.5*lambda_weight
 
 #%%
 def unnormalize(img_tensor):
@@ -16574,8 +16573,8 @@ def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,1
 #%%
 # training 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-epochs = 100
-print_interval = 10
+epochs = 200
+print_interval = 20
 batch_size = 16
 resize_dim = (128,128)
 
@@ -16593,8 +16592,8 @@ conv_fmap_d=64
 conv_fmap_g=64
 n_resblocks=6
 
-D_X = Discriminator(conv_depth=conv_fmap_d).to(device)
-D_Y = Discriminator(conv_depth=conv_fmap_d).to(device)
+D_X = Discriminator(base_num_channels=conv_fmap_d).to(device)
+D_Y = Discriminator(base_num_channels=conv_fmap_d).to(device)
 
 G_XtoY = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
 G_YtoX = CycleGenerator(conv_fmap=conv_fmap_g, n_resblock=n_resblocks).to(device)
@@ -16616,7 +16615,6 @@ optimizer_d_y = torch.optim.Adam(D_Y.parameters(), lr=lr, betas=betas)
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 arch_name = "cyclegan"
 current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
-
 
 losses=[]
 dloss_x_list = []
@@ -16642,11 +16640,13 @@ for epoch in range(epochs):
         dx_output_real = D_X(Images_X)
         dx_real_loss = real_loss(dx_output_real)
         # now we generate an x image and D_X should recognize its fake! 
-        fake_x = G_YtoX(Images_Y)
+        # note during discriminator update, we dont wantgenerator to be updated
+        # so we detach()
+        fake_x = G_YtoX(Images_Y).detach()
         
         dx_output_fake = D_X(fake_x)
         dx_fake_loss = fake_loss(dx_output_fake)
-        loss_dx = dx_fake_loss + dx_real_loss 
+        loss_dx = (dx_fake_loss + dx_real_loss) * 0.5
 
         dloss_x_list.append(loss_dx.item())
         
@@ -16662,10 +16662,10 @@ for epoch in range(epochs):
         # now generate a Y image using XtoY generator and
         # X (After all we want to get x and make it look like y)
         # and vice versa!
-        fake_y = G_XtoY(Images_X)
+        fake_y = G_XtoY(Images_X).detach()
         dy_output_fake = D_Y(fake_y)
         fake_loss_dy = fake_loss(dy_output_fake)
-        loss_dy = dy_real_loss + fake_loss_dy
+        loss_dy = (dy_real_loss + fake_loss_dy) * 0.5
 
         dloss_y_list.append(loss_dy.item())
 
@@ -16691,13 +16691,19 @@ for epoch in range(epochs):
         g_fake_image_y = G_XtoY(Images_X).to(device)
         fake_image_output_y = D_Y(g_fake_image_y)
         loss_g_xtoy = real_loss(fake_image_output_y)
+
+        # identity loss?
+        g_image_x = G_YtoX(Images_X)
+        g_image_y = G_XtoY(Images_Y)
+        loss_id_x = identity_loss(Images_X, g_image_x)
+        loss_id_y = identity_loss(Images_Y, g_image_y)
         
         #reconstruct x!
         reconstructed_x = G_YtoX(g_fake_image_y).to(device)
         cycle_reconstructed_loss_x = cyclic_loss(Images_X, reconstructed_x, 10)
         x_recons_loss_list.append(cycle_reconstructed_loss_x.item())
         
-        loss_total_g = loss_g_xtoy + loss_g_ytox + cycle_reconstructed_loss_x + cycle_reconstructed_loss_y
+        loss_total_g = loss_g_xtoy + loss_g_ytox + cycle_reconstructed_loss_x + cycle_reconstructed_loss_y +loss_id_x+loss_id_y
 
         g_loss_list.append(loss_total_g.item())
         
@@ -16735,10 +16741,10 @@ for epoch in range(epochs):
         save_dir = f'./results/gan/{current_experiment_name}'
 
         fname_xtoy = os.path.join(save_dir, f'SummerToWinter_Epoch_{epoch}.jpg') 
-        display_image_grid(fixed_image_x, fake_x, title='Summer to Winter(XtoY) [Epoch {epoch}]',save_path=fname_xtoy)
+        display_image_grid(fixed_image_x, fake_x, title=f'Summer to Winter(XtoY) [Epoch {epoch}]',save_path=fname_xtoy)
 
         fname_ytox = os.path.join(save_dir, f'WinterToSummer_Epoch_{epoch}.jpg') 
-        display_image_grid(fixed_image_y, fake_y, title='Winter to Summer(YtoX) [Epoch {epoch}]',save_path=fname_ytox)
+        display_image_grid(fixed_image_y, fake_y, title=f'Winter to Summer(YtoX) [Epoch {epoch}]',save_path=fname_ytox)
 
 print(f'CycleGAN training Completed!')
 #%%
