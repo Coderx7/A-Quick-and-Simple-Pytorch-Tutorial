@@ -2826,7 +2826,7 @@ print(f'{doutput.shape=}')
 print(f'{goutput.shape=}') 
 #
 # 
-#%%
+#%% FID/IS implementation
 # add FID/IFD/Incepcionscore metric inception score
 # up until now, we have checked the training results visually by 
 # looking at the generated images during training and telling if everything
@@ -16434,7 +16434,6 @@ class ResBlock(nn.Module):
     def __init__(self, conv_dim):
         super().__init__()
         # the paper uses reflectionpad to reduce checkerboard in edges
-        # (we could also use upsample!)
         self.conv = nn.Sequential(nn.ReflectionPad2d(1),
                                   ConvBlock(conv_dim, conv_dim, 3, 1, 0, True, nn.ReLU(True)),
                                   nn.ReflectionPad2d(1),
@@ -16504,17 +16503,19 @@ print(f'{out.shape=}')
 # for the fake one we would do (torch.mean(output_d - 0)**)
 # so in total we will have 3 lossses. lets write them down: 
 def real_loss(output_d):
-    return torch.mean(output_d - 1 ) **2
+    return torch.mean(output_d - 1)**2
 
 def fake_loss(output_d):
     return torch.mean(output_d)**2 
 
-def cyclic_loss(real_image, reconstructed_image, lambda_weight):
-    loss = torch.mean(torch.abs(real_image - reconstructed_image) )
-    return loss* lambda_weight
+def cyclic_loss(real_image, reconstructed_image, lambda_weight=10):
+    # loss = torch.mean(torch.abs(real_image - reconstructed_image) )
+    loss = F.l1_loss(real_image, reconstructed_image)
+    return loss * lambda_weight
 
-def identity_loss(real_image, fake_image, lambda_weight):
-    loss = torch.mean(torch.abs(real_image - fake_image) )
+def identity_loss(real_image, fake_image, lambda_weight=10):
+    # loss = torch.mean(torch.abs(real_image - fake_image))
+    loss = F.l1_loss(real_image, fake_image)
     return loss * 0.5*lambda_weight
 
 #%%
@@ -16530,8 +16531,10 @@ def display_image_grid(real_imgs, fake_imgs, nrows=None, ncols=None, title='', f
     if title:
         fig.suptitle(title)
         
-    nrows = int(math.sqrt(real_imgs.size(0))) if nrows is None else nrows
-    ncols = nrows if ncols is None else ncols 
+    if nrows is None:
+        nrows = int(math.sqrt(real_imgs.size(0)))
+    if ncols is None:
+        ncols = math.ceil(real_imgs.size(0) / nrows)
     
     assert nrows * ncols <= real_imgs.size(0), f'The number of plots({nrows*ncols}) is less than actual samples({real_imgs.size(0)})'
 
@@ -16546,6 +16549,7 @@ def display_image_grid(real_imgs, fake_imgs, nrows=None, ncols=None, title='', f
         os.makedirs(os.path.split(save_path)[0], exist_ok=True)
         plt.savefig(save_path)
     
+    plt.tight_layout()
     plt.show()
     
 def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,128)):
@@ -16569,6 +16573,7 @@ def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,1
                             split=is_test)
         dataloaders.append(dl)
     return dataloaders
+
 
 #%%
 # training 
@@ -16692,11 +16697,11 @@ for epoch in range(epochs):
         fake_image_output_y = D_Y(g_fake_image_y)
         loss_g_xtoy = real_loss(fake_image_output_y)
 
-        # identity loss?
+        # identity loss this increases the image quality
         g_image_x = G_YtoX(Images_X)
         g_image_y = G_XtoY(Images_Y)
-        loss_id_x = identity_loss(Images_X, g_image_x)
-        loss_id_y = identity_loss(Images_Y, g_image_y)
+        loss_id_x = identity_loss(Images_X, g_image_x,10)
+        loss_id_y = identity_loss(Images_Y, g_image_y,10)
         
         #reconstruct x!
         reconstructed_x = G_YtoX(g_fake_image_y).to(device)
@@ -16738,8 +16743,9 @@ for epoch in range(epochs):
         fake_x = G_XtoY(fixed_image_x)
         fake_y = G_YtoX(fixed_image_y)
 
-        save_dir = f'./results/gan/{current_experiment_name}'
-
+        save_dir = f'./results/gan/cyclegan/{current_experiment_name}'
+        os.makedirs(save_dir, exist_ok=True)
+        
         fname_xtoy = os.path.join(save_dir, f'SummerToWinter_Epoch_{epoch}.jpg') 
         display_image_grid(fixed_image_x, fake_x, title=f'Summer to Winter(XtoY) [Epoch {epoch}]',save_path=fname_xtoy)
 
@@ -16747,5 +16753,30 @@ for epoch in range(epochs):
         display_image_grid(fixed_image_y, fake_y, title=f'Winter to Summer(YtoX) [Epoch {epoch}]',save_path=fname_ytox)
 
 print(f'CycleGAN training Completed!')
+#%%
+# test some images 
+sample_summer,_ = next(iter(test_dataloader_summer))
+sample_winter,_ = next(iter(test_dataloader_winter ))
+
+@torch.no_grad()
+def convert(img, winter_to_summer):
+    G_YtoX.eval()
+    G_XtoY.eval()
+    
+    device = next(G_YtoX.parameters()).device
+    
+    img = img.to(device)
+    
+    if winter_to_summer:
+        out = G_YtoX(img)
+    else:
+        out = G_XtoY(img)
+    
+    display_image_grid(img, out,title=f'{"Winter2Summer" if winter_to_summer else "Summer2Winter"}')
+
+convert(sample_summer[:4], winter_to_summer=False)
+# convert(sample_summer[:4], winter_to_summer=True)
+convert(sample_winter[:4],winter_to_summer=True)
+# convert(sample_winter[:4],winter_to_summer=False)
 #%%
 # name only some other important GANs and then lets call it a day and go diffusion!
