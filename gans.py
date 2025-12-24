@@ -16402,7 +16402,20 @@ class ConvBlock(nn.Module):
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
 
-
+# reusing our dc_gan initialization to initialize cyclegan disc and gen
+def weights_init(module):
+    if isinstance(module, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+        nn.init.normal_(module.weight.data, 0.0, 0.02)
+        if module.bias is not None:
+            nn.init.constant_(module.bias.data, 0)
+    # the initial version of cyclegan used batchnorm
+    # but later they switched to instance norm
+    # instancenorm by default doesnt have wieghts,
+    # but when we set affine=True, it creates and use them
+    elif isinstance(module, (nn.BatchNorm2d,nn.InstanceNorm2d)):
+        nn.init.normal_(module.weight.data, 1.0, 0.02)
+        nn.init.constant_(module.bias.data, 0)
+        
 # the discriminator is nothing special, just ordinary classifier with the exception we
 # dont downsample to 1x1 at the end! i.e. the output of the network is a nxn matrix of 
 # logits thats what the authors called patchgan!
@@ -16422,7 +16435,9 @@ class Discriminator(nn.Module):
                                  ConvBlock(c*2, c*4, 4, 2, 1, True, act=nn.LeakyReLU(0.2,True)),
                                  ConvBlock(c*4, c*8, 4, 2, 1, True, act=nn.LeakyReLU(0.2,True)),
                                  nn.Conv2d(c*8, 1, 4, 1, 1 ),)# we want raw logits since we use lsgan loss
-    
+        # initialize the weights
+        self.apply(weights_init)
+
     def forward(self, x):
         output = self.net(x)
         return output
@@ -16445,10 +16460,10 @@ class ResBlock(nn.Module):
 
 class ConvTransposeBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, 
-                 stride=2, padding=1, norm=True, act=nn.Identity()):
+                 stride=2, padding=1, output_padding=1, norm=True, act=nn.Identity()):
         super().__init__()
         self.conv_trans = nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
-                                             stride, padding, bias=not norm)
+                                             stride, padding, output_padding, bias=not norm)
         self.norm = nn.InstanceNorm2d(out_channels, affine=True)
         self.act = act
         
@@ -16473,10 +16488,15 @@ class CycleGenerator(nn.Module):
             layers.append(ResBlock(conv_fmap*4))
 
         self.resblocks = nn.Sequential(*layers)
-        self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 3,2,1,True,act=nn.ReLU(True)),
-                                     ConvTransposeBlock(conv_fmap*2, conv_fmap, 3,2,1,True,act=nn.ReLU(True)),
-                                     ConvTransposeBlock(conv_fmap*1, 3, 7,1,0,True,act=nn.Tanh()),)
-
+        self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 3,2,1,1,True,act=nn.ReLU(True)),
+                                     ConvTransposeBlock(conv_fmap*2, conv_fmap*1, 3,2,1,1,True,act=nn.ReLU(True)),
+                                     nn.ReflectionPad2d(3),
+                                     # note we disable normalization for the last layer
+                                     # of decoder so we dont ruin our images!
+                                     nn.Conv2d(conv_fmap*1, 3, 7,1,0),
+                                     nn.Tanh(),)
+        self.apply(weights_init)
+        
     def forward(self, x):
         out = self.encoder(x)
         out = self.resblocks(out)
@@ -16495,6 +16515,7 @@ print(f'{gout.shape=}')
 # (we are basically trying to prevent it from adapting to new generator's changes cuz it usually 
 # overpowers the generators. (remember this came out in 2017). in practice I noticed this is a hit or miss
 # kind of thing. but I add it anyway for the same of implementation faithfulness.
+# update (it seems it may come in handy if the discriminator is good, or dataset is hard.)
 class ImageBuffer():
     def __init__(self, size=50):
         self.size = size
@@ -16629,11 +16650,45 @@ def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,1
                             drop_last=drop_last)
         dataloaders.append(dl)
     return dataloaders
+
+def plot_loss(history:dict, figsize=(12,6)):
+    plt.style.use('ggplot')
+    
+    fig, (ax1,ax2) = plt.subplots(1,2,figsize=figsize)
+    
+    epochs = range(len(history["ds_loss"])) 
+    
+    # part 1 plot the gan losses
+    ax1.plot(epochs, history["ds_loss"], label="D_summer", color='tab:blue', alpha=0.7)
+    ax1.plot(epochs, history["dw_loss"], label="D_winter", color='tab:cyan', alpha=0.7)
+    ax1.plot(epochs, history["gloss"], label="G_total", color='tab:orange', linewidth=2)
+    
+    ax1.set_title("Losses")
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("MSE-Loss")
+    ax1.legend()   
+    ax1.grid(True)
+        
+    # par2 plot consitency loss(recons error)
+    ax2.plot(epochs, history["w_rec"], label="Rec_winter", color='tab:green', alpha=0.7)
+    ax2.plot(epochs, history["s_rec"], label="Rec_summer", color='tab:olive', alpha=0.7)
+    
+    ax2.set_title("Cycle Consistency Losses")
+    ax2.set_xlabel("Epochs")
+    ax2.set_ylabel("L1-Loss")
+    ax2.legend()   
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+    
+
 #%%
 # training 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 epochs = 200
 print_interval = 20
+# batch of 16 takes around 8300Mb of vram
 batch_size = 16
 resize_dim = (128,128)
 dataset_name = 'summer2winter-yosemite'
@@ -16689,12 +16744,7 @@ experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 arch_name = "CycleGAN"
 current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
 
-losses=[]
-ds_loss_list = []
-dw_loss_list = []
-gloss_list = []
-s_recons_loss_list = []
-w_recons_loss_list = []
+history = {"ds_loss":[], "dw_loss":[], "gloss":[], "w_rec":[], "s_rec":[]}
 
 print(f'{arch_name} Training on {dataset_name} in {experiment_date}')
 print(f'--Dataset_name:       {dataset_name}')
@@ -16710,6 +16760,8 @@ print(f'--Adam Betas:         {betas}')
 for epoch in range(epochs):
     G_S2W.train()
     G_W2S.train()
+    
+    epoch_losses = {"ds":[], "dw":[], "g":[], "w_rec":[], "s_rec":[]}
     
     for i, ((imgs_summer,_), (imgs_winter,_)) in enumerate(zip(dataloader_summer, 
                                                                dataloader_winter)):
@@ -16800,22 +16852,26 @@ for epoch in range(epochs):
         gloss_total.backward()
         optimizer_g.step()
         
-        ds_loss_list.append(loss_ds.item())
-        dw_loss_list.append(loss_dw.item())
-        w_recons_loss_list.append(cycle_recons_loss_w.item())
-        s_recons_loss_list.append(cycle_recons_loss_s.item())
-        gloss_list.append(gloss_total.item())
+        epoch_losses["ds"].append(loss_ds.item())
+        epoch_losses["dw"].append(loss_dw.item())
+        epoch_losses["w_rec"].append(cycle_recons_loss_w.item())
+        epoch_losses["s_rec"].append(cycle_recons_loss_s.item())
+        epoch_losses["g"].append(gloss_total.item())
        
         if i%print_interval == 0:
-            losses.append((loss_ds.item(), loss_dw.item(), gloss_total.item()))
             print(f'Epoch: {epoch} | iter: {i} | dloss_s: {loss_ds:.4f} | dloss_w: {loss_dw:.4f} | gloss: {gloss_total:.4f} | WRecons: {cycle_recons_loss_w:.4f} | SRecons: {cycle_recons_loss_s:.4f}')
     
-    dsloss_mean = np.mean(ds_loss_list)
-    dwloss_mean = np.mean(dw_loss_list)
-    gloss_mean = np.mean(gloss_list)
-    wrecon_mean = np.mean(w_recons_loss_list)
-    srecon_mean = np.mean(s_recons_loss_list)
-    print(f'Epoch[Avg]: {epoch} | dloss_s: {dsloss_mean:.4f} | dloss_w: {dwloss_mean:.4f} | gloss: {gloss_mean:.4f} | WRecons: {wrecon_mean:.4f} | SRecons: {srecon_mean:.4f}')
+    avgs = {k:np.mean(l) for k,l in epoch_losses.items()}
+    
+    history["ds_loss"].append(avgs["ds"])
+    history["dw_loss"].append(avgs["dw"])
+    history["gloss"].append(avgs["g"])
+    history["w_rec"].append(avgs["w_rec"])
+    history["s_rec"].append(avgs["s_rec"])
+    
+    print(f'Epoch[Avg]: {epoch} | dloss_s: {avgs["ds"]:.4f} | dloss_w: {avgs["dw"]:.4f} | gloss: {avgs["g"]:.4f} | WRecons: {avgs["w_rec"]:.4f} | SRecons: {avgs["s_rec"]:.4f}')
+    # plot losses
+    plot_loss(history)
     
     # save checkpoints 
     save_dir = f'./weights/gan/cyclegan/{current_experiment_name}'
@@ -16824,11 +16880,7 @@ for epoch in range(epochs):
     torch.save({"G_S2W_state_dict":G_S2W.state_dict(),
                 "G_W2S_state_dict":G_W2S.state_dict(),
                 "epoch":epoch,
-                "ds_loss_list":ds_loss_list,
-                "dw_loss_list":dw_loss_list,
-                "gloss_list":gloss_list,
-                "s_recons_loss_list":s_recons_loss_list,
-                "w_recons_loss_list":w_recons_loss_list,
+                "history":history,
                 }
                ,os.path.join(save_dir,'cyclegan_checkpoint.pth'))
 
@@ -16842,7 +16894,7 @@ for epoch in range(epochs):
         save_dir = f'./results/gan/cyclegan/{current_experiment_name}'
         os.makedirs(save_dir, exist_ok=True)
         
-        loss_str = f'ds_{dsloss_mean:.4f}_dw_{dwloss_mean:.4f}_gloss_{gloss_mean:.4f}_wrec_{wrecon_mean:.4f}_srec_{srecon_mean:.4f}'
+        loss_str = f'ds_{avgs["ds"]:.4f}_dw_{avgs["dw"]:.4f}_gloss_{avgs["g"]:.4f}_wrec_{avgs["w_rec"]:.4f}_srec_{avgs["s_rec"]:.4f}'
         
         fname_xtoy = os.path.join(save_dir, f'SummerToWinter_Epoch_{epoch}.jpg') 
         display_image_grid(fixed_image_s, imgs_summer_fake, title=f'Summer to Winter [Epoch {epoch}] ({loss_str})',save_path=fname_xtoy)
@@ -16855,6 +16907,8 @@ print(f'CycleGAN training Completed!')
 # test some images 
 sample_summer,_ = next(iter(test_dataloader_summer))
 sample_winter,_ = next(iter(test_dataloader_winter ))
+
+plot_loss(history)
 
 @torch.no_grad()
 def convert(img, winter_to_summer):
@@ -16873,8 +16927,8 @@ def convert(img, winter_to_summer):
     display_image_grid(img, out,title=f'{"Winter2Summer" if winter_to_summer else "Summer2Winter"}')
 
 convert(sample_summer[:4], winter_to_summer=False)
-# convert(sample_summer[:4], winter_to_summer=True)
+convert(sample_summer[:4], winter_to_summer=True)
 convert(sample_winter[:4],winter_to_summer=True)
-# convert(sample_winter[:4],winter_to_summer=False)
+convert(sample_winter[:4],winter_to_summer=False)
 #%%
 # name only some other important GANs and then lets call it a day and go diffusion!
