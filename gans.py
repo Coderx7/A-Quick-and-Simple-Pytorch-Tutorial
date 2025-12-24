@@ -16476,13 +16476,50 @@ class CycleGenerator(nn.Module):
         out = F.relu(self.resblocks(out))
         out = self.decoder(out)
         return out
-    
+
 x = torch.randn(5,3,128,128)
 g = CycleGenerator()
-out = g(x)
-print(f'{out.shape=}')
-
+gout = g(x)
+print(f'{gout.shape=}')
 #%%
+# now we need to implement the image buffer, basically store up to n last generated images
+# and use these to update the discriminators. what we are doing is that we store the previously
+# generated images, and randomly add new generated ones, so we make a history of mixed old and 
+# new generations, this way, we are trying to prevent the discriminator from being good too quickly
+# (we are basically trying to prevent it from adapting to new generator's changes cuz it usually 
+# overpowers the generators. (remember this came out in 2017). in practice I noticed this is a hit or miss
+# kind of thing. but I add it anyway for the same of implementation faithfulness.
+class ImageBuffer():
+    def __init__(self, size=50):
+        self.size = size
+        self.imgs_buffer=[]
+        
+    @torch.no_grad()
+    def query(self, fake_imgs):
+        if self.size == 0:
+            return fake_imgs
+        
+        # build the history using old and new images
+        img_mix_list = []
+        for img in fake_imgs:
+            # if we havent started yet, fill the image buffer
+            # and use the current imgs as starting point
+            if len(self.imgs_buffer) < self.size:
+                img.unsqueeze_(0)
+                self.imgs_buffer.append(img)
+                img_mix_list.append(img)
+            # if its full already, swap an old image 
+            # with a newer one at random
+            else:
+                if random.uniform(0,1) > 0.5:
+                   idx = random.randint(0,self.size-1)
+                   tmp = self.imgs_buffer[idx].clone().detach()
+                   self.imgs_buffer[idx] = img.unsqueeze(0) 
+                   img_mix_list.append(tmp)
+                else:
+                    img_mix_list.append(img)
+        # return the mixed img list as a batch
+        return torch.cat(img_mix_list)
 # Ok, before we go on, lets explain something. 
 # we have two networks for each network type. i.e two generators and two discriminators
 # what is different here is the way our generators work, previously, we would feed a random
@@ -16582,6 +16619,7 @@ epochs = 200
 print_interval = 20
 batch_size = 16
 resize_dim = (128,128)
+dataset_name = 'summer2winter-yosemite'
 
 dataloader_summer, dataloader_winter = get_yosemite_dataloaders(is_test=False, batch_size=batch_size, resize_dim=resize_dim)
 
@@ -16617,6 +16655,14 @@ optimizer_g = torch.optim.Adam(g_pramas, lr=lr, betas=betas)
 optimizer_ds = torch.optim.Adam(D_S.parameters(), lr=lr, betas=betas)
 optimizer_dw = torch.optim.Adam(D_W.parameters(), lr=lr, betas=betas)
 
+use_image_buffer = False
+# buffer size =0 basically disables the image buffering
+# 50 is what paper uses if I recall correctly
+buffer_size = 50 if use_image_buffer else 0
+
+fake_imgs_summer_pl = ImageBuffer(buffer_size)
+fake_imgs_winter_pl = ImageBuffer(buffer_size)
+
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
 arch_name = "cyclegan"
 current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
@@ -16627,6 +16673,17 @@ dw_loss_list = []
 gloss_list = []
 s_recons_loss_list = []
 w_recons_loss_list = []
+
+print(f'Training CycleGAN')
+print(f'dataset_name:       {dataset_name}')
+print(f'epochs:             {epochs}')
+print(f'print_interval:     {print_interval}')
+print(f'batch_size:         {batch_size}')
+print(f'resize_dim:         {resize_dim}')
+print(f'LR:                 {lr}')
+print(f'betas:              {betas}')
+print(f'use_image_buffer:   {use_image_buffer}')
+print(f'image buffer_size:  {buffer_size}')
 
 for epoch in range(epochs):
     G_S2W.train()
@@ -16649,11 +16706,13 @@ for epoch in range(epochs):
         # now we generate a summer image and D_S should recognize as fake! 
         # note during discriminator update, we dont want generator to be updated so we detach()
         imgs_summer_fake = G_W2S(imgs_winter).detach()
-        ds_preds_fake = D_S(imgs_summer_fake)
+        # use image pool
+        imgs_summer_fake_pooled = fake_imgs_summer_pl.query(imgs_summer_fake).detach()
+        ds_preds_fake = D_S(imgs_summer_fake_pooled)
         ds_loss_fake = fake_loss(ds_preds_fake)
         # 0.5 to make discriminator slow down a bit so generator can catch up
         loss_ds = (ds_loss_fake + ds_loss_real) * 0.5
-                
+    
         optimizer_ds.zero_grad()
         loss_ds.backward()
         optimizer_ds.step()
@@ -16667,7 +16726,9 @@ for epoch in range(epochs):
         # now generate a winter image using S2W generator and imgs_summer (After all we want to
         # get summer and make it look like winter and vice versa!
         imgs_winter_fake = G_S2W(imgs_summer).detach()
-        dw_preds_fake = D_W(imgs_winter_fake)
+        # use image pool
+        imgs_winter_fake_pooled = fake_imgs_winter_pl.query(imgs_winter_fake).detach()
+        dw_preds_fake = D_W(imgs_winter_fake_pooled)
         dw_loss_fake = fake_loss(dw_preds_fake)
         # slow down the discriminator a bit so generator can catch up!
         loss_dw = (dw_loss_real + dw_loss_fake) * 0.5
