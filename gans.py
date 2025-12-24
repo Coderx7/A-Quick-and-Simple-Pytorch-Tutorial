@@ -16502,10 +16502,11 @@ class ImageBuffer():
         # build the history using old and new images
         img_mix_list = []
         for img in fake_imgs:
+            # add batch dim
+            img.unsqueeze_(0)
             # if we havent started yet, fill the image buffer
             # and use the current imgs as starting point
             if len(self.imgs_buffer) < self.size:
-                img.unsqueeze_(0)
                 self.imgs_buffer.append(img)
                 img_mix_list.append(img)
             # if its full already, swap an old image 
@@ -16514,12 +16515,18 @@ class ImageBuffer():
                 if random.uniform(0,1) > 0.5:
                    idx = random.randint(0,self.size-1)
                    tmp = self.imgs_buffer[idx].clone().detach()
-                   self.imgs_buffer[idx] = img.unsqueeze(0) 
+                   self.imgs_buffer[idx] = img
                    img_mix_list.append(tmp)
                 else:
                     img_mix_list.append(img)
         # return the mixed img list as a batch
         return torch.cat(img_mix_list)
+
+# x = torch.randn(50,3,128,128)
+# ib = ImageBuffer()
+# out = ib.query(x)
+# out = ib.query(x)
+#%%
 # Ok, before we go on, lets explain something. 
 # we have two networks for each network type. i.e two generators and two discriminators
 # what is different here is the way our generators work, previously, we would feed a random
@@ -16655,7 +16662,7 @@ optimizer_g = torch.optim.Adam(g_pramas, lr=lr, betas=betas)
 optimizer_ds = torch.optim.Adam(D_S.parameters(), lr=lr, betas=betas)
 optimizer_dw = torch.optim.Adam(D_W.parameters(), lr=lr, betas=betas)
 
-use_image_buffer = False
+use_image_buffer = True
 # buffer size =0 basically disables the image buffering
 # 50 is what paper uses if I recall correctly
 buffer_size = 50 if use_image_buffer else 0
