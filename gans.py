@@ -16396,10 +16396,12 @@ class ConvBlock(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=not norm)
         self.act = act
-        self.norm = nn.InstanceNorm2d(out_channels) if norm else nn.Identity()
+        # affine=True per paper instruction
+        self.norm = nn.InstanceNorm2d(out_channels, affine=True) if norm else nn.Identity()
     
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
+
 
 # the discriminator is nothing special, just ordinary classifier with the exception we
 # dont downsample to 1x1 at the end! i.e. the output of the network is a nxn matrix of 
@@ -16408,18 +16410,18 @@ class Discriminator(nn.Module):
     def __init__(self, base_num_channels):
         super().__init__()
 
-        self.nchannels = base_num_channels 
+        c = base_num_channels 
         # our input image is 128x128. and the output fmap
         # is calculated like this:
         #(w-k)+2p/s + 1 = (128-4)+2/2 +1 = 64
         # note we dont normalize the first layer so we get acurate input statistics
         # likewise we dont normalize the final logits either to retain the real statistics
         # since we want a single output at the end, we assing 1 for the last out_channels.
-        self.net = nn.Sequential(ConvBlock(3, self.nchannels, 4, 2, 1, False, act=nn.LeakyReLU(0.2)),
-                                 ConvBlock(self.nchannels, self.nchannels*2, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
-                                 ConvBlock(self.nchannels*2, self.nchannels*4, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
-                                 ConvBlock(self.nchannels*4, self.nchannels*8, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
-                                 ConvBlock(self.nchannels*8, 1, 4, 1, 1, False, act=nn.LeakyReLU(0.2)),)
+        self.net = nn.Sequential(ConvBlock(3, c, 4, 2, 1, False, act=nn.LeakyReLU(0.2)),
+                                 ConvBlock(c*1, c*2, 4, 2, 1, True, act=nn.LeakyReLU(0.2,True)),
+                                 ConvBlock(c*2, c*4, 4, 2, 1, True, act=nn.LeakyReLU(0.2,True)),
+                                 ConvBlock(c*4, c*8, 4, 2, 1, True, act=nn.LeakyReLU(0.2,True)),
+                                 nn.Conv2d(c*8, 1, 4, 1, 1 ),)# we want raw logits since we use lsgan loss
     
     def forward(self, x):
         output = self.net(x)
@@ -16439,8 +16441,7 @@ class ResBlock(nn.Module):
                                   nn.ReflectionPad2d(1),
                                   ConvBlock(conv_dim, conv_dim, 3, 1, 0, True))
     def forward(self, x): 
-        output = x + self.conv(x)
-        return output
+        return x + self.conv(x)
 
 class ConvTransposeBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, 
@@ -16448,35 +16449,40 @@ class ConvTransposeBlock(nn.Module):
         super().__init__()
         self.conv_trans = nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
                                              stride, padding, bias=not norm)
+        self.norm = nn.InstanceNorm2d(out_channels, affine=True)
         self.act = act
         
     def forward(self, x):
-        return self.act(self.conv_trans(x))
+        return self.act(self.norm(self.conv_trans(x)))
 
 class CycleGenerator(nn.Module):
     def __init__(self, conv_fmap=64, n_resblock=6):
         super().__init__()
         # here we have an encoder, couple of n_resblocks and then a decoder
         # which is a made of several deconv layer(transpose conv layers)
-        self.encoder = nn.Sequential(ConvBlock(3,conv_fmap, 4,2,1,False,nn.LeakyReLU(0.2)),
-                                     ConvBlock(conv_fmap*1,conv_fmap*2, 4,2,1,True,nn.LeakyReLU(0.2)),
-                                     ConvBlock(conv_fmap*2,conv_fmap*4, 4,2,1,True,nn.LeakyReLU(0.2)),
+        # we use overlapping filters so we dont face checkerboard artifacts
+        # this is what the paper used. if we use ks=4,stride=2, this will cause
+        # checkerboard patterns. the reflectionpad2d is there to take care of edges
+        self.encoder = nn.Sequential(nn.ReflectionPad2d(3),
+                                     ConvBlock(3,conv_fmap, 7,1,0,True,nn.ReLU(True)),
+                                     ConvBlock(conv_fmap*1,conv_fmap*2, 3,2,1,True,nn.ReLU(True)),
+                                     ConvBlock(conv_fmap*2,conv_fmap*4, 3,2,1,True,nn.ReLU(True)),
                                     )
         layers=[]
         for i in range(n_resblock):
             layers.append(ResBlock(conv_fmap*4))
 
         self.resblocks = nn.Sequential(*layers)
-        self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 4,2,1,True,act=nn.LeakyReLU(0.2)),
-                                     ConvTransposeBlock(conv_fmap*2, conv_fmap, 4,2,1,True,act=nn.LeakyReLU(0.2)),
-                                     ConvTransposeBlock(conv_fmap, 3, 4,2,1,True,act=nn.Tanh()),)
+        self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 3,2,1,True,act=nn.ReLU(True)),
+                                     ConvTransposeBlock(conv_fmap*2, conv_fmap, 3,2,1,True,act=nn.ReLU(True)),
+                                     ConvTransposeBlock(conv_fmap*1, 3, 7,1,0,True,act=nn.Tanh()),)
 
     def forward(self, x):
         out = self.encoder(x)
-        out = F.relu(self.resblocks(out))
+        out = self.resblocks(out)
         out = self.decoder(out)
         return out
-
+    
 x = torch.randn(5,3,128,128)
 g = CycleGenerator()
 gout = g(x)
@@ -16503,7 +16509,7 @@ class ImageBuffer():
         img_mix_list = []
         for img in fake_imgs:
             # add batch dim
-            img.unsqueeze_(0)
+            img = img.unsqueeze(0)
             # if we havent started yet, fill the image buffer
             # and use the current imgs as starting point
             if len(self.imgs_buffer) < self.size:
@@ -16542,15 +16548,19 @@ class ImageBuffer():
 # so we have a cyclic loss that checks if a reconstructed image is the same as the real one. 
 # apart from that, for our discriminators, we no longer use sigmoid, this time we will be using simle least squared
 # error as it is shown to perform better. 
-# for exaample for calculating the real loss (label is 1 or close to 1),
-# we would do (torch.mean(output_d2 - 1)**2) and 
-# for the fake one we would do (torch.mean(output_d - 0)**)
-# so in total we will have 3 lossses. lets write them down: 
-def real_loss(output_d):
-    return torch.mean(output_d - 1)**2
+# for the loss we use lsgan loss. for exaample for calculating the 
+# real loss (label is 1 or close to 1), we would do (torch.mean(output_d2 - 1)**2) and 
+# for the fake one we would do (torch.mean((output_d - 0)**2)
+# so in total we will have 3 lossses and plus the optional identity one 4 losses.
+# lets write them down: 
+# this is the lsgan loss by the way
+def real_loss(preds_real):
+    # return torch.mean((output_d - 1) ** 2)
+    return F.mse_loss(preds_real, torch.ones_like(preds_real))
 
-def fake_loss(output_d):
-    return torch.mean(output_d)**2 
+def fake_loss(preds_fake):
+    # return torch.mean(output_d**2)
+    return F.mse_loss(preds_fake, torch.zeros_like(preds_fake))
 
 def cyclic_loss(real_image, reconstructed_image, lambda_weight=10):
     # loss = torch.mean(torch.abs(real_image - reconstructed_image) )
@@ -16560,6 +16570,7 @@ def cyclic_loss(real_image, reconstructed_image, lambda_weight=10):
 def identity_loss(real_image, fake_image, lambda_weight=10):
     # loss = torch.mean(torch.abs(real_image - fake_image))
     loss = F.l1_loss(real_image, fake_image)
+    # the 0.5 is added per official paper's impl details
     return loss * 0.5*lambda_weight
 
 #%%
@@ -16621,7 +16632,7 @@ def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,1
 #%%
 # training 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-epochs = 166
+epochs = 200
 print_interval = 20
 batch_size = 16
 resize_dim = (128,128)
