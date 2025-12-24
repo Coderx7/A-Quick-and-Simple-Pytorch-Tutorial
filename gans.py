@@ -16664,7 +16664,7 @@ fake_imgs_summer_pl = ImageBuffer(buffer_size)
 fake_imgs_winter_pl = ImageBuffer(buffer_size)
 
 experiment_date = datetime.now().strftime("%Y%m%d%H%M%S")
-arch_name = "cyclegan"
+arch_name = "CycleGAN"
 current_experiment_name = f"{arch_name.lower()}_{dataset_name}_{experiment_date}"
 
 losses=[]
@@ -16674,16 +16674,16 @@ gloss_list = []
 s_recons_loss_list = []
 w_recons_loss_list = []
 
-print(f'Training CycleGAN')
-print(f'dataset_name:       {dataset_name}')
-print(f'epochs:             {epochs}')
-print(f'print_interval:     {print_interval}')
-print(f'batch_size:         {batch_size}')
-print(f'resize_dim:         {resize_dim}')
-print(f'LR:                 {lr}')
-print(f'betas:              {betas}')
-print(f'use_image_buffer:   {use_image_buffer}')
-print(f'image buffer_size:  {buffer_size}')
+print(f'{arch_name} Training on {dataset_name} in {experiment_date}')
+print(f'--Dataset_name:       {dataset_name}')
+print(f'--Use Image Buffer:   {use_image_buffer}')
+print(f'--Image Buffer Size:  {buffer_size}')
+print(f'--Epochs:             {epochs}')
+print(f'--Interval:           {print_interval}')
+print(f'--Batch_Size:         {batch_size}')
+print(f'--Resize_Dim:         {resize_dim}')
+print(f'--LearningRate:       {lr}')
+print(f'--Adam Betas:         {betas}')
 
 for epoch in range(epochs):
     G_S2W.train()
