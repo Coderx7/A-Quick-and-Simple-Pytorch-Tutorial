@@ -3233,7 +3233,7 @@ def get_transforms(resize_dims, data_augmentation, normalize):
     
 def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_size=128, 
                    num_workers=8, store_path="./data/", data_augmentation=False,
-                   normalize=False, experimental_size=None):
+                   normalize=False, experimental_size=None, drop_last=False):
     dataset_name = dataset_name.lower()
     transform = get_transforms(resize_dims, data_augmentation, normalize)
     dataset=None
@@ -3307,8 +3307,8 @@ def get_dataloader(dataset_name="SVHN", split=None, resize_dims=(32,32), batch_s
         print(f'Warning⚠️ Experimental size configured! Warning⚠️\nThe dataset size is now limited to {experimental_size} images only!')
 
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
-                             sampler=sampler, num_workers=num_workers, pin_memory=True)
-    
+                             sampler=sampler, num_workers=num_workers, pin_memory=True,
+                             drop_last=drop_last)
     return data_loader
 
 def get_dataset_size(name, split='train'):
@@ -16419,7 +16419,7 @@ class Discriminator(nn.Module):
                                  ConvBlock(self.nchannels, self.nchannels*2, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
                                  ConvBlock(self.nchannels*2, self.nchannels*4, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
                                  ConvBlock(self.nchannels*4, self.nchannels*8, 4, 2, 1, True, act=nn.LeakyReLU(0.2)),
-                                 ConvBlock(self.nchannels*8, 1, 4, 1, 1, False, act=nn.LeakyReLU(0.2)),)
+                                 ConvBlock(self.nchannels*8, 1, 4, 1, 1, False ),)#act=nn.LeakyReLU(0.2)
     
     def forward(self, x):
         output = self.net(x)
@@ -16469,7 +16469,7 @@ class CycleGenerator(nn.Module):
         self.resblocks = nn.Sequential(*layers)
         self.decoder = nn.Sequential(ConvTransposeBlock(conv_fmap*4, conv_fmap*2, 4,2,1,True,act=nn.LeakyReLU(0.2)),
                                      ConvTransposeBlock(conv_fmap*2, conv_fmap, 4,2,1,True,act=nn.LeakyReLU(0.2)),
-                                     ConvTransposeBlock(conv_fmap, 3, 4,2,1,True,act=nn.Tanh()),)
+                                     ConvTransposeBlock(conv_fmap, 3, 4,2,1,True),)#,act=nn.Tanh()
 
     def forward(self, x):
         out = self.encoder(x)
@@ -16562,9 +16562,62 @@ def identity_loss(real_image, fake_image, lambda_weight=10):
     loss = F.l1_loss(real_image, fake_image)
     return loss * 0.5*lambda_weight
 
+
+def discriminator_main_loss_cyclegan(d_preds_real, d_preds_fake):
+    loss = (F.softplus(-d_preds_real) + F.softplus(d_preds_fake)).mean()
+    return loss
+
+# must run in a fp32 graph
+def discriminator_r1_penalty_loss_cyclegan(discriminator, x_real, gamma=10):
+    x_real.requires_grad_(True)
+    d_preds_real = discriminator(x_real)
+    
+    grads = torch.autograd.grad(outputs=d_preds_real,
+                                inputs=x_real,
+                                grad_outputs=torch.ones_like(d_preds_real),
+                                retain_graph=True,
+                                create_graph=True)[0]
+    grads_l2norm_squared = grads.pow(2).view(d_preds_real.size(0),-1).sum(1).mean()
+    penalty = gamma/2 * grads_l2norm_squared
+
+    x_real.requires_grad_(False)
+    return penalty
+
+def generator_loss_cyclegan(d_preds_fake):
+    # G_loss = E[softplus(-D(G(z)))]
+    return F.softplus(-d_preds_fake).mean()
+
+
+# we also need Path length regularization loss for the generator
+def path_length_regularization_loss(fake_imgs,
+                                    w_latents,
+                                    mean_path_length, 
+                                    decay=0.01, 
+                                    pl_weight=2):
+    
+    # get the noise (y) , random noise images
+    # but we can use randn with the same shape as images aswell
+    # noise/sqrt(img_h*img_w)
+    noise = torch.randn_like(fake_imgs)/math.sqrt(math.prod(fake_imgs.shape[2:]))    
+    # now we calculate the gradients of the image*noise w.r.t w latents
+    # this measures how much the image changes when w changes
+    # we use sum() so we dont do .mean at the end
+    grad = torch.autograd.grad(outputs=(fake_imgs*noise).sum(),
+                               inputs=w_latents,
+                               create_graph=True)[0]
+    
+    path_lengths = torch.sqrt(grad.pow(2).sum(dim=2).mean(dim=1))
+    # update the moving average (no grad)
+    path_mean = mean_path_length + decay*(path_lengths.mean() - mean_path_length)
+    # now calculate the penalty
+    path_penalty = (path_lengths - path_mean).pow(2).mean()*pl_weight
+    
+    return path_penalty, path_mean.detach()
+
+
 #%%
 def unnormalize(img_tensor):
-    img_np = img_tensor.cpu().detach().numpy()
+    img_np = img_tensor.tanh().cpu().detach().numpy()
     # rescale to 0-255
     img_np = ((img_np +1)*255 / (2)).astype(np.uint8)
     return img_np
@@ -16596,12 +16649,11 @@ def display_image_grid(real_imgs, fake_imgs, nrows=None, ncols=None, title='', f
     plt.tight_layout()
     plt.show()
     
-def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,128)):
+def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,128), drop_last=False):
     #scale them between -1 , 1 
     normalize =True
     names = ['yosemite-summer','yosemite-winter']
     dataset_size = min(get_dataset_size('yosemite-summer'), get_dataset_size('yosemite-winter'))
-    print(f'{dataset_size=}')
     
     if is_test:
         dataset_size = None    
@@ -16614,22 +16666,24 @@ def get_yosemite_dataloaders(is_test=False, batch_size = 16, resize_dim = (128,1
                             data_augmentation=True,
                             normalize=normalize,
                             experimental_size=dataset_size,
-                            split=is_test)
+                            split=is_test,
+                            drop_last=drop_last)
         dataloaders.append(dl)
     return dataloaders
-
-
 #%%
 # training 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 epochs = 200
 print_interval = 20
 batch_size = 16
+r1_penalty_interval=16
 resize_dim = (128,128)
 dataset_name = 'summer2winter-yosemite'
 
-dataloader_summer, dataloader_winter = get_yosemite_dataloaders(is_test=False, batch_size=batch_size, resize_dim=resize_dim)
+dataloader_summer, dataloader_winter = get_yosemite_dataloaders(is_test=False, batch_size=batch_size, resize_dim=resize_dim, drop_last=True)
 
+print(f'{len(dataloader_summer)=} ')
+print(f'{len(dataloader_winter)=} ')
 # lets read some test images and use them for testing our network
 test_dataloader_summer, test_dataloader_winter = get_yosemite_dataloaders(is_test=True, batch_size=batch_size, resize_dim=resize_dim)
 test_iter_s = iter(test_dataloader_summer)
@@ -16662,7 +16716,7 @@ optimizer_g = torch.optim.Adam(g_pramas, lr=lr, betas=betas)
 optimizer_ds = torch.optim.Adam(D_S.parameters(), lr=lr, betas=betas)
 optimizer_dw = torch.optim.Adam(D_W.parameters(), lr=lr, betas=betas)
 
-use_image_buffer = True
+use_image_buffer = False
 # buffer size =0 basically disables the image buffering
 # 50 is what paper uses if I recall correctly
 buffer_size = 50 if use_image_buffer else 0
@@ -16696,7 +16750,8 @@ for epoch in range(epochs):
     G_S2W.train()
     G_W2S.train()
     
-    for i, ((imgs_summer,_), (imgs_winter,_)) in enumerate(zip(dataloader_summer, dataloader_winter)):
+    for i, ((imgs_summer,_), (imgs_winter,_)) in enumerate(zip(dataloader_summer, 
+                                                               dataloader_winter)):
     
         imgs_summer = imgs_summer.to(device)
         imgs_winter = imgs_winter.to(device)
@@ -16709,26 +16764,35 @@ for epoch in range(epochs):
         # D_S identifies reconstructed image (using W2S(img_winter)) is 
         # fake summer (reconstructed form img_winter) 
         ds_preds_real = D_S(imgs_summer)
-        ds_loss_real = real_loss(ds_preds_real)
+        # ds_loss_real = real_loss(ds_preds_real)
         # now we generate a summer image and D_S should recognize as fake! 
         # note during discriminator update, we dont want generator to be updated so we detach()
         imgs_summer_fake = G_W2S(imgs_winter).detach()
         # use image pool
         imgs_summer_fake_pooled = fake_imgs_summer_pl.query(imgs_summer_fake).detach()
         ds_preds_fake = D_S(imgs_summer_fake_pooled)
-        ds_loss_fake = fake_loss(ds_preds_fake)
+        # ds_loss_fake = fake_loss(ds_preds_fake)
         # 0.5 to make discriminator slow down a bit so generator can catch up
-        loss_ds = (ds_loss_fake + ds_loss_real) * 0.5
-    
+        # loss_ds = (ds_loss_fake + ds_loss_real) * 0.5
+        loss_ds = discriminator_main_loss_cyclegan(ds_preds_real, ds_preds_fake)
+                   
         optimizer_ds.zero_grad()
         loss_ds.backward()
+        
+        # only apply penalty intermittently
+        if (i%r1_penalty_interval)==0:
+            penalty_s = discriminator_r1_penalty_loss_cyclegan(D_S, imgs_summer)
+            penalty_s *= r1_penalty_interval
+            # add the gradients to existing ones from main loss
+            penalty_s.backward()
+        
         optimizer_ds.step()
 
         # D_W section
         # now we will do the same with D_W. that is the imgs_winter are real, the opposite 
         # way we work with imgs_winter here but generate summer images!
         dw_preds_real = D_W(imgs_winter)
-        dw_loss_real = real_loss(dw_preds_real)
+        # dw_loss_real = real_loss(dw_preds_real)
         
         # now generate a winter image using S2W generator and imgs_summer (After all we want to
         # get summer and make it look like winter and vice versa!
@@ -16736,12 +16800,22 @@ for epoch in range(epochs):
         # use image pool
         imgs_winter_fake_pooled = fake_imgs_winter_pl.query(imgs_winter_fake).detach()
         dw_preds_fake = D_W(imgs_winter_fake_pooled)
-        dw_loss_fake = fake_loss(dw_preds_fake)
+        # dw_loss_fake = fake_loss(dw_preds_fake)
         # slow down the discriminator a bit so generator can catch up!
-        loss_dw = (dw_loss_real + dw_loss_fake) * 0.5
-        
+        # loss_dw = (dw_loss_real + dw_loss_fake) * 0.5
+        loss_dw = discriminator_main_loss_cyclegan(dw_preds_real, dw_preds_fake)
+               
         optimizer_dw.zero_grad()
         loss_dw.backward()
+        
+        # only apply penalty intermittently
+        if (i%r1_penalty_interval)==0:
+            penalty_w = discriminator_r1_penalty_loss_cyclegan(D_W, imgs_winter)
+            penalty_w *= r1_penalty_interval
+            # add the gradients to existing ones from main loss
+            penalty_w.backward()
+        
+        
         optimizer_dw.step()
 
         # Generator optimization stage
@@ -16754,7 +16828,8 @@ for epoch in range(epochs):
         # we turn winter to sumer and treat fake summer imgs as real
         g_imgs_summer_fake = G_W2S(imgs_winter)
         g_preds_fake_summer = D_S(g_imgs_summer_fake)
-        gloss_w2s = real_loss(g_preds_fake_summer)
+        # gloss_w2s = real_loss(g_preds_fake_summer)
+        gloss_w2s = generator_loss_cyclegan(g_imgs_summer_fake)
         
         # reconstruct the image back to winter using fake image
         recons_imgs_winter = G_S2W(g_imgs_summer_fake).to(device)
@@ -16764,7 +16839,8 @@ for epoch in range(epochs):
         # now do this with summer images and turn to winter and treat fake winter imgs as real
         g_imgs_winter_fake = G_S2W(imgs_summer)
         g_preds_fake_winter = D_W(g_imgs_winter_fake)
-        gloss_s2w = real_loss(g_preds_fake_winter)
+        # gloss_s2w = real_loss(g_preds_fake_winter)
+        gloss_s2w = generator_loss_cyclegan(g_imgs_winter_fake)
                
         # reconstruct the image back to summer
         recons_imgs_summer = G_W2S(g_imgs_winter_fake)
