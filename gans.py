@@ -1,13 +1,13 @@
-#%%
-# in the name of God the most compassionate the most merciful 
+#%% In the name of God the most compassionate the most merciful  
+# In the name of God the most compassionate the most merciful 
 # GAN
 # in this sction we will be learning about GANs and implement 
-# some of the prominent architectures a long the way
+# some of the prominent architectures along the way
 # we start off simple with a proof of concept and then go for
 # more advanced architectures and hopefully get a good idea 
 # about these types of generative networks.
 #
-#%%
+#%% imports
 # Here we are going to create a simple GAN network. a GAN network 
 # consists of a generator network and a discriminator network. 
 # the generator part's job is to get a vector of some length 
@@ -61,7 +61,7 @@ import matplotlib.animation as animation
 # Before we go on, make sure you DO read this :
 
 
-#%%
+#%% initial GAN implementations (Discriminator & Generator)
 # now lets define our models 
 # we need to implement two separate networks. one for
 # the discriminator and another for our generator network.
@@ -153,7 +153,7 @@ gen_output = generator(latent_vectors)
 
 print(f'{dis_output.shape=}')
 print(f'{gen_output.shape=}')
-#%%
+#%% GAN Loss implementations
 # for the loss criterion, we should know that our discriminator's job is to 
 # successfuly recognize which image is fake and which image is real!
 # so we should create labels for each image. the real images will have label=1
@@ -193,7 +193,7 @@ def fake_loss(disc_output):
     labels = torch.zeros_like(disc_output)
     fake_loss = criterion(disc_output, labels)
     return fake_loss
-#%%
+#%% training introduction and display_images() implementation
 #training. the training proceduere is like this, 
 # first we train our discriminator net, on real images, 
 # then get its loss, then imiediately, we generate some images
@@ -247,7 +247,7 @@ def display_images(imgs, cols=8, title='',unnormalize=False, save_path=None, fig
     
 imgs, labels = next(iter(train_loader))
 display_images(imgs, title='sample batch from mnist', save_path='./results/misc_visualizations/test.jpg')
-#%%
+#%% training vanilla gan
 # discriminators
 # mnist images are 28x28x1 so our flattened
 # image will be 784 dimensional hence 28x28!
@@ -351,15 +351,13 @@ for epoch in range(epochs):
                    title=f'Generated Images at Epoch {epoch}',
                    unnormalize=True)
 
-#%%
+#%% display the loss curves
 losses = np.array(losses)
 plt.plot(losses[:,0], label='Discriminator loss')
 plt.plot(losses[:,1], label='Generator loss')
 plt.title('Loss')
 plt.legend()
 plt.show()
-
-#%%
 
 #%%
 #DCGAN - Unsupervised representation learning With deep convolutional Generative adversarial networks - ICLR 2016
@@ -548,7 +546,7 @@ doutput = discriminatorcnn(x)
 goutput = generatorcnn(z)
 print(f'{doutput.shape=}')
 print(f'{goutput.shape=}') 
-#%%
+#%% vanilla gan loss with smoothing
 # losses follow what we already attempted with the exception that we 
 # now smooth it a bit better.
 def real_loss(preds_real, smooth=True, strict_DCGAN=False, device='cuda'):
@@ -809,7 +807,7 @@ generatorcnn.load_state_dict(states["state_dict"])
 generatorcnn.eval()
 print(f"Generator's weights for {dataset_name.upper()} loaded!")
 # 
-#%%
+#%% debugging remarks
 # remarks:
 # ok early on we faced high generator's loss and mode collapse
 # then we added data-aumentation and noise to images and beafed up
@@ -1595,7 +1593,7 @@ class DiscriminatorCNNConditional(nn.Module):
         
         # initialize weights
         self.apply(weights_init_dcgan)
-                
+
         
     def forward(self, x, y):
         b,c,h,w = x.shape
@@ -2646,9 +2644,9 @@ class DiscriminatorCNN(nn.Module):
                                  ConvBlock(hidden_size*2, hidden_size*4, 4, 2, 1, batch_norm=use_batchnorm, act_func=act),
                                  nn.Flatten(),
                                  nn.Linear(hidden_size*4 * 4*4, 1),)
-        
+
         self.apply(weights_init_dcgan)
-                
+
     def forward(self, x):
         return self.net(x)
 
@@ -2659,7 +2657,7 @@ class GeneratorCNN(nn.Module):
         self.z_size = z_size
         self.hidden_size = hidden_size
         self.act = act
-    
+
         self.net = nn.Sequential(nn.Linear(z_size, hidden_size*4 * 4*4),
                                  nn.BatchNorm1d(hidden_size*4* 4*4),
                                  nn.ReLU(inplace=True),
@@ -2668,10 +2666,10 @@ class GeneratorCNN(nn.Module):
                                  ConvTransBlock(hidden_size*2, hidden_size, 4, batch_norm=True, act_func=act),   #16x16
                                  ConvTransBlock(hidden_size, 3, 4, batch_norm=False, act_func=nn.Tanh()),              #32x32
                                  )
-        
+
         # initialize weights
         self.apply(weights_init_dcgan)
-        
+
     def forward(self, x): 
         return self.net(x)
 
@@ -3166,7 +3164,7 @@ class IS_FID_Calculator():
         # so to get real score we need to use large number of images!
         fid = mean_diff_squared + torch.trace(real_cov+fake_cov-2 * cov_prod_sqrt)
         return fid.item()
-#%%
+#%% simple FID test (cpu)
 imgs = torch.randn(size=(10,3,32,32))
 metric = IS_FID_Calculator()
 iss = metric.compute_IS(imgs)
@@ -3179,8 +3177,7 @@ print(f'{iss=}')
 print(f'{fids=}')
 del metric
 gc.collect()
-#%%
-# test with dataloaders and cuda
+#%% simple FID test with dataloaders and cuda
 dataset_name = 'celeba'
 split='train' # train, test, extra(for celeba)
 batch_size=64
@@ -3211,7 +3208,7 @@ print(f'{iss=}')
 print(f'{fids=}')
 del metric
 gc.collect()
-#%%
+#%% re implementing get_dataloader with extended dataset support
 # lets add a few more datasets 
 def get_transforms(resize_dims, data_augmentation, normalize):
     trans_list = []
@@ -3323,7 +3320,7 @@ train_loader = get_dataloader(dataset_name=dataset_name, resize_dims=(128,128),
 (imgs, labels) = next(iter(train_loader))
 display_images(imgs, title=f'{dataset_name} samples',cols=4)
 
-#%%
+#%% training loop with wgan-gp/lsgan
 def training_loop(discriminator, generator, train_loader, disc_optimizer:torch.optim.Adam, gen_optimizer,
                   epochs, interval, gen_update_interval, dataset_name, loss_type, 
                   lambda_factor=10, gen_num_samples = 64, use_batchnorm=False, wgan_range=(-0.01, 0.01),
@@ -16927,8 +16924,8 @@ def convert(img, winter_to_summer):
     display_image_grid(img, out,title=f'{"Winter2Summer" if winter_to_summer else "Summer2Winter"}')
 
 convert(sample_summer[:4], winter_to_summer=False)
-convert(sample_summer[:4], winter_to_summer=True)
+# convert(sample_summer[:4], winter_to_summer=True)
 convert(sample_winter[:4],winter_to_summer=True)
-convert(sample_winter[:4],winter_to_summer=False)
+# convert(sample_winter[:4],winter_to_summer=False)
 #%%
 # name only some other important GANs and then lets call it a day and go diffusion!
