@@ -1,6 +1,7 @@
-#%% [markdown] 
-# in the name of God the most compassionate the most merciful
-# Pytorch basics : introduction on tensors
+#%% In the name of God the most compassionate the most merciful
+# Pytorch basics : Introduction of tensors
+
+import ctypes
 import sys
 import os
 
@@ -9,224 +10,832 @@ import numpy as np
 import torch.utils
 import torch.version 
 
-# Here we are going to see what torch is and how similar it is to numpy!
+# Here we are going to lean about torch and how we can use it to train neural networks. 
+# basically we are going to see what torch is and how similar it is to numpy!
 # torch is a deep learning framework written in C/C++ that is used for 
 # training and working with deep neural networks.
 # 
-# What is Pytorch then? 
-# PyTorch is a Python package that provides two high-level features:
+# sidenote:
+# historically torch was a lua based framework for deeplearning, later on
+# it was reimplemented in C/C++ and was reintroduced as Pytorch, a python 
+# framework for deeplearning.
+# So PyTorch is the Python package that wraps around the torch library.
+# and it provides two high-level features:
 #   1.Tensor computation (like NumPy) with strong GPU acceleration
 #   2.Deep neural networks built on a tape-based autograd system
 # 
-# Basically PYtorch is the python wrapper for torch! 
-# You can reuse your favorite Python packages such as NumPy, SciPy and Cython to extend PyTorch when needed. 
-# In this section we are going to have an introduction concerning torch as a numpy replacement in working with tensors
+# Since its a normal python package, we can reuse our favorite 
+# Python packages such as NumPy, SciPy and Cython to extend it when needed. 
 # 
-# note that pytorch has added support for many numpy functions, 
-# so if you are familiar with numpy, then you'll love torch!
+# In this section we are going to get familiar with and learn about
+# torch and its echo system. since torch offers tensor computation
+# you'll see a lot of similarities in terms of function parity with 
+# numpy. 
+# (In fact pytorch tries to follow numpy and has has added support 
+# for many numpy functions, as its an stablished library and extensively
+# used for tensor operations). this makes working with
+# torch very pleasant if you already know Numpy, and also do porting
+# very easy.
+# 
 # lets see how we can ue pytorch in this sense!
 #%%
+# we are going to cover a few  sections and by the end of this chapter
+# you should have a basic understanding of how to use torch and tensors 
+# and ready to learn more advanced concepts about deeplearning training 
+# and implementation. 
+#
+# Section 1: What is a Tensor & How to Create Them
+# Section 1.1: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
+# Section 2: Essential Tensor Attributes 
+# Section 3: Tensor Indexing, Slicing, and Boolean Masking
+# Section 4: Device Management & Custom Defaults
+# Section 5: Precise Data-Type Control & Casting
+# Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+# Section 7: Tensor Operations (Math, Broadcasting & Reductions)
+# Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
+# Section 9: Seeding & Reproducibility (RNG Management)
+# Section 10: Advanced Memory Management on CUDA
+
+#%% Section 1: What is a Tensor and How to create one
+# 
 # What is a tensor? 
-# simply put, a tensor is a general name given to arrays.
+# Simply put, a tensor is a general name given to arrays.
 # we can think of a tensor as a multi-dimensional array, 
-# that generalizes the concepts of vectors and matrices. 
-# that is a tensor is really a fancy name for arrays 
-# its a generalized way of representing data with multiple dimensions or modes.
-# It is an extension of the concept of vectors (1D tensors) 
-# and matrices (2D tensors) to higher dimensions.
+# that generalizes the concepts of scalers(0D), vectors(1D)
+# ,matrices(2D) and higher dimensional structures. 
+# That is a tensor is really a fancy name for arrays 
+# its a generalized way of representing data with multiple
+# dimensions or modes.
 # So, whenever we talk about tensors, remember that 
 # it's simply a more flexible and encompassing term for arrays. 
+# 
+# We use tensors to represent all forms of data in 
+# Deep Learning (images, audio, text embeddings, etc.)
 #
-# why do we care about them? 
-# they are important to us for a few reasons. for one 
-# they are used to represent multi-dimensional data, such
-# as images, audio, text, etc in deeplearning (and machinelearning in general).
-# why do we use them like that you ask? 
-# becasue they enable us to efficiently do computation on large datasets and complex 
-# models which are typical for deeplearning. this the second reason, 
-# which happens to be one of the most crucial ones why we use them (becasue of parallel
-# computation which allows us to quickly and efficiently run algorithms that would take a 
-# huge amount of times if processed used normal cpu! we can use our gpus to run them which is
-# a great help!) 
-# 
-# sidenote:
-# a tensor can be 1 dimensional like a vector, 2 dimensional like a matrix or
-# as we'll soon see, more dimensional which is usually 
-# what we refer to as simply a [multi-dimensional] tensor!
-# we dont have a specific name for higher dimensional arrays, 
-# so instead we use the general term 'tensor' for them.
-# 
-# a tensor as you now know, can have any dimensions (1,2,3,...), but usually when you hear the term tensor,
-# it may refer to 3 and higher dimensional arrays(becasue if its 1d or 2d, we usually refer to them as vectors/matrices)
-#  
-# 
+# Why do we care about them? 
+# aside from the terminology nuiacense, whether we call these 
+# data structures arrays, or tensors, the real reason they
+# are important to us is they are used to represent multi-dimensional data,
+# such as images, audio, text, etc in deeplearning (and machinelearning in general)
+# and it allows us to use hardware acceleration (e.e. GPUs on our systems),
+# to efficiently do computation on them in the form of 
+# large datasets and complex models which are typical for deeplearning. 
+# This is the very reason, and the most crucial one why we use them.
+# the parallel computation offered by torch allows us to quickly
+# and efficiently run algorithms that would otherwise take a 
+# huge amount! 
+# we can use our GPUs to run operations on them and make deeplearning practical! 
 # 
 # Common tensor operations include element-wise operations like addition,
 # multiplication, etc., matrix multiplications, convolutions, and more.
 # Deep learning frameworks, such as PyTorch, Jax(replacement for tensorflow) and others,
-# provide optimized implementations of tensor operations, making it easier 
+# provide optimized implementations of tensor operations, making it very easy 
 # to build and train complex neural networks.
-# Here we are going to have a very crude introduction to some of these operations in pytorch
-# and familiarize ourselves with some features. 
-# note that usually they may not make much sense, until later on when we actually try to do something
-# meaningful with them, like implementing certain algorithms/operations/modules with them. 
-# they would make much more sense then, but to get there we need to have a basic idea.
-# this is essential for that basic idea!
 #
+# sidenote:
+# torch is the most used deeplearining framework in the world, especially among researchers
+# a great number of new papers in the field publish their implementations 
+# using torch, hence you can run/experiment with sota works readily when you know torch! 
+# 
+# sidenote:
+# a tensor can be 0 dimensional like a scaler(an ordinary number), 1 dimensional 
+# like a vector, 2 dimensional like a matrix or
+# as we'll soon see, more dimensional which is usually 
+# what we refer to as simply a [multi-dimensional] tensor!
+# we dont have a specific name for higher dimensional arrays, 
+# so instead we use the general term 'tensor' for them.
+#  
+# sidenote:(could this be confusing?remove it or leave it?)
+# a tensor as you now know, can have any dimensions (0,1,2,3,...),
+# but usually when you hear the term tensor,
+# it may refer to 3 and higher dimensional arrays(becasue if its 
+# 1d or 2d, we usually refer to them as vectors/matrices)
+# 
+# sidenote:(exessive?obvious?)
+# In torch/coding nomenclecture however, since tensor is the basic 
+# building block on which the whole process is based on -- its the
+# class that implements basically everything we use to train networks--
+# any dimensional object thats inherited from Tensor is called tensor!
+# so regardless of its dimensions we call them simply tensors!
+#  
+# 
+# Here we are going to have a very crude introduction to some of 
+# these operations in pytorch and familiarize ourselves with some features. 
+# 
+# note that usually they may not make much sense right now, 
+# but later on when we actually try to do something meaningful
+# with them, like implementing certain algorithms/operations/modules with them 
+# they would make much more sense. To get there we need to have a basic idea.
+# this is essential for that basic idea!
 #
 # Creating new tensors 
 # to create a new tensor we can use several appraoches. 
-# we can use the Tensor() class, or use functions such as zeros,ones,rand and empty to say a few.
+# we can use the Tensor() class, or use factory functions such as zeros(),
+# `ones()`,`rand()` and `empty()` to say a few.
 #  
-# lets create a tensor of size (5) , (2, 2), (3, 5, 6) with all zeros, ones, random values and finally no values
-t = torch.Tensor(size=(1,))
-t1_zeros = torch.zeros(size=(5,))
-t1_ones = torch.ones(size=(2,2))
-t1_rand = torch.rand(size=(2,2,2))
-t1_randn = torch.randn(size=(2,2,2))
-t1_empt = torch.empty(size=(2,2,2))
+# lets create a few tensors with pre defined shapes and default values
+# size (5), (2, 2), (3, 5, 6) using the functions we just learned about!
+# 
+t = torch.Tensor(size=(1,))              # Using uninitialized scaler 
+t1_zeros = torch.zeros(size=(5,))        # using all zeros 
+t1_ones = torch.ones(size=(2, 2))        # using all ones
+t1_rand = torch.rand(size=(2, 2, 2))     # Using uniform distribution [0,1]
+t1_randn = torch.randn(size=(2, 2, 2))   # Using normal distribution (mean=0, std=1)
+t1_empty = torch.empty(size=(2, 2, 2))   # Using uninitialized memory
 
-print(f'zeros: {t1_zeros}')
-print(f'ones: {t1_ones}')
-print(f'rand: {t1_rand}')
-print(f'empt: {t1_empt}')
-print(t)
+print(f'Tensor(1): {t} ')
+print(f'Zeros:     {t1_zeros}')
+print(f'Ones:      {t1_ones}')
+print(f'Rand:      {t1_rand}')
+print(f'Randn:     {t1_rand}')
+print(f'Empty:     {t1_empty}')
 
-# we use torch.zeros() when we want a tensor to have zero values everywhere.
-# likewise if we want to have a tensor with 1 as values we use torch.ones()
-# we use torch.rand() to create a tensor with random values from a uniform distribution
-# like numpy, torch offers other variants, such as as torch.randn for normal distribution sampling
-# torch.randint to generate random integer numbers and much more. 
-# we may also want to create a tensor quickly, without initializing it with anything really, in tihs case
-# we use torch.empty() which creates an empty tensor in the sense that its not initialized so it has whatever
+# We use `torch.zeros()` when we want a tensor to have zero values everywhere.
+# likewise if we want to have a tensor with 1 as values we use `torch.ones()`
+# They come handy when we want to do operations such as add, multiplication,
+# etc or do masking which we will shortly see.
+# 
+# we use `torch.rand()` to create a tensor with random values from a uniform distribution
+# like numpy, torch offers other variants, such as as `torch.randn` for normal distribution
+# sampling, `torch.randint()` to generate random integer numbers and much more. 
+# 
+# We may also want to create a tensor quickly, without initializing it with anything really, in this case
+# we use `torch.empty()` which creates an empty tensor in the sense that its not initialized so it has whatever
 # values that happens to be on the memory where it points to. its not empty(as in having all values equals to 0)
-# its empty in the sense, its not preinitialized. this is especially useful for cases where we want to fill a tensor
+# its empty in the sense, its not pre-initialized. this is especially useful for cases where we want to fill a tensor
 # with some calculations, and thus it doesnt make sense to initialize it with a value to only be replaced later, which
-# would result in unnecessary computation overhead and slower speed! its equivalent to doing torch.Tensor()
+# would result in unnecessary computation overhead and slower speed! its equivalent to doing `torch.Tensor()`
 # 
 
-# what if we want our tensors to have specific data!
-# like we have our own data and need to create a tensor for it how do we do that? 
-# there are several ways to do this, but the simplest one is 
-# to simply send our data using list or a numpy array! 
-# here we are creating a tensor from a list of numbers (1, 2, 3, 4)!
-tensor_1 = torch.tensor([1, 2, 3, 4])
-print(f'{tensor_1}')
+# What if we want our tensors to have specific data!
+# like we have our own data and need to create a tensor for it
+# how do we do that? 
+# There are several ways to do this, but the simplest one is 
+# to simply send our data using a list or a numpy array! 
+# 
+# Here we are creating a tensor from a raw python list of numbers (1, 2, 3, 4)!
+list_data = [1,2,3,4]
+tensor_from_list = torch.tensor(list_data)
+print(f'Tensor from list:   {tensor_from_list}')
 
-# using an numpy array 
+# using a numpy array 
 array_np = np.random.rand(4)
-tensor_2 = torch.tensor(array_np)
-print(f'np array: {array_np}')
-print(f'torch tensor: {tensor_2}')
+tensor_from_np_copy = torch.tensor(array_np)
+print(f'Numpy array:            {array_np}')
+print(f'Pytorch tensor(copied): {tensor_from_np_copy}')
 
 # sidenote, 
-# note that we are using torch.tensor() (lowercase function, and not the class Tensor())
-# torch.Tensor is the main tensor class. 
-# All tensors are instances of torch.Tensor. 
-# When we call torch.Tensor(), we get an empty tensor without any data. 
-# On the other hand, torch.tensor() is a function that constructs a tensor with data.
-# and it infers the data type automatically. 
+# note that we are using `torch.tensor()` (lowercase function, and not the class Tensor())
+# `torch.Tensor` is the base tensor class. 
+# All tensors are instances of `torch.Tensor`. 
+# When we call `torch.Tensor()`, we get an empty tensor without any data. 
+# On the other hand, `torch.tensor()` is a factory function that constructs
+# a tensor with the given data and it infers the data type automatically.
+ 
 # For example consider the following examples:
-print(f'{torch.Tensor(10)=}') #returns an uninitialized FloatTensor with 10 values.
-print(f'{torch.tensor(10)=}') #returns a LongTensor containing a single value (10) 
+print(f'torch.Tensor(10): {torch.Tensor(10)}')  # Returns an uninitialized FloatTensor with 10 values.
+print(f'torch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor containing a single value (10)
+ 
+# So `torch.Tensor` is the main class constructor when called with a shape/size, 
+# it returns an uninitialized `FloatTensor` (equivalent to torch.empty).
+# however `torch.tensor` is a factory function that expects data as its argument and infers the type.
 
-
-# looking at the previous example we see that there is a difference in the number of decimals,
+# Looking at the previous example we see that 
+# there is a difference in the number of decimals,
 # we can use printoptions to get what we want!
 torch.set_printoptions(precision=8)
-print(f'np array: {array_np}')
-print(f'torch tensor: {tensor_2}')
+np.set_printoptions(precision=8)
+
+print(f'Numpy Array:         {array_np}')
+print(f'Torch Tensor-Copied: {tensor_from_np_copy}')
 
 # how can we reset it back to the defaults? easy we can use default profile and just go back to defaul!
 # as it turns out, we can use other profiles (short, full) as well for our uses!
 torch.set_printoptions(profile='default')
-print(f'np: {array_np}')
-print(f'np array: {tensor_2}')
+np.set_printoptions(precision=None)
 
-# by the way we can directly create a new tensor from a numpy array! 
-# like  this
-# unlike the previous way, this uses the same underlying numpy array so no copying takes place!
-# this is the way to go for large numpy arrays to prevent massive overhead due to copying time!
-tensor_from_numpy = torch.from_numpy(array_np)
-print(f'tensor_from_numpy: {tensor_from_numpy}')
+print(f'Numpy Array:   {array_np}')
+print(f'Shared Tensor: {tensor_from_np_copy}')
 
-# intrestingly we can access the underlying numpy array from a tensor, using. numpy() method!
-print(f'data_2(torch tensor): {tensor_2}')
-print(f'data_2.numpy()(converted to numpy!): {tensor_2.numpy()}')
-# if we look closely we can see that both the numpy and torch array point to the same memory location
-# when we use torch.from_numpy() to create the tensor, 
-# if we change the value in the torchtensor, the values in the numpy_array will change and vice versa,
-# but this will not be the case when we use torch.tensor() which creates a copy from the given data!
-print(f'torch.from_numpy() shares the underlying data')
-tensor_from_numpy[0]=999
+# Section 2: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
+# We can directly create a new tensor from a numpy array! 
+# unlike the previous way, this uses the same underlying
+# numpy array so no copying takes place!
+shared_tensor = torch.from_numpy(array_np)
+print(f'Shared tensor from numpy: {shared_tensor}\n')
+
+# this is the way to go for large numpy arrays to prevent massive 
+# overhead due to copying time!
+
+# Intrestingly we can access the underlying numpy array
+# from any tensor, using its numpy() method!
+
+# this is how sharing the underlying memory looks:
+print('Before modification:')
+print(f'  NumPy Array:   {array_np}')
+print(f'  Shared tensor: {shared_tensor}\n')
+
+# if we look closely we can see that both the numpy and
+# torch array point to the same memory location when we 
+# use `torch.from_numpy()` to create the tensor, 
+# if we change the value in the torch tensor, the values
+# in the numpy array will change also and vice versa.
+# However this will not be the case when we use torch.tensor()
+# which creates a copy from the given data!
+
+# print('Shared tensor shares the underlying data with array_np')
+shared_tensor[0] = 999
+print('After modifying shared_tensor(PyTorch side):')
+print(f'  NumPy Array:   {array_np}')
+print(f'  Shared tensor: {shared_tensor}\n')
+
 # now lets change a value in array_npy
 array_np[0] = -999
-print(f'{tensor_from_numpy[0]=}')
-print(f'{array_np[0] == tensor_from_numpy[0]=}')
-print(f'torch.tensor() creates a copy of the numpy data')
+print('After modifying array_np(NumPy side):')
+print(f'  NumPy Array:   {array_np}')
+print(f'  Shared Tensor: {shared_tensor}\n')
+
+# we can see this by checking their storage address as well
+numpy_address = array_np.ctypes.data
+tensor_address = shared_tensor.data_ptr()
+
+print('Numpy Data address vs Shared Tensor data address')
+print(f'  NumPy data address:  {numpy_address}')
+print(f'  Tensor data address: {tensor_address}')
+print(f'  Shared memory ?      {numpy_address == tensor_address}\n')
+
+# However as we mentioned earlier, torch.tensor() does not!
+print('Numpy Data vs torch.tensor() data')
 array_np[0] = 5
-print(f'{array_np[0] == tensor_2[0]=}')
+tensor_cpy_address = tensor_from_np_copy.data_ptr()
+print('After setting array_np[0] = 5')
+print(f'  NumPy Array:         {array_np}')
+print(f'  Torch.tensor():      {tensor_from_np_copy}\n')
 
-#%%
+print('Numpy Data address vs torch.tensor() data address')
+print(f'  NumPy data address:  {numpy_address}')
+print(f'  Tensor data address: {tensor_cpy_address}')
+print(f'  Shared memory ?      {numpy_address == tensor_cpy_address}\n')
 
-# Ok, so we just learnt how to create tensors. in the beginning we said we can leverage GPU! 
-# so lets see how we can do that! but before that, we need to check if GPU support is available to us!
-# for that we use torch.cuda.is_available() function. torch.cuda module offers a slew of goodies related
-# to the gpu, (cuda is for nvidia cards, but it works for other cards such as AMDs that support rocm as well
-# and you dont need to change anything. you can always check torch.cuda
+# As we said earlier we can convert a tensor back to numpy
+# and this operation also shares the underlying memory
+print('Sharing Memory between torch tensor and numpy with .numpy()')
+tensor_to_convert = torch.ones((3,3))
+np_from_tensor = tensor_to_convert.numpy() # shares memory!
+# modify one to see the effect on both
+tensor_to_convert *= 2
+print(f'  Torch Tensor: {tensor_to_convert}')
+print(f'  Numpy Array(using tensor.numpy()): {np_from_tensor}\n')
+print(f'Is memory shared back to NumPy? {tensor_to_convert.data_ptr() == np_from_tensor.ctypes.data}')
+#%% Section 2: Essential Tensor Attributes 
+# Before we dive into the operations, we need to inspect what makes up a Tensor.
+# Every PyTorch tensor carries metadata that describes how it is stored and
+# how PyTorch should treat it during computation. 
+# These are the several important attributes and methods that we'll 
+# encounter constantly when we deal with training/inference of a neural
+# network, but 4 of them are the most used:
 # 
-print(f'is GPU enabled? : {torch.cuda.is_available()}')
-# so as it turns out, all tensors, can have two modes, they can either be on the CPU or the GPU
-# the tensors we created so far are in CPU mode. to see on which device our tensors are created
-# and will run we simply use the device property! 
-print(f'data_2 is created on : {tensor_2.device.type}')
+# shape (or .size()): it describes the dimensions of the tensor.
+#      For example, a tensor with shape (3, 4) has 3 rows and 4 columns.
+#      Shape determines whether operations such as addition, multiplication,
+#      reshaping, and broadcasting are valid.
+#
+# dtype: specifies the type of values stored in the tensor (float32, int64,
+#       bool, etc). The data type affects memory usage, numerical precision,
+#       and which operations are permitted.
+#
+# device: indicates where the tensor resides: CPU, NVIDIA/AMD(through ROCM) GPU (CUDA),
+#       Apple Silicon GPU (MPS), and so on. Operations can only be performed
+#       between tensors on the same device.
+#
+# requires_grad: A boolean flag that tells PyTorch's Autograd engine whether to record
+#       operations on this tensor. During neural network training, model
+#       parameters usually have requires_grad=True so gradients can be computed
+#       automatically during backpropagation.
+#
+ 
+tensor = torch.randn(size=(3, 4), requires_grad=True)
+print(f'Tensor Shape (attribute): {tensor.shape}')
+print(f'Tensor Size (method):     {tensor.size()}')
+print(f'Tensor Data Type:         {tensor.dtype}')
+print(f'Tensor Device:            {tensor.device}')
+print(f'Requires Gradient?        {tensor.requires_grad}')
 
-# so how do we move or define a new tensor or an existing one from one device to another?
-# we can easily do that using .to(), .cpu() or .cuda() methods. 
-# .cuda() as the name implies, puts the tensor on the GPU! 
-tensor_2 = tensor_2.cuda()
-print(f'data_2 device : {tensor_2.device.type}')
+# There are other attributes and methods, that are as useful/important 
+# and are extensively used during training/inference process.
+# below we can see several of the mostly used ones:
+
+# Total number of elements in the tensor.
+# numel() and its alias nelement() return the total number
+# of values in a tensor regardless of how those values are 
+# arranged accross dimensions.
+# this is useful for a variety of reasons such as :
+# counting the total number of values in a tensor
+# or checking whether a reshape operation is possible
+# (ie. the number of elements must remain the same)
+# another thing this method is used for is for counting
+# model parameters.
+print(f'Tensor elements count:                 {tensor.numel()}')
+print(f'Tensor elements count(alias):          {tensor.nelement()}')
+
+# TODO Use properties instead of attributes? or keep using attribute?in python im more accustomed to attribute myself so thats why I used them here
+# but properties seem better
+
+# Number of dimensions (also called the tensor's rank).
+# This is one the most commonly used tensor attributes
+# its especially useful when we want to check whether 
+# a tensor has the expected number of dimension or when
+# writting code that works with tensors of different ranks
+# a scalar has 0 dimensions, a vector has 1, a matrix has 2, etc.
+print(f'Number of dimensions (ndim):           {tensor.ndim}')
+print(f'Number of dimensions (dim method):     {tensor.dim()}')
+
+# The memory layout describes how tensor elements are stored.
+# For almost all tensors(dense) we'll encounter, this will is torch.strided.
+# Almost all dense tensors use `torch.strided`, which means they
+# store elements in contiguous or strided memory. Other layouts,
+# such as sparse layouts, exist for specialized use cases but are
+# much less common.
+print(f'Tensor layout:                         {tensor.layout}')
+
+# Another attribute that we may encounter a lot especially when things go 
+# wrong, in error messages is the contiguous attribute of a tensor. 
+# A contiguous tensor is stored in one uninterrupted block of memory.
+# Many PyTorch operations are faster on contiguous tensors, and some
+# operations (such as view()) require contiguity otherwise we face error!
+print(f'Is tensor contiguous?                  {tensor.is_contiguous()}')
+
+# grad_fn attribute stores the operation that created this tensor.
+# note that leaf tensors created directly by the user have grad_fn=None.
+print(f'Gradient function(grad_fn):                     {tensor.grad_fn}')
+
+# .grad attribute stores the computed gradients for leaf tensors, 
+# after calling backward().
+# tensor is a leaf node but since Backward() hasn't been called yet,
+# this is currently None.
+print(f'Gradient currently stored:             {tensor.grad}')
+
+# is_leaf attribute specifies says whether the tensor is directly created 
+# by us (like weights, biases, basically model parameters) or is an
+# intermediate tensor as a result of an operation. 
+# Pytorch only stores the gradients for leaf nodes -(nodes starting
+# a graph) and it discards the gradients for non-leaf tensors.
+# A leaf tensor is a normal tensor like any other, however the 
+# distinctions is there purely out of a technicality in having
+# more efficient vram usage during traings.
+# We need to calculate gradients for all tensors in a network 
+# that have requires_grad = True. simply storing all of the gradients
+# for all tensors like that, leads to excessive amount of vram.
+# Instead, In practice libraries such as PyTorch use a smart approach
+# in which instead of storing the gradients for every single tensor 
+# in the graph it only stores the gradients for the leaf nodes, that 
+# the optimizers require for tuning and optimization. the rest of the
+# intermediat/non-leaf nodes (that get created as the result of operations
+# involved) will have their gradients calculated 
+# dynamically/on the fly during backpropagation and then discared 
+# to save memory (for non-leaf nodes Pytorch instead records how
+# the tensor was created, i.e. stores the function that yielded
+# that tensor in grad_fn and any other piece of information thats
+# required for computing gradients and computes the gradients using
+# that during backprop)
+# 
+# (so leaf tensors are the tensors we created that require gradients
+# PyTorch stores .grad only for them by default because they are the
+# tensors that optimizers update, while gradients of intermediate 
+# (non-leaf) tensors are computed on the fly and discarded to save
+# memory.) 
+print(f'Is tensor a leaf node:                 {tensor.is_leaf}')
+
+# When we run an operation and do a backward it gets filled 
+# note upon entering 
+out = tensor + 1 
+
+# sidenote:
+# since out is not a scalar, calling backward directly would raise an error
+# like 'RuntimeError: grad can be implicitly created only for scalar outputs.'
+# what we do during training is that we typically reduce the model's outputs
+# to a single scalar loss (e.g. using sum or mean or a loss function, etc)
+# this scalar serves as the starting point of the backpropagatopn process.
+# Otherwise we need to provide the initial (upstream) gradients ourselves so
+# that pytorch can then propagate this back and calculate all other gradients
+# with respect to them. 
+# since we are not training, and dont need a loss, we can use sum() to provide
+# the initial gradients. you may also see, some people, prefer a more verbose/explicit
+# approach by sending all ones with the same shape as the output tensor doing backward()
+# and send that as gradinets to backward() that is out.backward(gradient=torch.ones_like(out)! 
+# its the exact equivalent to out.sum().backward() since the gradient of a sum operation is ones!
+# hence why we chose the shorter method using sum()
+# 
+loss = out.sum()
+loss.backward()
+# or equivalently 
+# out.backward(gradient=torch.ones_like(out))
+
+print('\nAfter forming a computation graph using tensor + 1')
+print(f'  Is tensor Leaf node?                 {tensor.is_leaf}')
+print(f'  Gradient for tensor:                 {tensor.grad}')
+print(f'\n  Is out leaf node?                    {out.is_leaf}')
+print(f'  Gradient for non-leaf node:          {out.grad}')
+print(f'  Non-leaf grad_fn:                    {out.grad_fn}')
+
+# sidenote:
+# note that had we used an inplace operation on tensor, like tensor +=1
+# we would have faced an error. we can not do inplace changes to leaf nodes
+# that require grads. 
+# 
+
+# note2:
+# To force Pytorch to store gradients for non-leaf(intermediate) nodes
+# we can use retain_grad() function. note retain_grad() doesnt
+# follow the the inplace naming convenion for tensors in using underscore(_) to 
+# denote inplace changes, so it actually does change the tensor attribute 
+# in place!( more explain in a moment)
+# to query the grad retention status, we use the `retains_grad` attribute!
+
+out2 = tensor + 1
+out2.retain_grad()
+out2.sum().backward()
+
+print('\nForcing grad population for non-leaf node(out2) using retain_grad')
+print(f'  Is out2 leaf node?                   {out2.is_leaf}')
+print(f'  Does out2 retains gradients:         {out2.retains_grad}')
+print(f'  Gradient for non-leaf node:          {out2.grad}')
+print(f'  Non-leaf grad_fn:                    {out2.grad_fn}\n')
+
+# Memory occupied by a single element.
+# this method returns the size (amount of bytes) a dtype occupies
+# for example, float32 occupies 4 bytes, float64 occupies 8 bytes,
+# int64 occupies 8 bytes, and so on.
+print(f'Element size (bytes):                  {tensor.element_size()}')
+
+# we can use this to calculate the amount of memory a tensor's data buffer
+# takes. note that there are more than just a simple data buffer in a tensor.
+# PyTorch stores metadata for each tensor and theres also 
+# Python object overhead, gradients, or allocator bookkeeping as well so 
+# in reality the actual memory footprint is larger.
+print(f'Total memory (bytes):                  {tensor.element_size() * tensor.numel()}')
+
+# we can inspect a tensor's dtype directly (e.g. float32, int64, etc),
+# but Pytorch also provides a conviniet method named is_floating_point()
+# 
+# rather than checking for a specific floating-point dtype directly, this
+# method returns True for any floating-point tensor (float16, bfloat16, float32,...)
+# This is useful because many mathamatical operations and layers expect floating point inputs!
+print(f'Is floating-point tensor?              {tensor.is_floating_point()}')
+
+# Also remember that tensor conversion methods always return new tensors.
+# They never modify the original one inplace
+# Here we convert the tensor from float32 (the default) to float64.
+tensor_fp64 = tensor.double()
+
+print("\nData type conversion:")
+print(f'Original dtype:                        {tensor.dtype}')
+print(f'Converted dtype:                       {tensor_fp64.dtype}')
+print(f'Original tensor unchanged?             {tensor.dtype == torch.float32}')
+
+# sidenote:
+# Most Pytorch `tensor` operations are not inplace, instead they return a new tensor
+# and leave the original unchanged.
+# By convention, tensor methods that modify a tensor's *contents* inplace end
+# with a trailing underscore(_) such as tensor.add_, tensor.zero_, etc
+# 
+# some methods such as retain_grad() modify the tensor's autograd behavior
+# or its internal state (i.e. flags) rather than its data, so they do not 
+# necessarily follow this naming convention
+# 
+# the underscore convention is about in-place tensor mutation only, 
+# not "any method that changes anything about the object"!
+
+# so in a nutshell: methods with an trailing underscore like foo_() modify
+# the tensor's data/storage in place.
+# the others usually dont modify the *data*, but may very well still change
+# metadata or autograd state like retain_grad().
+# note detach_() is underscored because it changes autograd state inplace, like requires_grad_()
+
+# out.requires_grad_(True)   # modifies tensor state (underscore)
+# out.add_(1)                # modifies tensor data (underscore)
+# out.copy_(tensor)          # modifies tensor data (underscore)
+# out.retain_grad()          # modifies autograd behavior (no underscore)
+# 
+# likewise, there are other *stateful* methods without underscores such as:
+# 
+# tensor.share_memory_()   # underscore (storage-related)
+# module.cpu()             # changes module state, no underscore
+# module.cuda()            # changes module state, no underscore
+# module.train()           # changes module state, no underscore
+# module.eval()            # changes module state, no underscore
+
+#%% Section 3: Tensor Indexing, Slicing, and Boolean Masking
+# When we are dealing with tensors and large datasets, we need 
+# effective ways to carry out different tasks. we constantly
+# find ourselves in scenarios where extracting, inspecting and 
+# modifying specific regions of tensors are heavily involved.
+# In this regard, Pytorch follows Python's indexing rules and
+# extends them with NumPy-style advanced indexing, making it 
+# both very intuitive and very powerful.
+
+idx_tensor = torch.tensor([[10, 20, 30],
+                           [40, 50, 60],
+                           [70, 80, 90]])
+
+print(f'Original 3x3 Tensor:\n{idx_tensor}')
+
+# 4.1 Basic indexing 
+# Indexing starts at 0, just like Python lists.
+print(f'\nElement at row 1, column 2:          {idx_tensor[1, 2]}')
+
+# Entire row
+print(f'First row:                             {idx_tensor[0]}')
+
+# Entire column
+print(f'Last column:                           {idx_tensor[:, -1]}')
+
+# Negative indexing counts from the end.
+print(f'Bottom-right element:                  {idx_tensor[-1, -1]}')
+
+# 4.2 Slicing
+# The syntax is identical to Python lists:
+# start : stop : step
+
+print(f'\nFirst two rows:\n{idx_tensor[:2]}')
+print(f'Last two rows:\n{idx_tensor[1:]}')
+print(f'First two columns:\n{idx_tensor[:, :2]}')
+print(f'Every other column:\n{idx_tensor[:, ::2]}')
+
+# note slicing returns a view whenerver possible rather than
+# copying the underlying data
+sub_tensor = idx_tensor[:2, :2]
+
+print(f'\nTop-left 2x2 block:\n{sub_tensor}')
+
+# 4.3 Fancy Indexing
+# Just like Numpy, Pytorch allows us to use arbitrary rows and columns 
+# using integer tensors or Python lists. This makes many indexing
+# operations concise and expressive, and easy to read.
+# Not only that, because the indexing operation is performed by 
+# PyTorch's optimized backend(i.e. C/C++) rather than by the 
+# Python interpreter, its much faster!
+# we will be using fancy indexing extensively throughout this book.
+
+print(f'\nRows 0 and 2:\n{idx_tensor[[0, 2]]}')
+print(f'Columns 0 and 2:\n{idx_tensor[:, [0, 2]]}')
+
+# 4.4 Boolean Masking
+# When it comes to [large] tensor based operations, we generally want to operate
+# on entire tensors rather than individual elements. Vectorized tensor 
+# operations are significantly faster than explicit Python loops because
+# they are implemented in optimized C/C++ and can take advantage of 
+# hardware acceleration.
+#
+# Boolean masking is one of the most useful vectorized techniques. It lets
+# us select or modify only the elements satisfying a condition without
+# writing loops. A few common examples include ignoring padded tokens, 
+# selecting positive samples, filtering detections above a confidence
+# threshold, and removing invalid values.
+
+# This creates a tensor mask, with the same shape as `idx_tensor`
+# where each entry that is greater than 45 will be set to `True`
+# and `False` otherwise.
+mask = idx_tensor > 45
+print(f'\nBoolean mask (values > 45):\n{mask}')
+# Now using this mask, we can extract only the values that satisfy our 
+# condition i.e. > 45
+filtered = idx_tensor[mask]
+
+# note that boolean indexing always returns a 1-D tensor containing
+# all selected elements.
+print(f'Filtered elements:                     {filtered}')
+
+# 4.5 Modifying values using masks
+# Boolean masks can also be used for in-place modification.
+# Instead of filtering elements, we can also modify them directly.
+# This is a common technique for clipping values, removing invalid
+# entries, or masking unwanted regions before further computation.
+idx_tensor[idx_tensor < 40] = 0
+
+print(f'\nTensor after replacing values < 40 with 0:\n{idx_tensor}')
+
+# sidenote:
+# Basic slicing usually returns a *view* of the original tensor,
+# whereas advanced indexing (integer lists or boolean masks)
+# returns a new tensor.
+
+
+
+
+
+
+#%% Section 4: Device Management & Custom Defaults
+# Earlier, we learned how to create tensors. Those tensors have all lived on 
+# the CPU so far. However, one of PyTorch's biggest strengths is its ability 
+# to execute tensor operations on hardware accelerators, such as GPUs. 
+# Before we can move our tensors to an accelarator device, we first need to
+# determine whether one is available.
+
+# In this section, we'll learn how to check for accelerator support and inspect
+# the device on which a tensor resides.
+
+#sidenote:
+# We used the term "accelerator" instead of "GPU" because unlike the early
+# days of Pytorch when it only supported Nvidia GPUs, PyTorch now supports 
+# several kinds of hardware designed to speed up tensor operations, aka accelerators!
+# aside from CPU, which is the default device, Pytorch currently supports 
+# the following accelerator devices:
+#
+# - CUDA (NVIDIA GPUs): The most common accelerator you'll see in PyTorch
+#   tutorials and industery. NVIDIA GPUs are the most commonly used acceraltor
+#   both on consumer level GPUs and Server GPUS. They have thousands 
+#   processing cores that can execute many operations in
+#   parallel, making them orders of magnitude faster than CPUs for 
+#   training and running neural networks.
+#
+# - MPS (Apple Silicon): If you're using a recent Mac with an M-series chip,
+#   PyTorch can use Apple's Metal Performance Shaders (MPS) backend to take
+#   advantage of the integrated GPU.
+#
+# - ROCm (AMD GPUs): ROCm is AMD's equivalent of CUDA. If you have a supported
+#   AMD GPU, PyTorch can use the ROCm platform to accelerate tensor operations
+#   in much the same way that CUDA does on NVIDIA hardware. 
+#
+# - XPU (Intel GPUs): PyTorch also supports supported Intel GPUs through the
+#   XPU device type. Under the hood, it uses Intel's oneAPI software stack,
+#   but from your code, you simply move tensors to the "xpu" device.
+#
+# Besides these devices, PyTorch also includes optimized libraries such as
+# XNNPACK, MKL, and cuDNN. These aren't separate devices, instead they make
+# operations on a given device (such as the CPU or GPU) run faster behind the
+# scenes.
+#
+# Moreover, the nice thing is that, in most cases, your PyTorch code barely 
+# changes. you simply move your tensors (and later, your models) to whichever
+# device is available, and PyTorch takes care of running the computations there.
+# 
+# Before we can use an accelerator, we first need to determine which ones are
+# available on our machine. 
+
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"MPS available:  {torch.backends.mps.is_available()}")
+print(f"XPU available:  {hasattr(torch, 'xpu') and torch.xpu.is_available()}")
+
+# sidenote:
+# One interesting detail is that ROCm is not a separate device type in PyTorch.
+# PyTorch uses the same "cuda" device interface for both NVIDIA CUDA and AMD ROCm.
+# On a ROCm build of PyTorch, torch.device("cuda") refers to an AMD GPU, not an 
+# NVIDIA GPU.
+#
+# This is because PyTorch's GPU backend was originally built around the CUDA API,
+# and the ROCm backend implements the same interface for compatibility. As a result,
+# you still write device="cuda" in your code when using a ROCm-compatible AMD GPU.
+
+# On my machine, it prints the following outputs:
+# 
+# > CUDA available: True
+# > MPS available:  False
+# > XPU available:  False
+
+# To see on which device our tensors are created
+# and run we simply use the `.device` property!
+print(f'tensor is created on : {tensor.device}')
+
+# On my machine it prints :
+# > tensor is created on : cuda:0
+#
+# Notice that `.device` returns `cuda:0` instead of just `cuda`.
+# The number identifies the specific accelerator being used.
+# This is because some machines have more than one accelerator.
+# For example, a workstation might have two NVIDIA GPUs, or a
+# server might have eight or more GPUs for training large models.
+# For this reason, Pytorch assigns an index to each accelerator:
+#   cuda:0    # First GPU
+#   cuda:1    # Second GPU
+#   cuda:2    # Third GPU
+#   ...
+# We can choose a specific device by its index:
+#
+# device = torch.device("cuda:1")
+# x = torch.randn(3, 3, device=device)
+#
+# we also simply write "cuda", and it will work because PyTorch 
+# uses the first GPU ("cuda:0") by default.
+#
+# We'll use only a single accelerator throughout this book, since the vast
+# majority of PyTorch code works the same regardless of how many GPUs are
+# installed.
+#
+# To get the general device name without any index, we can use `.device.type`
+# property. This will allow us to simply get the device *type* like 'cpu','cuda'
+# instead of its specific device id, i.e. "cuda:0", "xpu:1", etc.
+
+# how do we move or define a new tensor or an existing one
+# from one device to another?
+# We can easily do that using .to(), method. 
+# PyTorch also provides convenience methods such as .cuda() and .cpu(). 
+# `.cuda()` as the name implies, puts the tensor on the GPU and `.cpu()`
+# does the same on CPU! note if we dont specify a device index to cuda(),
+# it will use the first device.
+# 
+# Throughout this book, we'll prefer .to(device) because it works 
+# regardless of whether you're using CUDA, MPS, XPU, or just the CPU.
+
+tensor = tensor.cuda()
+print(f'tensor device : {tensor.device.type}')
 
 # similarly .cpu() puts the tnesor back to the cpu!
-tensor_2 = tensor_2.cpu()
-print(f'data_2 device : {tensor_2.device.type}')
+tensor = tensor.cpu()
+print(f'tensor device : {tensor.device.type}')
 
-# we can do better, and based on our system for example decide if a tensor can use gpu or not!
+# If we want to create a tensor on specific device in 
+# the definition we simply set the device parameter! 
+# like device='cuda' or 'cuda:0'.
+tensor = torch.rand(size=(2,2), device='cuda:0') # or device = 0
+print(f'tensor device: {tensor.device}')
+
+# Note we can also use the index to the accelerator device
+# without hardcoding the device type! 
+tensor = torch.rand(size=(2,2), device=0) 
+print(f'tensor device: {tensor.device}')
+
+# We can do better, and based on our machine for example decide
+# if a tensor can use hardware acceleration on GPU or not!
+
+# We can specify a device using the torch.device explicitly
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# or simply just 
+# or simply use the string counterpart 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# and then use .to() method to transfer the data to the desired device
-tensor_2 = tensor_2.to(device)
-print(f'data_2 device : {tensor_2.device.type}')
 
-# now if we want to create a tensor on specific device in the definition we simply
-# set the device parameter! like device='cuda' or 'cuda:0'.
-# the 0 here denotes the specific GPU on our system. if we have only 1, we can simply 
-# use 'cuda', if we want to use a specific GPU, then we use its respective index!
-data_3 = torch.rand(size=(2,2), device='cuda:0') # or device = 0
-print(f'data_3 device: {data_3.device}')
+# A much better way is to make this device-agnostic and
+# make the code dynamically chose whats available on the machine
+ 
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+elif hasattr(torch, "xpu") and torch.xpu.is_available():
+    device = "xpu"
+else:
+    device = "cpu"
+
+# and then use .to() method to transfer the data to the desired device
+tensor = tensor.to(device)
+print(f'tensor device : {tensor.device.type}')
 
 # how do we get how many gpus are available on our system? 
 # easy we can use cuda.device_count(). 
 # how do we know which index belongs to which GPU then? 
 # we simply use cuda.get_device_name(idx) for that!
-from torch import cuda
-gpu_count = cuda.device_count()
+
+gpu_count = torch.cuda.device_count()
 print(f'all gpus available : {gpu_count}')
-print(f'gpu name : {cuda.get_device_name(0)}')
-# to see a specific GPU's capabilities we can simply use cuda.get_device_capability(idx)
-print(f'gpu capability : {cuda.get_device_capability(0)}')
+print(f'gpu name : {torch.cuda.get_device_name(0)}')
+# to see a specific GPU's capabilities we can simply 
+# use cuda.get_device_capability(idx)
+print(f'gpu capability : {torch.cuda.get_device_capability(0)}')
+
+# so to list all available GPUS and their capabilities we can simply do:
+if torch.cuda.is_available():
+    print(f'Available GPUs: {torch.cuda.device_count()}')
+
+    for i in range(torch.cuda.device_count()):
+        print(f'  #{i+1} GPU Name (cuda:{i}): {torch.cuda.get_device_name(i)}')
+        print(f'  GPU capability: {torch.cuda.get_device_capability(i)}')
+
+# sidenote:
+# Not all accelerators may expose multiple devices. While some types
+# such as CUDA/ROCm and XPU, do expose multiple devices, Apple MPS forexample 
+# doesnt. It curently only supports one device.
+
+# sidenote:
+# Since PyTorch uses CUDA for AMD GPUS aswell, in order to know 
+# exactly which backend our machine comes with(CUDA or ROCm),
+# other than checking the device name we just went over, we can
+# also get that information by checking the torch build information:
+# The `toch.version` module contains the specific version information
+# of each installed package, so by simply quering them, we can identify
+# the available backend.
+
+print(torch.version.cuda) # 13.0
+print(torch.version.hip)  # None
+
+# on my machine, it prints out 
+# > 13.0
+# > None
+# signifying I'm using a CUDA Card.
 
 # There are many more useful functions in cuda module. 
-# to read and learn more about this check out https://pytorch.org/docs/stable/cuda.html
-# we'll see more functions in later chapters but its a good idea to have a look at the docs anyway!
+# to read and learn more about this check out
+# https://pytorch.org/docs/stable/cuda.html
+# we'll see more functions in later chapters but its
+# a good idea to have a look at the docs anyway!
 
 #%%
 
-# Ok, now what if we have a tensor that is already on a specific device(it can be cpu or a gpu)
-# and also has a specific datatype!( all of our tensors can have dtype! the default is float64! 
+# Ok, now what if we have a tensor that is already on a 
+# specific device(it can be cpu or a gpu)
+# and also has a specific datatype!( all of our tensors 
+# can have dtype! the default is float64! 
 # (previously in older versions it was fp32))
-# in such cases, we can simply use the torch.*_new methods. lets see 
+# in such cases, we can simply use the torch.*_new methods. 
+# lets see 
 tensor_special = torch.rand(size=(2,2), device = 'cuda', dtype=torch.float16)
 print(f'{tensor_special=}')
 
@@ -313,7 +922,7 @@ print(f'{torch.get_default_device()=}')
 #    Python floats and complex Python numbers.
 print(f'{torch.tensor([1.2, 3]).dtype=}')
 
-#%%
+#%% Section 10: Seeding & Reproducibility (RNG Management)
 # before we continue, its worth taking a bit of time and learn about generators
 # and seeding. 
 # sometimes we want to produce determinstic output, for various reasons, ranging
