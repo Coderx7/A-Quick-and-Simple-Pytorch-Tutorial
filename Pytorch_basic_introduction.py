@@ -1,10 +1,6 @@
 #%% In the name of God the most compassionate the most merciful
 # Pytorch basics : Introduction of tensors
 
-import ctypes
-import sys
-import os
-
 import torch 
 import numpy as np
 import torch.utils
@@ -827,8 +823,291 @@ print(torch.version.hip)  # None
 # we'll see more functions in later chapters but its
 # a good idea to have a look at the docs anyway!
 
-#%%
+#%%TODO or should I use the new stgructure where theres a top-down order?
+#%% Section 4: Device Management & Custom Defaults
+# 1. What is an accelerator?
+# Earlier, we learned how to create tensors. So far, all of them have lived on
+# the CPU. However, one of PyTorch's biggest strengths is its ability to execute
+# tensor operations on hardware accelerators, such as GPUs.
+#
+# Before we can use an accelerator, we first need to understand what they are
+# and determine whether one is available on our machine.
+#
+# sidenote:
+# Why do we say "accelerator" instead of "GPU"?
+# We use the term accelerator instead of GPU because, unlike the early days of
+# PyTorch when it only supported NVIDIA GPUs, PyTorch now supports several kinds
+# of hardware designed to speed up tensor operations.
+#
+# Besides the CPU, which is the default device, PyTorch currently supports the
+# following accelerator platforms:
+#
+# - CUDA (NVIDIA GPUs): The most common accelerator you'll encounter in PyTorch
+# tutorials and industry. NVIDIA GPUs contain thousands of processing cores
+# capable of executing many operations in parallel, making them significantly
+# faster than CPUs for training and running neural networks.
+#
+# - MPS (Apple Silicon): If you're using a recent Mac with an M-series chip,
+# PyTorch can use Apple's Metal Performance Shaders (MPS) backend to accelerate
+# tensor operations on the integrated GPU.
+#
+# - ROCm (AMD GPUs): AMD's GPU platform. Supported AMD GPUs can accelerate
+# PyTorch computations in much the same way CUDA does on NVIDIA hardware.
+#
+# - XPU (Intel GPUs): PyTorch also supports compatible Intel GPUs through the
+# XPU device type. Under the hood it uses Intel's oneAPI software stack, but
+# from your code you simply move tensors to the "xpu" device.
+#
+# Besides these devices, PyTorch also includes optimized libraries such as
+# XNNPACK, MKL, and cuDNN. These are not separate devices. Instead, they optimize
+# operations on the CPU or GPU behind the scenes.
+#
+# The nice thing is that, in most cases, your PyTorch code barely changes. You
+# simply move your tensors (and later, your models) to whichever device is
+# available, and PyTorch takes care of executing the computations there.
+#
+# 2. How do I know what accelerator my machine has?
+# Before using an accelerator, we first need to determine which ones are
+# available.
 
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"MPS available:  {torch.backends.mps.is_available()}")
+print(f"XPU available:  {hasattr(torch, 'xpu') and torch.xpu.is_available()}")
+
+# On my machine, this prints:
+#
+# CUDA available: True
+# MPS available:  False
+# XPU available:  False
+#
+# Once we know which accelerator is available, we can begin working with
+# devices.
+
+# 3. Inspecting a tensor's device
+# Every tensor knows which device it lives on.
+#
+# We can inspect it using the .device property.
+print(f"Tensor device: {tensor.device}")
+
+# On my machine, this prints 'cuda:0'!
+# 
+# Notice that the output is cuda:0 instead of simply cuda.
+# The first part (cuda) tells us the device type, while the number (0)
+# identifies the specific accelerator being used.
+#
+# If we only care about the device type, we can use .device.type instead.
+print(tensor.device.type)
+# which prints 'cuda'!
+# 
+# The number becomes useful on machines that have multiple accelerators. For
+# example, a workstation might contain two GPUs while a large training server
+# may contain eight or more. PyTorch assigns each accelerator an index:
+#
+# cuda:0    # First GPU
+# cuda:1    # Second GPU
+# cuda:2    # Third GPU
+# ...
+#
+# We'll revisit multiple GPUs later in this chapter.
+# 
+# 4. Moving tensors between devices
+# Knowing where a tensor lives is useful, but eventually we'll want to move
+# tensors from one device to another.
+#
+# The recommended way to do this is with the .to() method.
+#
+# First, let's choose the best device available on the current machine.
+
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+elif hasattr(torch, "xpu") and torch.xpu.is_available():
+    device = "xpu"
+else:
+    device = "cpu"
+
+# Now we can move tensors to that device.
+tensor = tensor.to(device)
+print(f"Tensor device: {tensor.device.type}")
+# PyTorch also provides convenience methods such as .cuda() and .cpu().
+tensor = tensor.cuda()
+print(tensor.device.type)
+# To move the tensor back to the CPU,
+tensor = tensor.cpu()
+print(tensor.device.type)
+# Throughout this book we'll prefer .to(device) because it works regardless of
+# whether you're using CUDA, MPS, XPU, or just the CPU.
+#
+# 5. Creating tensors directly on a device
+# Instead of creating a tensor on the CPU and then moving it, we can create it
+# directly on the desired device.
+tensor = torch.rand((2, 2), device=device)
+print(tensor.device)
+# If you already know the exact device you want, you can also specify it
+# explicitly.
+tensor = torch.rand((2, 2), device="cuda:0")
+# PyTorch also allows you to specify the device index directly.
+tensor = torch.rand((2, 2), device=0)
+# Although this works, using the device variable from earlier is generally
+# preferred because it keeps your code portable across different machines.
+#
+# 6. Working with multiple GPUs
+# Some machines contain more than one GPU.
+# If we want to know how many GPUs are available, we can use
+torch.cuda.device_count()
+
+# To display every available GPU along with its name,
+if torch.cuda.is_available():
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    
+    for i in range(torch.cuda.device_count()):
+        print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+
+# To inspect a GPU's compute capability,
+torch.cuda.get_device_capability(0)
+# If we want to use a specific GPU, we simply specify its index.
+device = torch.device("cuda:1")
+tensor = torch.randn(3, 3, device=device)
+# If no index is specified,
+device = "cuda"
+# PyTorch automatically uses the first GPU (cuda:0).
+#
+# Throughout this book we'll use only a single accelerator since the
+# overwhelming majority of PyTorch code is identical regardless of how many
+# GPUs are installed.
+#
+# sidenote:
+# Not every accelerator platform supports multiple devices.
+#
+# CUDA/ROCm and XPU can expose multiple accelerators, whereas Apple's MPS
+# currently exposes only a single device.
+# 
+# 7. CUDA vs ROCm
+# One interesting detail is that ROCm is not a separate device type inside
+# PyTorch.
+# Even on AMD GPUs, PyTorch still uses the "cuda" device interface.
+#
+# For example,
+device = "cuda"
+# may refer to either
+# - an NVIDIA GPU (CUDA), or
+# - an AMD GPU (ROCm),
+#
+# depending on which build of PyTorch is installed.
+#
+# This is because PyTorch's GPU backend was originally designed around CUDA,
+# and the ROCm backend implements the same programming interface for
+# compatibility.
+#
+# If you'd like to know which backend your installation was built with, you can
+# inspect the version information.
+print(torch.version.cuda)
+print(torch.version.hip)
+# On my machine, this prints
+#
+# 13.0
+# None
+#
+# indicating that I'm using the CUDA backend. On a ROCm installation,
+# torch.version.cuda would be None while torch.version.hip would contain the
+# ROCm version.
+#
+# There are many more useful functions available in the torch.cuda module.
+# We'll introduce more of them later in the book, but it's worth browsing the
+# documentation if you're curious.
+#
+# 
+# 
+#%%TODO  we need to start each subsection with the problem first, not the technology
+# that is, we start with what the problem is, and they explain our way and introduce 
+# technologies. this should give us a much smoother read. 
+# as an example, for a section taling about dtypes e.g. we shouldnt start with sth like
+# pytorch supports x,y,z dtypes and methods! instead we should be saying sth like,
+# "so far we have been using default dtypes, but .... " and then start explaining why 
+# we need to be able to choose different dtypes and how we can do that. we dont just
+# say stuff like "the problem is," thats terrible! and not a good starting way.
+# anyway you get the idea, lets do that. 
+#%% Section 5: Precise Data-Type Control & Casting
+# Up until now all the tensors we've created have used Pytorch's default data types.
+# For many applications thats prefectly fine. However, in practice, we'll often
+# need more control. whether we're storing labels as integers, performing
+# high-precision comuptation or training models with mixed-precision, choosing
+# the appropriate data type is essential!
+
+# A tensor's data type (`dtype`) determines how its values are represented in mmeory
+# This directly affects numerical precisin, memory consumption and computational performance.
+# Fortunately Pytorch makes it very easy to inspect, change and convert a tensors dtype
+# whenever needed.
+
+# Let's see how PyTorch handles different tensor data types.
+# When constructing a tensor, PyTorch attempts to infer an appropriate
+# data type from the values provided.
+# The following line creates a tensor with `torch.int64` as data type.
+tensor = torch.tensor([1, 2, 3])
+print(f'Infered dtype for [1, 2, 3] : {tensor.dtype}') # torch.int64
+# Here, because the list contains a floating-point value, PyTorch promotes
+# all elements to a floating-point dtype. 
+tensor_float64 = torch.tensor([1., 2, 3])
+print(f'Infered dtype for [1., 2, 3] : {tensor_float64.dtype}') # torch.float64
+
+# There are several ways to convert a tensor from one data type to another.
+# One option is to specify the desired dtype explicitly during construction.
+# The following line casts the default `torch.int64` into `torch.in32` 
+tensor_int32 = torch.tensor([1, 2, 3], dtype=torch.int32)
+print(f'cast [1, 2, 3] to torch.int32: {tensor_int32.dtype}')
+
+# We can also use the generic `.to()` method.
+# Besides changing the dtype, `.to()` can also move tensors between devices,
+# making it one of the most commonly used tensor conversion methods.
+cast1 = tensor_int32.to(dtype=torch.float32)
+# PyTorch also provides convenience methods for the most common conversions,
+# such as `.float()`, `.double()`, `.long()`, `.half()`, and many others.
+cast2 = tensor_int32.float()   # converts to float32
+cast3 = tensor_fp64.long()     # converts to int64 (used for index/target layers)
+
+print(f'Cast 1: {cast1.dtype}')
+print(f'Cast 2: {cast2.dtype}')
+print(f'Cast 3: {cast3.dtype}')
+
+# sidenote:
+# An Interesting detail about `.view()` is although its primarily used 
+# to reshape tensors, it can also reinterpret a tensor's underlying bytes
+# as a different data type!
+# Unlike `.to()`, `.float()`, or `.long()`, `view(dtype)` does NOT perform
+# a (mathimatical) conversion. Instead, it simply reinterprets the existing binary 
+# representation using a different dtype.
+#
+# This is a low-level operation and is rarely needed in day-to-day deep
+# learning. It is primarily useful when working with binary file formats,
+# interfacing with external libraries, debugging low-level code, or
+# inspecting the bit-level representation of numerical values.
+# 
+# the following example demonstrates this more clearly.
+raw = torch.tensor([1, 256], dtype=torch.int16)
+print(raw)
+print(raw.view(torch.uint8))
+
+# On my machine this prints:
+#
+# > tensor([  1, 256], dtype=torch.int16)
+# > tensor([1, 0, 0, 1], dtype=torch.uint8)
+#
+# We are literally looking at the individual bytes that make 
+# up each 16-bit integer!
+# as I said, this is a very low level operation and not needed in 
+# day to day deeplearning chores, but it can come handy when doing
+# things such as parsing binary file formats or reading image headers
+# stuff like that!
+
+#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+# 6.1 view() vs. reshape()
+# 6.2 Adding/Removing Dimensions: squeeze() & unsqueeze()
+
+#%% Section 7: Tensor Operations (Math, Broadcasting & Reductions)
+#%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
+ 
+# %%
 # Ok, now what if we have a tensor that is already on a 
 # specific device(it can be cpu or a gpu)
 # and also has a specific datatype!( all of our tensors 
