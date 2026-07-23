@@ -1017,7 +1017,47 @@ print(torch.version.hip)
 # We'll introduce more of them later in the book, but it's worth browsing the
 # documentation if you're curious.
 #
-# 
+
+# Since pytorch 2.0 we have a `device` context manager which makes our lives easier
+# by assigning a specified device to all *new* tensors that get created inside that
+# context manager scope. 
+# that is any tensors-inlcuding models (torch modules)-we create inside that context manager will 
+# be assigned that device!
+
+print('\nUsing context manager to set device(cuda)')
+with torch.device('cuda'):
+    # our model can be as simple as a linear layer (we'll learn about them 
+    # in more details in future chapters)
+    model = torch.nn.Linear(4,1)
+    dummy_input = torch.rand(size=(1,4))
+    dummy_output = model(dummy_input)
+
+# note if we grab one of the parameters and check its device it shows cuda!
+print(f' Model.device:        {next(model.parameters()).device}')
+print(f' Dummy_input.device:  {dummy_input.device}')
+print(f' Dummy_output.device: {dummy_output.device}')
+
+# note that as of now(torch2.12), torch.device context manager does not change the device
+# for tensors that already exist. For those we still need to have use .to() to
+# move the data to a specific device
+
+# If you have noticed, all tensors we create by default, have been on cpu. 
+# we can change this behavior and make, by default, all tensors to be on a
+# specific device like cuda globally!
+
+# we use torch.set_default_device() for this purpose: 
+print('\nMaking CUDA the default device')
+torch.set_default_device('cuda')
+# now from now on, all tensors, modules, etc will have their device='cuda' by default
+dummy_input = torch.rand(size=(1,4))
+print(f'  dummy_input.device:  {dummy_input.device}')
+# since pytorch  2.3.0 we can also get the current default device
+# using `torch.get_default_device()`
+assert int("".join(torch.__version__.split('.')[:2])) > 23, 'pytorch 2.3.0+ is needed'
+print(f"\nthe default device is now '{torch.get_default_device().type}'")
+
+# revert back to CPU
+torch.set_default_device("cpu")
 # 
 #%%TODO  we need to start each subsection with the problem first, not the technology
 # that is, we start with what the problem is, and they explain our way and introduce 
@@ -1113,65 +1153,31 @@ print(f'{new_tensor_newtensor=}')
 # How is that any benificial to us? 
 # Later on when you write modules, you'll notice that instead of checking for an input
 # tensors dtype/device all the time and then creating the right combinations each time, 
-# We can easily create a tensor this way, which transfers the dtype and device of that tensor
-# automatically without us explicily checking and making a tensor for said dtype/device combo!
-# its less code, less bug and more efficient!
-
-# since pytorch 2.0 we have a device context manager which makes our lives easier
-# by assigning a specified device to all "new" tensors that get created inside that
-# context manager scope. 
-# that is any tensors/inlcuding models we create inside that context manager will 
-# be assigned that device!
-print(f'torch.device() context manager example:')
-with torch.device('cuda'):
-    # our model can be as simple as a linear layer (we'll learn about them 
-    # in more details in future chapters)
-    model = torch.nn.Linear(4,1)
-    dummy_input = torch.rand(size=(1,4))
-    dummy_output = model(dummy_input)
-
-# note we grab one of the parameters and checked its device.
-print(f'model device: {next(model.parameters()).device.type}')
-print(f'{dummy_input=}')
-print(f'{dummy_output=}')
-
-# note that as of now, torch.device context manager does not change the device
-# for tensors that already exist. for those we still need to have use .to() to
-# move the data to a specific device
-
-# if you have noticed, all tensors we create by default, have been on cpu. 
-# we can change this behavior and make, by default, all tensors to be on a
-# specific device like cuda globally!
-# we use torch.set_default_device() for this purpose: 
-torch.set_default_device('cuda')
-# now from now on, all tensors, modules, etc will have their device='cuda' by default
-dummy_input = torch.rand(size=(1,4))
-print(f'{dummy_input.device.type=}')
-# since pytorch  2.3.0 we can also get the current default device
-# using `torch.get_default_device()`
-assert int("".join(torch.__version__.split('.')[:2])) > 23, 'pytorch 2.3.0+ is needed'
-print(f'{torch.get_default_device()=}')
+# you can easily create a tensor this way, which transfers the dtype and device of that
+# tensor automatically without us explicily checking and making a tensor for said 
+# dtype/device combo! its less code, less bug and more efficient!
 
 # sidenote2: 
 # in the same fashion we have a way to specify a default dtype by using:
 # torch.set_default_dtype()
-# however note that, unlike what you may think at first, it doesnt allow you to 
+# However note that, unlike what you may think at first, it doesnt allow you to 
 # set any dtype you like. 
 # it only supports torch.float32 and torch.float64 as inputs. 
 # Other dtypes may be accepted without complaint but are not
 # supported and are unlikely to work as expected.
 # When PyTorch is initialized its default floating point dtype
 # is torch.float32, and the intent of set_default_dtype(torch.float64)
-# is to facilitate NumPy-like type inference. 
+# is to facilitate NumPy-like type inference.
+# 
 # The default floating point dtype is used to:
-# 1.To implicitly determine the default complex dtype. 
-# When the default floating point type is float32 
-# the default complex dtype is complex64, and 
-# when the default floating point type is float64
-# the default complex type is complex128.
-# 2.To infer the dtype for tensors constructed using Python floats or complex Python
-# numbers. See examples below.
-# 3.To determine the result of type promotion between bool and integer tensors and
+#  1.To implicitly determine the default complex dtype. 
+#    When the default floating point type is float32 
+#    the default complex dtype is complex64, and 
+#    when the default floating point type is float64
+#    the default complex type is complex128.
+#  2.To infer the dtype for tensors constructed using Python floats or complex Python
+#    numbers. See examples below.
+#  3.To determine the result of type promotion between bool and integer tensors and
 #    Python floats and complex Python numbers.
 print(f'{torch.tensor([1.2, 3]).dtype=}')
 
