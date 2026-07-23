@@ -1043,13 +1043,15 @@ print(torch.version.hip)
 # Let's see how PyTorch handles different tensor data types.
 # When constructing a tensor, PyTorch attempts to infer an appropriate
 # data type from the values provided.
+
 # The following line creates a tensor with `torch.int64` as data type.
 tensor = torch.tensor([1, 2, 3])
 print(f'Infered dtype for [1, 2, 3] : {tensor.dtype}') # torch.int64
-# Here, because the list contains a floating-point value, PyTorch promotes
-# all elements to a floating-point dtype. 
-tensor_float64 = torch.tensor([1., 2, 3])
-print(f'Infered dtype for [1., 2, 3] : {tensor_float64.dtype}') # torch.float64
+
+# In the second example below, because the list contains a floating-point
+# value, PyTorch promotes all elements to a floating-point dtype. 
+tensor_float32 = torch.tensor([1., 2, 3])
+print(f'Infered dtype for [1., 2, 3] : {tensor_float32.dtype}') # torch.float32
 
 # There are several ways to convert a tensor from one data type to another.
 # One option is to specify the desired dtype explicitly during construction.
@@ -1061,16 +1063,119 @@ print(f'cast [1, 2, 3] to torch.int32: {tensor_int32.dtype}')
 # Besides changing the dtype, `.to()` can also move tensors between devices,
 # making it one of the most commonly used tensor conversion methods.
 cast1 = tensor_int32.to(dtype=torch.float32)
+
 # PyTorch also provides convenience methods for the most common conversions,
 # such as `.float()`, `.double()`, `.long()`, `.half()`, and many others.
 cast2 = tensor_int32.float()   # converts to float32
-cast3 = tensor_fp64.long()     # converts to int64 (used for index/target layers)
+cast3 = tensor_float32.long()  # converts to int64 (used for index/target layers)
 
 print(f'Cast 1: {cast1.dtype}')
 print(f'Cast 2: {cast2.dtype}')
 print(f'Cast 3: {cast3.dtype}')
 
-#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+# sidenote:
+# The default dtype in PyTorch is float32 we can query the default dtype
+# by calling `torch.get_default_dtype()`
+
+print(torch.get_default_dtype()) # torch.float32
+
+# Now what if we have a tensor that is already on a specific device
+#(be it CPU,GPU, or something) and also has a specific datatype?
+# in such cases, we can simply use the `torch.*_new` methods to 
+# create tensors with the same exact device, dtype configuration!
+
+# lets see 
+tensor_special = torch.rand(size=(2,2), device = 'cuda', dtype=torch.float16)
+print(f'{tensor_special=}')
+
+# Now lets create a new tensor from this one that is both on cuda and uses float16!!
+new_tensor_ones = tensor_special.new_ones(size=(2,2))
+print(f'{new_tensor_ones=}')
+
+# we have other functions such as new_tensor, new_empty, new_full, new_zeros as well
+new_tensor_zeros = tensor_special.new_zeros(size=(2,2))
+print(f'{new_tensor_zeros=}')
+
+# a new tensor full of 0.3 with the same dtype and device as tensor_special
+new_tensor_full = tensor_special.new_full(size=(2,2), fill_value=0.3)
+print(f'{new_tensor_full=}')
+
+# uninitialized tensor with the same dtype and device as tensor_special
+new_tensor_empty = tensor_special.new_empty(size=(2,2))
+print(f'{new_tensor_empty=}')
+
+# Finally if we have a data of our own, we can create a new tensor with 
+# the same dtype and device as tensor_special as well
+new_tensor_newtensor = tensor_special.new_tensor(np.random.uniform(-1,1, size=(2,2)))
+print(f'{new_tensor_newtensor=}')
+
+# You may be puzzled and think to yourslef why would we want something like that? 
+# How is that any benificial to us? 
+# Later on when you write modules, you'll notice that instead of checking for an input
+# tensors dtype/device all the time and then creating the right combinations each time, 
+# We can easily create a tensor this way, which transfers the dtype and device of that tensor
+# automatically without us explicily checking and making a tensor for said dtype/device combo!
+# its less code, less bug and more efficient!
+
+# since pytorch 2.0 we have a device context manager which makes our lives easier
+# by assigning a specified device to all "new" tensors that get created inside that
+# context manager scope. 
+# that is any tensors/inlcuding models we create inside that context manager will 
+# be assigned that device!
+print(f'torch.device() context manager example:')
+with torch.device('cuda'):
+    # our model can be as simple as a linear layer (we'll learn about them 
+    # in more details in future chapters)
+    model = torch.nn.Linear(4,1)
+    dummy_input = torch.rand(size=(1,4))
+    dummy_output = model(dummy_input)
+
+# note we grab one of the parameters and checked its device.
+print(f'model device: {next(model.parameters()).device.type}')
+print(f'{dummy_input=}')
+print(f'{dummy_output=}')
+
+# note that as of now, torch.device context manager does not change the device
+# for tensors that already exist. for those we still need to have use .to() to
+# move the data to a specific device
+
+# if you have noticed, all tensors we create by default, have been on cpu. 
+# we can change this behavior and make, by default, all tensors to be on a
+# specific device like cuda globally!
+# we use torch.set_default_device() for this purpose: 
+torch.set_default_device('cuda')
+# now from now on, all tensors, modules, etc will have their device='cuda' by default
+dummy_input = torch.rand(size=(1,4))
+print(f'{dummy_input.device.type=}')
+# since pytorch  2.3.0 we can also get the current default device
+# using `torch.get_default_device()`
+assert int("".join(torch.__version__.split('.')[:2])) > 23, 'pytorch 2.3.0+ is needed'
+print(f'{torch.get_default_device()=}')
+
+# sidenote2: 
+# in the same fashion we have a way to specify a default dtype by using:
+# torch.set_default_dtype()
+# however note that, unlike what you may think at first, it doesnt allow you to 
+# set any dtype you like. 
+# it only supports torch.float32 and torch.float64 as inputs. 
+# Other dtypes may be accepted without complaint but are not
+# supported and are unlikely to work as expected.
+# When PyTorch is initialized its default floating point dtype
+# is torch.float32, and the intent of set_default_dtype(torch.float64)
+# is to facilitate NumPy-like type inference. 
+# The default floating point dtype is used to:
+# 1.To implicitly determine the default complex dtype. 
+# When the default floating point type is float32 
+# the default complex dtype is complex64, and 
+# when the default floating point type is float64
+# the default complex type is complex128.
+# 2.To infer the dtype for tensors constructed using Python floats or complex Python
+# numbers. See examples below.
+# 3.To determine the result of type promotion between bool and integer tensors and
+#    Python floats and complex Python numbers.
+print(f'{torch.tensor([1.2, 3]).dtype=}')
+
+
 #%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
 # The tensors we have created and experimented with so far had a pre-specified
 # shape and we didnt need to change them. However, this is not always the case
@@ -1333,8 +1438,9 @@ print(tensor)
 # two dimensions at a time.
 
 
-
 #%% Section 7: Tensor Operations (Math, Broadcasting & Reductions)
+
+
 #%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
  
 # %%
