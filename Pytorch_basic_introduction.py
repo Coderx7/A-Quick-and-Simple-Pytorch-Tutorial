@@ -1120,8 +1120,8 @@ print(f'Cast 3: {cast3.dtype}')
 print(torch.get_default_dtype()) # torch.float32
 
 # Now what if we have a tensor that is already on a specific device
-#(be it CPU,GPU, or something) and also has a specific datatype?
-# in such cases, we can simply use the `torch.*_new` methods to 
+# (be it CPU, GPU,etc) and also has a specific datatype?
+# In such cases, we can simply use the `torch.*_new` methods to 
 # create tensors with the same exact device, dtype configuration!
 
 # lets see 
@@ -1158,18 +1158,19 @@ print(f'{new_tensor_newtensor=}')
 # dtype/device combo! its less code, less bug and more efficient!
 
 # sidenote2: 
-# in the same fashion we have a way to specify a default dtype by using:
-# torch.set_default_dtype()
-# However note that, unlike what you may think at first, it doesnt allow you to 
-# set any dtype you like. 
-# it only supports torch.float32 and torch.float64 as inputs. 
-# Other dtypes may be accepted without complaint but are not
-# supported and are unlikely to work as expected.
+# Like torch.device, we have a way to specify a default dtype by using
+# `torch.set_default_dtype()`.
+# However note that, unlike what you might think at first, it doesn't 
+# allow you to set just any dtype you like!
+# It only supports `torch.float32`` and `torch.float64`` as inputs. 
+# Other dtypes may be accepted without complaint but are not supported
+# and are unlikely to work as expected.
+# 
 # When PyTorch is initialized its default floating point dtype
-# is torch.float32, and the intent of set_default_dtype(torch.float64)
+# is `torch.float32`, and the intent of `set_default_dtype(torch.float64)`
 # is to facilitate NumPy-like type inference.
 # 
-# The default floating point dtype is used to:
+# The default floating point dtype is used to :
 #  1.To implicitly determine the default complex dtype. 
 #    When the default floating point type is float32 
 #    the default complex dtype is complex64, and 
@@ -1180,7 +1181,6 @@ print(f'{new_tensor_newtensor=}')
 #  3.To determine the result of type promotion between bool and integer tensors and
 #    Python floats and complex Python numbers.
 print(f'{torch.tensor([1.2, 3]).dtype=}')
-
 
 #%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
 # The tensors we have created and experimented with so far had a pre-specified
@@ -1449,7 +1449,7 @@ print(tensor)
 
 #%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
  
-# %%
+# %% done added to device/dtype sections - can be removed 
 # Ok, now what if we have a tensor that is already on a 
 # specific device(it can be cpu or a gpu)
 # and also has a specific datatype!( all of our tensors 
@@ -1551,8 +1551,9 @@ print(f'{torch.tensor([1.2, 3]).dtype=}')
 # therefore in order to have a repreducible output, we need to take control of the 
 # randomness in our operations. 
 # whenever we work with operations that involve random numbers, setting the seed for
-# the RNG (random number generator) to use the same seedm allows us to generate the 
+# the RNG (random number generator) to use the same seed allows us to generate the 
 # same sequence of numbers again and again.
+# 
 # Nearly all libraries that involve such operations, offer ways to set the seed, including
 # both numpy and pytorch.
 # In pytorch we can simply specify a seed for the global RNG, by using `torch.manual_seed(number)`.
@@ -1690,9 +1691,10 @@ torch.random.manual_seed(15)
 # NumPy now encourages using explicit random generator objects (instances of `numpy.random.Generator`).
 # These generator objects allow us to manage seeds, distributions, and other properties independently.
 # 
-# therefore if our code interacts with NumPy (directly or indirectly), it's now essential to 
-# seed these generator objects consistently.
-# also setting the global seed (e.g., `np.random.seed(0)`) won't necessarily affect these generator objects.
+# therefore if our code interacts with NumPy (directly or indirectly), it's now essential
+# to seed these generator objects consistently.
+# also setting the global seed (e.g., `np.random.seed(0)`) won't necessarily affect these
+# generator objects.
 # and finally to ensure reproducibility, we would need to set the seed for both PyTorch 
 # (using `torch.manual_seed(0)`) and NumPy (using `np.random.seed(0)`).
 # basically when working with numpy alongside pytorch, we need to be aware of these 
@@ -1712,7 +1714,8 @@ torch.random.manual_seed(15)
 # note that the determinstic behavior we talk about here, is usually bound to software/hardware. 
 # that is, we expect that given the same input, and same sequence of operations, when run on the
 # same software and hardware, we always get the same output. 
-# This is an important implication (we see why this is the case when something like cuda is involved)
+# This is an important implication (we see why this is the case when something like cuda
+# is involved)
 # 
 # **CuDNN and CUDA**: The cuDNN library, used by CUDA convolution operations, 
 # can introduce nondeterminism. When a cuDNN convolution is called with new size parameters, 
@@ -2025,8 +2028,10 @@ print(f'{random_tensor=}')
 # it views the memory location asif it was int32
 print(f'{random_tensor.view(torch.int32)=}')
 # it views the memory location as a uint8,
-# note that viewing a float tensor as uint8 is a reinterpretation, not a direct conversion
-# therefore what we actually get, in this case, is a byte representation of the original float value!
+# note that viewing a float tensor as uint8 is a reinterpretation,
+# not a direct conversion
+# therefore what we actually get, in this case, is a byte representation
+# of the original float value!
 print(f'{random_tensor.view(torch.uint8)=}')
 # to test this theory we can easily do 
 bytes_rep = random_tensor.view(torch.uint8)[0].numpy()
