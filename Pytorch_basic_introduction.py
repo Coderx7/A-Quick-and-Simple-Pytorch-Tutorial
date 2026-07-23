@@ -1234,9 +1234,10 @@ print(raw.view(torch.uint8))
 # `unsqueeze()` to insert them without changing the underlying data.
 
 # if no dimension is provied to squeeze(), it removes all dimensions of size 1
-tensor = torch.randn(size=(1,3,4,1))
+tensor = torch.arange(12).reshape(1,3,4,1)
 print('\nBefore .squeeze()')
 print(f'  tensor.shape: {tensor.shape}')
+print(f'  tensor: {tensor}')
 
 # When no dimension is specified, squeeze() removes *all* dimensions
 # whose size is 1.
@@ -1294,23 +1295,29 @@ print(f'After unsqueeze_(0):               {tensor.shape}')
 
 print(f"\nOriginal shape:               {tensor.shape}")
 
-# To use permute(), we list every dimension in the order we want them to appear.
+# To use `permute()`, we list every dimension in the order we want them to appear.
 # Here we swap dimensions 1 and 2 while leaving the remaining dimensions
 # unchanged.
 tensor = tensor.permute(0,2,1,3)
 print(f'After permute(0,2,1,3):       {tensor.shape}')
+print(tensor)
+
+# Notice that `permute()` does not modify the values stored in the tensor.
+# It only changes how those values are interpreted across dimensions.
 
 # sidenote:
-# The arguments to permute() specify where each original dimension should
-# appear in the new tensor. In other words permute(0, 2, 1, 3) means:
-# dim 0 goes to dim 0, for the new dim 1, the old dim 2 is used, likewise
-# for the new dim 2 the old dim 1 is used and finally the old dim 3 is used
-# for the new dim 3 
-# i.e. : 
+# The arguments passed to `permute()` describe where each *original*
+# dimension should appear in the new tensor.
+# For example: `permute(0, 2, 1, 3)` means:
+#
 # new dim 0 <- old dim 0
 # new dim 1 <- old dim 2
 # new dim 2 <- old dim 1
 # new dim 3 <- old dim 3
+#
+# In other words, dimensions 1 and 2 are swapped while the remaining
+# dimensions stay in the same order.
+
 
 # `.permute()` appears throughout deep learning workflows For example, 
 # it is commonly used to convert images between HWC and CHW layouts,
@@ -1319,9 +1326,11 @@ print(f'After permute(0,2,1,3):       {tensor.shape}')
 # We'll encounter many practical examples of it in later chapters.
 
 # sidenote:
-# Pytorch's permute() behaves like Numpy's transpose(), it reorders any number
-# of dimensions. Pytorch also offers a transpose() method, however its only
-# capable of swaping two dimensions only!
+# If you're coming from NumPy, `.permute()` is roughly equivalent to
+# numpy.transpose(), which also reorders an arbitrary number of dimensions.
+#
+# PyTorch also provides `.transpose()`, but unlike `.permute()`, it swaps only
+# two dimensions at a time.
 
 
 
