@@ -1175,12 +1175,14 @@ print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 # 
 # sidenote:
 # If a tensor is not contigeous, we can use `.contigeous()` and make it continueous
-# Note however, this means a copy occurs, so a tensor.contigeous().view() would
-# be no different thatn using tensor.reshape(). This is why many suggest to use
-# reshape instead, unless you want to make your intent clear by using `view`
-# wich signifies, the tensor being worked on uses contigeous memory and any views
-# share the underlying storage. the same semantic cant be said about reshape 
-# as its not gauranteed to return views all the time.
+# Note however, this means a copy occurs, so a `tensor.contigeous().view()` would
+# be no different that using `tensor.reshape()`. 
+# 
+# This is why many suggest to use `.reshape()` instead, unless you want to make your
+# intent clear by using `view()` signifying, the tensor being worked on uses contigeous
+# memory and any views share the underlying storage. 
+# The same semantic cant be conveyed about `.reshape()` as its not gauranteed to
+# return views all the time.
 print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous().is_contiguous()}')  # False
 
 # sidenote:
