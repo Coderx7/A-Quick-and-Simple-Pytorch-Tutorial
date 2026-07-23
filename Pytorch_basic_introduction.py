@@ -1225,7 +1225,35 @@ print(raw.view(torch.uint8))
 # stuff like that!
 
 # 6.2 Adding/Removing Dimensions: squeeze() & unsqueeze()
+# Neural networks often expect tensors to have a specific number of
+# dimensions. For example, a model may expect a batch dimension even
+# when processing a single sample. Conversely, some operations leave
+# behind dimensions of size 1 that are no longer needed.
+#
+# PyTorch provides `squeeze()` to remove dimensions of size 1 and
+# `unsqueeze()` to insert them without changing the underlying data.
 
+# if no dimension is provied to squeeze() , it removes all dimensions with size 1 (i.e. singletone dimensions)
+tensor = torch.randn(size=(1,3,4))
+print('\nBefore .squeeze()')
+print(f'  tensor.shape: {tensor.shape}')
+print('\nAfter .squeeze()')
+print(f'  tensor.shape: {tensor.squeeze().shape}')
+
+# unlike `.squeeze()`, `.unsqueeze()` requires the the exact dimension to be
+# specified to be added to the tensor
+print('\nBefore .unsqueeze()')
+print(f'  tensor.shape: {tensor.shape}')
+print('\nAfter .unsqueeze()')
+print(f'  tensor.shape: {tensor.unsqueeze(3).shape}')
+
+# Pytorch also offers the in-place variants with `.squeeze_()` and `.unsqueeze_()`
+print(f"\ntensor's default shape:             {tensor.shape}")
+print(f'tensor.shape after squeeze_(0):     {tensor.squeeze_(0).shape}')
+print(f'tensor.shape after unsqueeze_(0):   {tensor.unsqueeze_(0).shape}')
+
+# Pytorch offers `permute()` to swap the order of a tensors dimensions/axis
+# this
 #%% Section 7: Tensor Operations (Math, Broadcasting & Reductions)
 #%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
  
