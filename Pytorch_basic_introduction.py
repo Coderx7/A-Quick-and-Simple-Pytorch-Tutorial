@@ -3,7 +3,6 @@
 
 import torch 
 import numpy as np
-import torch.utils
 import torch.version 
 
 # Here we are going to lean about torch and how we can use it to train neural networks. 
@@ -967,7 +966,8 @@ if torch.cuda.is_available():
 # To inspect a GPU's compute capability,
 torch.cuda.get_device_capability(0)
 # If we want to use a specific GPU, we simply specify its index.
-device = torch.device("cuda:1")
+# since I only have one GPU, I use 0!
+device = torch.device("cuda:0") 
 tensor = torch.randn(3, 3, device=device)
 # If no index is specified,
 device = "cuda"
@@ -1070,6 +1070,119 @@ print(f'Cast 1: {cast1.dtype}')
 print(f'Cast 2: {cast2.dtype}')
 print(f'Cast 3: {cast3.dtype}')
 
+#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+# The tensors we have created and experimented with so far had a pre-specified
+# shape and we didnt need to change them. However, this is not always the case
+# As we'll see shortly, different PyTorch operations and neural network layers 
+# expect tensors to have specific dimensions. As a result, we'll frequently need
+# to reshape tensors, add or remove dimensions, or rearrange the order of their 
+# axes without changing the underlying data. This can range from simply adding
+# a batch dimension into an input tensor during inference, reshape/merge the 
+# dimensions in an input to make it suitable for the next layer like an LSTM or
+# swap axis (permute) when implementing an attention module.
+# 
+# In this section, we'll explore the most common dimension manipulation
+# operations and learn when to use each one.
+
+# 6.1 Reshaping Tensors: view() vs. reshape()
+# Like Numpy Pytorch offers a `.reshape()` method that allows us to change
+# a tensor's shape.
+
+# using torch.arange(n) we create a 1D tensor from [0-n),
+tensor = torch.arange(12)
+# reshape the 1D tensor with 12 elements into 3 rows and 4 columns
+tensor_3x4 = tensor.reshape(3,4)
+# reshape the same 1D tensor into a 3D tensor
+tensor_1x2x6 = tensor.reshape(1,2,6)
+print (f'tensor:                {tensor}')
+print (f'tensor.reshape(3,4):   {tensor_3x4}')
+print (f'tensor.reshape(1,2,6): {tensor_1x2x6}')
+
+# If we specify all dimensions except one, PyTorch can automatically
+# compute the missing size so that the total number of elements remains unchanged.
+# We can reshape a tensor into any shape, as long as the sizes for
+# each dimension, result in the same total number of elements.
+
+# this will automatically infer the last dim to be 2! so 2x3x2=12 total elements
+tensor_inferred = tensor.reshape(2,3,-1)
+print('Using -1 to automatically infer last dim:')
+print (f'  tensor_inferred.shape:    {tensor_inferred.shape}')
+print (f'  tensor_inferred:          {tensor_inferred}')
+
+# Passing -1 as the *only* dimension tells PyTorch to infer that dimension,
+# since its the only provided dimension, it effectively flattens the tensor
+# into a one-dimensional vector.
+tensor_flattened = tensor.reshape(-1)
+print (f'tensor.reshape(-1):    {tensor_flattened}')
+
+# Interestingly, in this example, `.reshape()` did not create 
+# new copies of the tensors, it was able to return *views* of the 
+# original tensor. That is all these tensors are different "views" of the
+# same underlying storage hence all of these tensors share the same 
+# underlying storage. Modifying one therefore, immediately affects
+# the others.
+
+tensor_flattened[1] *= 1000 
+print('\nAfter changing tensor_flattened[1] *= 1000 ')
+print (f'  tensor:                   {tensor}')
+print (f'  tensor.reshape(3,4):      {tensor_3x4}')
+print (f'  tensor.reshape(1,2,6):    {tensor_1x2x6}')
+print (f'  tensor.reshape(2,3,-1):   {tensor_inferred}')
+print (f'  tensor.reshape(-1):       {tensor_flattened}')
+
+# This behavior comes from the fact that, the original tensor was stored as
+# a contigeous chunk in memory so reshape was able to rearrange the layout to
+# achieve a certain view.
+# Not all operations preserve this property. One common example is transposing
+# a tensor.
+# Transposing a tensor changes its strides, producing a non-contiguous tensor.
+# In this case, `.reshape()` transparaently allocates a new contigeous memory
+# and returns a copy of the original tensor.
+
+# since transpose is only meaningful for tensors with at least two dimensions,
+# we'll use our 2-D tensor here.
+tensorT = tensor_3x4.t().reshape(2,6) # .view(2,6) raises runtime error
+print('\nBefore transposing:')
+print(f'  tensor:             {tensor}')
+print(f'  tensor transposed:  {tensorT}')
+
+# Now if we change tensorT, to have the first row to be 999
+# the original tensor wont be affected!
+tensorT[0] = 999
+print('\nAfter transposing and changing it:')
+print(f'  tensor:             {tensor}')
+print(f'  tensor transposed:  {tensorT}')
+
+# Pytorch offers another method however, convineintly named as *view*. The 
+# `.view()` behaves similarly to `reshape()`, with one important difference,
+# it only works on contiguous tensors and therefore never allocates new memory.
+
+# In the previous example if we tried to use `.view()` we would face 
+# a runtime error, which would interestingly instruct us to use `.reshape()` instead!
+
+# How can we tell whether a tensor is contiguous?
+# Using `is_contiguous()` we can easily determine if a tensor is contigous or not:
+print(f'tensor_3x4 contiguous:     {tensor_3x4.is_contiguous()}')      # True
+print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
+
+# `.reshape()` as you saw is more flexible than `.view()`. Like a `.view()` 
+# it returns a view whenever possible, but if it can not rearrange the memory,
+# it transparently allocates a new tensor and returns a copy instead.
+#
+# so if we specifically need to avoid a copy, we use `view()`. Otherwise,
+# `reshape()` is often the more convenient choice. 
+# 
+# sidenote:
+# If a tensor is not contigeous, we can use `.contigeous()` and make it continueous
+# Note however, this means a copy occurs, so a tensor.contigeous().view() would
+# be no different thatn using tensor.reshape(). This is why many suggest to use
+# reshape instead, unless you want to make your intent clear by using `view`
+# wich signifies, the tensor being worked on uses contigeous memory and any views
+# share the underlying storage. the same semantic cant be said about reshape 
+# as its not gauranteed to return views all the time.
+print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous().is_contiguous()}')  # False
+
 # sidenote:
 # An Interesting detail about `.view()` is although its primarily used 
 # to reshape tensors, it can also reinterpret a tensor's underlying bytes
@@ -1084,112 +1197,30 @@ print(f'Cast 3: {cast3.dtype}')
 # inspecting the bit-level representation of numerical values.
 # 
 # the following example demonstrates this more clearly.
-raw = torch.tensor([1, 256], dtype=torch.int16)
+raw = torch.tensor([14,256], dtype=torch.int16)
 print(raw)
 print(raw.view(torch.uint8))
 
 # On my machine this prints:
 #
-# > tensor([  1, 256], dtype=torch.int16)
-# > tensor([1, 0, 0, 1], dtype=torch.uint8)
+# > tensor([  14, 256], dtype=torch.int16)
+# > tensor([14, 0, 0, 1], dtype=torch.uint8)
 #
-# We are literally looking at the individual bytes that make 
-# up each 16-bit integer!
-# as I said, this is a very low level operation and not needed in 
+# Each int16 value occupies bytes, so 14 is
+# 0x000E, which is stored as the bytes [0x0E, 0x00]
+# that is [14, 0] on little-endian systems like the 
+# one I'm running on.
+# Likewise 256 is 0x0100 which is stored as [0x00, 0x01].
+# 
+# To reiterate, calling `.view(torch.uint8)` does not convert
+# the values instead, it *reinterprets* the same block of memory as an
+# array of `uint8`` values, so we are literally looking at the
+# individual bytes that make up each 16-bit integer.
+# 
+# As mentioned before, this is a very low level operation and not needed in 
 # day to day deeplearning chores, but it can come handy when doing
 # things such as parsing binary file formats or reading image headers
 # stuff like that!
-
-#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
-#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
-# Different PyTorch operations and neural network layers expect tensors to
-# have specific dimensions. As a result, we'll frequently need to reshape
-# tensors, add or remove dimensions, or rearrange the order of their axes
-# without changing the underlying data.
-#
-# In this section, we'll explore the most common dimension manipulation
-# operations and learn when to use each one.
-
-# 6.1 Reshaping Tensors: view() vs. reshape()
-# Both `view()` and `reshape()` can change a tensor's shape.
-# The key difference is that `view()` requires the tensor to be stored in
-# contiguous memory. If this requirement isn't met, `view()` raises a
-# RuntimeError.
-#
-# `reshape()` is more flexible. It returns a view whenever possible, but if the
-# tensor's memory layout prevents that, it transparently allocates a new tensor
-# with the requested shape.
-#
-# If you specifically need to avoid a copy, use `view()`. Otherwise,
-# `reshape()` is often the more convenient choice.
-
-# We can view a tensor with any number of dims, as long as the total number of 
-# elements match the new dim arragement. 
-
-#! todo swap reshape with view? i.e. first use reshape, then explain view?
-tensor = torch.arange(12)
-tensor_3x4 = tensor.view(3,4)
-tensor_1x2x6 = tensor.view(1,2,6)
-print (f'tensor:                {tensor}')
-print (f'tensor.view(3,4):      {tensor_3x4}')
-print (f'tensor.view(1,2,6):    {tensor_1x2x6}')
-
-# We can let PyTorch infer one dimension by specifying -1.
-# PyTorch automatically computes the missing size so that the
-# total number of elements remains unchanged.
-tensor_infered = tensor.view(2,3,-1)
-print (f'tensor.view(2,3,-1):    {tensor_infered}')
-
-#Passing -1 as the only dimension flattens the tensor into
-# a one-dimensional vector.
-tensor_flattened = tensor.view(-1)
-print (f'tensor.view(-1):    {tensor_flattened}')
-
-# We can check all the views point to the same underlying memory 
-# by changing one of them, since all of these tensors are  
-# simply different views of the same underlying storage, 
-# modifying one immediately affects the others.
-tensor_flattened[1] *= 1000 
-print('\nAfter changing tensor_flattened[1] *= 1000 ')
-print (f'  tensor:                {tensor}')
-print (f'  tensor.view(3,4):      {tensor_3x4}')
-print (f'  tensor.view(1,2,6):    {tensor_1x2x6}')
-print (f'  tensor.view(2,3,-1):   {tensor_infered}')
-print (f'  tensor.view(-1):       {tensor_flattened}')
-
-# `.reshape()` works just like view(), with the exception it returns a copy if 
-# it cant reinterpret existing memory layout without rearranging the data 
-# hence copying to new location
-# 
-# Transposing a tensor changes its strides, producing a non-contiguous tensor.
-# Since `view()` requires contiguous memory, it can no longer reinterpret the
-# tensor with a different shape. `reshape()`, however, allocates a new contiguous
-# tensor when necessary.
-# So in the following example if we try to use ``.view()` we will face 
-# a runtime error:
-# '''RuntimeError: view size is not compatible with input tensor's size 
-# and stride (at least one dimension spans across two contiguous subspaces).
-# Use .reshape(...) instead.'''
-# instructing us to use reshape instead!
-# 
-# since transpose is only meaningful for tensors with at least two dimensions,
-# we'll use our 2-D tensor here.
-tensorT = tensor_3x4.t().reshape(2,6)
-print('\nBefore transposing:')
-print(f'  tensor:             {tensor}')
-print(f'  tensor transposed:  {tensorT}')
-# Now if we change tensorT, to have the first row to be 999
-# the original tensor wont be affected!
-tensorT[0] = 999
-print('\nAfter transposing and changing it:')
-print(f'  tensor:             {tensor}')
-print(f'  tensor transposed:  {tensorT}')
-
-# sidenote:
-# reshape() may or may not share memory with the original tensor.
-# If it returns a view, changes affect both tensors.
-# If it creates a copy, the tensors become independent.
-
 
 # 6.2 Adding/Removing Dimensions: squeeze() & unsqueeze()
 
