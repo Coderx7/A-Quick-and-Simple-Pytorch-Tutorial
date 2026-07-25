@@ -33,7 +33,7 @@ import torch.version
 # very easy.
 # 
 # lets see how we can ue pytorch in this sense!
-#%%
+#%% section into
 # we are going to cover a few  sections and by the end of this chapter
 # you should have a basic understanding of how to use torch and tensors 
 # and ready to learn more advanced concepts about deeplearning training 
@@ -138,13 +138,21 @@ t1_rand = torch.rand(size=(2, 2, 2))     # Using uniform distribution [0,1]
 t1_randn = torch.randn(size=(2, 2, 2))   # Using normal distribution (mean=0, std=1)
 t1_empty = torch.empty(size=(2, 2, 2))   # Using uninitialized memory
 
-print(f'Tensor(1): {t} ')
-print(f'Zeros:     {t1_zeros}')
-print(f'Ones:      {t1_ones}')
-print(f'Rand:      {t1_rand}')
-print(f'Randn:     {t1_rand}')
-print(f'Empty:     {t1_empty}')
+# TODO : put all tensors on a new line so they look nicer when printed,
+print('Tensor((1,))')
+print(t)
 
+print('\nZeros((5,)):')
+print(t1_zeros)
+
+print('\nOnes((2,2)):')
+print(t1_ones)
+
+print('\nRand((2,2,2)):')
+print(t1_rand)
+
+print('\nEmpty((2,2,2)):')
+print(t1_empty)
 # We use `torch.zeros()` when we want a tensor to have zero values everywhere.
 # likewise if we want to have a tensor with 1 as values we use `torch.ones()`
 # They come handy when we want to do operations such as add, multiplication,
@@ -171,13 +179,13 @@ print(f'Empty:     {t1_empty}')
 # Here we are creating a tensor from a raw python list of numbers (1, 2, 3, 4)!
 list_data = [1,2,3,4]
 tensor_from_list = torch.tensor(list_data)
-print(f'Tensor from list:   {tensor_from_list}')
+print(f'\nTensor from list:   {tensor_from_list}')
 
 # using a numpy array 
 array_np = np.random.rand(4)
 tensor_from_np_copy = torch.tensor(array_np)
-print(f'Numpy array:            {array_np}')
-print(f'Pytorch tensor(copied): {tensor_from_np_copy}')
+print(f'\nNumpy array:            {array_np}')
+print(f'\nPytorch tensor(copied): {tensor_from_np_copy}')
 
 # sidenote, 
 # note that we are using `torch.tensor()` (lowercase function, and not the class Tensor())
@@ -188,8 +196,8 @@ print(f'Pytorch tensor(copied): {tensor_from_np_copy}')
 # a tensor with the given data and it infers the data type automatically.
  
 # For example consider the following examples:
-print(f'torch.Tensor(10): {torch.Tensor(10)}')  # Returns an uninitialized FloatTensor with 10 values.
-print(f'torch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor containing a single value (10)
+print(f'\ntorch.Tensor(10): {torch.Tensor(10)}')  # Returns an uninitialized FloatTensor with 10 values.
+print(f'\ntorch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor containing a single value (10)
  
 # So `torch.Tensor` is the main class constructor when called with a shape/size, 
 # it returns an uninitialized `FloatTensor` (equivalent to torch.empty).
@@ -201,23 +209,23 @@ print(f'torch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor containin
 torch.set_printoptions(precision=8)
 np.set_printoptions(precision=8)
 
-print(f'Numpy Array:         {array_np}')
-print(f'Torch Tensor-Copied: {tensor_from_np_copy}')
+print(f'\nNumpy Array:         {array_np}')
+print(f'\nTorch Tensor-Copied: {tensor_from_np_copy}')
 
 # how can we reset it back to the defaults? easy we can use default profile and just go back to defaul!
 # as it turns out, we can use other profiles (short, full) as well for our uses!
 torch.set_printoptions(profile='default')
 np.set_printoptions(precision=None)
 
-print(f'Numpy Array:   {array_np}')
-print(f'Shared Tensor: {tensor_from_np_copy}')
+print(f'\nNumpy Array:   {array_np}')
+print(f'\nShared Tensor: {tensor_from_np_copy}')
 
 # Section 2: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
 # We can directly create a new tensor from a numpy array! 
 # unlike the previous way, this uses the same underlying
 # numpy array so no copying takes place!
 shared_tensor = torch.from_numpy(array_np)
-print(f'Shared tensor from numpy: {shared_tensor}\n')
+print(f'\nShared tensor from numpy: {shared_tensor}\n')
 
 # this is the way to go for large numpy arrays to prevent massive 
 # overhead due to copying time!
@@ -226,7 +234,7 @@ print(f'Shared tensor from numpy: {shared_tensor}\n')
 # from any tensor, using its numpy() method!
 
 # this is how sharing the underlying memory looks:
-print('Before modification:')
+print('\nBefore modification:')
 print(f'  NumPy Array:   {array_np}')
 print(f'  Shared tensor: {shared_tensor}\n')
 
@@ -240,13 +248,13 @@ print(f'  Shared tensor: {shared_tensor}\n')
 
 # print('Shared tensor shares the underlying data with array_np')
 shared_tensor[0] = 999
-print('After modifying shared_tensor(PyTorch side):')
+print('\nAfter modifying shared_tensor(PyTorch side):')
 print(f'  NumPy Array:   {array_np}')
 print(f'  Shared tensor: {shared_tensor}\n')
 
 # now lets change a value in array_npy
 array_np[0] = -999
-print('After modifying array_np(NumPy side):')
+print('\nAfter modifying array_np(NumPy side):')
 print(f'  NumPy Array:   {array_np}')
 print(f'  Shared Tensor: {shared_tensor}\n')
 
@@ -254,27 +262,27 @@ print(f'  Shared Tensor: {shared_tensor}\n')
 numpy_address = array_np.ctypes.data
 tensor_address = shared_tensor.data_ptr()
 
-print('Numpy Data address vs Shared Tensor data address')
+print('\nNumpy Data address vs Shared Tensor data address')
 print(f'  NumPy data address:  {numpy_address}')
 print(f'  Tensor data address: {tensor_address}')
 print(f'  Shared memory ?      {numpy_address == tensor_address}\n')
 
 # However as we mentioned earlier, torch.tensor() does not!
-print('Numpy Data vs torch.tensor() data')
+print('\nNumpy Data vs torch.tensor() data')
 array_np[0] = 5
 tensor_cpy_address = tensor_from_np_copy.data_ptr()
-print('After setting array_np[0] = 5')
+print('\nAfter setting array_np[0] = 5')
 print(f'  NumPy Array:         {array_np}')
 print(f'  Torch.tensor():      {tensor_from_np_copy}\n')
 
-print('Numpy Data address vs torch.tensor() data address')
+print('\nNumpy Data address vs torch.tensor() data address')
 print(f'  NumPy data address:  {numpy_address}')
 print(f'  Tensor data address: {tensor_cpy_address}')
 print(f'  Shared memory ?      {numpy_address == tensor_cpy_address}\n')
 
 # As we said earlier we can convert a tensor back to numpy
 # and this operation also shares the underlying memory
-print('Sharing Memory between torch tensor and numpy with .numpy()')
+print('\nSharing Memory between torch tensor and numpy with .numpy()')
 tensor_to_convert = torch.ones((3,3))
 np_from_tensor = tensor_to_convert.numpy() # shares memory!
 # modify one to see the effect on both
@@ -1445,10 +1453,355 @@ print(tensor)
 
 
 #%% Section 7: Tensor Operations (Math, Broadcasting & Reductions)
+#
+# So far, we've covered a range of topics concerning tensors, from how to
+# create and inspect them to learning how to manage them on different devices.
+# But we left out one core concept around them, lets talk about tensor operations.
+#
+# In this section, we are going to explore PyTorch's built-in mathematical
+# operations, learn how broadcasting allows tensors of different shapes to
+# interact, and see how reduction operations summarize data by computing 
+# quantities such as sums, means, minima, and maxima.
+#
+# These operations form the foundation of virtually every deep learning model,
+# from simple linear regression to modern transformer architectures.
+#  
 
+# Element-wise Arithmetic
+# Element-wise arithmetic refers to the operations that operate on a per-element basis
+# when tensors have the same shape. That is, each element in one tensor is operated on
+# by the same element in the other tensor and resulted in the same element in output.
+
+a = torch.tensor([[1., 2., 3.],
+                  [4., 5., 6.]])
+
+b = torch.tensor([[10., 20., 30.],
+                  [40., 50., 60.]])
+
+print("Tensor A:")
+print(a)
+
+print("\nTensor B:")
+print(b)
+
+print("\nAddition (a+b):")
+print(a + b)
+
+print("\nSubtraction (b-a):")
+print(b - a)
+
+print("\nMultiplication (a*b):")
+print(a * b)
+
+print("\nDivision (a/b):")
+print(a / b)
+
+print("\nPower (a**2):")
+print(a ** 2)
+
+# Matrix Multiplication
+# Elementwise mathematical operations like adding and subtracting are really obvious,
+# but when it comes to multiplilication, its more involved. We have several options 
+# to choose from: `torch.matmul`, `torch.mm`, `torch.bmm` 
+# `torch.mm` and `torch.matmul` are kind of the same, they both do matrix multipilication,
+# the difference however is, the `torch.matmul` does the broadcasting when dimensions
+# dont match exactly while the `torch.mm` doesn't. 
+# It is recommened to use `torch.mm`, becasue if the dimensions dont match, you'll
+# face an error righaway before you end up completely flabergasted as to what could 
+# have possibly gone wrong when seemingly you have got everything right! 
+# you'll know exactly where to fix before it becomes a nightmare!
+#
+# `torch.matmul` however, when the dimensions don't match, may broadcast and
+# thus dont give you an error while the result may very well be wrong! 
+# So to be on the safe side, always try to use `torch.mm`!
+# 
+# `torch.bmm` is `torch.mm` with batches. Basically if you do want to multiply several
+# samples of two tensors you can use `torch.bmm()`. we will see how this works later 
+# on so dont worry about it! 
+#
+# *@* matrix multiplication operator behaves exactly as torch.matmul, Like Numpy.
+# *@* matrix multiplication operator was introduced back in Python 3.5 and Pytorch
+# has supported ever since.
+
+# Note, when it comes to tensor multiplication, it gets a little involved. 
+# the default multiplication operator i.e. `*` we use for normal multiplication,
+# executes elementwise operation not a [linear algebra] matrix multiplication.
+# 
+# In order to do matrix multiplication, we can use `torch.matmul` or use *@*
+# matrix multiplication operator Like Numpy.
+# *@* matrix multiplication operator was introduced back in Python 3.5 and Pytorch
+# has supported ever since.
+#
+
+x = torch.tensor([[1., 2.],
+                  [3., 4.]])
+
+y = torch.tensor([[5., 6.],
+                  [7., 8.]])
+
+print("\nElement-wise multiplication using x*y:")
+print(x * y)
+
+print("\nMatrix multiplication using torch.matmul(x,y):")
+print(torch.matmul(x,y))
+
+print("\nMatrix multiplication using x@y:")
+print(x @ y)
+
+# Pytorch offers more methods for tensor multiplication, such as `torch.mm()`
+# 
+
+# torch.matmul(tensor1, tensor2, out=None) → Tensor
+# Matrix product of two tensors.
+# The behavior depends on the dimensionality of the tensors as follows:
+#    If both tensors are 1-dimensional, the dot product (scalar) is returned.
+#    If both arguments are 2-dimensional, the matrix-matrix product is returned.
+#    If the first argument is 1-dimensional and the second argument is 2-dimensional,
+#        a 1 is prepended to its dimension for the purpose of the matrix multiply. 
+#        After the matrix multiply, the prepended dimension is removed.
+#    If the first argument is 2-dimensional and the second argument is 1-dimensional, 
+#        the matrix-vector product is returned.
+#    If both arguments are at least 1-dimensional and at least one argument is N-dimensional
+#        (where N > 2), then a batched matrix multiply is returned. If the first argument is
+#        1-dimensional, a 1 is prepended to its dimension for the purpose of the batched matrix
+#        multiply and removed after. If the second argument is 1-dimensional, a 1 is appended to
+#        its dimension for the purpose of the batched matrix multiple and removed after.
+#        The non-matrix (i.e. batch) dimensions are broadcasted (and thus must be broadcastable).
+#        For example, if tensor1 is a (j×1×n×m)(j \times 1 \times n \times m)(j×1×n×m) tensor and 
+#        tensor2 is a (k×m×p)(k \times m \times p)(k×m×p) tensor, out will be an
+#        (j×k×n×p)(j \times k \times n \times p)(j×k×n×p) tensor.
+# Note
+#     The 1-dimensional dot product version of this function does not support an out parameter.
+
+# note that we need a different seed for each cells in a jupyter notebook environment
+# unless we use a single generator for all operations, which we dont do now becasue we are lazy!:d
+torch.manual_seed(15)
+tensor_1 = torch.rand(size=(2,3))
+tensor_2 = torch.rand(size = (2,))
+print(f'{tensor_1=}')
+print(f'{tensor_2=}')
+# pay careful attention to the dimensions and how the multiplication is carried out!
+# data2 * data1
+tensor_3 = torch.matmul(tensor_2, tensor_1)
+print(f'tensor_2(2,) x tensor_1(2x3): {tensor_3}')
+print(f'{tensor_3.shape=}')
+# as you just saw, the tensor_2 was broadcasted so it can be multiplied by tensor_1
+# tensor_2 was 1D, and it was treated as (1,2) so the dimensions between two tensors
+# are valid. thus the output is a 1x3 tensor! 
+# this is how we do transpose! using .t() method!
+tensor_4 = torch.matmul(tensor_1.t(), tensor_2)
+print(f'tensor_1.t()(3x2) x tensor_2(2,): {tensor_4}')
+print(f'{tensor_4.shape=}')
+# now in this example, the tensor_2 again is broadcasted and this time  
+# it is treated as (2x1) tensor so the dimensions between tensors are valid 
+# as you can see the output is a tensor of 3x1.
+
+# note that, since one of our tensors is 1D, the result is also shown as 1D
+# if we explictly make the tensor_2 2D, the output will follow suit as well
+# here we get a row vector which is (1,3) (A row vector is a one-dimensional array (or vector) that has a single row and multiple columns)
+tensor_3_2 = torch.matmul(tensor_2.view(1,2), tensor_1)
+print(f'{tensor_3_2=}\n{tensor_3_2.shape=}')
+# and likewise we get (3,1) or a column vector here
+tensor_4_2 = torch.matmul(tensor_1.t(), tensor_2.view(2,1))
+print(f'{tensor_4_2=}\n{tensor_4_2.shape=}')
+
+# we can do all of these using mm! 
+print('using torch.mm:')
+# mm is short for matrix multiply, so all dimensions must be specified!
+# unlike matmul, there is no broadcasting going on here!
+# we must specify all dimensions ourselevs thats why we used .view() to reshape our tensor 
+# to the form it needs to be to have a proper multiplication!
+data_3_2 = torch.mm(tensor_2.view(1,2), tensor_1)
+print(f'data_2(1x2) * data_1(2x3): {data_3_2}')
+# this is how we do transpose!
+data_4_2 = torch.mm(tensor_1.t(), tensor_2.view(2,1))
+print(f'data_1.t()(3x2) * data_2(2x1): {data_4_2}')
+
+
+# if you want to know more about boradcasting in Pytorch read more here : 
+# https://pytorch.org/docs/stable/notes/broadcasting.html#broadcasting-semantics 
+
+# In short, if a PyTorch operation supports broadcast, then its Tensor arguments
+# can be automatically expanded to be of equal sizes (without making copies of the data).
+
+# Two tensors are “broadcastable” if the following rules hold:
+#     Each tensor has at least one dimension (like what we just saw in our example above!)
+#     When iterating over the dimension sizes, starting at the trailing dimension,
+#     the dimension sizes must either be equal, one of them is 1, or one of them does not exist.
+x=torch.empty(5,7,3)
+y=torch.empty(5,7,3)
+# same shapes are always broadcastable (i.e. the above rules always hold)
+
+x=torch.empty((0,))
+y=torch.empty(2,2)
+# x and y are not broadcastable, because x does not have at least 1 dimension
+
+# can line up trailing dimensions
+x=torch.empty(5,3,4,1)
+y=torch.empty(  3,1,1)
+# x and y are broadcastable.
+# 1st trailing dimension: both have size 1
+# 2nd trailing dimension: y has size 1
+# 3rd trailing dimension: x size == y size
+# 4th trailing dimension: y dimension doesn't exist
+
+# but:
+x=torch.empty(5,2,4,1)
+y=torch.empty(  3,1,1)
+# x and y are not broadcastable, because in the 3rd trailing dimension 2 != 3
+
+# Backwards compatibility
+# Prior versions of PyTorch allowed certain pointwise functions to execute on 
+# tensors with different shapes, as long as the number of elements in each tensor was equal. 
+# The pointwise operation would then be carried out by viewing each tensor as 1-dimensional. 
+# PyTorch now supports broadcasting and the “1-dimensional” pointwise behavior is considered 
+# deprecated and will generate a Python warning in cases where tensors are not broadcastable, 
+# but have the same number of elements.
+# Note that the introduction of broadcasting can cause backwards incompatible changes in the 
+# case where two tensors do not have the same shape, but are broadcastable and have the same 
+# number of elements. For Example:
+# torch.add(torch.ones(4,1), torch.randn(4))
+# would previously produce a Tensor with size: torch.Size([4,1]), but now produces a Tensor 
+# with size: torch.Size([4,4]). In order to help identify cases in your code where backwards 
+# incompatibilities introduced by broadcasting may exist, you may set :
+# torch.utils.backcompat.broadcast_warning.enabled to True, which will generate a python 
+# warning in such cases.
+# For Example:
+# torch.utils.backcompat.broadcast_warning.enabled=True
+# torch.add(torch.ones(4,1), torch.ones(4))
+# __main__:1: UserWarning: self and other do not have the same shape, but are broadcastable, 
+# and have the same number of elements.
+# Changing behavior in a backwards incompatible manner to broadcasting rather than viewing as 
+# 1-dimensional.
+
+
+
+# Broadcasting
+# Broadcasting automatically expands compatible dimensions without
+# actually copying data.
+
+matrix = torch.tensor([[1., 2., 3.],
+                       [4., 5., 6.]])
+
+bias = torch.tensor([10., 20., 30.])
+
+print("\nBroadcasting:")
+print(matrix + bias)
+
+# Scalars broadcast as well.
+print("\nScalar broadcasting:")
+print(matrix + 100)
+
+# Reductions
+# Reduction operations summarize many values into fewer values.
+
+print("\nSum of all elements:")
+print(matrix.sum())
+
+print("\nMean:")
+print(matrix.mean())
+
+print("\nMaximum:")
+print(matrix.max())
+
+print("\nMinimum:")
+print(matrix.min())
+
+# Reductions can also be performed along a specific dimension.
+
+print("\nColumn sums (dim=0):")
+print(matrix.sum(dim=0))
+
+print("\nRow sums (dim=1):")
+print(matrix.sum(dim=1))
+
+print("\nColumn means:")
+print(matrix.mean(dim=0))
 
 #%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
- 
+# 
+# One of the core operations that we'll often find ourselves using repeatedly 
+# is tensor joining and splitting. As our models become more complex, we'll 
+# need to combine multiple tensors into a single larger tensor or split a 
+# tensor into smaller pieces either purely performance motivated or because
+# of an algorithic requirement.
+# These operations are common when preparing datasets, building mini-batches,
+# processing model outputs, or implementing neural network architectures.
+#
+# In this section, we'll learn how to concatenate, stack, split, and chunk
+# tensors, and understand when each operation is the appropriate choice.
+#
+# PyTorch offers many functions to this end. torch.concatenate(), and its alias
+# torch.cat(), joins two or more tensors together along the given axis.
+
+a = torch.tensor([[1, 2],
+                  [3, 4]])
+
+b = torch.tensor([[5, 6],
+                  [7, 8]])
+
+print("Tensor A:")
+print(a)
+
+print("\nTensor B:")
+print(b)
+
+# Concatenation joins tensors along an existing dimension.
+print("\nConcatenate along rows (dim=0):")
+print(torch.cat((a, b), dim=0))
+
+print("\nConcatenate along columns (dim=1):")
+print(torch.cat((a, b), dim=1))
+
+# Stacking on the other hand creates a NEW dimension.
+
+print("\nStack along dim=0:")
+print(torch.stack((a, b), dim=0))
+
+print("\nStack along dim=1:")
+print(torch.stack((a, b), dim=1))
+
+# Notice the difference:
+#
+# cat()   -> joins existing dimensions.
+# stack() -> creates a brand-new dimension.
+
+# For splitting we use `torch.split()` to divide a tensor into smaller tensors.
+
+tensor = torch.arange(12).reshape(3, 4)
+
+print("\nOriginal tensor:")
+print(tensor)
+# split the tensor into two, along the column dimension (dim=1)
+parts = torch.split(tensor, 2, dim=1)
+
+print("\nSplit into chunks of 2 columns:")
+
+for i, part in enumerate(parts):
+    print(f"Part {i}:")
+    print(part)
+
+# Chunking
+# `torch.chunk()` splits a tensor into approximately equal-sized pieces.
+
+chunks = torch.chunk(tensor, chunks=3, dim=0)
+
+print("\nChunk into 3 row chunks:")
+
+for i, chunk in enumerate(chunks):
+    print(f"Chunk {i}:")
+    print(chunk)
+
+# Unbinding
+# unbind() removes a dimension and returns a tuple of tensors.
+
+rows = torch.unbind(tensor, dim=0)
+
+print("\nRows returned by unbind():")
+
+for row in rows:
+    print(row)
+
 # %% done added to device/dtype sections - can be removed 
 # Ok, now what if we have a tensor that is already on a 
 # specific device(it can be cpu or a gpu)
