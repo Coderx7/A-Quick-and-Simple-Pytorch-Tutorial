@@ -1,6 +1,9 @@
 #%% In the name of God the most compassionate the most merciful
 # Pytorch basics : Introduction of tensors
 
+from colorsys import yiq_to_rgb
+from re import X
+
 import torch 
 import numpy as np
 import torch.version 
@@ -1456,7 +1459,8 @@ print(tensor)
 #
 # So far, we've covered a range of topics concerning tensors, from how to
 # create and inspect them to learning how to manage them on different devices.
-# But we left out one core concept around them, lets talk about tensor operations.
+# But we left out one core concept around them, the tensor operations.
+# lets talk about them.
 #
 # In this section, we are going to explore PyTorch's built-in mathematical
 # operations, learn how broadcasting allows tensors of different shapes to
@@ -1468,9 +1472,9 @@ print(tensor)
 #  
 
 # Element-wise Arithmetic
-# Element-wise arithmetic refers to the operations that operate on a per-element basis
+# Element-wise arithmetic refers to operations that operate on a per-element basis
 # when tensors have the same shape. That is, each element in one tensor is operated on
-# by the same element in the other tensor and resulted in the same element in output.
+# by the same element in the other tensor and results in the same position in the output.
 
 a = torch.tensor([[1., 2., 3.],
                   [4., 5., 6.]])
@@ -1484,25 +1488,51 @@ print(a)
 print("\nTensor B:")
 print(b)
 
-print("\nAddition (a+b):")
+print("\nAddition (A+B):")
 print(a + b)
 
-print("\nSubtraction (b-a):")
+print("\nSubtraction (B-A):")
 print(b - a)
 
-print("\nMultiplication (a*b):")
+print("\nMultiplication (A*B):")
 print(a * b)
 
-print("\nDivision (a/b):")
+print("\nDivision (A/B):")
 print(a / b)
 
-print("\nPower (a**2):")
+print("\nPower (A**2):")
 print(a ** 2)
 
 # Matrix Multiplication
 # Elementwise mathematical operations like adding and subtracting are really obvious,
-# but when it comes to multiplilication, its more involved. We have several options 
-# to choose from: `torch.matmul`, `torch.mm`, `torch.bmm` 
+# there's no special case, or exception. However, when it comes to multiplilication,
+# its more involved. We have several options to choose from when we want to do tensor multiplication
+# `torch.matmul`, `torch.mm` and `torch.bmm`.
+# `torch.matmul()` does matrix multiplication and its behavior depends on the 
+# dimensionality of the tensors as follows:
+# 
+# If both tensors are 1-dimensional, the dot product (scalar) is returned.
+# If both arguments are 2-dimensional, the matrix-matrix product is returned.
+# If the first argument is 1-dimensional and the second argument is 2-dimensional,
+# a 1 is prepended to its dimension for the purpose of the matrix multiply. 
+# After the matrix multiply, the prepended dimension is removed.
+# 
+# If the first argument is 2-dimensional and the second argument is 1-dimensional, 
+# the matrix-vector product is returned.
+# 
+# If both arguments are at least 1-dimensional and at least one argument is N-dimensional
+# (where N > 2), then a batched matrix multiply is returned. 
+# 
+# If the first argument is 1-dimensional, a 1 is prepended to its dimension for the 
+# purpose of the batched matrix multiply and removed after.
+# 
+# If the second argument is 1-dimensional, a 1 is appended to its dimension for the 
+# purpose of the batched matrix multiple and removed after.
+# 
+# The non-matrix (i.e. batch) dimensions are broadcasted (and thus must be broadcastable).
+# For example, if tensor1 is a (j×1×n×m) tensor and tensor2 is a (k×m×p) tensor, out will
+# be an (j×k×n×p) tensor.
+# 
 # `torch.mm` and `torch.matmul` are kind of the same, they both do matrix multipilication,
 # the difference however is, the `torch.matmul` does the broadcasting when dimensions
 # dont match exactly while the `torch.mm` doesn't. 
@@ -1531,65 +1561,80 @@ print(a ** 2)
 # matrix multiplication operator Like Numpy.
 # *@* matrix multiplication operator was introduced back in Python 3.5 and Pytorch
 # has supported ever since.
-#
+
+t1 = torch.tensor([1., 2.])
+t2 = torch.tensor([10., 20.])
+
+
+print("Tensor t1:")
+print(t1)
+
+print("\nTensor t2:")
+print(t2)
+
+print("\nElementwise multiplication t1 * t2:")
+print(t1 * t2)
+
+# Two vectors when multiplied using `@`` or `torch.matmul`,
+# will result in dotproduct (a scaler)
+print("\ndotproduct t1 @ t2:")
+print(t1 @ t2)
+
+print("\ndotproduct torch.matmul(t1,t2):")
+print(torch.matmul(t1,t2))
+
+# note to myself what should I do? 
+# !it might be a good idea to start treating variable names so that 
+# a scaler, a vector and a matrix is apparent from their shape/captilization
+# scalers, lower case, vectors, and matrixes upper cased?! not sure if we can
+# pull this off in code! cause if I recall correctly, vectors would be in italic
+# form, while martices would be in bold, while scaler would be lowercase (normal)
 
 x = torch.tensor([[1., 2.],
                   [3., 4.]])
-
 y = torch.tensor([[5., 6.],
                   [7., 8.]])
 
-print("\nElement-wise multiplication using x*y:")
+print("Tensor X:")
+print(x)
+
+print("\nTensor Y:")
+print(y)
+
+print("\nElement-wise multiplication using X * Y:")
 print(x * y)
 
-print("\nMatrix multiplication using torch.matmul(x,y):")
+print("\nMatrix multiplication using torch.matmul(X, Y):")
 print(torch.matmul(x,y))
 
-print("\nMatrix multiplication using x@y:")
+print("\nMatrix multiplication using X @ Y:")
 print(x @ y)
 
+
 # Pytorch offers more methods for tensor multiplication, such as `torch.mm()`
-# 
+# example for mm 
 
-# torch.matmul(tensor1, tensor2, out=None) → Tensor
-# Matrix product of two tensors.
-# The behavior depends on the dimensionality of the tensors as follows:
-#    If both tensors are 1-dimensional, the dot product (scalar) is returned.
-#    If both arguments are 2-dimensional, the matrix-matrix product is returned.
-#    If the first argument is 1-dimensional and the second argument is 2-dimensional,
-#        a 1 is prepended to its dimension for the purpose of the matrix multiply. 
-#        After the matrix multiply, the prepended dimension is removed.
-#    If the first argument is 2-dimensional and the second argument is 1-dimensional, 
-#        the matrix-vector product is returned.
-#    If both arguments are at least 1-dimensional and at least one argument is N-dimensional
-#        (where N > 2), then a batched matrix multiply is returned. If the first argument is
-#        1-dimensional, a 1 is prepended to its dimension for the purpose of the batched matrix
-#        multiply and removed after. If the second argument is 1-dimensional, a 1 is appended to
-#        its dimension for the purpose of the batched matrix multiple and removed after.
-#        The non-matrix (i.e. batch) dimensions are broadcasted (and thus must be broadcastable).
-#        For example, if tensor1 is a (j×1×n×m)(j \times 1 \times n \times m)(j×1×n×m) tensor and 
-#        tensor2 is a (k×m×p)(k \times m \times p)(k×m×p) tensor, out will be an
-#        (j×k×n×p)(j \times k \times n \times p)(j×k×n×p) tensor.
-# Note
-#     The 1-dimensional dot product version of this function does not support an out parameter.
 
-# note that we need a different seed for each cells in a jupyter notebook environment
-# unless we use a single generator for all operations, which we dont do now becasue we are lazy!:d
-torch.manual_seed(15)
-tensor_1 = torch.rand(size=(2,3))
-tensor_2 = torch.rand(size = (2,))
-print(f'{tensor_1=}')
-print(f'{tensor_2=}')
+# example for bmm
+
+x = torch.arange(6.).view(2,3)+1
+y = torch.arange(2.).view(2,)+1
+
+print("Tensor X:")
+print(x)
+
+print("\nTensor Y:")
+print(y)
 # pay careful attention to the dimensions and how the multiplication is carried out!
 # data2 * data1
-tensor_3 = torch.matmul(tensor_2, tensor_1)
+tensor_3 = torch.matmul(y, x)
 print(f'tensor_2(2,) x tensor_1(2x3): {tensor_3}')
 print(f'{tensor_3.shape=}')
 # as you just saw, the tensor_2 was broadcasted so it can be multiplied by tensor_1
 # tensor_2 was 1D, and it was treated as (1,2) so the dimensions between two tensors
 # are valid. thus the output is a 1x3 tensor! 
 # this is how we do transpose! using .t() method!
-tensor_4 = torch.matmul(tensor_1.t(), tensor_2)
+tensor_4 = torch.matmul(x.t(), y)
 print(f'tensor_1.t()(3x2) x tensor_2(2,): {tensor_4}')
 print(f'{tensor_4.shape=}')
 # now in this example, the tensor_2 again is broadcasted and this time  
@@ -1599,10 +1644,10 @@ print(f'{tensor_4.shape=}')
 # note that, since one of our tensors is 1D, the result is also shown as 1D
 # if we explictly make the tensor_2 2D, the output will follow suit as well
 # here we get a row vector which is (1,3) (A row vector is a one-dimensional array (or vector) that has a single row and multiple columns)
-tensor_3_2 = torch.matmul(tensor_2.view(1,2), tensor_1)
+tensor_3_2 = torch.matmul(y.view(1,2), x)
 print(f'{tensor_3_2=}\n{tensor_3_2.shape=}')
 # and likewise we get (3,1) or a column vector here
-tensor_4_2 = torch.matmul(tensor_1.t(), tensor_2.view(2,1))
+tensor_4_2 = torch.matmul(x.t(), y.view(2,1))
 print(f'{tensor_4_2=}\n{tensor_4_2.shape=}')
 
 # we can do all of these using mm! 
@@ -1611,10 +1656,10 @@ print('using torch.mm:')
 # unlike matmul, there is no broadcasting going on here!
 # we must specify all dimensions ourselevs thats why we used .view() to reshape our tensor 
 # to the form it needs to be to have a proper multiplication!
-data_3_2 = torch.mm(tensor_2.view(1,2), tensor_1)
+data_3_2 = torch.mm(y.view(1,2), x)
 print(f'data_2(1x2) * data_1(2x3): {data_3_2}')
 # this is how we do transpose!
-data_4_2 = torch.mm(tensor_1.t(), tensor_2.view(2,1))
+data_4_2 = torch.mm(x.t(), y.view(2,1))
 print(f'data_1.t()(3x2) * data_2(2x1): {data_4_2}')
 
 
@@ -1674,8 +1719,6 @@ y=torch.empty(  3,1,1)
 # Changing behavior in a backwards incompatible manner to broadcasting rather than viewing as 
 # 1-dimensional.
 
-
-
 # Broadcasting
 # Broadcasting automatically expands compatible dimensions without
 # actually copying data.
@@ -1719,88 +1762,7 @@ print("\nColumn means:")
 print(matrix.mean(dim=0))
 
 #%% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
-# 
-# One of the core operations that we'll often find ourselves using repeatedly 
-# is tensor joining and splitting. As our models become more complex, we'll 
-# need to combine multiple tensors into a single larger tensor or split a 
-# tensor into smaller pieces either purely performance motivated or because
-# of an algorithic requirement.
-# These operations are common when preparing datasets, building mini-batches,
-# processing model outputs, or implementing neural network architectures.
-#
-# In this section, we'll learn how to concatenate, stack, split, and chunk
-# tensors, and understand when each operation is the appropriate choice.
-#
-# PyTorch offers many functions to this end. torch.concatenate(), and its alias
-# torch.cat(), joins two or more tensors together along the given axis.
 
-a = torch.tensor([[1, 2],
-                  [3, 4]])
-
-b = torch.tensor([[5, 6],
-                  [7, 8]])
-
-print("Tensor A:")
-print(a)
-
-print("\nTensor B:")
-print(b)
-
-# Concatenation joins tensors along an existing dimension.
-print("\nConcatenate along rows (dim=0):")
-print(torch.cat((a, b), dim=0))
-
-print("\nConcatenate along columns (dim=1):")
-print(torch.cat((a, b), dim=1))
-
-# Stacking on the other hand creates a NEW dimension.
-
-print("\nStack along dim=0:")
-print(torch.stack((a, b), dim=0))
-
-print("\nStack along dim=1:")
-print(torch.stack((a, b), dim=1))
-
-# Notice the difference:
-#
-# cat()   -> joins existing dimensions.
-# stack() -> creates a brand-new dimension.
-
-# For splitting we use `torch.split()` to divide a tensor into smaller tensors.
-
-tensor = torch.arange(12).reshape(3, 4)
-
-print("\nOriginal tensor:")
-print(tensor)
-# split the tensor into two, along the column dimension (dim=1)
-parts = torch.split(tensor, 2, dim=1)
-
-print("\nSplit into chunks of 2 columns:")
-
-for i, part in enumerate(parts):
-    print(f"Part {i}:")
-    print(part)
-
-# Chunking
-# `torch.chunk()` splits a tensor into approximately equal-sized pieces.
-
-chunks = torch.chunk(tensor, chunks=3, dim=0)
-
-print("\nChunk into 3 row chunks:")
-
-for i, chunk in enumerate(chunks):
-    print(f"Chunk {i}:")
-    print(chunk)
-
-# Unbinding
-# unbind() removes a dimension and returns a tuple of tensors.
-
-rows = torch.unbind(tensor, dim=0)
-
-print("\nRows returned by unbind():")
-
-for row in rows:
-    print(row)
 
 # %% done added to device/dtype sections - can be removed 
 # Ok, now what if we have a tensor that is already on a 
