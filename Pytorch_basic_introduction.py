@@ -1664,7 +1664,10 @@ show_tensor("torch.mm(X.t(), Y.view(2,1))",Z)
 # 7.3 Broadcasting
 # Broadcasting is one of PyTorch's most convenient features. It allows tensors
 # with compatible shapes to participate in the same operation without
-# explicitly reshaping or copying data.
+# explicitly reshaping or copying data. 
+# Broadcasting, simply put, means to broad cast dimensions in a tensor so 
+# it becomes identical to the other tensor, so their operation can continue
+# as if they were identical in shape from the begining.
 
 matrix = torch.tensor([[1., 2., 3.],
                        [4., 5., 6.]])
@@ -1672,45 +1675,47 @@ matrix = torch.tensor([[1., 2., 3.],
 bias = torch.tensor([10., 20., 30.])
 
 show_tensor("Matrix",matrix)
-
 show_tensor("Bias",bias)
+
+# In this example, we have a single Bias vector while we have 2 rows 
+# in the matrix, in order for the Addition operation to carry on 
+# bias needs to be replicated once along the row dimension, so each
+# row in matrix, has a corrosponding row in bias. 
+# In practice no copying happens when broadcasting takes place! 
+# because PyTorch performs this expansion logically, so it does not actually
+# duplicate the underlying data in memory.
 
 print_header("Broadcasted Addition")
 show_tensor("Matrix + Bias", matrix + bias, newline=False)
 
-# Scalars are broadcast as well.
+# Scalars are broadcast as well in the same fashion. an scaler will be
+# replicated for as many elements as there are in the matrix so the addition
+# can go ahead without any issues.
 print_header("Scalar Broadcasting",)
 show_tensor("Matrix + 100", matrix + bias, newline=False)
 
-# Broadcasting works whenever the dimensions are compatible.
-# Starting from the trailing dimensions, each pair of dimensions must either:
-# be equal, one of them must be 1, or one of them must not exist.
-# PyTorch performs this expansion logically, so it does not actually duplicate
-# the underlying data in memory.
+# Note that, in order for the broadcasting to work, the two tensor must have 
+# compatible dimensions. That is, each tensor must have at least one dimension
+# and starting from the trailing dimensions, each pair of dimensions must either:
+# be equal or one of them must be 1 or one of them must not exist.
 # 
 # In short, if a PyTorch operation supports broadcast, then its Tensor arguments
 # can be automatically expanded to be of equal sizes (without making copies of the data).
 
-# Two tensors are "broadcastable" if the following rules hold:
-# Each tensor has at least one dimension (like what we just saw in our example above!)
-# When iterating over the dimension sizes, starting at the trailing dimension,
-# the dimension sizes must either be equal, one of them is 1, or one of them
-# does not exist.
-
 # Deeper example review 
 # lets review some of the points we discussed just now
 
-X=torch.empty(5,7,3)
-Y=torch.empty(5,7,3)
-# same shapes are always broadcastable (i.e. the above rules always hold)
+X = torch.empty(5,7,3)
+Y = torch.empty(5,7,3)
+# Tensors with the same shapes are always broadcastable (i.e. the above rules always hold)
 
-X=torch.empty((0,))
-Y=torch.empty(2,2)
+X = torch.empty((0,))
+Y = torch.empty(2,2)
 # x and y are not broadcastable, because x does not have at least 1 dimension
 
 # can line up trailing dimensions
-X=torch.empty(5,3,4,1)
-Y=torch.empty(  3,1,1)
+X = torch.empty(5,3,4,1)
+Y = torch.empty(  3,1,1)
 # x and y are broadcastable.
 # 1st trailing dimension: both have size 1
 # 2nd trailing dimension: y has size 1
@@ -1718,12 +1723,12 @@ Y=torch.empty(  3,1,1)
 # 4th trailing dimension: y dimension doesn't exist
 # 
 # but:
-X=torch.empty(5,2,4,1)
-Y=torch.empty(  3,1,1)
+X = torch.empty(5,2,4,1)
+Y = torch.empty(  3,1,1)
 # x and y are not broadcastable, because in the 3rd trailing dimension 2 != 3
 
 # sidenote about backwards compatibility:
-# Early versions of PyTorch (i.e. <1.0) allowed certain pointwise/elementwise functions to 
+# Early versions of PyTorch (i.e. <1.0) allowed certain *pointwise/elementwise* functions to 
 # execute on tensors with different shapes, as long as the number of elements in each tensor
 # was equal. 
 # The pointwise operation would then be carried out by viewing each tensor as 1-dimensional. 
@@ -1752,54 +1757,62 @@ Y=torch.empty(  3,1,1)
 
 # torch.utils.backcompat.broadcast_warning.enabled=True
 A = torch.randn((4,1))
-v1 = torch.randn((4,))
+v = torch.randn((4,))
 
-show_tensor("A",A)
-show_tensor("v1",v1)
+show_tensor("A", A)
+show_tensor("v", v)
 
 torch.utils.backcompat.broadcast_warning.enabled=True
-show_tensor("A + v1",A + v1) 
+show_tensor("A + v", A + v) 
 # results in a 4x4 tensor
 
 # this line fails:
-# print(A @ v1) 
-show_tensor("v1 @ A", torch.matmul(v1,A))
-show_tensor("A @ v1.view(1,-1)", torch.matmul(A, v1.view(1,-1)))
-# show_tensor("v1.view(-1,1) @ A", torch.matmul(v1.view(-1,1), A))
+# print(A @ v) 
+show_tensor("v @ A", torch.matmul(v,A))
+show_tensor("A @ v.view(1,-1)", torch.matmul(A, v.view(1,-1)))
+# show_tensor("v.view(-1,1) @ A", torch.matmul(v.view(-1,1), A))
 
 # 7.4 Reduction Operations
 # Reduction operations summarize many values into fewer values (often a single
 # value). These operations are extremely common when computing statistics and
 # defining loss functions during neural network training.
 
-print("\nSum:")
-print(matrix.sum())
+# print("\nSum:")
+# print(MATRIX.sum())
+show_tensor("Sum",matrix.sum())
 
-print("\nMean:")
-print(matrix.mean())
+# print("\nMean:")
+# print(MATRIX.mean())
+show_tensor("Mean",matrix.mean())
 
-print("\nMaximum:")
-print(matrix.max())
+# print("\nMaximum:")
+# print(MATRIX.max())
+show_tensor("Maximum",matrix.max())
 
-print("\nMinimum:")
-print(matrix.min())
+# print("\nMinimum:")
+# print(MATRIX.min())
+show_tensor("Minimum",matrix.min())
+
+# sidenote:
+# To convert a Pytorch scaler into a Python number, we use .item()
+print_header("Raw Pytorch Scalar")
+print(f"Sum = {repr(matrix.sum())}")
+
+print_header("Aftert using .item()")
+print(f"Sum = {repr(matrix.sum().item())}")
+
 
 # Reductions can also be performed along a specific dimension.
+show_tensor("Column sum(dim=0)",matrix.sum(dim=0))
 
-print("\nColumn sums (dim=0):")
-print(matrix.sum(dim=0))
+show_tensor("Column sum(dim=1)",matrix.sum(dim=1))
 
-print("\nRow sums (dim=1):")
-print(matrix.sum(dim=1))
-
-print("\nColumn means (dim=0):")
-print(matrix.mean(dim=0))
- 
+show_tensor("Column mean(dim=0)",matrix.mean(dim=0)) 
 #%% 7.6 Advanced Matrix Multiplication
 #
 # Previously, we introduced matrix multiplication using the `@`
-# operator and `torch.matmul()`. For most everyday PyTorch code, these are all
-# you'll ever need.
+# operator and `torch.matmul()` and briefly talked about `torch.mm`.
+# For most everyday PyTorch code, these are all you'll ever need.
 #
 # However, PyTorch actually provides several related matrix multiplication
 # functions. Although they may appear redundant at first, each exists for a
@@ -1810,7 +1823,6 @@ print(matrix.mean(dim=0))
 # tensor and how they influence the multiplication being performed.
 
 # 7.6.1 The @ Operator
-#
 # The @ operator was introduced in Python 3.5 specifically for matrix
 # multiplication. In PyTorch, it is simply syntactic sugar for
 # `torch.matmul().` Both produce identical results.
@@ -1824,8 +1836,6 @@ B = torch.tensor([[5., 6.],
 # print("Using the @ operator:")
 # print(A @ B)
 show_tensor("Using @ operator (A @ B)", A @ B)
-# print("\nUsing torch.matmul():")
-# print(torch.matmul(A, B))
 show_tensor("Using torch.matmul (torch.matmul(A, B))", torch.matmul(A, B))
 
 # 7.6.2 torch.matmul()
@@ -1873,8 +1883,6 @@ v = torch.tensor([10., 20.])
 M = torch.tensor([[1., 2., 3.],
                   [4., 5., 6.]])
 
-# print("\nVector x Matrix:")
-# print(torch.matmul(v, M))
 show_tensor("Vector x Matrix", torch.matmul(v, M))
 
 # Matrix x Matrix
@@ -1886,8 +1894,6 @@ A = torch.tensor([[1., 2.],
 B = torch.tensor([[5., 6.],
                   [7., 8.]])
 
-# print("\nMatrix x Matrix:")
-# print(torch.matmul(A, B))
 show_tensor("Matrix x Matrix", torch.matmul(A, B))
 
 # Batched Matrix Multiplication
@@ -1897,40 +1903,38 @@ show_tensor("Matrix x Matrix", torch.matmul(A, B))
 # Instead of multiplying one pair of matrices, PyTorch multiplies every
 # corresponding pair in the batch.
 
-batch_A = torch.randn(10, 3, 4)
-batch_B = torch.randn(10, 4, 5)
-result = torch.matmul(batch_A, batch_B)
+batch_a = torch.randn(2, 3, 4)
+batch_b = torch.randn(2, 4, 5)
+result = torch.matmul(batch_a, batch_b)
 # print("\nBatched Matrix Multiplication:")
 # print(result.shape)
-show_tensor("Batch A", batch_A)
-show_tensor("Batch B", batch_B)
+show_tensor("Batch A", batch_a)
+show_tensor("Batch B", batch_b)
 show_tensor("Batched Matrix Multiplication", result)
 
 # Conceptually this performs:
 #
-# batch_A[0] @ batch_B[0]
-# batch_A[1] @ batch_B[1]
+# batch_a[0] @ batch_b[0]
+# batch_a[1] @ batch_b[1]
 # ...
-# batch_A[9] @ batch_B[9]
+# batch_a[9] @ batch_b[9]
 
 # Broadcasting
 # `torch.matmul()` also supports broadcasting across batch dimensions.
 
-batch_A = torch.randn(10, 3, 4)
-shared_B = torch.randn(4, 5)
-result = torch.matmul(batch_A, shared_B)
-# print("\nBroadcasted Matrix Multiplication:")
-# print(result.shape)
-show_tensor("Batch A", batch_A)
-show_tensor("B shared", shared_B)
+batch_a = torch.randn(2, 3, 4)
+shared_b = torch.randn(4, 5)
+result = torch.matmul(batch_a, shared_b)
+show_tensor("Batch A", batch_a)
+show_tensor("shared_B", shared_b)
 show_tensor("Broadcasted Matrix Multiplication", result)
 
 # Here the same matrix is reused for every batch:
 #
-# batch_A[0] @ shared_B
-# batch_A[1] @ shared_B
+# batch_a[0] @ shared_b
+# batch_a[1] @ shared_b
 # ...
-# batch_A[9] @ shared_B
+# batch_a[9] @ shared_b
 #
 # This behavior is extremely common in modern deep learning models.
 
@@ -1943,8 +1947,6 @@ show_tensor("Broadcasted Matrix Multiplication", result)
 A = torch.randn(2, 3)
 B = torch.randn(3, 4)
 
-# print("\ntorch.mm():")
-# print(torch.mm(A, B))
 show_tensor("A", A)
 show_tensor("B", B)
 show_tensor("torch.mm(A, B)", torch.mm(A, B))
@@ -1952,10 +1954,10 @@ show_tensor("torch.mm(A, B)", torch.mm(A, B))
 # The following would raise an error because `torch.mm()` only accepts
 # matrices:
 #
-# batch_A = torch.randn(10, 3, 4)
-# batch_B = torch.randn(10, 4, 5)
+# batch_a = torch.randn(2, 3, 4)
+# batch_b = torch.randn(2, 4, 5)
 #
-# torch.mm(batch_A, batch_B)
+# torch.mm(batch_a, batch_b)
 
 # 7.6.4 torch.bmm()
 # `torch.bmm()` performs batched matrix multiplication.
@@ -1963,51 +1965,52 @@ show_tensor("torch.mm(A, B)", torch.mm(A, B))
 # Unlike `torch.matmul()`, it requires both tensors to already have matching
 # batch dimensions and does NOT perform broadcasting.
 
-batch_A = torch.randn(10, 3, 4)
-batch_B = torch.randn(10, 4, 5)
+batch_a = torch.randn(6, 3, 4)
+batch_b = torch.randn(6, 4, 5)
 
-# print("\ntorch.bmm():")
-# print(torch.bmm(batch_A, batch_B).shape)
+show_tensor("batch_A", batch_a)
+show_tensor("batch_B", batch_b)
+show_tensor("torch.bmm(batch_A, batch_B)", torch.bmm(batch_a, batch_b))
 
-show_tensor("Batch A", batch_A)
-show_tensor("Batch B", batch_B)
-show_tensor("torch.bmm(A_batch, B_batch)", torch.mm(batch_A, batch_B))
-
-# This works because both tensors contain 10 matrices.
-# The following would fail because broadcasting is not supported:
+# This works because both tensors contain 6 matrices.
+# The following would fail because `torch.bmm` doesnt support broadcasting
+# and the second tensor doesnt have a matching batch dimension either.
 #
-# batch_A = torch.randn(10, 3, 4)
+# batch_A = torch.randn(6, 3, 4)
 # shared_B = torch.randn(4, 5)
 #
 # torch.bmm(batch_A, shared_B)
 
-# 7.6.5 Which One Should I Use?
-# For most PyTorch code, use the `@` operator whenever possible.
-# Use `torch.matmul()` if you prefer the functional API or need to call
+# 7.6.5 Which One Should we Use?
+# For most PyTorch code, we use the `@` operator whenever possible.
+# We use `torch.matmul()` if we prefer the functional API or need to call
 # the operation programmatically.
-# Use `torch.mm()` only when you intentionally want to restrict 
-# your code to two-dimensional matrix multiplication.
-# Use `torch.bmm()` when working with batches of matrices that already
-# have matching batch dimensions and you do not want broadcasting.
+# We only use `torch.mm()` if we intentionally want to restrict 
+# our code to two-dimensional matrix multiplication.
+# And finaly we use `torch.bmm()` when we are working with batches
+# of matrices that already have matching batch dimensions and 
+# we do not want broadcasting.
 #
-# In practice, you'll encounter `@` and `torch.matmul()` far more frequently
+# In practice, you'll see `@` and `torch.matmul()` far more frequently
 # than `torch.mm()` or `torch.bmm()`.
 
-# Matrix Multiplication Summary
-# Input Shapes                     Result
-# -------------------------------------------------------
-# (n)       @ (n)       -> ()          Dot Product
+# sidenote:
+#                   Matrix Multiplication Summary
+#     Input Shapes              Output Shape           Result
+# ------------------------------------------------------------------------------
+# (n)       @   (n)        ->         ()        Vector x Vector -> Dot Product 
 #
-# (m, n)    @ (n)       -> (m)         Matrix x Vector
+# (m, n)    @   (n)        ->         (m)            Matrix x Vector
 #
-# (n)       @ (n, p)    -> (p)         Vector x Matrix
+# (n)       @   (n, p)     ->         (p)            Vector x Matrix
 #
-# (m, n)    @ (n, p)    -> (m, p)      Matrix x Matrix
+# (m, n)    @   (n, p)     ->        (m, p)          Matrix x Matrix
 #
-# (...,m,n) @ (...,n,p) -> (...,m,p)   Batched Matrix Multiplication
+# (...,m,n) @   (...,n,p)  ->       (...,m,p)    Batched Matrix Multiplication
 #
 # `torch.matmul()` automatically handles all of the above cases.
 # The `@` operator is simply shorthand for `torch.matmul()`.
+
 # %% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
 # 
 # One of the core operations that we'll often find ourselves using repeatedly 
@@ -2024,49 +2027,53 @@ show_tensor("torch.bmm(A_batch, B_batch)", torch.mm(batch_A, batch_B))
 # PyTorch offers many functions to this end. torch.concatenate(), and its alias
 # torch.cat(), joins two or more tensors together along the given axis.
 
-a = torch.tensor([[1, 2],
+A = torch.tensor([[1, 2],
                   [3, 4]])
 
-b = torch.tensor([[5, 6],
+B = torch.tensor([[5, 6],
                   [7, 8]])
 
-print("Tensor A:")
-print(a)
-
-print("\nTensor B:")
-print(b)
+show_tensor("A", A)
+show_tensor("B", B)
 
 # Concatenation joins tensors along an existing dimension.
-print("\nConcatenate along rows (dim=0):")
-print(torch.cat((a, b), dim=0))
+# print("\nConcatenate along rows (dim=0):")
+# print(torch.cat((A, B), dim=0))
+show_tensor("Concatenate along rows (dim=0)", torch.cat((A, B), dim=0))
 
-print("\nConcatenate along columns (dim=1):")
-print(torch.cat((a, b), dim=1))
+
+# print("\nConcatenate along columns (dim=1):")
+# print(torch.cat((A, B), dim=1))
+show_tensor("Concatenate along columns (dim=1)", torch.cat((A, B), dim=1))
 
 # Stacking on the other hand creates a NEW dimension.
-
 print("\nStack along dim=0:")
-print(torch.stack((a, b), dim=0))
+print(torch.stack((A, B), dim=0))
+show_tensor("Stack along dim=0", torch.stack((A, B), dim=0))
 
-print("\nStack along dim=1:")
-print(torch.stack((a, b), dim=1))
+# print("\nStack along dim=1:")
+# print(torch.stack((A, B), dim=1))
+show_tensor("Stack along dim=1", torch.stack((A, B), dim=1))
 
 # Notice the difference:
-#
 # cat()   -> joins existing dimensions.
 # stack() -> creates a brand-new dimension.
 
-# For splitting we use `torch.split()` to divide a tensor into smaller tensors.
+# sidenote:
+# `torch.cat` is an alias for `torch.concatenate()`
 
+
+# For splitting we use `torch.split()` to divide a tensor into smaller tensors.
 tensor = torch.arange(12).reshape(3, 4)
 
-print("\nOriginal tensor:")
-print(tensor)
+# print("\nOriginal tensor:")
+# print(tensor)
+show_tensor("Original tensor", tensor)
 # split the tensor into two, along the column dimension (dim=1)
 parts = torch.split(tensor, 2, dim=1)
 
-print("\nSplit into chunks of 2 columns:")
-
+# print("\nSplit into chunks of 2 columns:")
+print_header("Split into chunks of 2 columns")
 for i, part in enumerate(parts):
     print(f"Part {i}:")
     print(part)
@@ -2076,21 +2083,25 @@ for i, part in enumerate(parts):
 
 chunks = torch.chunk(tensor, chunks=3, dim=0)
 
-print("\nChunk into 3 row chunks:")
+# print("\nChunk into 3 row chunks:")
+print_header("Chunk into 3 row chunks")
 
 for i, chunk in enumerate(chunks):
-    print(f"Chunk {i}:")
-    print(chunk)
+    # print(f"Chunk {i}:")
+    # print(repr(chunk))
+    show_tensor(f"Chunk {i}", chunk)
 
 # Unbinding
 # unbind() removes a dimension and returns a tuple of tensors.
 
 rows = torch.unbind(tensor, dim=0)
 
-print("\nRows returned by unbind():")
+# print("\nRows returned by unbind():")
+print_header("Rows returned by unbind(dim=0):")
 
-for row in rows:
-    print(row)
+for i, row in enumerate(rows):
+    # print(repr(row))
+    show_tensor(f"row {i}", row)
 
 # %% done added to device/dtype sections - can be removed 
 # Ok, now what if we have a tensor that is already on a 
