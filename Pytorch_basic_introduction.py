@@ -2044,7 +2044,7 @@ show_tensor("torch.bmm(batch_A, batch_B)", torch.bmm(batch_a, batch_b))
 # `torch.matmul()` automatically handles all of the above cases.
 # The `@` operator is simply shorthand for `torch.matmul()`.
 
-# %% Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
+# %% Section 8: Joining, Splitting and Repeating Tensors (Concatenation, Stacking and Repeating)
 # 
 # One of the core operations that we'll often find ourselves using repeatedly 
 # is tensor joining and splitting. As our models become more complex, we'll 
@@ -2182,6 +2182,174 @@ for i, row in enumerate(rows):
 # we usually use `torch.unbind()` when we want to return one tensor for every slice
 # along a dimension. its equivalent to chunking into single slices followed by 
 # squeezing away the split dimension.
+
+# Repeating and Expanding
+# Another common operation is making a tensor larger. PyTorch provides two
+# related operations for tensors:
+# `Tensor.repeat()` and `Tensor.expand()`.
+# 
+# `.repeat()` physically copies the tensor's data.
+# while `expand()` creates a larger *view* of the same data without copying it.
+#
+# Both can produce tensors with the same shape, but they have very different
+# performance and memory characteristics and are intended for different use cases.
+
+vector = torch.tensor([1, 2, 3])
+
+show_tensor("Original vector", vector)
+
+# `Tensor.repeat(*sizes)` accepts a list or tuple of sizes for each dimension
+# and repeats the tensor along those dimension based on respective sizes.
+# note the arguments specify *how many times* each dimension should be repeated,
+# its not the final size.
+#
+# For a 1D tensor we provide one repeat factor.
+show_tensor("vector.repeat(3)", vector.repeat(3))
+
+# For higher-dimensional tensors we provide one repeat factor per dimension.
+matrix = vector.unsqueeze(0)
+show_tensor("matrix", matrix)
+
+show_tensor("matrix.repeat(2, 1)", matrix.repeat(2, 1))
+show_tensor("matrix.repeat(2, 2)", matrix.repeat(2, 2))
+
+# Notice how each repeat factor affects one dimension independently.
+#
+# matrix.shape is (1, 3)
+# when we do repeat(2, 1) we get shape(2, 3)
+# when we do repeat(2, 2) we get shape(2, 6)
+# only that dimension gets repeated that many times. 
+
+# Unlike broadcasting, `repeat()` allocates new memory and physically copies
+# every element into the output tensor. The repeated values are completely
+# independent copies.
+
+# Expanding
+# `Tensor.expand(*sizes)` looks similar to repeat(), but the arguments have
+# a completely different meaning.
+# Instead of specifying repeat factors, we specify the desired *final size*
+# of each dimension.
+# Passing -1 as the size for a dimension means not changing the size of that
+# dimension.
+
+row = torch.tensor([[1, 2, 3]])
+show_tensor("row", row)
+
+expanded = row.expand(4, 3)
+show_tensor("row.expand(4, 3)", expanded)
+
+# Even though the result looks identical to `repeat()`, no copies were made.
+# expand() returns a *view* of the original tensor by reusing the same memory.
+# This makes it much more memory efficient than repeat().
+
+# A dimension can only be expanded if its size is 1. Since there is only one
+# row, PyTorch can safely pretend that same row exists multiple times.
+#
+# The following would raise an error because the first dimension already has
+# size 2, so PyTorch cannot expand it without creating new data.
+#
+bad = torch.tensor([[1, 2, 3],
+                    [4, 5, 6]])
+try:
+    show_tensor("bad",bad)
+    bad.expand(4, 3)
+except Exception as ex:
+    print_header('bad.expand(4, 3) Failed')
+    # print(ex.msg)
+    
+# Because expand() shares memory with the original tensor, modifying the
+# original tensor changes every expanded view.
+
+row[0, 0] = 99
+show_tensor("Modified original row", row)
+show_tensor("Expanded view reflects the change", expanded)
+
+# sidenote:
+# As we just saw because expand returns a view, more than one element of an
+# expanded tensor may refer to a single memory location. 
+# As a result, in-place operations (especially ones that are vectorized) may
+# result in incorrect behavior.
+# If you need to write to the tensors, please clone them first or use repeat()
+# or expand_copy()!
+
+# sidenote 
+# summary:
+# repeat(*sizes) -> the arguments specify how many times to repeat each
+#                   dimension. A new tensor is allocated and the data is copied.
+#
+# expand(*sizes) -> the arguments specify the desired output size. No new
+#                   memory is allocated; instead a broadcasted view is returned.
+#
+# We usually use repeat() when independent copies are required.
+# We usually use expand() when broadcasting is sufficient and we want to avoid
+# unnecessary memory allocations.
+
+
+# Repeat Interleave
+# Besides `Tensor.repeat()`, PyTorch also provides `torch.repeat_interleave()`.
+#
+# While `repeat()` duplicates entire dimensions, `repeat_interleave()` repeats
+# individual elements along a dimension. its behave's like NumPy's `repeat()`.
+#
+# For the arguments, we specify the `repeats` argument, with either a single integer
+# or a tensor specifying how many times each element should be repeated.
+# the dim argument specifies the dimension along which elements are repeated. 
+# If we use None, (i.e. dont fill it, omit it), the input tensor is first flattened.
+# 
+vector = torch.tensor([1, 2, 3])
+show_tensor("Original vector", vector)
+
+show_tensor("torch.repeat_interleave(vector, repeats=2)",
+    torch.repeat_interleave(vector, repeats=2))
+
+# Unlike `repeat()`, which repeats the entire tensor
+# like e.g. 
+# [1, 2, 3] -> repeats=2 -> [1, 2, 3, 1, 2, 3]
+#`repeat_interleave()` repeats each individual element
+# [1, 2, 3] -> repeats=2 -> [1, 1, 2, 2, 3, 3]
+
+# We can also specify a different repeat count for every element by 
+# specifying a tensor with counts for each element.
+show_tensor("Different repeat counts",
+    torch.repeat_interleave(vector, repeats=torch.tensor([1, 3, 2])))
+
+# We usually use `repeat_interleave()` when duplicating labels, indices,
+# or individual samples, rather than entire tensor dimensions.
+
+# Expand Copy
+# `Tensor.expand_copy()` behaves similarly to `expand()`, but instead of
+# returning a view, it allocates new memory and copies the expanded result.
+#
+# Just like expand(), only dimensions whose size is 1 may be expanded.
+# However, unlike expand(), the returned tensor owns its own storage.
+
+row = torch.tensor([[1, 2, 3]])
+
+show_tensor("Original row", row)
+
+expanded = row.expand(4, 3)
+expanded_copy = torch.expand_copy(row, [4, 3])
+
+show_tensor("expand()", expanded)
+show_tensor("expand_copy()", expanded_copy)
+
+# The outputs look identical, but expand() shares memory with the original
+# tensor while expand_copy() creates an independent tensor.
+
+row[0, 0] = 99
+
+show_tensor("Modified original row", row)
+show_tensor("expand() shares storage", expanded)
+show_tensor("expand_copy() owns its data", expanded_copy)
+
+# sidenote
+# summary
+# expand() returns a broadcasted view without copying data.
+# expand_copy() performs the same expansion but allocates new memory.
+#
+# We usually use expand() when a read-only broadcasted view is sufficient,
+# and expand_copy() when we need an expanded tensor that can be modified
+# independently of the original.
 
 #%% Section 10: Seeding & Reproducibility (RNG Management)
 # before we continue, its worth taking a bit of time and learn about generators
