@@ -5,6 +5,16 @@ import torch
 import numpy as np
 import torch.version 
 
+def print_header(title, width=40, fillchar='─', newline=True):
+    if newline:
+        print()
+    print(f"{f' {title} '.center(width, fillchar)}")
+
+def show_tensor(name,t,newline=True):
+    print_header(f"{name}", newline=newline)
+    print(f"shape={tuple(t.shape)!s:<10}")
+    print(t)
+
 # Here we are going to lean about torch and how we can use it to train neural networks. 
 # basically we are going to see what torch is and how similar it is to numpy!
 # torch is a deep learning framework written in C/C++ that is used for 
@@ -1190,9 +1200,9 @@ print(f'{new_tensor_newtensor=}')
 #    Python floats and complex Python numbers.
 print(f'{torch.tensor([1.2, 3]).dtype=}')
 
-#%% Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+#%% Section 6: Dimension Manipulation (Shape, Reshape, View, Resize, Squeeze, Unsqueeze & Permute)
 # The tensors we have created and experimented with so far had a pre-specified
-# shape and we didnt need to change them. However, this is not always the case
+# shape and we didn't need to change them. However, this is not always the case
 # As we'll see shortly, different PyTorch operations and neural network layers 
 # expect tensors to have specific dimensions. As a result, we'll frequently need
 # to reshape tensors, add or remove dimensions, or rearrange the order of their 
@@ -1204,7 +1214,7 @@ print(f'{torch.tensor([1.2, 3]).dtype=}')
 # In this section, we'll explore the most common dimension manipulation
 # operations and learn when to use each one.
 
-# 6.1 Reshaping Tensors: view() vs. reshape()
+# 6.1 Reshaping Tensors: view() vs. reshape() vs resize()
 # Like Numpy Pytorch offers a `.reshape()` method that allows us to change
 # a tensor's shape.
 
@@ -1251,11 +1261,11 @@ print (f'  tensor.reshape(2,3,-1):   {tensor_inferred}')
 print (f'  tensor.reshape(-1):       {tensor_flattened}')
 
 # This behavior comes from the fact that, the original tensor was stored as
-# a contigeous chunk in memory so reshape was able to rearrange the layout to
-# achieve a certain view.
+# a contigeous chunk in memory or had compatible strides so reshape was able
+# to rearrange the layout to achieve a certain view.
 # Not all operations preserve this property. One common example is transposing
 # a tensor.
-# Transposing a tensor changes its strides, producing a non-contiguous tensor.
+# Transposing a tensor changes its strides, and produces a non-contiguous tensor.
 # In this case, `.reshape()` transparaently allocates a new contigeous memory
 # and returns a copy of the original tensor.
 
@@ -1274,10 +1284,10 @@ print(f'  tensor:             {tensor}')
 print(f'  tensor transposed:  {tensorT}')
 
 # Pytorch offers another method however, convineintly named as *view*. The 
-# `.view()` behaves similarly to `reshape()`, with one important difference,
+# `.view()` behaves similarly to `reshape()`, with one important distinction,
 # it only works on contiguous tensors and therefore never allocates new memory.
 
-# In the previous example if we tried to use `.view()` we would face 
+# In the previous example if we tried to use `.view()` we would haved faced 
 # a runtime error, which would interestingly instruct us to use `.reshape()` instead!
 
 # How can we tell whether a tensor is contiguous?
@@ -1305,6 +1315,33 @@ print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous().is_contiguous()}')  # False
 
 # sidenote:
+# For a tensor to be 'viewed', the new view size must be 'Compatible' with its 
+# original size and stride, i.e. each new view dimension must either:
+# i.be a subspace of an original dimension, or
+# ii.only span across original dimensions d,d+1,…,d+k that satisfy the following 
+# contiguity-like condition that ∀i=0,…,k−1
+# stride[i] = stride[i+1] × size[i+1]
+# Otherwise, contiguous() needs to be called before the tensor can be viewed. 
+
+# sidenote:(extra?)
+# Contiguous inputs and inputs with compatible strides can be reshaped without copying,
+# but you should not depend on the copying vs. viewing behavior.
+
+# sidenote:(extra?)
+# When it is unclear whether a `view()` can be performed, it is advisable to use `reshape()`,
+# which returns a view if the shapes are compatible, and copies (equivalent to calling 
+# `contiguous()`) otherwise.
+
+             
+# resize_:
+# As the name implies it 'physically' resizes the tensor 'inplace' (note the '_' which denotes inplace
+# operation). 
+# If the new specified dimensions, result in a larger tensor, new uninitialized data will be 
+# resulted. Similarly, if the new dimensions are less than the actual dimensions, data will be
+# lost! 
+
+
+# sidenote:
 # An Interesting detail about `.view()` is although its primarily used 
 # to reshape tensors, it can also reinterpret a tensor's underlying bytes
 # as a different data type!
@@ -1319,8 +1356,8 @@ print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous(
 # 
 # the following example demonstrates this more clearly.
 raw = torch.tensor([14,256], dtype=torch.int16)
-print(raw)
-print(raw.view(torch.uint8))
+print(f'\nraw tensor:          {raw}')
+print(f'raw.view(torch.uint8): {raw.view(torch.uint8)}')
 
 # On my machine this prints:
 #
@@ -1332,7 +1369,13 @@ print(raw.view(torch.uint8))
 # that is [14, 0] on little-endian systems like the 
 # one I'm running on.
 # Likewise 256 is 0x0100 which is stored as [0x00, 0x01].
-# 
+
+# To test this we can easily do 
+bytes_rep = raw.view(torch.uint8).numpy()
+raw_int16 = np.frombuffer(bytes_rep, dtype=np.int16)
+print(f'Bytes interpreted as int16: {raw_int16}')
+print()
+
 # To reiterate, calling `.view(torch.uint8)` does not convert
 # the values instead, it *reinterprets* the same block of memory as an
 # array of `uint8`` values, so we are literally looking at the
@@ -1342,6 +1385,7 @@ print(raw.view(torch.uint8))
 # day to day deeplearning chores, but it can come handy when doing
 # things such as parsing binary file formats or reading image headers
 # stuff like that!
+
 
 # 6.2 Adding/Removing Dimensions: squeeze() & unsqueeze()
 # Neural networks often expect tensors to have a specific number of
@@ -1450,7 +1494,6 @@ print(tensor)
 #
 # PyTorch also provides `.transpose()`, but unlike `.permute()`, it swaps only
 # two dimensions at a time.
-
 
 #%% Section 7: Tensor Operations (Math, Broadcasting)
 #
@@ -1592,16 +1635,6 @@ print(v1 @ v2)
 # Below we revisit the example we glanced over just now and pay more attention
 # to some details we might have missed, to get a better understanding on what
 # is going on.
-
-def print_header(title, width=40, fillchar='─', newline=True):
-    if newline:
-        print()
-    print(f"{f' {title} '.center(width, fillchar)}")
-
-def show_tensor(name,t,newline=True):
-    print_header(f"{name}", newline=newline)
-    print(f"shape={tuple(t.shape)!s:<10}")
-    print(t)
 
 X = torch.arange(6.).view(2,3) + 1
 Y = torch.arange(2.).view(2,) + 1
@@ -2062,140 +2095,93 @@ show_tensor("Stack along dim=1", torch.stack((A, B), dim=1))
 # sidenote:
 # `torch.cat` is an alias for `torch.concatenate()`
 
-
 # For splitting we use `torch.split()` to divide a tensor into smaller tensors.
+# We can specify how many `splits` we want in the output tensor
+# by specifying the number of splits directly, or specify the exact size for each
+# split in the output using a list of tuple.
+# note if the tensor can not be divided equally, the last split will be smaller.
+
 tensor = torch.arange(12).reshape(3, 4)
 
-# print("\nOriginal tensor:")
-# print(tensor)
 show_tensor("Original tensor", tensor)
+
 # split the tensor into two, along the column dimension (dim=1)
 parts = torch.split(tensor, 2, dim=1)
 
-# print("\nSplit into chunks of 2 columns:")
-print_header("Split into chunks of 2 columns")
+print_header("Split into groups of 2 columns")
 for i, part in enumerate(parts):
     print(f"Part {i}:")
     print(part)
 
+# specify each split size individually
+parts = torch.split(tensor, [1,2,1], dim=1)
+print_header("differently sized splits along columns")
+for i, part in enumerate(parts):
+    show_tensor(f"Part {i}", part)
+
+# We usually use `.torch.split` to specify each chunks size separately.
+
 # Chunking
-# `torch.chunk()` splits a tensor into approximately equal-sized pieces.
+# `torch.chunk()` splits a tensor into *approximately equal-sized* pieces.
+# Unlike `torch.split()` we specify the number of chunks not the size of each chunk.
+# note we we said *approximately* equally-sized, because if an even split 
+# is not possible, the chunks may have different sizes. 
+# 
 
 chunks = torch.chunk(tensor, chunks=3, dim=0)
+print_header("Chunk into 3 equal row chunks")
+for i, chunk in enumerate(chunks):
+    print(f"Chunk {i}:")
+    print(repr(chunk))
+    # show_tensor(f"Chunk {i}", chunk)
 
-# print("\nChunk into 3 row chunks:")
-print_header("Chunk into 3 row chunks")
-
+tensor_odd = torch.arange(15).reshape(3, 5)
+chunks = torch.chunk(tensor_odd, chunks=2, dim=0)
+print_header("Chunk into 2 diffrenly sized chunks")
 for i, chunk in enumerate(chunks):
     # print(f"Chunk {i}:")
     # print(repr(chunk))
     show_tensor(f"Chunk {i}", chunk)
 
+
+# Also note when using .chunk, just like `.split()` the chunks 
+# keep the dimension, that is chunk is (1,1,4), not just 4! 
+# the distinction matters later on. 
+
+chunks = torch.chunk(tensor.unsqueeze(0), chunks=3, dim=1)
+print_header("Chunks keeps the dimension")
+for i, chunk in enumerate(chunks):
+    # print(f"Chunk {i}:")
+    # print(repr(chunk))
+    show_tensor(f"Chunk {i}", chunk)
+
+# We usually use `torch.chunk` when we want to divide work into larger
+# groups like e.g. split a batch across several GPUs or split features
+# into several parts, where having differently sized chunks doesnt pose
+# any issues.
+
 # Unbinding
-# unbind() removes a dimension and returns a tuple of tensors.
+# `torch.unbind()` works similarly to split and .chunk() but with the difference
+# we cant specify the number of splits, it returns exactly one tensor per element
+# along the specified dimension and it removes the dimension when returning the split.
 
 rows = torch.unbind(tensor, dim=0)
-
-# print("\nRows returned by unbind():")
 print_header("Rows returned by unbind(dim=0):")
-
 for i, row in enumerate(rows):
     # print(repr(row))
     show_tensor(f"row {i}", row)
 
-# %% done added to device/dtype sections - can be removed 
-# Ok, now what if we have a tensor that is already on a 
-# specific device(it can be cpu or a gpu)
-# and also has a specific datatype!( all of our tensors 
-# can have dtype! the default is float64! 
-# (previously in older versions it was fp32))
-# in such cases, we can simply use the torch.*_new methods. 
-# lets see 
-tensor_special = torch.rand(size=(2,2), device = 'cuda', dtype=torch.float16)
-print(f'{tensor_special=}')
+# note it returns all elements along the row dimension, each as a separate row
+# the dimension is also removed and we get (4,) instead of (1,4) for each row!
 
-# now lets create a new tensor from this one that is both on cuda and uses float16!!
-new_tensor_ones = tensor_special.new_ones(size=(2,2))
-print(f'{new_tensor_ones=}')
-# we have other functions such as new_tensor, new_empty, new_full, new_zeros as well
-new_tensor_zeros = tensor_special.new_zeros(size=(2,2))
-print(f'{new_tensor_zeros=}')
-# a new tensor full of 3 with the same dtype and device as tensor_special
-new_tensor_full = tensor_special.new_full(size=(2,2), fill_value=0.3)
-print(f'{new_tensor_full=}')
-# uninitialized tensor with the same dtype and device as tensor_special
-new_tensor_empty = tensor_special.new_empty(size=(2,2))
-print(f'{new_tensor_empty=}')
-
-# and finally if we have a data of our own, we can create 
-# a new tensor with the same dtype and device as tensor_special as well
-new_tensor_newtensor = tensor_special.new_tensor(np.random.uniform(-1,1,size=(2,2)))
-print(f'{new_tensor_newtensor=}')
-#
-# why would we want something like that? how is that any benificial to us? 
-# later on when you write modules, you'll notice that instead of checking for an input
-# tensors dtype/device all the time and then creating the right combinations each time, 
-# we can easily create a tensor this way, which transfers the dtype and device of that tensor
-# automatically without us explicily checking and making a tensor for said dtype/device combo!
-# its less code, less bug and more efficient!
-
-# since pytorch 2.0 we have a device context manager which makes our lives easier
-# by assigning a specified device to all "new" tensors that get created inside that
-# context manager scope. 
-# that is any tensors/inlcuding models we create inside that context manager will 
-# be assigned that device!
-print(f'torch.device() context manager example:')
-with torch.device('cuda'):
-    # our model can be as simple as a linear layer (we'll learn about them 
-    # in more details in future chapters)
-    model = torch.nn.Linear(4,1)
-    dummy_input = torch.rand(size=(1,4))
-    dummy_output = model(dummy_input)
-
-# note we grab one of the parameters and checked its device.
-print(f'model device: {next(model.parameters()).device.type}')
-print(f'{dummy_input=}')
-print(f'{dummy_output=}')
-
-# note that as of now, torch.device context manager does not change the device
-# for tensors that already exist. for those we still need to have use .to() to
-# move the data to a specific device
-
-# if you have noticed, all tensors we create by default, have been on cpu. 
-# we can change this behavior and make, by default, all tensors to be on a
-# specific device like cuda globally!
-# we use torch.set_default_device() for this purpose: 
-torch.set_default_device('cuda')
-# now from now on, all tensors, modules, etc will have their device='cuda' by default
-dummy_input = torch.rand(size=(1,4))
-print(f'{dummy_input.device.type=}')
-# since pytorch  2.3.0 we can also get the current default device
-# using `torch.get_default_device()`
-assert int(torch.__version__.split('+')[0][2]) >2, 'pytorch 2.3.0+ is needed'
-print(f'{torch.get_default_device()=}')
-
-# sidenote2: 
-# in the same fashion we have a way to specify a default dtype by using:
-# torch.set_default_dtype()
-# however note that, unlike what you may think at first, it doesnt allow you to 
-# set any dtype you like. 
-# it only supports torch.float32 and torch.float64 as inputs. 
-# Other dtypes may be accepted without complaint but are not
-# supported and are unlikely to work as expected.
-# When PyTorch is initialized its default floating point dtype
-# is torch.float32, and the intent of set_default_dtype(torch.float64)
-# is to facilitate NumPy-like type inference. 
-# The default floating point dtype is used to:
-# 1.To implicitly determine the default complex dtype. 
-# When the default floating point type is float32 
-# the default complex dtype is complex64, and 
-# when the default floating point type is float64
-# the default complex type is complex128.
-# 2.To infer the dtype for tensors constructed using Python floats or complex Python
-# numbers. See examples below.
-# 3.To determine the result of type promotion between bool and integer tensors and
-#    Python floats and complex Python numbers.
-print(f'{torch.tensor([1.2, 3]).dtype=}')
+# sidenote:
+# when should we use these? 
+# we usually use `torch.split()` when we want to specify the *size* of each split.
+# we usually use `torch.chunk()` when we want to specify the *number* of chunks.
+# Chunks are approximately equal-sized.
+# we usually use `torch.unbind()` when we want to return one tensor for every slice
+# along a dimension. its equivalent to chunking into single slices followed by 
+# squeezing away the split dimension.
 
 #%% Section 10: Seeding & Reproducibility (RNG Management)
 # before we continue, its worth taking a bit of time and learn about generators
@@ -2474,245 +2460,6 @@ print(f't2 = {t2}')
 print(f't3 = {t3}')
 print(f't1 + t2 =\n {t1 + t2}')
 print(f't1 + t3 =\n {t1 + t3}')
-#%%
-# adding and subtracting is really obvious, but when it comes to multiplilication we have several options!
-# mm, matmul, bmm 
-# basically mm and matmul are kinda the same, they both do multipilication, the difference is, 
-# the matmul does the broadcasting as well while the mm doesnt. 
-# it is recommened to use mm, becasue if the dimensions dont match, you'll face an error and know where to fix!
-# however, in matmul, when the dimensions dont match, it may broadcast and thus dont give you an error while
-# the result may very well be wrong! so to be on the safe side, always try to use mm!
-# 
-# bmm is mm with batches. basically if you do want to multiply several samples of two tensors 
-# you can use bmm. we will see how this works later on so dont worry about it! 
-
-# torch.matmul(tensor1, tensor2, out=None) → Tensor
-# Matrix product of two tensors.
-# The behavior depends on the dimensionality of the tensors as follows:
-#    If both tensors are 1-dimensional, the dot product (scalar) is returned.
-#    If both arguments are 2-dimensional, the matrix-matrix product is returned.
-#    If the first argument is 1-dimensional and the second argument is 2-dimensional,
-#        a 1 is prepended to its dimension for the purpose of the matrix multiply. 
-#        After the matrix multiply, the prepended dimension is removed.
-#    If the first argument is 2-dimensional and the second argument is 1-dimensional, 
-#        the matrix-vector product is returned.
-#    If both arguments are at least 1-dimensional and at least one argument is N-dimensional
-#        (where N > 2), then a batched matrix multiply is returned. If the first argument is
-#        1-dimensional, a 1 is prepended to its dimension for the purpose of the batched matrix
-#        multiply and removed after. If the second argument is 1-dimensional, a 1 is appended to
-#        its dimension for the purpose of the batched matrix multiple and removed after.
-#        The non-matrix (i.e. batch) dimensions are broadcasted (and thus must be broadcastable).
-#        For example, if tensor1 is a (j×1×n×m)(j \times 1 \times n \times m)(j×1×n×m) tensor and 
-#        tensor2 is a (k×m×p)(k \times m \times p)(k×m×p) tensor, out will be an
-#        (j×k×n×p)(j \times k \times n \times p)(j×k×n×p) tensor.
-# Note
-#     The 1-dimensional dot product version of this function does not support an out parameter.
-
-# note that we need a different seed for each cells in a jupyter notebook environment
-# unless we use a single generator for all operations, which we dont do now becasue we are lazy!:d
-torch.manual_seed(15)
-tensor_1 = torch.rand(size=(2,3))
-tensor_2 = torch.rand(size = (2,))
-print(f'{tensor_1=}')
-print(f'{tensor_2=}')
-# pay careful attention to the dimensions and how the multiplication is carried out!
-# data2 * data1
-Z = torch.matmul(tensor_2, tensor_1)
-print(f'tensor_2(2,) x tensor_1(2x3): {Z}')
-print(f'{Z.shape=}')
-# as you just saw, the tensor_2 was broadcasted so it can be multiplied by tensor_1
-# tensor_2 was 1D, and it was treated as (1,2) so the dimensions between two tensors
-# are valid. thus the output is a 1x3 tensor! 
-# this is how we do transpose! using .t() method!
-tensor_4 = torch.matmul(tensor_1.t(), tensor_2)
-print(f'tensor_1.t()(3x2) x tensor_2(2,): {tensor_4}')
-print(f'{tensor_4.shape=}')
-# now in this example, the tensor_2 again is broadcasted and this time  
-# it is treated as (2x1) tensor so the dimensions between tensors are valid 
-# as you can see the output is a tensor of 3x1.
-
-# note that, since one of our tensors is 1D, the result is also shown as 1D
-# if we explictly make the tensor_2 2D, the output will follow suit as well
-# here we get a row vector which is (1,3) (A row vector is a one-dimensional array (or vector) that has a single row and multiple columns)
-tensor_3_2 = torch.matmul(tensor_2.view(1,2), tensor_1)
-print(f'{tensor_3_2=}\n{tensor_3_2.shape=}')
-# and likewise we get (3,1) or a column vector here
-tensor_4_2 = torch.matmul(tensor_1.t(), tensor_2.view(2,1))
-print(f'{tensor_4_2=}\n{tensor_4_2.shape=}')
-
-# we can do all of these using mm! 
-print('using torch.mm:')
-# mm is short for matrix multiply, so all dimensions must be specified!
-# unlike matmul, there is no broadcasting going on here!
-# we must specify all dimensions ourselevs thats why we used .view() to reshape our tensor 
-# to the form it needs to be to have a proper multiplication!
-data_3_2 = torch.mm(tensor_2.view(1,2), tensor_1)
-print(f'data_2(1x2) * data_1(2x3): {data_3_2}')
-# this is how we do transpose!
-data_4_2 = torch.mm(tensor_1.t(), tensor_2.view(2,1))
-print(f'data_1.t()(3x2) * data_2(2x1): {data_4_2}')
-
-
-# if you want to know more about boradcasting in Pytorch read more here : 
-# https://pytorch.org/docs/stable/notes/broadcasting.html#broadcasting-semantics 
-
-# In short, if a PyTorch operation supports broadcast, then its Tensor arguments
-# can be automatically expanded to be of equal sizes (without making copies of the data).
-
-# Two tensors are “broadcastable” if the following rules hold:
-#     Each tensor has at least one dimension (like what we just saw in our example above!)
-#     When iterating over the dimension sizes, starting at the trailing dimension,
-#     the dimension sizes must either be equal, one of them is 1, or one of them does not exist.
-x=torch.empty(5,7,3)
-y=torch.empty(5,7,3)
-# same shapes are always broadcastable (i.e. the above rules always hold)
-
-x=torch.empty((0,))
-y=torch.empty(2,2)
-# x and y are not broadcastable, because x does not have at least 1 dimension
-
-# can line up trailing dimensions
-x=torch.empty(5,3,4,1)
-y=torch.empty(  3,1,1)
-# x and y are broadcastable.
-# 1st trailing dimension: both have size 1
-# 2nd trailing dimension: y has size 1
-# 3rd trailing dimension: x size == y size
-# 4th trailing dimension: y dimension doesn't exist
-
-# but:
-x=torch.empty(5,2,4,1)
-y=torch.empty(  3,1,1)
-# x and y are not broadcastable, because in the 3rd trailing dimension 2 != 3
-
-# Backwards compatibility
-# Prior versions of PyTorch allowed certain pointwise functions to execute on 
-# tensors with different shapes, as long as the number of elements in each tensor was equal. 
-# The pointwise operation would then be carried out by viewing each tensor as 1-dimensional. 
-# PyTorch now supports broadcasting and the “1-dimensional” pointwise behavior is considered 
-# deprecated and will generate a Python warning in cases where tensors are not broadcastable, 
-# but have the same number of elements.
-# Note that the introduction of broadcasting can cause backwards incompatible changes in the 
-# case where two tensors do not have the same shape, but are broadcastable and have the same 
-# number of elements. For Example:
-# torch.add(torch.ones(4,1), torch.randn(4))
-# would previously produce a Tensor with size: torch.Size([4,1]), but now produces a Tensor 
-# with size: torch.Size([4,4]). In order to help identify cases in your code where backwards 
-# incompatibilities introduced by broadcasting may exist, you may set :
-# torch.utils.backcompat.broadcast_warning.enabled to True, which will generate a python 
-# warning in such cases.
-# For Example:
-# torch.utils.backcompat.broadcast_warning.enabled=True
-# torch.add(torch.ones(4,1), torch.ones(4))
-# __main__:1: UserWarning: self and other do not have the same shape, but are broadcastable, 
-# and have the same number of elements.
-# Changing behavior in a backwards incompatible manner to broadcasting rather than viewing as 
-# 1-dimensional.
-
-# now that we have the multiplication covered, lets takl about how to change the shape of our tensors
-# for this we have several options. 
-# x.reshape():  this is like what we have in numpy, but there is a catche here. 
-#               sometimes, reshape, just changes the shape and returns the very same data (x)
-#               but sometimes, it returns a 'clone' of the data because of some internal operations!
-#               (it copies the data to some other memory location and thus return a clone!!)  
-# As it is explained in the docs : 
-#               Returns a tensor with the same data and number of elements as input,
-#               but with the specified shape. When possible, the returned tensor will
-#               be a view of input. Otherwise, it will be a 'copy'. Contiguous inputs and
-#               inputs with compatible strides can be reshaped without copying, but you 
-#               should not depend on the copying vs. viewing behavior.
-#
-# view():       This is what we should be using nearly 100% of all times! view always returns the same
-#               data(x). it works just like reshape, but with the benifit of returning the very same data!
-#               (there is a note that we will get to later when we deal with rnns and lstms!)
-# As we see in the docs (https://pytorch.org/docs/stable/tensors.html#torch.Tensor.view): 
-#               Returns a new tensor with the same data as the self tensor but of a different shape.
-#               The returned tensor shares the same data and must have the same number of elements, 
-#               but may have a different size. 
-#               For a tensor to be 'viewed', the new view size must be 'Compatible' with its 
-#               original size and stride, i.e. each new view dimension must either:
-#                   i.be a subspace of an original dimension, or
-#                   ii.only span across original dimensions d,d+1,…,d+k that satisfy the following 
-#                      contiguity-like condition that ∀i=0,…,k−1
-#                                    stride[i] = stride[i+1] × size[i+1]
-#               Otherwise, contiguous() needs to be called before the tensor can be viewed. 
-#               See also: reshape(), which returns a view if the shapes are compatible, and copies
-#               (equivalent to calling contiguous()) otherwise.
-#               
-#               When it is unclear whether a view() can be performed, it is advisable to use reshape(),
-#               which returns a view if the shapes are compatible, and copies (equivalent to calling 
-#               contiguous()) otherwise.
-#
-# resize_():    as the name implies it 'physically' resizes the tensor 'inplace' (note the '_' which denotes inplace
-#               operation) there is a catch here as well!
-#               if the new specified dimensions, result in a larger tensor, new uninitialized data will be 
-#               resulted. similarly, if the new dimensions are less than the actual dimensions, data will be
-#               lost! 
-# 
-#
-# 
-#
-# sidenote: 
-# using view() we can also view the array using other dtypes. that is, we can reinterpret_cast
-# our tensor from one dtype to another!
-# view(dtype) -> Tensor
-# Returns a new tensor with the same data as the self tensor but of a different dtype.
-# If the element size of dtype is different than that of self.dtype, 
-# then the size of the last dimension of the output will be scaled proportionally. 
-# For instance, if dtype element size is twice that of self.dtype, then each pair of elements
-# in the last dimension of self will be combined, and the size of the last dimension of the output
-# will be half that of self. 
-# If dtype element size is half that of self.dtype, then each element in the last dimension of 
-# self will be split in two, and the size of the last dimension of the output will be double that
-# of self. For this to be possible, the following conditions must be true:
-#   self.dim() must be greater than 0.
-#   self.stride(-1) must be 1.
-# Additionally, if the element size of dtype is greater than that of self.dtype, 
-# the following conditions must be true as well:
-#   self.size(-1) must be divisible by the ratio between the element sizes of the dtypes.
-#   self.storage_offset() must be divisible by the ratio between the element sizes of the dtypes.
-#   The strides of all dimensions, except the last dimension, must be divisible by the ratio between
-#   the element sizes of the dtypes.
-# If any of the above conditions are not met, an error is thrown.
-
-# lets see this using an example: we have a float tensor
-# which we want to reinterpret its values as int32 and uint8!
-random_tensor = torch.randn(size=(2,2),dtype=torch.float32)
-print(f'{random_tensor=}')
-# it views the memory location asif it was int32
-print(f'{random_tensor.view(torch.int32)=}')
-# it views the memory location as a uint8,
-# note that viewing a float tensor as uint8 is a reinterpretation,
-# not a direct conversion
-# therefore what we actually get, in this case, is a byte representation
-# of the original float value!
-print(f'{random_tensor.view(torch.uint8)=}')
-# to test this theory we can easily do 
-bytes_rep = random_tensor.view(torch.uint8)[0].numpy()
-float_num = np.frombuffer(bytes_rep,dtype=np.float32)
-print(f'{float_num=}')
-print(f'{random_tensor[0]=}')
-# which checks out !
-
-# import sys
-# print(f'{sys.getsizeof(random_tensor[0,0].item())=}') #24
-# random_tensor=tensor([[ 1.0682,  0.1424],
-#                       [-1.2754, -0.1769]])
-# random_tensor.view(torch.int32)=tensor([[ 1065925280,  1041354631],
-#                                         [-1079820441, -1103813929]], dtype=torch.int32)
-# random_tensor.view(torch.uint8)=tensor([[160, 186, 136,  63, 135, 207,  17,  62],
-#                                         [103,  63, 163, 191, 215,  34,  53, 190]], dtype=torch.uint8)
-# 
-# 
-# 
-# so the best option as you can see is to use view() unless, you specifically intend on using the other two!
-# knowing their pitfals ! in which case is fine!!
-# in our introductory tutorial, we will always be using view!
-# 
-#  
-#
-#
-
 
 #%%
 # inplace operations 
@@ -2727,7 +2474,7 @@ print(f'{a.div_(2)=}')
 print(f'{a.add_(2)=}')
 print(f'{a.sub_(2)=}')
 print(f'{a.tanh_()=}')
-#%%
+
 # now lets create a simple hidden layer with a weight and bias and input 
 # lets imlement a simple 1 layer and then 2 layer neural network! 
 # dont worry here we will keep it simple! 
