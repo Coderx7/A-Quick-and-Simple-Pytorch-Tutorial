@@ -140,6 +140,7 @@ def show_tensor(name,t,newline=True):
 # Section 8: Joining, Splitting and Repeating Tensors (Concatenation, Stacking & Repeating)
 # Section 9: Seeding & Reproducibility (RNG Management)
 # Section 10: Advanced Memory Management on CUDA
+# Section 11: Quick detour - Learn some utility functions(torch.print_options)
 
 #%% Section 1: What is a Tensor and How to create one
 # 
@@ -2431,7 +2432,7 @@ show_tensor("expand_copy() owns its data", expanded_copy)
 # and expand_copy() when we need an expanded tensor that can be modified
 # independently of the original.
 
-#%% Section 10: Seeding & Reproducibility (RNG Management)
+#%% Section 9: Seeding & Reproducibility (RNG Management)
 # before we continue, its worth taking a bit of time and learn about generators
 # and seeding. 
 # sometimes we want to produce determinstic output, for various reasons, ranging
@@ -2442,105 +2443,190 @@ show_tensor("expand_copy() owns its data", expanded_copy)
 # the RNG (random number generator) to use the same seed allows us to generate the 
 # same sequence of numbers again and again.
 # 
-# Nearly all libraries that involve such operations, offer ways to set the seed, including
-# both numpy and pytorch.
-# In pytorch we can simply specify a seed for the global RNG, by using `torch.manual_seed(number)`.
-# interestingly there is `torch.seed()` that generates a random seed automatically sets the global RNG
-# and then returns it! 
+# Nearly all libraries that involve such operations, offer ways to set the seed,
+# including both numpy and pytorch.
 # 
-# note that torch.manual_seed() both sets the seed for global RNG and returns a generator object!
-# while torch.seed() only returns the random seed that was used to set the global RNG.
-generator = torch.manual_seed(15)
-# now if we try and create a random tensor, it will always have the same values
+# By default, PyTorch uses a single global random number generator (RNG) which we
+# can simply specify a seed for by using `torch.manual_seed(number)`.
+# Interestingly there is `torch.seed()` that generates a random seed automatically 
+# and sets the global RNG and then returns it!
+# 
+# note that `torch.manual_seed()` both sets the seed for global RNG and returns a
+# generator! while `torch.seed()` only returns the random seed that was used to 
+# set the global RNG.
+
+seed = 15
+global_rng_generator = torch.manual_seed(seed)
+
+# now if we try and create a random tensor, it will always have the same values.
+# its as if we specified generator=global_rng_generator below. 
 random_tensor = torch.randn(size=(2,2))
-print(f'{random_tensor=}')
+show_tensor(f"Random tensor with manual seed({seed})", random_tensor)
+# print(f'{random_tensor=}')
 # we will always get 
 # random_tensor=tensor([[-0.7056,  0.6741],
 #                       [-0.5454,  0.9107]])
 # 
-# now if we want to see what seed was used initially 
-# we can easily use `torch.initial_seed()` or `torch.random.initial_seed()`:
-print(f'{torch.initial_seed()=}')
 
-# When we set the seed using torch.manual_seed(), or torch.seed() or anyotherway 
-# we can retrieve the random state as a tensor using either 
+# Now if we want to see what seed was used initially 
+# We can easily use `torch.initial_seed()` or `torch.random.initial_seed()`:
+print_header(f"Displaying Initial seed({seed})")
+print(f'torch.initial_seed():  {torch.initial_seed()}')
+
+# When we set the seed using `torch.manual_seed()`, or `torch.seed()`
+# or any other way, we can retrieve the random state as a tensor using either 
 # `torch.get_rng_state()` or `torch.random.get_state()`.
-# The state tensor contains information about the internal
-# state of the random number generator (RNG). 
-# this RNG state is returned as a torch.ByteTensor
-# and it contains all the necessary bits to restore the RNG to
-# a specific point in time. we can save this into a file
-# and later on restore it and set it back using `torch.random.set_state(saved_state)`.
-# but an easier way would be to simply use torch.initial_seed()
-print(f'{torch.random.get_rng_state()=}')
+# The state tensor contains information about the internal state of the 
+# random number generator (RNG). 
+# This RNG state is returned as a `torch.ByteTensor` and it contains all 
+# the necessary bits to restore the RNG to a specific point in time. 
+# We can save this into a file and later on restore it and set it back 
+# using `torch.random.set_state(saved_state)`.
+# But an easier way would be to simply use `torch.initial_seed()`
+# print(f'\n{torch.random.get_rng_state()=}')
+show_tensor("Random RNG State", torch.random.get_rng_state())
 
-# note that the rng_state doesnt only contain initial_seed, it has other information
-# as well. so its not like a byte representation of a single seed number!
-# if we convert the initial_seed() into a bytes array and look at it
+# Note that the rng_state doesnt only contain the `initial_seed`, it has 
+# other information as well. so its not like a byte representation of a 
+# single seed number!
+# If we convert the `initial_seed()` into a bytes array and look at it
 # we can see our initial seed there, at the begining of the array but
-# the rest will be zeros whereas in the actual rng_state they are nonzero
+# the rest will be zeros whereas in the actual `rng_state` they are nonzero
 # values: 
 
-# lets see this in action. 
+# lets see this in action.
 # generate a random seed
 seed = torch.seed()
+
 # retrieve the initial seed used
 init_seed=torch.initial_seed()
+
 # now get the rng_state
 rng_state = torch.get_rng_state()
-print(f'{seed=}')
-print(f'{init_seed=}')
+print(f'seed :          {seed}')
+print(f'initial seed:   {init_seed}')
+
 # rng_state is a tensor of size torch.Size([5056])
-print(f'{rng_state.shape=}')
-# by default pytorch doesnt print all the elements and it might give us
+print(f'rng_state.shape:{rng_state.shape}')
+
+# By default Pytorch doesn't print all the elements and it might give us
 # the impression that only the few starting elements are nonzero and the
 # rest are zeros! this is obviouly wrong! see the rest
-print(f'{rng_state=}')
+# print(f'{rng_state=}')
+show_tensor("rng_state",rng_state)
+
 # to convert our seed into bytes, we take the byte length as well
 # our system is little endian, so we specify that as well otherwise, the
 # result would be messed up (kind of flipped) due to cpu endian-ness!
 seed_bytes = seed.to_bytes(rng_state.shape[0],'little')
-# now create a numpy/torch array out of our bytes, 
-# thanks to torch implementing numpy operations, they are identical here:
+
+# now we create a numpy/torch array out of our bytes, 
+# Thanks to torch implementing numpy operations, they are identical here:
 # seed_bytearray = np.frombuffer(seed_bytes, dtype=np.uint8)
 seed_bytearray = torch.frombuffer(seed_bytes, dtype=torch.uint8)
+
 # length checks out as well
-print(f'{seed_bytearray.shape=}')
+print(f'seed_bytearray.shape:   {seed_bytearray.shape}')
+print(f'seed_bytearray:         {seed_bytearray}')
+print(f'rng_state:              {rng_state}')
+
 # seems pretty similar to rng_state right? not so fast
-print(f'{seed_bytearray=}')
-print(f'{rng_state=}')
 # when we compare them we see that they are not equal!
-print(f'{torch.equal(rng_state, seed_bytearray)=}')
-# now lets try to see them in full
+print(f'Is rng_state == seed_bytearray? {torch.equal(rng_state, seed_bytearray)}')
+
+# now lets try to see them in their full glory!
 torch.set_printoptions(profile='full')
-print(f'{seed_bytearray=}')
-# while our rng_state is quit different after the few early elements
+# print(f'{seed_bytearray=}')
+show_tensor("seed_bytearray", seed_bytearray)
+
+# while our `rng_state` is quit different after the few early elements
 # which tells us it has more information other than a simple seed!
-print(f'{rng_state=}')
+# print(f'{rng_state=}')
+show_tensor("rng_state", rng_state)
+
 # so the thing to remember is, to either store the seed-number, or the
-# rng_state for resuming purposes later on. (we usually use seed only!)
+# `rng_state` for resuming purposes later on. (we usually use seed only!)
 
 # lets reset the printoptions back to its defaults
 torch.set_printoptions(profile='default')
 
-
-# we can create generators and instead of using a global one, use 
+# We can create generators and instead of using the global RNG, use 
 # separate seeds for separate sections of our code.
-# this initializes the global rng, so we dont need to grab the return generator!
-torch.manual_seed(15)
+
+# `torch.manual_seed` initializes the global rng, so we dont need 
+# to grab the returned generator! this is what you see commonly used
+# in many training tutorials and jupyter notebooks.
+seed = 15
+torch.manual_seed(seed)
 random_tensor_1 = torch.randn(size=(2,2))
-# now lets create a new tensor this time using a generator
-# lets set the default device to cpu otherwise our tensors will be on cuda
-# while our generator would be on cpu and it would cause an error (both
-# generator and tensor need to be on the same device)
-torch.set_default_device('cpu')
-# ok now lets create the generator on cpu
-generator = torch.Generator(device='cpu').manual_seed(5)
-random_tensor_2 = torch.randn(size=(2,2,), generator=generator)
-random_tensor_3 = torch.randn(size=(2,2,), generator=generator)
-print(f'{random_tensor_1=}')
-print(f'{random_tensor_2=}')
-print(f'{random_tensor_3=}')
+show_tensor(f"Using global random generator (seed={seed})", random_tensor_1)
+
+# The issue with this approach however is, the global RNG is shared by all
+# PyTorch random operations.
+# 
+# So every call to `torch.rand()`, `torch.randn()`, `torch.randint()`, etc.
+# will use the global RNG and consume values from the same generator,
+# basically changing the internal state and thus resulting in a different
+# set of random values.
+# 
+# That is if we (or even another library we use) insert an
+# additional random operation somewhere earlier in the program,
+# after the `manual_seed()`, the global RNG advances and causes all
+# subsequent random numbers to change.
+#
+# thats why we try to use a dedicated generator for any set of operations
+# that we want determinstic behavior from.
+# 
+# A Generator object maintains its own RNG state, and is completely 
+# independent of the global generator. By using our own generator
+# and passing it explicitly, we guarantee that only the operations using
+# that generator affect its state giving us locally deterministic behavior.
+#  
+# Other parts of our code are still free to use the global RNG without changing
+# the random numbers produced by our generator.
+#
+
+# torch.manual_seed(15)
+# random_tensor_1 = torch.randn(size=(2,2))
+# show_tensor("Using global random generator", random_tensor_1)
+
+# Using the same seed, but with a new operation that uses randomness
+# under the hood. 
+torch.manual_seed(seed)
+# create a simple linear layer (aka fully connected layer)
+model = torch.nn.Linear(10, 5)
+random_tensor_1 = torch.randn(size=(2,2))
+# random_tensor_2= torch.randn(size=(2,2))
+show_tensor(f"Using global random generator1 After nn.Linear (seed={seed})", random_tensor_1)
+# show_tensor(f"Using global random generator2  After torch.randn (seed={seed})", random_tensor_2)
+
+# As you can see, using `torch.nn.Linear()` which is simply defining a fully
+# connected layer, changes the global RNG state and we get different values for
+# `random_tensor1`. The reason is that layer uses global RNG to initialize
+# the weights for that fully connected layer. 
+# This is not limited to modules/layers only, even creating a Dataloader, or 
+# doing augmentation during training can result in the same outcome. 
+# Many modules and layers use global RNG for parameter initialization,
+# these may not overtly look they utilize randomness like e.g. DropOut
+# does but they nonetheless do! so any operations that uses randomness will 
+# have the same effect. Hence why we need to use a separate generator for the snippets we need
+# determinsm for.
+
+# Now lets create a new tensor this time using a generator
+# Generators can be built on any device, in fact, when using generators,
+# the tensors and the generators assigned to them must live on the same device
+# otherwise it would lead an error.
+
+# lets create the generator on he same device as the tensors
+device = 'cpu'
+with torch.device(device) as device:
+    generator = torch.Generator(device=device).manual_seed(5)
+    random_tensor_2 = torch.randn(size=(2,2,), generator=generator)
+    random_tensor_3 = torch.randn(size=(2,2,), generator=generator)
+    show_tensor("random_tensor_1 (Global RNG)",random_tensor_1)
+    show_tensor("random_tensor_2 (local generator)",random_tensor_2)
+    show_tensor("random_tensor_3 (local generator)",random_tensor_3)
+        
 # and we get : 
 #random_tensor_1=tensor([[-0.7056,  0.6741],
 #                        [-0.5454,  0.9107]])
@@ -2548,9 +2634,10 @@ print(f'{random_tensor_3=}')
 #                         [-0.5581,  0.6675]])
 # random_tensor_3=tensor([[-0.1974,  1.9428],
 #                         [-1.4017, -0.7626]])
+
 # as you can see, the global generator is used with our first tensor 
-# while for the other two we used an explicit generator and their results stay the same
-# no matter how many times we run this!
+# while for the other two we used an explicit generator and their results 
+# stay the same no matter how many times we run this!
 # 
 # sidenote:
 # torch like numpy, has put all random related functionalities into random
@@ -2561,20 +2648,34 @@ print(f'{random_tensor_3=}')
 # note that to get true determinstic output, we usually need to set seed not only
 # for torch, but python and numpy as well, especially if some other libraries we use 
 # happen to use them. 
-# so for For custom operators, we might need to set python seed as well.
-# so we might want to do sth like this and seed the global numpy RNG as well as pythons: 
+# so for custom operators, we might need to set python seed as well.
+# we might want to do sth like this and seed the global numpy RNG as well as python's: 
 # as well: 
 import random 
-random.seed(15)
-np.random.seed(15)
-torch.random.manual_seed(15)
+seed = 15
+random.seed(seed)
+np.random.seed(seed)
+torch.random.manual_seed(seed)
+# and if we want to have dedicated generator we do 
+generator = torch.Generator(device=device).manual_seed(5)
+
+# sidenote:
+# using the Generator returned by `torch.manual_seed()` is *not* the
+# same as creating a new `torch.Generator()`.
+#`torch.manual_seed()` seeds the global RNG and returns a reference
+# to it. Since the global RNG is shared, any PyTorch operation that
+# uses randomness can advance its state.
+# To get an isolated stream of random numbers, we need to create our
+# own Generator with `torch.Generator().manual_seed(seed)`.
+
 # as the official documentation says: 
 # However, some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
 # and those will need to be seeded consistently as well.
 # what does it mean really?
-# this is refering to a recent change in numpy where it introduced a new random number generation
-# system that provides more flexibility and features than the older global RNG.
+# this is refering to a recent change in numpy where it introduced a new random 
+# number generation system that provides more flexibility and features than the
+# older global RNG.
 # in the new system, instead of relying on the global state (as in `np.random`), 
 # NumPy now encourages using explicit random generator objects (instances of `numpy.random.Generator`).
 # These generator objects allow us to manage seeds, distributions, and other properties independently.
@@ -2944,4 +3045,108 @@ print(f'- available memory:   {torch.cuda.mem_get_info(0)[0]//2**20}MB')
 # but nearly everyone else sticked to the good old definition!(including windows)
 # until a few years ago when this slowly started to catch up and you probably see it
 # here and there more often including in nvidia-smi reports.
-# %%
+# %% Section 11: Quick detour, utility functions (torch.set_printoptions)
+# One small utility that is worth knowing early on is `torch.set_printoptions()`.
+# As the name suggests, this function controls how tensors are displayed 
+# when we print them. It does not change the actual values stored inside
+# a tensor, only how those values appear on the screen.
+# 
+# This is identical to NumPy's `np.set_printoptions()`, infact it was taken
+# from Numpy! so if you've used NumPy before, the idea should feel familiar.
+#
+# For example, imagine we have a very large tensor with thousands of elements.
+# By default, PyTorch does not print every single value because that would 
+# quickly flood the terminal with text. Instead, it prints only the beginning
+# and end of the tensor, replacing the middle with "...".
+# Likewise, floating-point numbers are displayed using a default precision 
+# so the output remains readable. Sometimes, however, we may want more or 
+# less detail. That's where `torch.set_printoptions()` comes in.
+# One of the easiest ways to configure the printing behavior is
+# by using one of PyTorch's predefined profiles.
+
+# There are 3 default profiles we can use ['default', 'short', 'full']. 
+# the 'default' profile argument tells PyTorch to use a predefined collection 
+# of print settings. it restores PyTorch's normal printing behavior. This is
+# especially useful if you previously changed the print options and want to 
+# go back to the standard settings.
+
+# 'full' profile as the name implies, displays the whole tensor without any
+# summerization. 'short' on the other hand, is the opposite, it makes tensor
+# printing more compact by showing fewer elements and using a smaller display format.
+#
+# We can also manually change different aspects related to tensor printing
+# in the output. `torch.set_printoptions()` lets us customize 
+# aspects such as:
+# precision: 
+#  Number of digits of precision for floating point output (default = 4).
+# 
+# threshold:
+#  Total number of array elements which trigger summarization rather than full repr (default = 1000)
+#  basically when to summarize large tensors using "...".
+# 
+# edgeitems:
+#  Number of array items in summary at beginning and end of each dimension (default = 3)
+# 
+# linewidth:
+#  The number of characters per line for the purpose of inserting line breaks
+#  (default = 80). (i.e. maximum number of characters per printed line).
+#  Thresholded matrices will ignore this parameter.
+#  
+# sci_mode:
+#  For whether scientific notation should be used. That is instead of 0.001, it prints
+#  in scientific notation form 1e-3. If None (default) is specified,
+#  the value is defined by torch._tensor_str._Formatter. This value is automatically
+#  chosen by the framework.
+
+tensor = torch.randn(4,10)
+
+torch.set_printoptions(precision=2, threshold=10, linewidth=80)
+show_tensor("tensor with custom printoptions", tensor)
+
+torch.set_printoptions(profile='default')
+show_tensor("tensor with default values", tensor)
+
+# sidenote:
+# Numpy, beside set_printoption, also offers `np.printoptions` as
+# a context manager. Unlike Numpy, Pytorch sadly doesnt offer one.
+# If we have a context manager, instead of modifying the global 
+# settings, we can apply custom print options only within a specific
+# block of code so once we leave the block, the previous settings 
+# are automatically restored.
+# we can create one for ourselves like below:
+from contextlib import contextmanager
+
+@contextmanager
+def printoptions(**kwargs):
+    # save the options we care about
+    defaults = {
+        "precision": 4,
+        "threshold": 1000,
+        "edgeitems": 3,
+        "linewidth": 80,
+        "sci_mode": None,
+        }
+
+    torch.set_printoptions(**kwargs)
+    try:
+        yield
+    finally:
+        torch.set_printoptions(**defaults)
+
+with printoptions(precision=1):
+    show_tensor("tensor inside context manager", tensor)
+   
+# Outside the 'with' block, the original print settings
+# are automatically restored.
+show_tensor("tensor outside context manager", tensor)
+
+# This is generally preferred when we only need custom formatting
+# for debugging or inspecting a few tensors, since it avoids
+# accidentally changing the print behavior for the rest of our
+# program.
+#
+# We'll mostly keep the default settings throughout this course,
+# but occasionally we'll change them to make tensors easier to
+# inspect and understand as we did earlier in this chapter. 
+# Whenever possible, we'll prefer the context manager since it
+# keeps the changes local and makes our code easier to reason about.
