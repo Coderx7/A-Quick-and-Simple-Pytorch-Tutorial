@@ -14,7 +14,7 @@ def show_tensor(name,t,newline=True):
     print_header(f"{name}", newline=newline)
     print(f"shape={tuple(t.shape)!s:<10}")
     print(t)
-
+#%% intro
 # Here we are going to lean about torch and how we can use it to train neural networks. 
 # basically we are going to see what torch is and how similar it is to numpy!
 # torch is a deep learning framework written in C/C++ that is used for 
@@ -51,8 +51,9 @@ def show_tensor(name,t,newline=True):
 # At the center of everything is torch itself.
 # This is where tensors live. It provides tensor creation, mathematical
 # operations, indexing, linear algebra, random number generation,
-# GPU support, and automatic differentiation. If you already know NumPy,
-# this is the part that will feel the most familiar.
+# GPU support, and automatic differentiation. Basically the very foundation
+# we need to build a deep learning model, hence why we start with this!
+# If you already know NumPy, this is the part that will feel the most familiar.
 #
 # On top of torch sits torch.nn.
 # This module provides the building blocks used to construct neural
@@ -96,14 +97,11 @@ def show_tensor(name,t,newline=True):
 #
 # Beyond the core library, PyTorch has an ecosystem of domain-specific
 # libraries built on top of it.
-# For example:
-#
-# torchvision   -> computer vision (datasets, image transforms,
-#                  pretrained vision models)
-# torchaudio    -> audio and speech processing
-# torchtext     -> natural language processing and text datasets
-# torchrec      -> recommendation systems
-#
+# For example `torchvision` is used for computer vision (datasets, image transforms,
+# pretrained vision models) while `torchaudio` is used for audio and speech processing
+# likewise `torchtext` is used for natural language processing and text datasets
+# and `torchrec`  is used recommendation systems. these are just a few examples, there
+# are more! 
 # These libraries build upon the same tensor and autograd system,
 # so once you understand the PyTorch fundamentals, learning these
 # becomes much easier.
@@ -128,8 +126,8 @@ def show_tensor(name,t,newline=True):
 #%% section into
 # we are going to cover a few  sections and by the end of this chapter
 # you should have a basic understanding of how to use torch and tensors 
-# and ready to learn more advanced concepts about deeplearning training 
-# and implementation. 
+# and will be ready to learn more advanced concepts about deeplearning 
+# training and implementation. 
 #
 # Section 1: What is a Tensor & How to Create Them
 # Section 1.1: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
@@ -137,9 +135,9 @@ def show_tensor(name,t,newline=True):
 # Section 3: Tensor Indexing, Slicing, and Boolean Masking
 # Section 4: Device Management & Custom Defaults
 # Section 5: Precise Data-Type Control & Casting
-# Section 6: Dimension Manipulation (Shape, Reshape, Squeeze, Unsqueeze & Permute)
+# Section 6: Dimension Manipulation (Shape, Reshape, View, Resize, Squeeze, Unsqueeze & Permute)
 # Section 7: Tensor Operations (Math, Broadcasting & Reductions)
-# Section 8: Joining and Splitting Tensors (Concatenation & Stacking)
+# Section 8: Joining, Splitting and Repeating Tensors (Concatenation, Stacking & Repeating)
 # Section 9: Seeding & Reproducibility (RNG Management)
 # Section 10: Advanced Memory Management on CUDA
 
