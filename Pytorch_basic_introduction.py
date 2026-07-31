@@ -2458,9 +2458,9 @@ show_tensor("expand_copy() owns its data", expanded_copy)
 # Interestingly there is `torch.seed()` that generates a random seed automatically 
 # and sets the global RNG and then returns it!
 # 
-# note that `torch.manual_seed()` both sets the seed for global RNG and returns a
-# generator! while `torch.seed()` only returns the random seed that was used to 
-# set the global RNG.
+# note that `torch.manual_seed()` both sets the seed for global RNG and returns
+# the global generator! while `torch.seed()` only returns the random seed that
+# was used to set the global RNG.
 
 seed = 15
 global_rng_generator = torch.manual_seed(seed)
@@ -2686,7 +2686,7 @@ generator = torch.Generator(device=device).manual_seed(5)
 # To get an isolated stream of random numbers, we need to create our
 # own Generator with `torch.Generator().manual_seed(seed)`.
 
-# sidenote:
+# sidenote -appendix?:
 # As the official documentation says: 
 # Some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
