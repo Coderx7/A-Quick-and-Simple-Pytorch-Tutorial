@@ -2586,33 +2586,44 @@ show_tensor(f"Using global random generator (seed={seed})", random_tensor_1)
 # the random numbers produced by our generator.
 #
 
-# torch.manual_seed(15)
-# random_tensor_1 = torch.randn(size=(2,2))
-# show_tensor("Using global random generator", random_tensor_1)
+
+torch.manual_seed(15)
+random_tensor_1 = torch.randn(size=(2,2))
+show_tensor("Using global RNG before nn.Linear ", random_tensor_1)
 
 # Using the same seed, but with a new operation that uses randomness
 # under the hood. 
 torch.manual_seed(seed)
-# create a simple linear layer (aka fully connected layer)
-model = torch.nn.Linear(10, 5)
+
+# Create a simple fully connected (Linear) layer.
+# Even though we're only defining the layer, PyTorch randomly
+# initializes its weights and bias.
+_ = torch.nn.Linear(10, 5)
 random_tensor_1 = torch.randn(size=(2,2))
-# random_tensor_2= torch.randn(size=(2,2))
-show_tensor(f"Using global random generator1 After nn.Linear (seed={seed})", random_tensor_1)
-# show_tensor(f"Using global random generator2  After torch.randn (seed={seed})", random_tensor_2)
+show_tensor(f"Using global RNG After nn.Linear (seed={seed})", random_tensor_1)
 
-# As you can see, using `torch.nn.Linear()` which is simply defining a fully
-# connected layer, changes the global RNG state and we get different values for
-# `random_tensor1`. The reason is that layer uses global RNG to initialize
-# the weights for that fully connected layer. 
-# This is not limited to modules/layers only, even creating a Dataloader, or 
-# doing augmentation during training can result in the same outcome. 
-# Many modules and layers use global RNG for parameter initialization,
-# these may not overtly look they utilize randomness like e.g. DropOut
-# does but they nonetheless do! so any operations that uses randomness will 
-# have the same effect. Hence why we need to use a separate generator for the snippets we need
-# determinsm for.
+# As you can see, simply creating a `torch.nn.Linear` layer changes
+# the next random numbers produced by the global RNG.
+#
+# The reason is that `nn.Linear` randomly initializes its parameters
+# (weights and bias) during construction, consuming values from the
+# global random number generator.
+#
+# Note that this isn't limited to neural network layers. Many PyTorch
+# operations use randomness internally. For example, creating a DataLoader
+# with `shuffle=True` or applying random data augmentations or using layers
+# such as Dropout will also consume random numbers.
+#
+# The important thing to remember (takeaway) is that not every operation 
+# that advances the global RNG obviously "looks random". Because of this, 
+# code elsewhere in a larger program or in a library we might happen to 
+# use can unintentionally affect the sequence of random numbers our code receives.
+#
+# If we need a section of code to have its own isolated and reproducible
+# stream of random numbers,i.e. determinstic output, we should create and
+# use our own `torch.Generator`.
 
-# Now lets create a new tensor this time using a generator
+# Now lets create a new tensor this time using a dedicated generator.
 # Generators can be built on any device, in fact, when using generators,
 # the tensors and the generators assigned to them must live on the same device
 # otherwise it would lead an error.
@@ -2635,7 +2646,7 @@ with torch.device(device) as device:
 # random_tensor_3=tensor([[-0.1974,  1.9428],
 #                         [-1.4017, -0.7626]])
 
-# as you can see, the global generator is used with our first tensor 
+# As you can see, the global generator is used with our first tensor 
 # while for the other two we used an explicit generator and their results 
 # stay the same no matter how many times we run this!
 # 
@@ -2664,11 +2675,11 @@ generator = torch.Generator(device=device).manual_seed(5)
 # same as creating a new `torch.Generator()`.
 #`torch.manual_seed()` seeds the global RNG and returns a reference
 # to it. Since the global RNG is shared, any PyTorch operation that
-# uses randomness can advance its state.
+# uses randomness can advance its state, changing the generated random numbers.
 # To get an isolated stream of random numbers, we need to create our
 # own Generator with `torch.Generator().manual_seed(seed)`.
 
-# as the official documentation says: 
+# As the official documentation says: 
 # However, some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
 # and those will need to be seeded consistently as well.
@@ -2680,42 +2691,43 @@ generator = torch.Generator(device=device).manual_seed(5)
 # NumPy now encourages using explicit random generator objects (instances of `numpy.random.Generator`).
 # These generator objects allow us to manage seeds, distributions, and other properties independently.
 # 
-# therefore if our code interacts with NumPy (directly or indirectly), it's now essential
-# to seed these generator objects consistently.
-# also setting the global seed (e.g., `np.random.seed(0)`) won't necessarily affect these
-# generator objects.
-# and finally to ensure reproducibility, we would need to set the seed for both PyTorch 
+# therefore if our code interacts with NumPy (directly or indirectly), it's now 
+# essential to seed these generator objects consistently.
+# also setting the global seed (e.g., `np.random.seed(0)`) won't necessarily affect 
+# these generator objects.
+# and finally to ensure reproducibility, we would need to set the seed for both PyTorch
 # (using `torch.manual_seed(0)`) and NumPy (using `np.random.seed(0)`).
 # basically when working with numpy alongside pytorch, we need to be aware of these 
 # separate random generator objects and seed them consistently for reproducible results.
 
 # I also need to mention something important that getting determinstic output
 # when it comes to cuda is not always as plain and simple as the cpu version
-# becasue of the nature of cuda, trying to get determinstic output will not be easy to say the least
-# and some times not possible, and for the cases where its possible it may very well result 
-# in degraded performance. read https://pytorch.org/docs/stable/notes/randomness.html
-# TODO: explain more 
-# see, the deterministic behavior in pytorch refers to ensuring that given the same input, 
-# the same sequence of operations will produce the same output.
-# However, achieving complete determinism across different releases, or various platforms 
-# can be challenging to say the least especially when it comes to cuda.
+# becasue of the nature of cuda, trying to get determinstic output will not be easy to
+# say the least and some times not possible, and for the cases where its possible it
+# may very well result in degraded performance. 
+# read https://pytorch.org/docs/stable/notes/randomness.html
+
+# see, the deterministic behavior in pytorch refers to ensuring that given the same 
+# input, the same sequence of operations will produce the same output.
+# However, achieving complete determinism across different releases, or various
+# platforms can be challenging to say the least especially when it comes to cuda.
 # 
 # note that the determinstic behavior we talk about here, is usually bound to software/hardware. 
-# that is, we expect that given the same input, and same sequence of operations, when run on the
-# same software and hardware, we always get the same output. 
-# This is an important implication (we see why this is the case when something like cuda
-# is involved)
+# that is, we expect that given the same input, and same sequence of operations, 
+# when run on the same software and hardware, we always get the same output. 
+# This is an important implication (we see why this is the case when something like
+# cuda is involved)
 # 
-# **CuDNN and CUDA**: The cuDNN library, used by CUDA convolution operations, 
-# can introduce nondeterminism. When a cuDNN convolution is called with new size parameters, 
-# it runs multiple convolution algorithms to find the fastest one. 
-# Due to benchmarking noise and different hardware, the benchmark may 
-# select different algorithms on subsequent runs, even on the same machine(due to benchmarking noise as hardwre is the same here).
+# The cuDNN library, used by CUDA convolution operations, can introduce nondeterminism.
+# When a cuDNN convolution is called with new size parameters, it runs multiple 
+# convolution algorithms to find the fastest one. 
+# Due to benchmarking noise and different hardware, the benchmark may select different
+# algorithms on subsequent runs, even on the same machine(due to benchmarking noise as
+# hardwre is the same here).
 # Disabling the benchmarking feature with `torch.backends.cudnn.benchmark = False`
 # causes cuDNN to deterministically select an algorithm, possibly at the cost of 
 # reduced performance.(this is usually the case!)
 #
-# 
 # this is not all, aside from this, using `torch.use_deterministic_algorithms()`
 # we can configure PyTorch to use deterministic algorithms instead of nondeterministic ones
 # where available, and to throw an error if an operation is known to be nondeterministic
@@ -2723,22 +2735,23 @@ generator = torch.Generator(device=device).manual_seed(5)
 # we can find the list of such operations here : https://pytorch.org/docs/stable/generated/torch.use_deterministic_algorithms.html#torch.use_deterministic_algorithms 
 # 
 # note that some of these operations are only determinstic when they are on CPU. 
-# so going determinstic aside from negatively affecting the performance, may not always be feasible
-# we can use set_deterministic_debug_mode() as an alternative interface for torch.use_deterministic_algorithms() 
-# which allows us to specify what to do when it faces nondeterminstic operations (do nothig(0), warn(1), or error out(2!)
+# so going determinstic aside from negatively affecting the performance, may not always
+# be feasible. we can use `set_deterministic_debug_mode()` as an alternative interface
+# for `torch.use_deterministic_algorithms()` which allows us to specify what to do when
+# it faces nondeterminstic operations (do nothig(0), warn(1), or error out(2!)
 # 
 # for example trying to run the nondeterministic CUDA implementation of 
-# torch.Tensor.index_add_() will throw an error while it will run ok on CPU mode! 
+# `torch.Tensor.index_add_()` will throw an error while it will run ok on CPU mode!
 #
 #
 # sidenote 1:
 # we mentioned earlier that disabling CUDA convolution benchmarking ensures that 
 # CUDA selects the same algorithm each time an application is run, however, that
-# algorithm itself may be nondeterministic, unless either torch.use_deterministic_algorithms(True)
-# or torch.backends.cudnn.deterministic = True is set. 
-# The latter setting controls only this behavior, unlike torch.use_deterministic_algorithms() 
+# algorithm itself may be nondeterministic, unless either `torch.use_deterministic_algorithms(True)`
+# or `torch.backends.cudnn.deterministic = True` is set. 
+# The latter setting controls only this behavior, unlike `torch.use_deterministic_algorithms()` 
 # which will make other PyTorch operations behave deterministically, too.
-# so to make to make the whole process determinstic, torch.use_deterministic_algorithms(True)
+# so to make the whole process determinstic, `torch.use_deterministic_algorithms(True)`
 # must be used (provided all our operations have determinstic implementations)
 #
 # sidenote 2: 
@@ -2750,21 +2763,24 @@ generator = torch.Generator(device=device).manual_seed(5)
 # In some versions of CUDA, RNNs and LSTM networks may have non-deterministic behavior. 
 #
 # sidenote 4:
-# any operations that return a tensor with undefined values (from an uninitialized memory), 
-# such as torch.empty(), which is then used as "an input" to some other operations can not 
-# be used when determinstic behavior is needed simply becasue they introduce randomness this way.
-# In order to get around this issue, pytorch offers, `torch.utils.deterministic.fill_uninitialized_memory()`
-# which initializes all unintialized memories with a known value. 
-# its set by default when torch.use_deterministic_algorithms(True)
-# while this works, it comes with a huge price/overhead becasue of this extra initialization step.
-# if we dont use such cases that involve using unintialized memory as 'an input' to an 
-# operation, then this function can be set to False.
+# any operations that return a tensor with undefined values (from an 
+# uninitialized memory), such as `torch.empty()`, which is then used as
+# "an input" to some other operations can not be used when determinstic
+# behavior is needed simply becasue they introduce randomness this way.
+# In order to get around this issue, pytorch offers, 
+# `torch.utils.deterministic.fill_uninitialized_memory()` which initializes 
+# all unintialized memories with a known value. 
+# its set by default when `torch.use_deterministic_algorithms(True)` while 
+# this works, it comes with a huge price/overhead becasue of this extra 
+# initialization step.
+# if we dont use such cases that involve using unintialized memory as 'an input'
+# to an operation, then this function can be set to False.
 # 
 # from official documentation: 
 # Operations such as `torch.empty()`` and `torch.Tensor.resize_()` 
 # can return tensors with uninitialized memory that contain undefined values.
-# Using such a tensor as "an input" to another operation is invalid if determinism is required,
-# because the output will be nondeterministic. 
+# Using such a tensor as "an input" to another operation is invalid if determinism
+# is required, because the output will be nondeterministic. 
 # But there is nothing to actually prevent such invalid code from being run. 
 # So for safety, `torch.utils.deterministic.fill_uninitialized_memory` is set to True
 # by default, which will fill the uninitialized memory with a known value 
@@ -2779,21 +2795,23 @@ generator = torch.Generator(device=device).manual_seed(5)
 # helps control the RNG, certain operations (like `torch.svd_lowrank()`) may still 
 # exhibit nondeterministic behavior.
 # 
-# when using libraries like NumPy, ensure consistent seeds for their random number generators as well.
+# when using libraries like NumPy, make sure consistent seeds for their random number 
+# generators as well.
 # 
 # Use `torch.manual_seed(0)` to seed the RNG for all devices (CPU and CUDA).
 # For custom operators, set the Python seed with `random.seed(0)`.
-# If relying on NumPy, use `np.random.seed(0)` (but be aware of NumPy Random Generator objects).
-# Remember that complete reproducibility isn't guaranteed, but these steps limit sources of nondeterminism.
+# If relying on NumPy, use `np.random.seed(0)` (but be aware of NumPy Random Generator
+# objects).
+# Remember that complete reproducibility isn't guaranteed, but these steps limit sources
+# of nondeterminism.
 
 # Deterministic operations may be slower than nondeterministic ones, 
 # but they facilitate experimentation, debugging, and regression testing.
 # Be cautious when sacrificing performance for reproducibility.
-# In summary, while PyTorch provides tools to enhance determinism, achieving perfect 
+# while PyTorch provides tools to enhance determinism, achieving perfect 
 # reproducibility across all scenarios remains challenging.
-#
-# check dataloaders as well (since this is still too early, well cover this later when
-# we talk about them.)
+# check dataloaders as well (since this is still too early, well cover this
+# later when we talk about them.)
 #
 #%%
 # now  that we've learnt how to create a new tensor, initialize it, specify different dtypes, device, etc
