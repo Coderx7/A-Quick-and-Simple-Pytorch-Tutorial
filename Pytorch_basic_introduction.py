@@ -179,9 +179,10 @@ def show_tensor(name,t,newline=True):
 # to build and train complex neural networks.
 #
 # sidenote:
-# torch is the most used deeplearining framework in the world, especially among researchers
-# a great number of new papers in the field publish their implementations 
-# using torch, hence you can run/experiment with sota works readily when you know torch! 
+# torch is the most used deeplearining framework in the world, especially 
+# among researchers a great number of new papers in the field publish their
+# implementations using torch, hence you can run/experiment with sota works
+# readily when you know torch! 
 # 
 # sidenote:
 # a tensor can be 0 dimensional like a scaler(an ordinary number), 1 dimensional 
