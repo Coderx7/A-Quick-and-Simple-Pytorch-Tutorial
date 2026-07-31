@@ -1632,6 +1632,12 @@ print(A / B)
 print("\nPower (A**2):")
 print(A ** 2)
 
+# There are inplace variants where the name ends with an underscore(_)
+show_tensor("Inplace Multiplication A.mul_(2)", A.mul_(2))
+show_tensor("Inplace Division A.div_(2)", A.div_(2))
+show_tensor("Inplace Addition A.add_(2)", A.add_(2))
+show_tensor("Inplace Subtraction A.sub_(2)", A.sub_(2))
+
 # 7.2 Matrix Multiplication
 # Matrix multiplication is one of the most important operations in deep
 # learning. In fact it is the most fundamental operation that is used in
@@ -2679,15 +2685,17 @@ generator = torch.Generator(device=device).manual_seed(5)
 # To get an isolated stream of random numbers, we need to create our
 # own Generator with `torch.Generator().manual_seed(seed)`.
 
+# sidenote:
 # As the official documentation says: 
-# However, some applications and libraries may use NumPy Random Generator objects, 
+# Some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
 # and those will need to be seeded consistently as well.
+# 
 # what does it mean really?
-# this is refering to a recent change in numpy where it introduced a new random 
+# This is refering to a recent change in numpy where it introduced a new random 
 # number generation system that provides more flexibility and features than the
 # older global RNG.
-# in the new system, instead of relying on the global state (as in `np.random`), 
+# In the new system, instead of relying on the global state (as in `np.random`), 
 # NumPy now encourages using explicit random generator objects (instances of `numpy.random.Generator`).
 # These generator objects allow us to manage seeds, distributions, and other properties independently.
 # 
@@ -2802,53 +2810,27 @@ generator = torch.Generator(device=device).manual_seed(5)
 # For custom operators, set the Python seed with `random.seed(0)`.
 # If relying on NumPy, use `np.random.seed(0)` (but be aware of NumPy Random Generator
 # objects).
-# Remember that complete reproducibility isn't guaranteed, but these steps limit sources
-# of nondeterminism.
-
-# Deterministic operations may be slower than nondeterministic ones, 
+# 
+# Remember that complete reproducibility isn't guaranteed, but these steps 
+# limit sources of nondeterminism.
+#
+# deterministic operations may be slower than nondeterministic ones, 
 # but they facilitate experimentation, debugging, and regression testing.
 # Be cautious when sacrificing performance for reproducibility.
 # while PyTorch provides tools to enhance determinism, achieving perfect 
-# reproducibility across all scenarios remains challenging.
+# reproducibility across all scenarios is still challenging.
 # check dataloaders as well (since this is still too early, well cover this
 # later when we talk about them.)
 #
-#%%
-# now  that we've learnt how to create a new tensor, initialize it, specify different dtypes, device, etc
-# lets work on addition, subtraction, multiplication, negation, transpose, and the likes 
-# for adding two tensors, 
-# either a tensor should be as scaler, or has 1 dimension in comon
-t1 = torch.tensor([1., 2., 3., 4.])
-t2 = torch.tensor([[10.,10.,10.,10.],
-                   [10.,10.,10.,10.]])
-t3 = torch.tensor([0.5])
-print(f't1 = {t1}')
-print(f't2 = {t2}')
-print(f't3 = {t3}')
-print(f't1 + t2 =\n {t1 + t2}')
-print(f't1 + t3 =\n {t1 + t3}')
 
 #%%
-# inplace operations 
-# tensors also provide inplace version of some operations such as mul, add, abs, cos, etc
-# these inplace operations are denoted by and underscore or '_' at the end 
-# add_
-# mul_
-a = torch.tensor([1.])
-print(f'{a=}')
-print(f'{a.mul_(2)=}')
-print(f'{a.div_(2)=}')
-print(f'{a.add_(2)=}')
-print(f'{a.sub_(2)=}')
-print(f'{a.tanh_()=}')
-
 # now lets create a simple hidden layer with a weight and bias and input 
 # lets imlement a simple 1 layer and then 2 layer neural network! 
 # dont worry here we will keep it simple! 
 # our network has 5 neurons in its hidden layer, gets an input with 7 data points
 # and creates 1 output 
 # lets write the calculation for 1 step only!(forward propagation only)
-inputs = torch.randn(2,7)
+X = torch.randn(size=(2,7))
 W = torch.rand(size=(7,5)) 
 b = torch.rand(size=(5,))
 W_output = torch.rand(size=(5,1)) 
@@ -2857,20 +2839,24 @@ b_output = torch.rand(size=(1,))
 def sigmoid(x):
     return 1/(1+torch.exp(-x))
 
-output = sigmoid(torch.mm(inputs, W) + b)
+output = sigmoid(torch.mm(X, W) + b)
 output = sigmoid(torch.mm(output, W_output) + b_output)
-print(f'{output=}')
+print(f'{output}')
 
+# we could further simplify this by using the built-in functions!
+output = ((X @ W) + b).sigmoid()
+output = ((output @ W_output) + b_output).sigmoid()
+show_tensor("output", output)
 #%%
-# before we end our discussion here, Id like to talk a bit about logging some extra information
-# about pytorch, and basically our stack. 
+# Before we end our discussion here, I'd like to talk a bit about logging some extra
+# information about pytorch, and basically our stack. 
 # its always a good idea to log some amount of information about the current stack 
 # that is being used to produce something. 
-# things like what version of pytorch, python, cuda and other things we might be interested in
-# and have an effect on our result. 
-# its always good to log such information so we know what configuration was used in
-# getting a result. 
-# one of the first things we would want to log is the version of pytorch we are using
+# things like what version of pytorch, python, cuda and other things we might be 
+# interested in and have an effect on our result. 
+# its always a good idea to log such information so we know what configuration was
+# used in getting certain results.
+# One of the first things we would want to log is the version of pytorch we are using
 # we can follow the python convention and use `torch.__version__` to get torch version 
 print(f'{torch.__version__}') # 2.2.0+cu118
 # or use the `version` module to access versions for other modules involved in the package
@@ -2887,14 +2873,14 @@ print(f'{torch.version.git_version=}')
 print(f'{torch.cuda.device_count()=}')
 
 # dummy tensor for taking up some vram so we can test with the memory stats below!
-dummy_tensor = torch.randn(size=(1000,512,512),dtype=torch.float64,device='cuda')
+dummy_tensor = torch.randn(size=(1000,512,512), dtype=torch.float64, device='cuda')
 
 for i in range(torch.cuda.device_count()):
     name = torch.cuda.get_device_name(i)
     compute_capability = torch.cuda.get_device_capability(i)
     properties = torch.cuda.get_device_properties(i)
-    print(f'{i}){name}')
-    print(f"  - Compute capability: {'.'.join([str(l) for l in compute_capability])}")
+    print(f'{i}) {name}')
+    print(f"  - Compute capability: {'.'.join([str(cc) for cc in compute_capability])}")
     print(f'  - Total memory:       {properties.total_memory/(2**30):.0f}GB')
     print(f'  - SM count:           {properties.multi_processor_count}')
     current_temp = torch.cuda.temperature()
@@ -2902,11 +2888,12 @@ for i in range(torch.cuda.device_count()):
     print(f'  - current temp:       {current_temp}C')
     print(f'  - current util:       {current_util}%')
 
-    # of course the temperature and utilization doesnt make sense for the start of our log
-    # but they definitely come in handy for monitoring our system/gpu status, for example 
-    # low uitilization could imply our batchsize need to change, or we need more worker threads
-    # or a faster media to read form, or maybe some parts of our model is not efficiently executing
-    # and we are io bound! we can also check them for health checks so that we dont burn our gpu!!
+    # of course the temperature and utilization doesnt make sense for the start 
+    # of our log but they definitely come in handy for monitoring our system/gpu status,
+    # for example low uitilization could imply our batchsize need to change, or 
+    # we need more worker threads or a faster media to read form, or maybe some 
+    # parts of our model is not efficiently executing and we are io bound! 
+    # we can also check them for health checks so that we dont burn our gpu!!
 
     # we can also see how much memory is currently taken!
     # torch.cuda.mem_get_info() gives us free memory out of the whole vram
@@ -2931,10 +2918,11 @@ for i in range(torch.cuda.device_count()):
     # information we want.
     memory_stat = torch.cuda.memory.memory_stats(i)
     print(f'{memory_stat=}')
-    
-    # or we could use memory_summary and get a nice table displaying all relavent information
+
+    # or we could use memory_summary and get a nice table displaying all 
+    # relavent information
     # summary = torch.cuda.memory.memory_summary(i)
-    # print(f'  - vram summary:       {summary}')
+    # print(f'\n  - vram summary:       \n{summary}')
     
 # I guess thats enough for now. before we call it a day, lets see how we can 
 # free gpu memory, this is especially handy in jupyeter notebooks where memory
@@ -2945,93 +2933,95 @@ print(f'- available memory:   {torch.cuda.mem_get_info(0)[0]//2**20}MiB')
 # it didnt free anything it seems!
 # The reason is empty_cache() as the name suggests, frees all "unused cached memory"
 # The occupied GPU memory by tensors can not be freed this way. 
-# therefore, we cant use this to increase the amount of GPU memory available for PyTorch.
-#
+# Therefore, we cant use this to increase the amount of GPU memory available for PyTorch.
+# So what do we do? 
 # In order to make this work for us, we need to delete the variables that take up
-# vram or somehow make them refer to sth else so that the memory chunk they are referring to
-# can be reclaimed. 
+# vram or somehow make them refer to sth else so that the memory chunk they are 
+# referring to can be reclaimed. 
 #
-# Note that sometimes this doesnt work either, when this happens, this is most probably 
-# a case of memory leakage, mutiple variables pointing to the same memory chunk, etc.
-# so we need to watch out for these cases as well.(one of such cases that we will get to 
-# later happens during training, like appending,adding loss, 
+# Note that sometimes this doesnt work either, when this happens, this is most 
+# probably a case of memory leakage, mutiple variables pointing to the same 
+# memory chunk, etc.
+# So we need to watch out for these cases as well.(one of such cases that we 
+# will get to later happens during training, like appending, adding loss, 
 # total_loss += loss, where it should have been total_loss += loss.item() otherwise, 
 # the whole computation graph is being added each time instead of the loss value!
 # which leaks memory (and takes up more vram as trainibg continues)
 # 
 # Now back to what we were doing, by deleting the tensor or setting it to something
 # like None, we mark that chunk of memory ready for being garbage collected! 
-# (if its referenced only once) if not, and if we have two variables refering to the same 
-# object, both of them needs to be deleted or made to point to sth else (so the ref count becomes 0 and it can be freed))
+# (if its referenced only once) if not, and if we have two variables refering to 
+# the same object, both of them needs to be deleted or made to point to sth else 
+# (so the ref count becomes 0 and it can be freed))
 # lets make a second variable to also refer to dummy_tensor to see this in action
 dummy_tensor2 = dummy_tensor
 # del dummy_tensor
 dummy_tensor = None
-# see if we only delete dummy_tensor, the mmeory wont be freeed
+# see if we only delete dummy_tensor, the mmeory wont be freed
 dummy_tensor2 = None
 # and following a empty_cache() call we may reclaim that memory!
 torch.cuda.empty_cache()
 print(f'- available memory:   {torch.cuda.mem_get_info(0)[0]//2**20}MB')
 
 # also note that, sometimes this process gets a bit more involved,
-# but the underlying issue stays the same, multiple references to the same memory chuncks,
-# or memory leak. one of the cases where this may happen, (we will cover in later chapeters)
-# could be trying to free memories taken by optimizers, or our model.
+# but the underlying issue stays the same, multiple references to the same memory
+# chuncks, or memory leak. one of the cases where this may happen, (we will cover
+# in later chapeters) could be trying to free memories taken by optimizers, or 
+# our model.
 # in such cases, we may need to need to explictly move all the tensors to cpu first,
-# then delete the variable/instance followed by a gc.collect() to finally do a empty_cache().
-# this may happen when we want to e.g. delete our optimizer and free-up the memory it takes!
-# however, it wouldnt work for somereason!
+# then delete the variable/instance followed by a gc.collect() to finally do a 
+# empty_cache().
+# this may happen when we want to e.g. delete our optimizer and free-up the memory
+# it takes! however, it wouldnt work for some reason!
 # the reason is the model's parameters, is also referenced by optimizers, so simply 
-# deleting the model or setting it to None, wont do it. We need to also handle the optimizer
-# we can delete them both, and this should free the memory. 
-# if somehow we want to keep the model, and want to remove the optimizer, this is what
-# we would try first (move all the params to cpu, delete optimizer, gc.collect it and then
-# try to empty_cache)
+# deleting the model or setting it to None, wont do it. We need to also handle the
+# optimizer we can delete them both, and this should free the memory. 
+# if somehow we want to keep the model, and want to remove the optimizer, this is 
+# what we would try first (move all the params to cpu, delete optimizer, gc.collect
+# it and then try to empty_cache)
 # again we'll see this later on. this was just a heads up!
 # see : https://discuss.pytorch.org/t/how-can-we-release-gpu-memory-cache/14530/27
-
 
 # sidenote: how empty_cache() works: 
 # note when an object/variable is no longer referenced, its memory is set to be freed.
 # this means its memory can be used to create new objects/tensors.
-# the same way, deleting an object in python runtime, doesnt guarantee its given back to the OS,
-# the same thing applies in cuda runtime as well. the memory is not released to the OS
-# immediately and therefore when you query nvidia-smi it wont show any freed up memory!
-# This is a typical behavior we often see when dealing with cuda/deeplearning training process
-# this is caused by the pytorch allocator behavior, which keeps such these memory chuncks (as reserved)
-# so it can do memory allocations much faster. 
-# empty_cache() when called, forces the allocator, to release these memories 
+# the same way, deleting an object in python runtime, doesnt guarantee its given 
+# back to the OS, the same thing applies in cuda runtime as well. 
+# the memory is not released to the OS immediately and therefore when you query
+# nvidia-smi it wont show any freed up memory!
+# This is a typical behavior we often see when dealing with cuda/deeplearning training
+# process this is caused by the pytorch allocator behavior, which keeps such these
+# memory chuncks (as reserved) so it can do memory allocations much faster. 
+# empty_cache() when called, forces the allocator to release these memories 
 # that it's kept to allocate new tensors, back to the OS. 
 # when this happens, the freed amount is reported in nvidia-smi.
 # its noteworthy to mention that, these reserved memories, were already available to 
-# allocator to create new tensors, so its not crucial to call empty_cache() to be able to
-# use such memories. (it makes a difference if we want to use them in a separate process though)
+# allocator to create new tensors, so its not crucial to call empty_cache() to be 
+# able to use such memories. (it makes a difference if we want to use them in a 
+# separate process though)
 # its just that it makes memory bookkeeping/logging on our side more clear!
 # ref: https://discuss.pytorch.org/t/how-can-we-release-gpu-memory-cache/14530/4
 
-#sidenote: concerning discrepency between nvidia-smi report vs pytorch's:
+# sidenote: concerning discrepency between nvidia-smi report vs pytorch's:
 # PyTorch uses a caching memory allocator to speed up memory allocations. 
 # This allows fast memory deallocation without device synchronizations. 
 # However, the unused memory managed by the allocator will still show 
 # as if used in nvidia-smi. 
-#
 # memory_allocated() and max_memory_allocated() can be used to monitor 
 # memory occupied by tensors.
-
 # memory_reserved() and max_memory_reserved() can be used to monitor the
 # total amount of memory managed by the caching allocator. 
-# 
-#  
 # torch.cuda.max_memory_allocated reported number can differ from the one 
 # reported by nvidia-smi and may report a much smaller amount.   
-# This discrepency is due to CUDA memory allocator. 
-# The current CUDA memory allocator is a caching allocator, 
-# and it shows more memory than is currently being occupied by tensors 
-# (the amount reported by torch.cuda.max_memory_allocated()).
-# a portion of this number in nvidia-smi belong to "reserved" memory which is used 
-# to speed up future allocations/reclaim unused memory from garbage collected tensors.
-# The reserved memory amount (using torch.cuda.max_memory_reserved()) will be closer to 
-# what is being reported by nvidia-smi.
+# This discrepency is related to CUDA memory allocator. 
+# The current CUDA memory allocator is a caching allocator, and it shows 
+# more memory than is currently being occupied by tensors (the amount 
+# reported by torch.cuda.max_memory_allocated()).
+# a portion of this number in nvidia-smi belongs to "reserved" memory which
+# is used to speed up future allocations/reclaim unused memory from garbage 
+# collected tensors.
+# The reserved memory amount (using torch.cuda.max_memory_reserved()) will be
+# closer to  what is being reported by nvidia-smi.
 # note that there will always be some additional overhead depending on 
 # what operations/libraries are being used e.g. like cuDNN, cuBLAS, etc).
 # this can become a substantial amount, as much a few hundreds of MB in many cases.
