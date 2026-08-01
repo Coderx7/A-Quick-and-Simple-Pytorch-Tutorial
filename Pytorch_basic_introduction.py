@@ -15,15 +15,18 @@ def show_tensor(name,t,newline=True):
     print(f"shape={tuple(t.shape)!s:<10}")
     print(t)
 #%% intro
-# Here we are going to lean about torch and how we can use it to train neural networks. 
-# basically we are going to see what torch is and how similar it is to numpy!
-# torch is a deep learning framework written in C/C++ that is used for 
+# We are going to lean about torch and how we can use it to train neural networks. 
+# We are going to see what torch is and how similar it is to numpy!
+# 
+# What is torch/Pytorch? 
+# torch is a deep learning framework written in C/C++ and it is used for 
 # training and working with deep neural networks.
 # 
 # sidenote:
-# historically torch was a lua based framework for deeplearning, later on
-# it was reimplemented in C/C++ and was reintroduced as Pytorch, a python 
+# Historically torch was a lua based framework for deeplearning, later on
+# it was reimplemented in C/C++ and was reintroduced as `Pytorch`, a python 
 # framework for deeplearning.
+#
 # So PyTorch is the Python package that wraps around the torch library.
 # and it provides two high-level features:
 #   1.Tensor computation (like NumPy) with strong GPU acceleration
@@ -42,7 +45,7 @@ def show_tensor(name,t,newline=True):
 # torch very pleasant if you already know Numpy, and also do porting
 # very easy.
 # 
-# Before we dive into the details, it helps to have a bird's eye view
+# Before we dive into the details, it helps to have a holistic view
 # of the PyTorch ecosystem. Think of PyTorch as a toolbox where each
 # module has a specific responsibility. You don't need to learn all of
 # them at once, but it is useful to know they exist and what problems
@@ -123,7 +126,7 @@ def show_tensor(name,t,newline=True):
 # only know how to use PyTorch, but also where to look whenever you
 # encounter a new problem.
 
-#%% section into
+#%% section intro
 # we are going to cover a few  sections and by the end of this chapter
 # you should have a basic understanding of how to use torch and tensors 
 # and will be ready to learn more advanced concepts about deeplearning 
@@ -2496,64 +2499,66 @@ show_tensor("Random RNG State", torch.random.get_rng_state())
 # Note that the rng_state doesnt only contain the `initial_seed`, it has 
 # other information as well. so its not like a byte representation of a 
 # single seed number!
+# 
+# DeepDive Note:
 # If we convert the `initial_seed()` into a bytes array and look at it
 # we can see our initial seed there, at the begining of the array but
 # the rest will be zeros whereas in the actual `rng_state` they are nonzero
 # values: 
-
+# 
 # lets see this in action.
 # generate a random seed
 seed = torch.seed()
-
+#
 # retrieve the initial seed used
 init_seed=torch.initial_seed()
-
+#
 # now get the rng_state
 rng_state = torch.get_rng_state()
 print(f'seed :          {seed}')
 print(f'initial seed:   {init_seed}')
-
+#
 # rng_state is a tensor of size torch.Size([5056])
 print(f'rng_state.shape:{rng_state.shape}')
-
+#
 # By default Pytorch doesn't print all the elements and it might give us
 # the impression that only the few starting elements are nonzero and the
 # rest are zeros! this is obviouly wrong! see the rest
 # print(f'{rng_state=}')
 show_tensor("rng_state",rng_state)
-
+#
 # to convert our seed into bytes, we take the byte length as well
 # our system is little endian, so we specify that as well otherwise, the
 # result would be messed up (kind of flipped) due to cpu endian-ness!
 seed_bytes = seed.to_bytes(rng_state.shape[0],'little')
-
+#
 # now we create a numpy/torch array out of our bytes, 
 # Thanks to torch implementing numpy operations, they are identical here:
 # seed_bytearray = np.frombuffer(seed_bytes, dtype=np.uint8)
 seed_bytearray = torch.frombuffer(seed_bytes, dtype=torch.uint8)
-
+#
 # length checks out as well
 print(f'seed_bytearray.shape:   {seed_bytearray.shape}')
 print(f'seed_bytearray:         {seed_bytearray}')
 print(f'rng_state:              {rng_state}')
-
+#
 # seems pretty similar to rng_state right? not so fast
 # when we compare them we see that they are not equal!
 print(f'Is rng_state == seed_bytearray? {torch.equal(rng_state, seed_bytearray)}')
-
+#
 # now lets try to see them in their full glory!
 torch.set_printoptions(profile='full')
 # print(f'{seed_bytearray=}')
 show_tensor("seed_bytearray", seed_bytearray)
-
+#
 # while our `rng_state` is quit different after the few early elements
 # which tells us it has more information other than a simple seed!
 # print(f'{rng_state=}')
 show_tensor("rng_state", rng_state)
-
+#
 # so the thing to remember is, to either store the seed-number, or the
 # `rng_state` for resuming purposes later on. (we usually use seed only!)
-
+#
 # lets reset the printoptions back to its defaults
 torch.set_printoptions(profile='default')
 
@@ -2592,7 +2597,6 @@ show_tensor(f"Using global random generator (seed={seed})", random_tensor_1)
 # Other parts of our code are still free to use the global RNG without changing
 # the random numbers produced by our generator.
 #
-
 
 torch.manual_seed(15)
 random_tensor_1 = torch.randn(size=(2,2))
@@ -2686,7 +2690,7 @@ generator = torch.Generator(device=device).manual_seed(5)
 # To get an isolated stream of random numbers, we need to create our
 # own Generator with `torch.Generator().manual_seed(seed)`.
 
-# sidenote -appendix?:
+#%% sidenote - appendix?:
 # As the official documentation says: 
 # Some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
