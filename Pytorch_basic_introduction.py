@@ -22,16 +22,17 @@ def show_tensor(name,t,newline=True):
 #
 # So, what exactly is PyTorch?
 #
-# PyTorch is an open-source deep learning framework built around tensor
-# computation. It provides a Python interface to the underlying `torch`
-# library, which performs the heavy lifting and is implemented primarily in
-# C/C++ (along with CUDA support for NVIDIA GPUs). The Python package that
-# we interact with, i.e. Pytorch, exposes these capabilities through a 
-# clean and Pythonic interface.
+# PyTorch is an open-source deep learning framework for tensor computation
+# and deep learning. It provides fast tensor operations, automatic differentiation
+# (Autograd), GPU acceleration, and a rich ecosystem of tools for building 
+# and training neural networks.
+# It provides a Python interface to the underlying `torch` library, which 
+# performs the heavy lifting and is implemented primarily in C/C++ 
+# (along with CUDA support for NVIDIA GPUs). 
 # 
-# Pytorch revolves around tensors. If you've worked with NumPy before, you can
-# think of a PyTorch tensor as something very similar to a NumPy array, but
-# with a few important superpowers. 
+# Pytorch revolves around tensors. if you've worked with NumPy before, 
+# you can think of a PyTorch tensor as something very similar to a NumPy array,
+# but with a few important superpowers. 
 # It gives us everything we need to create and manipulate tensors, perform fast
 # numerical computations, automatically calculate gradients, and eventually 
 # build and train neural networks.
@@ -43,12 +44,14 @@ def show_tensor(name,t,newline=True):
 # Today, when people say torch or PyTorch, they almost always mean the Python
 # package built on top of the `torch` library.
 #
-# If you've worked with NumPy before, you'll notice that many things in
-# PyTorch feels very familiar. Its because PyTorch intentionally follows
-# many of NumPy's conventions, making it easy to pick up. If you haven't
-# used NumPy before, don't worry, we'll explain everything we need as we go.
+# When we start working with PyTorch, if you've worked with NumPy before, 
+# you'll notice that many things in PyTorch feels very familiar. Its because
+# PyTorch intentionally follows many of NumPy's conventions, making it easy
+# to pick up. 
+# If you haven't used NumPy before, don't worry, we'll explain  everything 
+# we need as we go.
 #
-# Since PyTorch is just another Python package, it works naturally alongside
+# Moreover, since PyTorch is just another Python package, it works naturally alongside
 # libraries such as NumPy and SciPy. In fact, many parts of its API were
 # intentionally designed to resemble NumPy's. If you're already comfortable
 # with NumPy, you'll find many familiar functions and programming patterns.
