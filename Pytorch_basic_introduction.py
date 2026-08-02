@@ -452,13 +452,14 @@ print(f'  Torch Tensor: {tensor_to_convert}')
 print(f'  Numpy Array(using tensor.numpy()): {np_from_tensor}\n')
 print(f'Is memory shared back to NumPy? {tensor_to_convert.data_ptr() == np_from_tensor.ctypes.data}')
 #%% Section 2: Essential Tensor Attributes 
-# Before we dive into the operations, we need to inspect what makes up a Tensor.
+# Before we talk about tensor operations, we need to inspect what makes 
+# up a Tensor.
 # Every PyTorch tensor carries metadata that describes how it is stored and
 # how PyTorch should treat it during computation. 
 #
 # These are the several important attributes and methods that we'll 
-# encounter constantly when we deal with training/inference of a neural
-# network, 4 of them are the most used:
+# encounter over and over when we are working on training/inference of 
+# a neural network. 4 of them are used the most which are as follows:
 # 
 # shape (or .size()): it describes the dimensions of the tensor.
 #      For example, a tensor with shape (3, 4) has 3 rows and 4 columns.
@@ -490,11 +491,11 @@ print(f'Requires Gradient?        {tensor.requires_grad}')
 # and are extensively used during training/inference process.
 # below we can see several of the mostly used ones:
 
-# Total number of elements in the tensor.
-# numel() and its alias nelement() return the total number
-# of values in a tensor regardless of how those values are 
-# arranged accross dimensions.
-# this is useful for a variety of reasons such as :
+## Total number of elements in the tensor.
+# we use `numel()` or its alias `nelement()` To get the the
+# total number of values in a tensor regardless of how
+# those values are arranged accross dimensions. 
+# This is useful for a variety of reasons such as 
 # counting the total number of values in a tensor
 # or checking whether a reshape operation is possible
 # (ie. the number of elements must remain the same)
@@ -507,7 +508,7 @@ print(f'Tensor elements count(alias):          {tensor.nelement()}')
 # but properties seem better
 
 # Number of dimensions (also called the tensor's rank).
-# This is one the most commonly used tensor attributes
+# This is one the most commonly used tensor attributes/properties
 # its especially useful when we want to check whether 
 # a tensor has the expected number of dimension or when
 # writting code that works with tensors of different ranks
@@ -516,7 +517,7 @@ print(f'Number of dimensions (ndim):           {tensor.ndim}')
 print(f'Number of dimensions (dim method):     {tensor.dim()}')
 
 # The memory layout describes how tensor elements are stored.
-# For almost all tensors(dense) we'll encounter, this will is torch.strided.
+# For almost all tensors(dense) we'll encounter, this will is `torch.strided`.
 # Almost all dense tensors use `torch.strided`, which means they
 # store elements in contiguous or strided memory. Other layouts,
 # such as sparse layouts, exist for specialized use cases but are
@@ -671,7 +672,7 @@ print(f'Original tensor unchanged?             {tensor.dtype == torch.float32}')
 # the underscore convention is about in-place tensor mutation only, 
 # not "any method that changes anything about the object"!
 
-# so in a nutshell: methods with an trailing underscore like foo_() modify
+# so in a nutshell, methods with an trailing underscore like foo_() modify
 # the tensor's data/storage in place.
 # the others usually dont modify the *data*, but may very well still change
 # metadata or autograd state like retain_grad().
@@ -705,7 +706,7 @@ idx_tensor = torch.tensor([[10, 20, 30],
 
 print(f'Original 3x3 Tensor:\n{idx_tensor}')
 
-# 4.1 Basic indexing 
+# 3.1 Basic indexing 
 # Indexing starts at 0, just like Python lists.
 print(f'\nElement at row 1, column 2:          {idx_tensor[1, 2]}')
 
@@ -718,7 +719,7 @@ print(f'Last column:                           {idx_tensor[:, -1]}')
 # Negative indexing counts from the end.
 print(f'Bottom-right element:                  {idx_tensor[-1, -1]}')
 
-# 4.2 Slicing
+# 3.2 Slicing
 # The syntax is identical to Python lists:
 # start : stop : step
 
@@ -733,7 +734,7 @@ sub_tensor = idx_tensor[:2, :2]
 
 print(f'\nTop-left 2x2 block:\n{sub_tensor}')
 
-# 4.3 Fancy Indexing
+# 3.3 Fancy Indexing
 # Just like Numpy, Pytorch allows us to use arbitrary rows and columns 
 # using integer tensors or Python lists. This makes many indexing
 # operations concise and expressive, and easy to read.
@@ -745,7 +746,7 @@ print(f'\nTop-left 2x2 block:\n{sub_tensor}')
 print(f'\nRows 0 and 2:\n{idx_tensor[[0, 2]]}')
 print(f'Columns 0 and 2:\n{idx_tensor[:, [0, 2]]}')
 
-# 4.4 Boolean Masking
+# 3.4 Boolean Masking
 # When it comes to [large] tensor based operations, we generally want to operate
 # on entire tensors rather than individual elements. Vectorized tensor 
 # operations are significantly faster than explicit Python loops because
@@ -771,7 +772,7 @@ filtered = idx_tensor[mask]
 # all selected elements.
 print(f'Filtered elements:                     {filtered}')
 
-# 4.5 Modifying values using masks
+# 3.5 Modifying values using masks
 # Boolean masks can also be used for in-place modification.
 # Instead of filtering elements, we can also modify them directly.
 # This is a common technique for clipping values, removing invalid
