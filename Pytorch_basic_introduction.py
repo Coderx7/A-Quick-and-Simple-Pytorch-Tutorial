@@ -146,40 +146,57 @@ def show_tensor(name,t,newline=True):
 # Section 11: Quick detour - Learn some utility functions(torch.print_options)
 
 #%% Section 1: What is a Tensor and How to create one
-# 
+# We start with the Tensor, the most fundamental concept we will
+# be dealing the most first.
+#
 # What is a tensor? 
 # Simply put, a tensor is a general name given to arrays.
-# we can think of a tensor as a multi-dimensional array, 
+# We can think of a tensor as a multi-dimensional array, 
 # that generalizes the concepts of scalers(0D), vectors(1D)
 # ,matrices(2D) and higher dimensional structures. 
-# That is a tensor is really a fancy name for arrays 
-# its a generalized way of representing data with multiple
-# dimensions or modes.
+# (A tensor is really a fancy name for arrays its a generalized
+# way of representing data with multiple dimensions or modes.)
 # So, whenever we talk about tensors, remember that 
 # it's simply a more flexible and encompassing term for arrays. 
 # 
 # We use tensors to represent all forms of data in 
 # Deep Learning (images, audio, text embeddings, etc.)
 #
-# Why do we care about them? 
-# Aside from the terminology nuiacense, whether we call these 
-# data structures arrays, or tensors, the real reason they
+# Why do we care so much about them? 
+# Aside from the terminology nuiacense- whether we call these 
+# data structures arrays or tensors- the real reason they
 # are important to us is they are used to represent multi-dimensional data,
 # such as images, audio, text, etc in deeplearning (and machinelearning in general)
-# and it allows us to use hardware acceleration (e.e. GPUs on our systems),
-# to efficiently do computation on them in the form of 
-# large datasets and complex models which are typical for deeplearning. 
-# This is the very reason, and the most crucial one why we use them.
-# the parallel computation offered by torch allows us to quickly
-# and efficiently run algorithms that would otherwise take a 
-# huge amount! 
-# we can use our GPUs to run operations on them and make deeplearning practical! 
+# and they are implemented so efficiently, they allows us to use 
+# hardware acceleration (i.e. GPUs on our systems), to efficiently 
+# do computation on large datasets and complex models which are typical 
+# for deeplearning.
 # 
+# This is the very reason, and the most important one why we use them.
+# Different numerical computing libraries refer to multi-dimensioanl arrays,
+# by different names, e.g. Torch and Tensorflow among others refer to them 
+# as Tensors, while Numpy, Cupy and MxNet call it ndarray (n-dimensional array),
+# Others like Jax may call it Array. Most deep learning libraries use Tensor though.
+
+# sidenote:
+# Unlike other libraries we mentioned here, Numpy doesnt offer GPU
+# acceleration. CuPy (a cuda based gpu accelerated library) instead does,
+# CuPy's interface is highly compatible with NumPy and SciPy; in most cases
+# it can be used as a drop-in replacement.
+# Also note that Both NumPy and CuPy do not support automatic differentiation
+# they are just pure numerical computation libraries, where as others such as
+# Torch, Tensorflow,Jax or MXNet are specificlly designed for deeplearning.
+# 
+# The parallel computation offered by torch allows us to quickly and efficiently
+# run algorithms that would otherwise take a huge amount of time to complete! 
+# We can use our GPUs to run operations on them and make deeplearning actually feasible!
+# 
+# There are several important operations that we can run on tensors.
 # Common tensor operations include element-wise operations like addition,
 # multiplication, etc., matrix multiplications, convolutions, and more.
-# Deep learning frameworks, such as PyTorch, Jax(replacement for tensorflow) and others,
-# provide optimized implementations of tensor operations, making it very easy 
-# to build and train complex neural networks.
+# Deep learning frameworks, such as PyTorch, Jax(replacement for Tensorflow) 
+# and others, provide optimized implementations of tensor operations, making
+# it very easy to build and train complex neural networks.
 #
 # sidenote:
 # torch is the most used deeplearining framework in the world, especially 
@@ -195,19 +212,13 @@ def show_tensor(name,t,newline=True):
 # we dont have a specific name for higher dimensional arrays, 
 # so instead we use the general term 'tensor' for them.
 #  
-# sidenote:(could this be confusing?remove it or leave it?)
-# a tensor as you now know, can have any dimensions (0,1,2,3,...),
-# but usually when you hear the term tensor,
-# it may refer to 3 and higher dimensional arrays(becasue if its 
-# 1d or 2d, we usually refer to them as vectors/matrices)
-# 
 # sidenote:(exessive?obvious?)
 # In torch/coding nomenclecture however, since tensor is the basic 
 # building block on which the whole process is based on -- its the
 # class that implements basically everything we use to train networks--
 # any dimensional object thats inherited from Tensor is called tensor!
 # so regardless of its dimensions we call them simply tensors!
-#  
+#   
 # 
 # Here we are going to have a very crude introduction to some of 
 # these operations in pytorch and familiarize ourselves with some features. 
@@ -248,6 +259,7 @@ print(t1_rand)
 
 print('\nEmpty((2,2,2)):')
 print(t1_empty)
+
 # We use `torch.zeros()` when we want a tensor to have zero values everywhere.
 # likewise if we want to have a tensor with 1 as values we use `torch.ones()`
 # They come handy when we want to do operations such as add, multiplication,
@@ -296,7 +308,8 @@ print(f'\ntorch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor contain
  
 # So `torch.Tensor` is the main class constructor when called with a shape/size, 
 # it returns an uninitialized `FloatTensor` (equivalent to torch.empty).
-# however `torch.tensor` is a factory function that expects data as its argument and infers the type.
+# however `torch.tensor` is a factory function that expects data as its argument 
+# and infers the type.
 
 # Looking at the previous example we see that 
 # there is a difference in the number of decimals,
@@ -307,9 +320,11 @@ np.set_printoptions(precision=8)
 print(f'\nNumpy Array:         {array_np}')
 print(f'\nTorch Tensor-Copied: {tensor_from_np_copy}')
 
-# how can we reset it back to the defaults? easy we can use default profile and just go back to defaul!
-# as it turns out, we can use other profiles (short, full) as well for our uses!
+# How can we reset it back to the defaults? easy we can use default profile and
+# just go back to defaul!
+# As it turns out, we can use other profiles (short, full) as well!
 torch.set_printoptions(profile='default')
+# numpy offers the same routine, infact Pytorch took its set_printoptions from NumPy!
 np.set_printoptions(precision=None)
 
 print(f'\nNumpy Array:   {array_np}')
@@ -380,6 +395,7 @@ print(f'  Shared memory ?      {numpy_address == tensor_cpy_address}\n')
 print('\nSharing Memory between torch tensor and numpy with .numpy()')
 tensor_to_convert = torch.ones((3,3))
 np_from_tensor = tensor_to_convert.numpy() # shares memory!
+
 # modify one to see the effect on both
 tensor_to_convert *= 2
 print(f'  Torch Tensor: {tensor_to_convert}')
