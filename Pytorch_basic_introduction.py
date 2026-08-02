@@ -17,44 +17,59 @@ def show_tensor(name,t,newline=True):
     print(t)
 #%% intro
 #%% Introduction
-# Before we can build and train neural networks, we first need to get familiar
-# with the library we'll be using throughout this book, that is PyTorch.
+# Before we start, we first need to get familiar with the library we'll be
+# using extensively, that is PyTorch.
+# or
+# We are going to learn Pytorch and build different kinds of models. Before 
+# we actually build and train neural networks, we first need to get familiar
+# with the library we'll be using, that is PyTorch.
 #
 # So, what exactly is PyTorch?
 #
 # PyTorch is an open-source deep learning framework for tensor computation
-# and deep learning. It provides fast tensor operations, automatic differentiation
-# (Autograd), GPU acceleration, and a rich ecosystem of tools for building 
+# and deep learning. It provides us with a few important facilities that makes
+# building and training neural networks especially easy and efficient. Speaking 
+# of those facilities, PyTorch provides very fast and GPU accelerated tensor operations,
+# automatic differentiation (Autograd), and a rich ecosystem of tools for building 
 # and training neural networks.
-# It provides a Python interface to the underlying `torch` library, which 
-# performs the heavy lifting and is implemented primarily in C/C++ 
-# (along with CUDA support for NVIDIA GPUs). 
 # 
-# Pytorch revolves around tensors. if you've worked with NumPy before, 
-# you can think of a PyTorch tensor as something very similar to a NumPy array,
-# but with a few important superpowers. 
-# It gives us everything we need to create and manipulate tensors, perform fast
-# numerical computations, automatically calculate gradients, and eventually 
-# build and train neural networks.
+# Sidenote:
+# Pytorch wraps around the underlying `torch` library, which performs the actual
+# heavy lifting and is implemented primarily in C/C++ (along with CUDA support 
+# for NVIDIA GPUs). Pytorch as said before, is an ecosystem and is made of several
+# libraries beside torch. we will cover many of them in this book.
+# 
+# As we pointed out, Pytorch revolves around tensors. if you've worked with NumPy
+# before, you can think of a PyTorch tensor as something very similar to a NumPy 
+# array, but with a few important superpowers. 
+# It basically gives us everything we need to create and manipulate tensors, 
+# perform fast numerical computations, automatically calculate gradients, and 
+# eventually build and train neural networks.
  
 # sidenote:
-# Before PyTorch, there was Torch, it was a popular deep learning framework
-# based on the Lua programming language. PyTorch was later introduced as its 
-# spiritual successor, bringing the same ideas to Python.
+# Py prefix in Pytorch as you might have guessed, signifies its a Python package,
+# around Torch. However, what you may not know is that, originally Torch was a 
+# popular deep learning framework written in the Lua programming language. 
+# PyTorch was later introduced as its spiritual successor, bringing the same 
+# ideas to Python.
 # Today, when people say torch or PyTorch, they almost always mean the Python
-# package built on top of the `torch` library.
+# package built on top of the `torch` library. The lua version is long abandoned
+# and not used anymore. 
+# There are wrappers for other languages such as C++, such as libtorch.
 #
-# When we start working with PyTorch, if you've worked with NumPy before, 
-# you'll notice that many things in PyTorch feels very familiar. Its because
+# When we start working with PyTorch, you'll notice that many things in PyTorch
+# feels very familiar if you've worked with NumPy before. Its because
 # PyTorch intentionally follows many of NumPy's conventions, making it easy
 # to pick up. 
 # If you haven't used NumPy before, don't worry, we'll explain  everything 
 # we need as we go.
 #
-# Moreover, since PyTorch is just another Python package, it works naturally alongside
-# libraries such as NumPy and SciPy. In fact, many parts of its API were
-# intentionally designed to resemble NumPy's. If you're already comfortable
-# with NumPy, you'll find many familiar functions and programming patterns.
+# Moreover, since PyTorch is just another Python package, it works naturally
+# alongside other python packages and libraries such as NumPy, SciPy, OpenCV,
+# Matplotlib, PIL, etc.
+# In fact, many parts of its API were intentionally designed to resemble NumPy's.
+# If you're already comfortable with NumPy, you'll find many familiar functions 
+# and programming patterns.
 
 # Throughout this chapter, we'll gradually build our understanding of PyTorch.
 # We'll start by learning what tensors are and how to create them. Then we'll
@@ -75,42 +90,9 @@ def show_tensor(name,t,newline=True):
 # 
 # Torch is the core library implemented in C/C++ that Pytorch is built upon.
 #
-#
-
-#%%
-# We are going to lean about torch and how we can use it to train neural networks. 
-# We are going to see what torch is and how similar it is to numpy!
-# 
-# What is torch/Pytorch? 
-# torch is a deep learning framework written in C/C++ and it is used for 
-# training and working with deep neural networks.
-# 
-# sidenote:
-# Historically torch was a lua based framework for deeplearning, later on
-# it was reimplemented in C/C++ and was reintroduced as `Pytorch`, a python 
-# framework for deeplearning.
-#
-# So PyTorch is the Python package that wraps around the torch library.
-# and it provides two high-level features:
-#   1.Tensor computation (like NumPy) with strong GPU acceleration
-#   2.Deep neural networks built on a tape-based autograd system
-# 
-# Since its a normal python package, we can reuse our favorite 
-# Python packages such as NumPy, SciPy and Cython to extend it when needed. 
-# 
-# In this section we are going to get familiar with and learn about
-# torch and its echo system. since torch offers tensor computation
-# you'll see a lot of similarities in terms of function parity with 
-# numpy. 
-# (In fact pytorch tries to follow numpy and has has added support 
-# for many numpy functions, as its an stablished library and extensively
-# used for tensor operations). this makes working with
-# torch very pleasant if you already know Numpy, and also do porting
-# very easy.
-# 
-# Before we dive into the details, it helps to have a holistic view
-# of the PyTorch ecosystem. Think of PyTorch as a toolbox where each
-# module has a specific responsibility. You don't need to learn all of
+# Before we dive into the details, it helps to have a general/holistic view
+# of the PyTorch ecosystem. We can think of PyTorch as a toolbox where each
+# module has a specific responsibility. We don't need to learn all of
 # them at once, but it is useful to know they exist and what problems
 # they solve.
 #
@@ -119,7 +101,7 @@ def show_tensor(name,t,newline=True):
 # operations, indexing, linear algebra, random number generation,
 # GPU support, and automatic differentiation. Basically the very foundation
 # we need to build a deep learning model, hence why we start with this!
-# If you already know NumPy, this is the part that will feel the most familiar.
+# this is the part that will feel the most familiar if you already know NumPy.
 #
 # On top of torch sits torch.nn.
 # This module provides the building blocks used to construct neural
@@ -130,7 +112,7 @@ def show_tensor(name,t,newline=True):
 #
 # Once we have a model, we need a way to optimize it.
 # That is the job of torch.optim.
-# It implements optimization algorithms such as SGD, Adam, RMSProp,
+# It implements optimization algorithms such as SGD, Adadelta, Adam, RMSProp,
 # AdamW and many others. These optimizers know how to update the
 # parameters of our neural network based on the gradients computed
 # during backpropagation.
@@ -164,9 +146,10 @@ def show_tensor(name,t,newline=True):
 # Beyond the core library, PyTorch has an ecosystem of domain-specific
 # libraries built on top of it.
 # For example `torchvision` is used for computer vision (datasets, image transforms,
-# pretrained vision models) while `torchaudio` is used for audio and speech processing
-# likewise `torchtext` is used for natural language processing and text datasets
-# and `torchrec`  is used recommendation systems. these are just a few examples, there
+# pretrained vision models) which we use heavily in this book. we also have `torchaudio` 
+# for audio and speech processing likewise there is `torchtext` that is used for 
+# natural language processing and text datasets. another example is `torchrec`  
+# which is used for recommendation systems. these are just a few examples, there
 # are more! 
 # These libraries build upon the same tensor and autograd system,
 # so once you understand the PyTorch fundamentals, learning these
@@ -181,10 +164,10 @@ def show_tensor(name,t,newline=True):
 # hardware acceleration -> torch.cuda and torch.amp
 # specialized domains   -> torchvision, torchaudio, torchtext, etc.
 #
-# Fortunately, you don't need to master the entire ecosystem before
+# Fortunately, we don't need to master the entire ecosystem before
 # becoming productive. Most PyTorch projects spend the majority of
 # their time using only a handful of these modules. As we progress
-# through this course, we'll build up this toolbox gradually, learning
+# through this book, we'll build up this toolbox gradually, learning
 # each module only when we actually need it. By the end, you'll not
 # only know how to use PyTorch, but also where to look whenever you
 # encounter a new problem.
@@ -209,14 +192,15 @@ def show_tensor(name,t,newline=True):
 # Section 11: Quick detour - Learn some utility functions(torch.print_options)
 
 #%% Section 1: What is a Tensor and How to create one
-# We start with the Tensor, the most fundamental concept we will
-# be dealing the most first.
+# The first concept we are going to learn about is Tensors, 
+# Tensor, is the most fundamental concept we will be dealing
+# the most first.
 #
 # What is a tensor? 
 # Simply put, a tensor is a general name given to arrays.
 # We can think of a tensor as a multi-dimensional array, 
-# that generalizes the concepts of scalers(0D), vectors(1D)
-# ,matrices(2D) and higher dimensional structures. 
+# that generalizes the concepts of scalers(0D, i.e. numbers),
+# vectors(1D) ,matrices(2D arrays) and higher dimensional structures. 
 # (A tensor is really a fancy name for arrays its a generalized
 # way of representing data with multiple dimensions or modes.)
 # So, whenever we talk about tensors, remember that 
@@ -239,7 +223,7 @@ def show_tensor(name,t,newline=True):
 # Different numerical computing libraries refer to multi-dimensioanl arrays,
 # by different names, e.g. Torch and Tensorflow among others refer to them 
 # as Tensors, while Numpy, Cupy and MxNet call it ndarray (n-dimensional array),
-# Others like Jax may call it Array. Most deep learning libraries use Tensor though.
+# Others like Jax call it Array. Most deep learning libraries use Tensor though.
 
 # sidenote:
 # Unlike other libraries we mentioned here, Numpy doesnt offer GPU
@@ -248,28 +232,31 @@ def show_tensor(name,t,newline=True):
 # it can be used as a drop-in replacement.
 # Also note that Both NumPy and CuPy do not support automatic differentiation
 # they are just pure numerical computation libraries, where as others such as
-# Torch, Tensorflow,Jax or MXNet are specificlly designed for deeplearning.
+# Torch, Tensorflow,Jax or MXNet are specificlly designed for deeplearning and
+# offer automatic diffrentiation as a core feature among other tensor computation capabilities.
 # 
 # The parallel computation offered by torch allows us to quickly and efficiently
 # run algorithms that would otherwise take a huge amount of time to complete! 
-# We can use our GPUs to run operations on them and make deeplearning actually feasible!
+# We can use our GPUs to run operations on them and make deeplearning actually
+# feasible!
 # 
 # There are several important operations that we can run on tensors.
-# Common tensor operations include element-wise operations like addition,
-# multiplication, etc., matrix multiplications, convolutions, and more.
+# To name a few common tensor operations we can say, element-wise operations
+# like addition, multiplication, etc., matrix multiplications, convolutions,
+# and more.
 # Deep learning frameworks, such as PyTorch, Jax(replacement for Tensorflow) 
 # and others, provide optimized implementations of tensor operations, making
 # it very easy to build and train complex neural networks.
 #
 # sidenote:
-# torch is the most used deeplearining framework in the world, especially 
+# Pytorch is the most used deeplearining framework in the world, especially 
 # among researchers a great number of new papers in the field publish their
-# implementations using torch, hence you can run/experiment with sota works
-# readily when you know torch! 
+# implementations using pytorch, hence you can run/experiment with sota works
+# readily when you know Pytorch! 
 # 
 # sidenote:
-# a tensor can be 0 dimensional like a scaler(an ordinary number), 1 dimensional 
-# like a vector, 2 dimensional like a matrix or
+# a tensor can be 0 dimensional like a scaler(an ordinary number), 
+# 1 dimensional like a vector, 2 dimensional like a matrix or
 # as we'll soon see, more dimensional which is usually 
 # what we refer to as simply a [multi-dimensional] tensor!
 # we dont have a specific name for higher dimensional arrays, 
