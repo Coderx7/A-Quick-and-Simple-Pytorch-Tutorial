@@ -1,6 +1,7 @@
 #%% In the name of God the most compassionate the most merciful
 # Pytorch basics : Introduction of tensors
 
+from prometheus_client import Summary
 import torch 
 import numpy as np
 import torch.version 
@@ -15,6 +16,65 @@ def show_tensor(name,t,newline=True):
     print(f"shape={tuple(t.shape)!s:<10}")
     print(t)
 #%% intro
+#%% Introduction
+# Before we can build and train neural networks, we first need to get familiar
+# with the library we'll be using throughout this book, that is PyTorch.
+#
+# So, what exactly is PyTorch?
+#
+# PyTorch is an open-source deep learning framework built around tensor
+# computation. It provides a Python interface to the underlying `torch`
+# library, which performs the heavy lifting and is implemented primarily in
+# C/C++ (along with CUDA support for NVIDIA GPUs). The Python package that
+# we interact with, i.e. Pytorch, exposes these capabilities through a 
+# clean and Pythonic interface.
+# 
+# Pytorch revolves around tensors. If you've worked with NumPy before, you can
+# think of a PyTorch tensor as something very similar to a NumPy array, but
+# with a few important superpowers. 
+# It gives us everything we need to create and manipulate tensors, perform fast
+# numerical computations, automatically calculate gradients, and eventually 
+# build and train neural networks.
+ 
+# sidenote:
+# Before PyTorch, there was Torch, it was a popular deep learning framework
+# based on the Lua programming language. PyTorch was later introduced as its 
+# spiritual successor, bringing the same ideas to Python.
+# Today, when people say torch or PyTorch, they almost always mean the Python
+# package built on top of the `torch` library.
+#
+# If you've worked with NumPy before, you'll notice that many things in
+# PyTorch feels very familiar. Its because PyTorch intentionally follows
+# many of NumPy's conventions, making it easy to pick up. If you haven't
+# used NumPy before, don't worry, we'll explain everything we need as we go.
+#
+# Since PyTorch is just another Python package, it works naturally alongside
+# libraries such as NumPy and SciPy. In fact, many parts of its API were
+# intentionally designed to resemble NumPy's. If you're already comfortable
+# with NumPy, you'll find many familiar functions and programming patterns.
+
+# Throughout this chapter, we'll gradually build our understanding of PyTorch.
+# We'll start by learning what tensors are and how to create them. Then we'll
+# learn how to inspect them, manipulate them, perform mathematical operations,
+# and understand how PyTorch keeps track of gradients behind the scenes.
+#
+# Don't worry if some of these terms sound unfamiliar right now. By the end of
+# this chapter they'll hopefully feel much more natural.
+#
+# So, let's start with the most fundamental building block in PyTorch:
+# the Tensor.
+
+# Quick Summary
+# PyTorch is a Python framework for tensor computation and deep
+# learning. It provides fast tensor operations, automatic differentiation
+# (Autograd), GPU acceleration, and a rich ecosystem of tools for building and
+# training neural networks.
+# 
+# Torch is the core library implemented in C/C++ that Pytorch is built upon.
+#
+#
+
+#%%
 # We are going to lean about torch and how we can use it to train neural networks. 
 # We are going to see what torch is and how similar it is to numpy!
 # 
@@ -405,9 +465,10 @@ print(f'Is memory shared back to NumPy? {tensor_to_convert.data_ptr() == np_from
 # Before we dive into the operations, we need to inspect what makes up a Tensor.
 # Every PyTorch tensor carries metadata that describes how it is stored and
 # how PyTorch should treat it during computation. 
+#
 # These are the several important attributes and methods that we'll 
 # encounter constantly when we deal with training/inference of a neural
-# network, but 4 of them are the most used:
+# network, 4 of them are the most used:
 # 
 # shape (or .size()): it describes the dimensions of the tensor.
 #      For example, a tensor with shape (3, 4) has 3 rows and 4 columns.
