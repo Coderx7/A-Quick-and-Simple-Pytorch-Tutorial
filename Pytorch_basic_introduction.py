@@ -1,7 +1,6 @@
 #%% In the name of God the most compassionate the most merciful
 # Pytorch basics : Introduction of tensors
 
-from prometheus_client import Summary
 import torch 
 import numpy as np
 import torch.version 
@@ -1245,16 +1244,20 @@ torch.set_default_device("cpu")
 # say stuff like "the problem is," thats terrible! and not a good starting way.
 # anyway you get the idea, lets do that. 
 #%% Section 5: Precise Data-Type Control & Casting
-# Up until now all the tensors we've created have used Pytorch's default data types.
-# For many applications thats prefectly fine. However, in practice, we'll often
-# need more control. whether we're storing labels as integers, performing
-# high-precision comuptation or training models with mixed-precision, choosing
-# the appropriate data type is essential!
+# Up until now all the tensors we've created have been using Pytorch's default data types.
+# Thats prefectly fine for many applications. However, in practice, we'll often
+# need more control on the data types we use. whether we're storing labels as 
+# integers, performing high-precision comuptation or training models with 
+# mixed-precision, choosing the appropriate data type is essential for us!
+# A wrong choice can result in a lot of issues, from errors stemming from underflow
+# or overflow, unsupported operations, to not converging during training or 
+# simply wasting a lot of precious memory and computation that could have been easily
+# prevented.
 
 # A tensor's data type (`dtype`) determines how its values are represented in mmeory
 # This directly affects numerical precisin, memory consumption and computational performance.
-# Fortunately Pytorch makes it very easy to inspect, change and convert a tensors dtype
-# whenever needed.
+# Luckily Pytorch makes it very easy for us to inspect, change and convert a tensors dtype
+# whenever its needed.
 
 # Let's see how PyTorch handles different tensor data types.
 # When constructing a tensor, PyTorch attempts to infer an appropriate
@@ -1264,14 +1267,15 @@ torch.set_default_device("cpu")
 tensor = torch.tensor([1, 2, 3])
 print(f'Infered dtype for [1, 2, 3] : {tensor.dtype}') # torch.int64
 
-# In the second example below, because the list contains a floating-point
-# value, PyTorch promotes all elements to a floating-point dtype. 
+# In the second example below, because the list contains a single floating-point
+# value, PyTorch promotes all elements to a floating-point dtype to prevent loss
+# of precision.
 tensor_float32 = torch.tensor([1., 2, 3])
 print(f'Infered dtype for [1., 2, 3] : {tensor_float32.dtype}') # torch.float32
 
-# There are several ways to convert a tensor from one data type to another.
+# There are several ways we can convert a tensor from one data type to another.
 # One option is to specify the desired dtype explicitly during construction.
-# The following line casts the default `torch.int64` into `torch.in32` 
+# The following line casts the default `torch.int64` into `torch.in32` during construction
 tensor_int32 = torch.tensor([1, 2, 3], dtype=torch.int32)
 print(f'cast [1, 2, 3] to torch.int32: {tensor_int32.dtype}')
 
@@ -1292,11 +1296,15 @@ print(f'Cast 3: {cast3.dtype}')
 # sidenote:
 # The default dtype in PyTorch is float32 we can query the default dtype
 # by calling `torch.get_default_dtype()`
+# This gives you the idea that, since we have a default dtype, we should 
+# be able to set a default dtype aswell. That is correct, we can use
+# `torch.set_default_dtype` to do that and only float dtypes are supported.
 
 print(torch.get_default_dtype()) # torch.float32
 
 # Now what if we have a tensor that is already on a specific device
-# (be it CPU, GPU,etc) and also has a specific datatype?
+# (be it CPU, GPU,etc) and also has a specific datatype and we want
+# to use that device/dtype combo be used on new tensors?
 # In such cases, we can simply use the `torch.*_new` methods to 
 # create tensors with the same exact device, dtype configuration!
 
@@ -1327,11 +1335,12 @@ print(f'{new_tensor_newtensor=}')
 
 # You may be puzzled and think to yourslef why would we want something like that? 
 # How is that any benificial to us? 
-# Later on when you write modules, you'll notice that instead of checking for an input
-# tensors dtype/device all the time and then creating the right combinations each time, 
-# you can easily create a tensor this way, which transfers the dtype and device of that
-# tensor automatically without us explicily checking and making a tensor for said 
-# dtype/device combo! its less code, less bug and more efficient!
+# Later on when you write modules, you'll notice that instead of checking
+# for an input tensors dtype/device all the time and then creating the 
+# right combinations each time, you can easily create a tensor this way,
+# which transfers the dtype and device of that tensor automatically 
+# without us explicily checking and making a tensor for said dtype/device combo!
+# its less code, less bug and more efficient!
 
 # sidenote2: 
 # Like torch.device, we have a way to specify a default dtype by using
@@ -1340,7 +1349,7 @@ print(f'{new_tensor_newtensor=}')
 # allow you to set just any dtype you like!
 # It only supports `torch.float32`` and `torch.float64`` as inputs. 
 # Other dtypes may be accepted without complaint but are not supported
-# and are unlikely to work as expected.
+# and are unlikely to work as expected.(they raise an error in new versions of Pytorch)
 # 
 # When PyTorch is initialized its default floating point dtype
 # is `torch.float32`, and the intent of `set_default_dtype(torch.float64)`
