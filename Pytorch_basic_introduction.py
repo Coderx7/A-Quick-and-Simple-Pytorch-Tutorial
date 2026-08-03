@@ -1368,7 +1368,7 @@ print(f'{new_tensor_newtensor=}')
 print(f'{torch.tensor([1.2, 3]).dtype=}')
 
 #%% Section 6: Dimension Manipulation (Shape, Reshape, View, Resize, Squeeze, Unsqueeze & Permute)
-# The tensors we have created and experimented with so far had a pre-specified
+# The tensors we have experimented with so far had a pre-specified
 # shape and we didn't need to change them. However, this is not always the case
 # As we'll see shortly, different PyTorch operations and neural network layers 
 # expect tensors to have specific dimensions. As a result, we'll frequently need
@@ -1378,7 +1378,7 @@ print(f'{torch.tensor([1.2, 3]).dtype=}')
 # inference, reshape/merge the dimensions in an input to make it suitable for the 
 # next layer like an LSTM or swap axis (permute) when implementing an attention module.
 # 
-# In this section, we'll explore the most common dimension manipulation
+# In this section, we'll go over the most common dimension manipulation
 # operations and learn when to use each one.
 
 # 6.1 Reshaping Tensors: view() vs. reshape() vs resize()
@@ -1439,8 +1439,8 @@ print (f'  tensor.reshape(-1):       {tensor_flattened}')
 # and returns a copy of the original tensor.
 
 # since transpose is only meaningful for tensors with at least two dimensions,
-# we'll use our 2-D tensor here.
-tensorT = tensor_3x4.t().reshape(2,6) # .view(2,6) raises runtime error
+# we'll use our 2D tensor here.
+tensorT = tensor_3x4.t().reshape(2,6)
 print('\nBefore transposing:')
 print(f'  tensor:             {tensor}')
 print(f'  tensor transposed:  {tensorT}')
@@ -1452,9 +1452,9 @@ print('\nAfter transposing and changing it:')
 print(f'  tensor:             {tensor}')
 print(f'  tensor transposed:  {tensorT}')
 
-# Pytorch offers another method however, convineintly named as *view*. The 
-# `.view()` behaves similarly to `reshape()`, with one important distinction,
-# it only works on contiguous tensors and therefore never allocates new memory.
+# Pytorch offers another method named *view*. The `.view()` method behaves similarly 
+# to `reshape()`, with one important distinction, it only works on contiguous tensors
+# and therefore never allocates new memory.
 
 # In the previous example if we tried to use `.view()` we would haved faced 
 # a runtime error, which would interestingly instruct us to use `.reshape()` instead!
@@ -1465,16 +1465,13 @@ print(f'tensor_3x4 contiguous:     {tensor_3x4.is_contiguous()}')      # True
 print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 
 # `.reshape()` as you saw is more flexible than `.view()`. Like a `.view()` 
-# it returns a view whenever possible, but if it can not rearrange the memory,
-# it transparently allocates a new tensor and returns a copy instead.
+# it returns a view whenever possible, but if it can not rearrange the memory
+# layout, it transparently allocates a new tensor and returns a copy instead.
 #
-# so if we specifically need to avoid a copy, we use `view()`. Otherwise,
-# `reshape()` is often the more convenient choice. 
-# 
 # sidenote:
 # If a tensor is not contigeous, we can use `.contigeous()` and make it continueous
-# Note however, this means a copy occurs, so a `tensor.contigeous().view()` would
-# be no different that using `tensor.reshape()`. 
+# Note however, this means a copy occurs, so a `tensor.contigeous().view()` 
+# is no different that `tensor.reshape()`. 
 # 
 # This is why many suggest to use `.reshape()` instead, unless you want to make your
 # intent clear by using `view()` signifying, the tensor being worked on uses contigeous
@@ -1531,21 +1528,22 @@ print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous(
 # .view() can only reinterpret an existing contiguous block of memory.
 
 # sidenote:(extra?)
-# Contiguous inputs and inputs with compatible strides can be reshaped without copying,
-# but you should not depend on the copying vs. viewing behavior.
+# Contiguous inputs and inputs with compatible strides can be reshaped
+# without copying, but you should not depend on the copying vs. viewing 
+# behavior.
 
 # sidenote:(extra?)
-# When it is unclear whether a `view()` can be performed, it is advisable to use `reshape()`,
-# which returns a view if the shapes are compatible, and copies (equivalent to calling 
-# `contiguous()`) otherwise.
+# When it is unclear whether a `view()` can be performed, it is advisable
+# to use `reshape()`, which returns a view if the shapes are compatible,
+# and copies (equivalent to calling `contiguous()`) otherwise.
 
              
 # resize_:
-# As the name implies it 'physically' resizes the tensor 'inplace' (note the '_' which denotes inplace
-# operation). 
-# If the new specified dimensions, result in a larger tensor, new uninitialized data will be 
-# resulted. Similarly, if the new dimensions are less than the actual dimensions, data will be
-# lost! 
+# As the name implies it 'physically' resizes the tensor 'inplace' 
+# (note the '_' which denotes inplace operation). 
+# If the new specified dimensions, result in a larger tensor, 
+# new uninitialized data will be resulted. Similarly, if the new
+# dimensions are less than the actual dimensions, data will be lost! 
 
 
 # sidenote:
@@ -1556,7 +1554,7 @@ print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous(
 # a (mathimatical) conversion. Instead, it simply reinterprets the existing binary 
 # representation using a different dtype.
 #
-# This is a low-level operation and is rarely needed in day-to-day deep
+# note this is a low-level operation and is rarely needed in day-to-day deep
 # learning. It is primarily useful when working with binary file formats,
 # interfacing with external libraries, debugging low-level code, or
 # inspecting the bit-level representation of numerical values.
