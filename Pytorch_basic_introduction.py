@@ -995,13 +995,16 @@ print(torch.version.hip)  # None
 
 #%%TODO or should I use the new stgructure where theres a top-down order?
 #%% Section 4: Device Management & Custom Defaults
-# 1. What is an accelerator?
-# Earlier, we learned how to create tensors. So far, all of them have lived on
-# the CPU. However, one of PyTorch's biggest strengths is its ability to execute
-# tensor operations on hardware accelerators, such as GPUs.
+# 1.Accelerator
+# So far we have learned how to create tensors, and all of them have been runing on
+# the CPU. However, if you remember we pointed out early on, that one of the reasons
+# we use Pytorch is that they support very efficient implementations that can run on
+# GPUs! We are going to learn about just that and see how we can utlize one of PyTorch's
+# biggest strengths, i.e. the ability to execute tensor operations on hardware accelerators,
+# such as GPUs.
 #
 # Before we can use an accelerator, we first need to understand what they are
-# and determine whether one is available on our machine.
+# and determine whether one is available on our system/machine.
 #
 # sidenote:
 # Why do we say "accelerator" instead of "GPU"?
@@ -1012,28 +1015,28 @@ print(torch.version.hip)  # None
 # Besides the CPU, which is the default device, PyTorch currently supports the
 # following accelerator platforms:
 #
-# - CUDA (NVIDIA GPUs): The most common accelerator you'll encounter in PyTorch
+# - CUDA (NVIDIA GPUs): The most common accelerator we'll encounter in PyTorch
 # tutorials and industry. NVIDIA GPUs contain thousands of processing cores
-# capable of executing many operations in parallel, making them significantly
+# capable of executing many operations in parallel. This makes them significantly
 # faster than CPUs for training and running neural networks.
 #
-# - MPS (Apple Silicon): If you're using a recent Mac with an M-series chip,
+# - MPS (Apple Silicon): If we are using a recent Mac with an M-series chip,
 # PyTorch can use Apple's Metal Performance Shaders (MPS) backend to accelerate
 # tensor operations on the integrated GPU.
 #
-# - ROCm (AMD GPUs): AMD's GPU platform. Supported AMD GPUs can accelerate
-# PyTorch computations in much the same way CUDA does on NVIDIA hardware.
+# - ROCm (AMD GPUs): This is AMD's GPU platform. Using RoCM, suupported AMD GPUs
+# can accelerate PyTorch computations in nearly the same way CUDA does on NVIDIA hardware.
 #
 # - XPU (Intel GPUs): PyTorch also supports compatible Intel GPUs through the
 # XPU device type. Under the hood it uses Intel's oneAPI software stack, but
-# from your code you simply move tensors to the "xpu" device.
+# from our code we simply move tensors to the "xpu" device.
 #
 # Besides these devices, PyTorch also includes optimized libraries such as
 # XNNPACK, MKL, and cuDNN. These are not separate devices. Instead, they optimize
 # operations on the CPU or GPU behind the scenes.
 #
-# The nice thing is that, in most cases, your PyTorch code barely changes. You
-# simply move your tensors (and later, your models) to whichever device is
+# The nice thing is that, in most cases, our PyTorch code barely changes. We
+# simply move our tensors (and later, our models) to whichever device is
 # available, and PyTorch takes care of executing the computations there.
 #
 # 2. How do I know what accelerator my machine has?
@@ -1061,11 +1064,11 @@ print(f"Tensor device: {tensor.device}")
 
 # On my machine, this prints 'cuda:0'!
 # 
-# Notice that the output is cuda:0 instead of simply cuda.
-# The first part (cuda) tells us the device type, while the number (0)
+# Notice that the output is `cuda:0` instead of simply `cuda`.
+# The first part ('cuda') tells us the device type, while the number (0)
 # identifies the specific accelerator being used.
 #
-# If we only care about the device type, we can use .device.type instead.
+# If we only care about the device type, we can use `.device.type` instead.
 print(tensor.device.type)
 # which prints 'cuda'!
 # 
@@ -1084,9 +1087,9 @@ print(tensor.device.type)
 # Knowing where a tensor lives is useful, but eventually we'll want to move
 # tensors from one device to another.
 #
-# The recommended way to do this is with the .to() method.
+# The recommended way to do this is with the `.to()` method.
 #
-# First, let's choose the best device available on the current machine.
+# First, let's choose the best device available on our current machine.
 
 if torch.cuda.is_available():
     device = "cuda"
@@ -1100,7 +1103,7 @@ else:
 # Now we can move tensors to that device.
 tensor = tensor.to(device)
 print(f"Tensor device: {tensor.device.type}")
-# PyTorch also provides convenience methods such as .cuda() and .cpu().
+# PyTorch also provides for us convenience methods such as .cuda() and .cpu().
 tensor = tensor.cuda()
 print(tensor.device.type)
 # To move the tensor back to the CPU,
@@ -1111,16 +1114,16 @@ print(tensor.device.type)
 #
 # 5. Creating tensors directly on a device
 # Instead of creating a tensor on the CPU and then moving it, we can create it
-# directly on the desired device.
+# directly on the desired/target device.
 tensor = torch.rand((2, 2), device=device)
 print(tensor.device)
 # If you already know the exact device you want, you can also specify it
 # explicitly.
 tensor = torch.rand((2, 2), device="cuda:0")
-# PyTorch also allows you to specify the device index directly.
+# PyTorch also allows us to specify the device index directly.
 tensor = torch.rand((2, 2), device=0)
-# Although this works, using the device variable from earlier is generally
-# preferred because it keeps your code portable across different machines.
+# Although this works, we generally prefer using the device variable from 
+# earlier because it keeps our code portable across different machines.
 #
 # 6. Working with multiple GPUs
 # Some machines contain more than one GPU.
@@ -1140,24 +1143,23 @@ torch.cuda.get_device_capability(0)
 # since I only have one GPU, I use 0!
 device = torch.device("cuda:0") 
 tensor = torch.randn(3, 3, device=device)
+
 # If no index is specified,
 device = "cuda"
 # PyTorch automatically uses the first GPU (cuda:0).
 #
-# Throughout this book we'll use only a single accelerator since the
+# we'll be using only a single accelerator throughout this book since the
 # overwhelming majority of PyTorch code is identical regardless of how many
 # GPUs are installed.
 #
 # sidenote:
 # Not every accelerator platform supports multiple devices.
-#
 # CUDA/ROCm and XPU can expose multiple accelerators, whereas Apple's MPS
-# currently exposes only a single device.
+# currently exposes only a single device.(As of writing this in PyTorch 2.12)
 # 
 # 7. CUDA vs ROCm
 # One interesting detail is that ROCm is not a separate device type inside
-# PyTorch.
-# Even on AMD GPUs, PyTorch still uses the "cuda" device interface.
+# PyTorch. Even on AMD GPUs, PyTorch still uses the "cuda" device interface.
 #
 # For example,
 device = "cuda"
@@ -1180,20 +1182,19 @@ print(torch.version.hip)
 # 13.0
 # None
 #
-# indicating that I'm using the CUDA backend. On a ROCm installation,
-# torch.version.cuda would be None while torch.version.hip would contain the
+# which means that I'm using the CUDA backend. On a ROCm installation,
+# `torch.version.cuda` would be None while `torch.version.hip` would contain the
 # ROCm version.
 #
-# There are many more useful functions available in the torch.cuda module.
+# There are many more useful functions available in the `torch.cuda` module.
 # We'll introduce more of them later in the book, but it's worth browsing the
 # documentation if you're curious.
 #
-
 # Since pytorch 2.0 we have a `device` context manager which makes our lives easier
 # by assigning a specified device to all *new* tensors that get created inside that
 # context manager scope. 
-# that is any tensors-inlcuding models (torch modules)-we create inside that context manager will 
-# be assigned that device!
+# that is any tensors-inlcuding models (torch modules)-we create inside that context
+# manager will be assigned that device!
 
 print('\nUsing context manager to set device(cuda)')
 with torch.device('cuda'):
@@ -1208,11 +1209,11 @@ print(f' Model.device:        {next(model.parameters()).device}')
 print(f' Dummy_input.device:  {dummy_input.device}')
 print(f' Dummy_output.device: {dummy_output.device}')
 
-# note that as of now(torch2.12), torch.device context manager does not change the device
-# for tensors that already exist. For those we still need to have use .to() to
-# move the data to a specific device
+# note that as of now(Pytorch2.12), torch.device context manager does not change 
+# the device for tensors that already exist. For those we still need to have use
+# `.to()` to move the data to a specific device
 
-# If you have noticed, all tensors we create by default, have been on cpu. 
+# If you have noticed, all tensors we create by default, have been on the cpu. 
 # we can change this behavior and make, by default, all tensors to be on a
 # specific device like cuda globally!
 
@@ -1224,9 +1225,13 @@ dummy_input = torch.rand(size=(1,4))
 print(f'  dummy_input.device:  {dummy_input.device}')
 # since pytorch  2.3.0 we can also get the current default device
 # using `torch.get_default_device()`
-assert int("".join(torch.__version__.split('.')[:2])) > 23, 'pytorch 2.3.0+ is needed'
-print(f"\nthe default device is now '{torch.get_default_device().type}'")
+version = int("".join(torch.__version__.split('.')[:2]))
 
+if version >23:
+    print(f"\nthe default device is now '{torch.get_default_device().type}'")
+else:
+    print('pytorch 2.3.0+ is needed for this feature.')
+    
 # revert back to CPU
 torch.set_default_device("cpu")
 # 
