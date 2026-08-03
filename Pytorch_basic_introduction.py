@@ -1373,10 +1373,10 @@ print(f'{torch.tensor([1.2, 3]).dtype=}')
 # As we'll see shortly, different PyTorch operations and neural network layers 
 # expect tensors to have specific dimensions. As a result, we'll frequently need
 # to reshape tensors, add or remove dimensions, or rearrange the order of their 
-# axes without changing the underlying data. This can range from simply adding
-# a batch dimension into an input tensor during inference, reshape/merge the 
-# dimensions in an input to make it suitable for the next layer like an LSTM or
-# swap axis (permute) when implementing an attention module.
+# axes without changing the underlying data. 
+# This can range from simply adding a batch dimension into an input tensor during
+# inference, reshape/merge the dimensions in an input to make it suitable for the 
+# next layer like an LSTM or swap axis (permute) when implementing an attention module.
 # 
 # In this section, we'll explore the most common dimension manipulation
 # operations and learn when to use each one.
@@ -1385,7 +1385,9 @@ print(f'{torch.tensor([1.2, 3]).dtype=}')
 # Like Numpy Pytorch offers a `.reshape()` method that allows us to change
 # a tensor's shape.
 
-# using torch.arange(n) we create a 1D tensor from [0-n),
+# using torch.arange(n) we create a 1D tensor from [0-n), we do this as a quick way
+# to create a tensor with sequential, easy to follow numbers that make comparing
+# different shapes and their changes more intuitive to us!
 tensor = torch.arange(12)
 # reshape the 1D tensor with 12 elements into 3 rows and 4 columns
 tensor_3x4 = tensor.reshape(3,4)
@@ -1416,7 +1418,7 @@ print (f'tensor.reshape(-1):    {tensor_flattened}')
 # new copies of the tensors, it was able to return *views* of the 
 # original tensor. That is all these tensors are different "views" of the
 # same underlying storage hence all of these tensors share the same 
-# underlying storage. Modifying one therefore, immediately affects
+# underlying storage. if we modify one of them, it immediately affecs
 # the others.
 
 tensor_flattened[1] *= 1000 
@@ -1489,6 +1491,44 @@ print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous(
 # contiguity-like condition that ∀i=0,…,k−1
 # stride[i] = stride[i+1] × size[i+1]
 # Otherwise, contiguous() needs to be called before the tensor can be viewed. 
+
+#sidenote:
+# what does contigueous mean and whats the deal with strides?
+# A tensor is contiguous when its elements are stored one after another in
+# memory without any gaps or reordering. This is the "normal" layout created
+# when we first construct most tensors.
+# For example, the tensor
+# [[1, 2, 3],
+#  [4, 5, 6]]
+# is stored in memory as [1, 2, 3, 4, 5, 6] everything is laid out in a single
+# continuous block.
+# Strides tell PyTorch how many memory locations to jump to move along each
+# dimension of a tensor. for the tensor above
+# tensor.shape   = (2, 3)
+# tensor.stride() = (3, 1)
+# This means moving down one row jumps 3 elements. moving across one column 
+# jumps 1 element.
+# 
+# another example is transpose operation. when we transpose a tensor, PyTorch
+# usually doesn't move any data. instead, it simply changes the strides so the
+# same memory is interpreted differently.
+# suppose original tensor is :
+# [[1, 2, 3],
+#  [4, 5, 6]]
+# 
+# when we transpose it we get:
+# [[1, 4],
+#  [2, 5],
+#  [3, 6]]
+# 
+# The values look rearranged, but they're still stored in memory as:
+# [1, 2, 3, 4, 5, 6]
+# 
+# its only the strides that have changed. 
+# Because the data is no longer laid out in the order the tensor appears,
+# the tensor is no longer contiguous.
+# This is why some operations (like .view()) fail on a transposed tensor.
+# .view() can only reinterpret an existing contiguous block of memory.
 
 # sidenote:(extra?)
 # Contiguous inputs and inputs with compatible strides can be reshaped without copying,
