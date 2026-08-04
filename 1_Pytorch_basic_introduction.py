@@ -467,15 +467,14 @@ tensor_to_convert *= 2
 print(f'  Torch Tensor: {tensor_to_convert}')
 print(f'  Numpy Array(using tensor.numpy()): {np_from_tensor}\n')
 print(f'Is memory shared back to NumPy? {tensor_to_convert.data_ptr() == np_from_tensor.ctypes.data}')
-#%% Section 2: Essential Tensor Attributes 
-# Before we talk about tensor operations, we need to inspect what makes 
-# up a Tensor.
+#%% Section 2: Essential Tensor Attributes/Properties 
+# Before we continue any further we first need to talk about a few important 
+# properties in tensors. These properties are what makes up a tensor.
 # Every PyTorch tensor carries metadata that describes how it is stored and
-# how PyTorch should treat it during computation. 
-#
-# These are the several important attributes and methods that we'll 
-# encounter over and over when we are working on training/inference of 
-# a neural network. 4 of them are used the most which are as follows:
+# how PyTorch should treat it during computation.
+# Among these properties/attributes, there are several important ones 
+# that we'll encounter over and over when we are working on training/inference of 
+# a neural network. The following 4, are used all the time:
 # 
 # shape (or .size()): it describes the dimensions of the tensor.
 #      For example, a tensor with shape (3, 4) has 3 rows and 4 columns.
@@ -523,8 +522,8 @@ print(f'Tensor elements count(alias):          {tensor.nelement()}')
 # TODO Use properties instead of attributes? or keep using attribute?in python im more accustomed to attribute myself so thats why I used them here
 # but properties seem better
 
-# Number of dimensions (also called the tensor's rank).
-# This is one the most commonly used tensor attributes/properties
+# Number of dimensions (also known as the tensor's rank).
+# This is one the most commonly used tensor properties
 # its especially useful when we want to check whether 
 # a tensor has the expected number of dimension or when
 # writting code that works with tensors of different ranks
@@ -532,34 +531,51 @@ print(f'Tensor elements count(alias):          {tensor.nelement()}')
 print(f'Number of dimensions (ndim):           {tensor.ndim}')
 print(f'Number of dimensions (dim method):     {tensor.dim()}')
 
-# The memory layout describes how tensor elements are stored.
-# For almost all tensors(dense) we'll encounter, this will is `torch.strided`.
-# Almost all dense tensors use `torch.strided`, which means they
-# store elements in contiguous or strided memory. Other layouts,
-# such as sparse layouts, exist for specialized use cases but are
-# much less common.
+# Another property thats not as common but is as important is
+# memory layout. The memory layout describes how tensor elements
+# are stored.
+# For almost all tensors(dense) we'll work with, this will is
+# `torch.strided`.
+# most dense tensors use `torch.strided`, which means PyTorch
+# stores their elements using strides that describe how to move 
+# through memory. Other layouts, such as sparse layouts, exist 
+# for specialized use cases but are much less common. 
+# we dont think about memory layouts everyday when using Pytorch,
+# but deal with them implicityly all the  time. therefore 
+# understanding them helps us explain a lot of PyTorch's behavior. 
+# For example, why some operations are faster than others, 
+# why certain functions require a tensor to be contiguous, while others
+# dont, or why an operation that looks simple might create a copy 
+# of the data behind the scenes instead of just returning a view.
+# we'll almost always be working with `torch.strided`,but knowing
+# what a tensor's memory layout is gives us a much better
+# understanding/intuition of how PyTorch stores and accesses data.
+# This becomes especially useful when we start optimizing code,
+# or debug performance issues, or work with specialized tensor
+# types later on.
 print(f'Tensor layout:                         {tensor.layout}')
 
-# Another attribute that we may encounter a lot especially when things go 
-# wrong, in error messages is the contiguous attribute of a tensor. 
-# A contiguous tensor is stored in one uninterrupted block of memory.
-# Many PyTorch operations are faster on contiguous tensors, and some
-# operations (such as view()) require contiguity otherwise we face error!
+# Another property that we may encounter a lot especially when things
+# go wrong, and see it in error messages, is the contiguous property
+# of a tensor. 
+# A contiguous tensor is stored in one solid/uninterrupted block of memory.
+# A lot of PyTorch operations are faster on contiguous tensors, and some
+# operations (such as view()) require contiguity otherwise we face errors!
 print(f'Is tensor contiguous?                  {tensor.is_contiguous()}')
 
-# grad_fn attribute stores the operation that created this tensor.
-# note that leaf tensors created directly by the user have grad_fn=None.
-print(f'Gradient function(grad_fn):                     {tensor.grad_fn}')
+# `grad_fn` property stores the operation that created this tensor.
+# note that leaf tensors created directly by the user have `grad_fn=None`.
+print(f'Gradient function(grad_fn):            {tensor.grad_fn}')
 
-# .grad attribute stores the computed gradients for leaf tensors, 
-# after calling backward().
-# tensor is a leaf node but since Backward() hasn't been called yet,
+# .grad property stores the computed gradients for *leaf* tensors, 
+# after we call `.backward()` to run backpropagation pass.
+# the `tensor` is a leaf node but since `Backward()` hasn't been called yet,
 # this is currently None.
 print(f'Gradient currently stored:             {tensor.grad}')
 
-# is_leaf attribute specifies says whether the tensor is directly created 
+# `is_leaf` property tells us whether the tensor is directly created 
 # by us (like weights, biases, basically model parameters) or is an
-# intermediate tensor as a result of an operation. 
+# intermediate tensor that was created as a result of an operation. 
 # Pytorch only stores the gradients for leaf nodes -(nodes starting
 # a graph) and it discards the gradients for non-leaf tensors.
 # A leaf tensor is a normal tensor like any other, however the 
@@ -570,16 +586,15 @@ print(f'Gradient currently stored:             {tensor.grad}')
 # for all tensors like that, leads to excessive amount of vram.
 # Instead, In practice libraries such as PyTorch use a smart approach
 # in which instead of storing the gradients for every single tensor 
-# in the graph it only stores the gradients for the leaf nodes, that 
+# in the graph they only store the gradients for the leaf nodes, that 
 # the optimizers require for tuning and optimization. the rest of the
-# intermediat/non-leaf nodes (that get created as the result of operations
-# involved) will have their gradients calculated 
-# dynamically/on the fly during backpropagation and then discared 
-# to save memory (for non-leaf nodes Pytorch instead records how
-# the tensor was created, i.e. stores the function that yielded
-# that tensor in grad_fn and any other piece of information thats
-# required for computing gradients and computes the gradients using
-# that during backprop)
+# intermediate/non-leaf nodes (that get created as the result of operations
+# involved) will have their gradients calculated dynamically/on the fly
+# during backpropagation and then discared to save memory 
+# (for non-leaf nodes Pytorch instead records how the tensor was created,
+# i.e. stores the function that yielded that tensor in grad_fn and 
+# any other piece of information thats required for computing gradients
+# and computes the gradients using that during backprop)
 # 
 # (so leaf tensors are the tensors we created that require gradients
 # PyTorch stores .grad only for them by default because they are the
@@ -589,7 +604,6 @@ print(f'Gradient currently stored:             {tensor.grad}')
 print(f'Is tensor a leaf node:                 {tensor.is_leaf}')
 
 # When we run an operation and do a backward it gets filled 
-# note upon entering 
 out = tensor + 1 
 
 # sidenote:
@@ -628,11 +642,11 @@ print(f'  Non-leaf grad_fn:                    {out.grad_fn}')
 
 # note2:
 # To force Pytorch to store gradients for non-leaf(intermediate) nodes
-# we can use retain_grad() function. note retain_grad() doesnt
+# we can use retain_grad() function. note `retain_grad()` doesnt
 # follow the the inplace naming convenion for tensors in using underscore(_) to 
-# denote inplace changes, so it actually does change the tensor attribute 
+# denote inplace changes, so it actually does change the tensor property 
 # in place!( more explain in a moment)
-# to query the grad retention status, we use the `retains_grad` attribute!
+# to query the grad retention status, we use the `retains_grad` property!
 
 out2 = tensor + 1
 out2.retain_grad()
@@ -683,16 +697,17 @@ print(f'Original tensor unchanged?             {tensor.dtype == torch.float32}')
 # 
 # some methods such as retain_grad() modify the tensor's autograd behavior
 # or its internal state (i.e. flags) rather than its data, so they do not 
-# necessarily follow this naming convention
+# necessarily follow this naming convention.
 # 
-# the underscore convention is about in-place tensor mutation only, 
+# so the underscore convention is about in-place tensor mutation only, 
 # not "any method that changes anything about the object"!
 
-# so in a nutshell, methods with an trailing underscore like foo_() modify
+# so in a nutshell, methods with a trailing underscore like foo_() modify
 # the tensor's data/storage in place.
 # the others usually dont modify the *data*, but may very well still change
 # metadata or autograd state like retain_grad().
-# note detach_() is underscored because it changes autograd state inplace, like requires_grad_()
+# note detach_() is underscored because it changes autograd state inplace,
+# like requires_grad_()
 
 # out.requires_grad_(True)   # modifies tensor state (underscore)
 # out.add_(1)                # modifies tensor data (underscore)
