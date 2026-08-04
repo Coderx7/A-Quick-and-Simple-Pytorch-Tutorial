@@ -360,29 +360,41 @@ print(f'\ntorch.tensor(10):\n{torch.tensor(10)}')  # Returns a LongTensor contai
 # and infers the type.
 
 # sidenote:
-# Looking at the previous example we see that 
-# there is a difference in the number of decimals,
-# we can use printoptions to specify how man decimal
-# we want to be displayed. Like Numpy, torch also offers
-# us set_printoptions for this exact purpose.
+# One nice utility Pytorch provides, is `set_printoptions()`
+# that allows us to specify different properties related to
+# how a tensor gets displayed when printed. if we look at
+# previous examples, we see that some examples have different
+# decimal points(precision) than others when printed.
+# using this routine, we can specify the precision, among
+# other things and have a nicer, easier to follow result.
+# note this is a great help for debugging which we later
+# come to talk about in the upcomming chapters. 
 # lets set the precision to 4 decimals 
-torch.set_printoptions(precision=4)
-np.set_printoptions(precision=4)
-# todo: change this (remove this altogether or make it very brief
-# because we explained this in another chpater also the arraysused
-# for example need to change)
-print(f'\nNumpy Array:\n{array_np}')
-print(f'\nTorch Tensor-Copied:\n{tensor_from_np_copy}')
 
-# How can we reset it back to the defaults? 
+random_v = torch.randn(3,)
+print("\nDefault Behavior")
+print(f'Random Tensor:       {random_v}')
+print(f'Random Tensor:       {random_v.numpy()}')
+
+torch.set_printoptions(precision=2, sci_mode=False)
+np.set_printoptions(precision=2, suppress=True)
+
+print("\nUsing PrintOption's Precision=2")
+print(f'Random Tensor:       {random_v}')
+print(f'Random Numpy Array:  {random_v.numpy()}')
+
+# What if we need to reset it back to the defaults? 
 # pretty easy! we can use the `'default'` profile and
 # just go back to default!
-# there are other profiles like (short, full) which we can use as well!
 torch.set_printoptions(profile='default')
-np.set_printoptions(precision=None)
+np.set_printoptions()
 
-print(f'\nNumpy Array:\n{array_np}')
-print(f'\nTorch Tensor-Copied:\n{tensor_from_np_copy}')
+print("\nUsing PrintOption's Default profile")
+print(f'Random Tensor:       {random_v}')
+print(f'Random Numpy Array:  {random_v.numpy()}')
+
+# We will talk about this in more detail in the OprintOptions
+# chapter.
 
 # 1.3 Shared Memory vs. Copying (Bridging PyTorch and NumPy)
 # We can directly create a new tensor from a numpy array! 
