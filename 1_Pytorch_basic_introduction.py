@@ -274,8 +274,8 @@ def show_tensor(name,t,newline=True):
 #
 # 1.2 Creating new tensors 
 # To create a new tensor we can use several appraoches. 
-# we can use the Tensor() class, or use factory functions such as zeros(),
-# `ones()`,`rand()` and `empty()` to say a few.
+# we can use the Tensor() class, or use factory functions such as `.zeros()`,
+# `.ones()`,`.rand()` and `.empty()` to say a few.
 #  
 # lets create a few tensors with pre defined shapes and default values
 # size (5), (2, 2), (3, 5, 6) using the functions we just learned about!
@@ -306,18 +306,23 @@ print(t1_empty)
 # We use `torch.zeros()` when we want a tensor to have zero values everywhere.
 # likewise if we want to have a tensor with 1 as values we use `torch.ones()`
 # They come handy when we want to do operations such as add, multiplication,
-# etc or do masking which we will shortly see.
+# etc or do masking which we will learn about shortly.
 # 
-# we use `torch.rand()` to create a tensor with random values from a uniform distribution
-# like numpy, torch offers other variants, such as as `torch.randn` for normal distribution
-# sampling, `torch.randint()` to generate random integer numbers and much more. 
+# we use `torch.rand()` to create a tensor with random values from a
+# uniform distribution. like numpy, torch offers other variants, such
+# as as `torch.randn` for normal distribution sampling, `torch.randint()`
+# to generate random integer numbers and much more. 
 # 
-# We may also want to create a tensor quickly, without initializing it with anything really, in this case
-# we use `torch.empty()` which creates an empty tensor in the sense that its not initialized so it has whatever
-# values that happens to be on the memory where it points to. its not empty(as in having all values equals to 0)
-# its empty in the sense, its not pre-initialized. this is especially useful for cases where we want to fill a tensor
-# with some calculations, and thus it doesnt make sense to initialize it with a value to only be replaced later, which
-# would result in unnecessary computation overhead and slower speed! its equivalent to doing `torch.Tensor()`
+# We may also want to create a tensor quickly, without initializing it 
+# with anything really, in this case we use `torch.empty()` which creates
+# an empty tensor in the sense that its not initialized so it has whatever
+# values that happens to be on the memory where it points to. 
+# its not empty(as in having all values equals to 0)
+# its empty in the sense, its not pre-initialized. this is especially
+# useful for cases where we want to fill a tensor with some calculations,
+# and thus it doesnt make sense to initialize it with a value to only be
+# replaced later, which would result in unnecessary computation overhead
+# and slower speed! its equivalent to doing `torch.Tensor()`
 # 
 
 # What if we want our tensors to have specific data!
@@ -329,16 +334,16 @@ print(t1_empty)
 # Here we are creating a tensor from a raw python list of numbers (1, 2, 3, 4)!
 list_data = [1,2,3,4]
 tensor_from_list = torch.tensor(list_data)
-print(f'\nTensor from list:   {tensor_from_list}')
+print(f'\nTensor from list:       {tensor_from_list}')
 
-# using a numpy array 
+# Using a numpy array 
 array_np = np.random.rand(4)
 tensor_from_np_copy = torch.tensor(array_np)
-print(f'\nNumpy array:            {array_np}')
-print(f'\nPytorch tensor(copied): {tensor_from_np_copy}')
+print(f'\nNumpy Array:\n{array_np}')
+print(f'\nTorch Tensor-Copied:\n{tensor_from_np_copy}')
 
 # sidenote, 
-# note that we are using `torch.tensor()` (lowercase function, and not the class Tensor())
+# note we are using `torch.tensor()` (lowercase function, and not the class Tensor())
 # `torch.Tensor` is the base tensor class. 
 # All tensors are instances of `torch.Tensor`. 
 # When we call `torch.Tensor()`, we get an empty tensor without any data. 
@@ -346,37 +351,43 @@ print(f'\nPytorch tensor(copied): {tensor_from_np_copy}')
 # a tensor with the given data and it infers the data type automatically.
  
 # For example consider the following examples:
-print(f'\ntorch.Tensor(10): {torch.Tensor(10)}')  # Returns an uninitialized FloatTensor with 10 values.
-print(f'\ntorch.tensor(10): {torch.tensor(10)}')  # Returns a LongTensor containing a single value (10)
+print(f'\ntorch.Tensor(10):\n{torch.Tensor(10)}')  # Returns an uninitialized FloatTensor with 10 values.
+print(f'\ntorch.tensor(10):\n{torch.tensor(10)}')  # Returns a LongTensor containing a single value (10)
  
-# So `torch.Tensor` is the main class constructor when called with a shape/size, 
-# it returns an uninitialized `FloatTensor` (equivalent to torch.empty).
-# however `torch.tensor` is a factory function that expects data as its argument 
+# So `torch.Tensor` is the main class constructor when we call it with a shape/size, 
+# it returns an uninitialized `FloatTensor` (equivalent to `torch.empty`).
+# But `torch.tensor` is a factory function that expects data as its argument 
 # and infers the type.
 
+# sidenote:
 # Looking at the previous example we see that 
 # there is a difference in the number of decimals,
-# we can use printoptions to get what we want!
-torch.set_printoptions(precision=8)
-np.set_printoptions(precision=8)
+# we can use printoptions to specify how man decimal
+# we want to be displayed. Like Numpy, torch also offers
+# us set_printoptions for this exact purpose.
+# lets set the precision to 4 decimals 
+torch.set_printoptions(precision=4)
+np.set_printoptions(precision=4)
+# todo: change this (remove this altogether or make it very brief
+# because we explained this in another chpater also the arraysused
+# for example need to change)
+print(f'\nNumpy Array:\n{array_np}')
+print(f'\nTorch Tensor-Copied:\n{tensor_from_np_copy}')
 
-print(f'\nNumpy Array:         {array_np}')
-print(f'\nTorch Tensor-Copied: {tensor_from_np_copy}')
-
-# How can we reset it back to the defaults? easy we can use default profile and
-# just go back to defaul!
-# As it turns out, we can use other profiles (short, full) as well!
+# How can we reset it back to the defaults? 
+# pretty easy! we can use the `'default'` profile and
+# just go back to default!
+# there are other profiles like (short, full) which we can use as well!
 torch.set_printoptions(profile='default')
-# numpy offers the same routine, infact Pytorch took its set_printoptions from NumPy!
 np.set_printoptions(precision=None)
 
-print(f'\nNumpy Array:   {array_np}')
-print(f'\nShared Tensor: {tensor_from_np_copy}')
+print(f'\nNumpy Array:\n{array_np}')
+print(f'\nTorch Tensor-Copied:\n{tensor_from_np_copy}')
 
-# Section 2: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
+# 1.3 Shared Memory vs. Copying (Bridging PyTorch and NumPy)
 # We can directly create a new tensor from a numpy array! 
 # unlike the previous way, this uses the same underlying
-# numpy array so no copying takes place!
+# numpy array so no copying happens here!
 shared_tensor = torch.from_numpy(array_np)
 print(f'\nShared tensor from numpy: {shared_tensor}\n')
 
@@ -384,7 +395,7 @@ print(f'\nShared tensor from numpy: {shared_tensor}\n')
 # overhead due to copying time!
 
 # Intrestingly we can access the underlying numpy array
-# from any tensor, using its numpy() method!
+# from any tensor, using its `numpy()` method!
 
 # this is how sharing the underlying memory looks:
 print('\nBefore modification:')
