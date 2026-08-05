@@ -1310,7 +1310,7 @@ print(tensor)
 # need more control on the data types we use. whether we're storing labels as 
 # integers, performing high-precision comuptation or training models with 
 # mixed-precision, choosing the appropriate data type is essential for us!
-# A wrong choice can result in a lot of issues, from errors stemming from underflow
+# A wrong choice can result in a lot of issues, from errors steming from underflow
 # or overflow, unsupported operations, to not converging during training or 
 # simply wasting a lot of precious memory and computation that could have been easily
 # prevented.
@@ -1321,7 +1321,7 @@ print(tensor)
 # whenever its needed.
 
 # Let's see how PyTorch handles different tensor data types.
-# When constructing a tensor, PyTorch attempts to infer an appropriate
+# When constructing a tensor, PyTorch attempts to infer the appropriate
 # data type from the values provided.
 
 # The following line creates a tensor with `torch.int64` as data type.
@@ -1357,7 +1357,7 @@ print(f'Cast 3: {cast3.dtype}')
 # sidenote:
 # The default dtype in PyTorch is float32 we can query the default dtype
 # by calling `torch.get_default_dtype()`
-# This gives you the idea that, since we have a default dtype, we should 
+# This may give you the idea that, since we have a default dtype, we should 
 # be able to set a default dtype aswell. That is correct, we can use
 # `torch.set_default_dtype` to do that and only float dtypes are supported.
 
@@ -1467,7 +1467,7 @@ print(f'Last two rows:\n{idx_tensor[1:]}')
 print(f'First two columns:\n{idx_tensor[:, :2]}')
 print(f'Every other column:\n{idx_tensor[:, ::2]}')
 
-# note slicing returns a view whenerver possible rather than
+# note slicing returns a *view* whenerver possible rather than
 # copying the underlying data
 sub_tensor = idx_tensor[:2, :2]
 
@@ -1476,7 +1476,7 @@ print(f'\nTop-left 2x2 block:\n{sub_tensor}')
 # 3.3 Fancy Indexing
 # Just like Numpy, Pytorch allows us to use arbitrary rows and columns 
 # using integer tensors or Python lists. This makes many indexing
-# operations concise and expressive, and easy to read.
+# operations concise, yet expressive and easy to read.
 # Not only that, because the indexing operation is performed by 
 # PyTorch's optimized backend(i.e. C/C++) rather than by the 
 # Python interpreter, its much faster!
@@ -1526,10 +1526,15 @@ print(f'\nTensor after replacing values < 40 with 0:\n{idx_tensor}')
 # returns a new tensor.
 
 
-
-
-
-
+# So instead of if checks for individual elements using a loop, we
+# run the check once against the whole tensor and get a boolean mask
+# the same shape as the original tensor, then we can use that mask to only
+# affect the elements that fullfilled the check, and change them accordingly
+# or extract them! sometimes, we negate a mask to get the other elements,
+# so we create a simple mask for the condition that we dont wnat and then
+# negate it to get the actual values we are after. 
+# If these are still hard to grasp for you, dont worry, we will be working 
+# on many examples and you'll feel just at home.
 
 #%% Section 7: Tensor Operations (Math, Broadcasting)
 #
@@ -1602,7 +1607,7 @@ show_tensor("Inplace Subtraction A.sub_(2)", A.sub_(2))
 # modules, it plays a crucial and unrivaled role so mastering it is paramount!
 #
 # Elementwise multiplication that we just covered, like adding and subtracting,
-# are self explanetory, there's no special case, or exception. The rule is 
+# is self explanetory, there's no special case, or exception. The rule is 
 # simple and straightforward. However, for multiplilication, we have several
 # rules and depending on tensor's dimensions, the way the multiplication is 
 # carried out changes.
@@ -1640,7 +1645,8 @@ print("\nMatrix multiplication (torch.matmul(X, Y)):")
 print(torch.matmul(X, Y))
 
 # Vectors behave slightly differently.
-# Multiplying two vectors with `@` computes their dot product.
+# Multiplying two vectors with `@` computes their dot product,
+# and the result is a single number (scaler).
 
 v1 = torch.tensor([1., 2.])
 v2 = torch.tensor([10., 20.])
@@ -1662,8 +1668,13 @@ print(v1 @ v2)
 # multiplication and automatically applies broadcasting when needed.
 #
 # PyTorch also provides `torch.mm()`, which is a specialized version that only
-# accepts *two-dimensional* matrices. Some developers prefer using `torch.mm()`
-# when they want to ensure that only *matrix-matrix* multiplication is allowed.
+# accepts *two-dimensional* matrices. we use `torch.mm()` when we want to make
+# sure that only *matrix-matrix* multiplication is allowed, or show the reader
+# that the operation involve only 2d matrices. this is to ensure, if for any reason
+# the tensors became 3d (one or both) e.g. we face an error, and its not broadcasted/treated 
+# as a batched matrix multiplication, where toch.matmul would have done.
+# also it makes doing linear algebra easier and consistent with other linear 
+# algebra libraries that expose similar API. 
 #
 # We'll revisit batched matrix multiplication later when we work with batches
 # of data and neural network models.
@@ -1802,7 +1813,7 @@ X = torch.empty(5,2,4,1)
 Y = torch.empty(  3,1,1)
 # x and y are not broadcastable, because in the 3rd trailing dimension 2 != 3
 
-# sidenote about backwards compatibility:
+# sidenote about backwards compatibility of legacy pytorch (0-4 to 1.0):
 # Early versions of PyTorch (i.e. <1.0) allowed certain *pointwise/elementwise* functions to 
 # execute on tensors with different shapes, as long as the number of elements in each tensor
 # was equal. 
@@ -1846,6 +1857,10 @@ show_tensor("A + v", A + v)
 show_tensor("v @ A", torch.matmul(v,A))
 show_tensor("A @ v.view(1,-1)", torch.matmul(A, v.view(1,-1)))
 # show_tensor("v.view(-1,1) @ A", torch.matmul(v.view(-1,1), A))
+
+# sidenote:
+# The warning only occures in very old versions, <1.0, you wont get a warning
+# in newer versions (i.e. >2 e.g.) .
 
 # 7.4 Reduction Operations
 # Reduction operations summarize many values into fewer values (often a single
@@ -2099,8 +2114,9 @@ show_tensor("torch.bmm(batch_A, batch_B)", torch.bmm(batch_a, batch_b))
 # In this section, we'll learn how to concatenate, stack, split, and chunk
 # tensors, and understand when each operation is the appropriate choice.
 #
-# PyTorch offers many functions to this end. torch.concatenate(), and its alias
-# torch.cat(), joins two or more tensors together along the given axis.
+# PyTorch provides several functions for this job. one of them is `torch.concatenate()`
+# , and its alias `torch.cat()`. using them we can join two or more tensors together
+# along the given axis.
 
 A = torch.tensor([[1, 2],
                   [3, 4]])
@@ -2130,9 +2146,8 @@ show_tensor("Stack along dim=0", torch.stack((A, B), dim=0))
 # print(torch.stack((A, B), dim=1))
 show_tensor("Stack along dim=1", torch.stack((A, B), dim=1))
 
-# Notice the difference:
-# cat()   -> joins existing dimensions.
-# stack() -> creates a brand-new dimension.
+# Notice the difference: cat() joins existing dimensions but
+# stack() creates a brand-new dimension.
 
 # sidenote:
 # `torch.cat` is an alias for `torch.concatenate()`
@@ -2148,6 +2163,7 @@ tensor = torch.arange(12).reshape(3, 4)
 show_tensor("Original tensor", tensor)
 
 # split the tensor into two, along the column dimension (dim=1)
+# each part/group will have 2 columns each.
 parts = torch.split(tensor, 2, dim=1)
 
 print_header("Split into groups of 2 columns")
@@ -2161,7 +2177,7 @@ print_header("differently sized splits along columns")
 for i, part in enumerate(parts):
     show_tensor(f"Part {i}", part)
 
-# We usually use `.torch.split` to specify each chunks size separately.
+# We usually use `.torch.split` to specify each chunk's size separately.
 
 # Chunking
 # `torch.chunk()` splits a tensor into *approximately equal-sized* pieces.
@@ -2186,7 +2202,7 @@ for i, chunk in enumerate(chunks):
     show_tensor(f"Chunk {i}", chunk)
 
 
-# Also note when using .chunk, just like `.split()` the chunks 
+# Also note when using .chunk(), just like `.split()` the chunks 
 # keep the dimension, that is chunk is (1,1,4), not just 4! 
 # the distinction matters later on. 
 
@@ -2204,16 +2220,17 @@ for i, chunk in enumerate(chunks):
 
 # Unbinding
 # `torch.unbind()` works similarly to split and .chunk() but with the difference
-# we cant specify the number of splits, it returns exactly one tensor per element
+# we can *not* specify the number of splits, it returns exactly *one tensor per element*
 # along the specified dimension and it removes the dimension when returning the split.
-
+# in other words, if we specified rows (dim=0), it will return individual rows
+# hence *unbind* them form each other! if we have 3 rows, we will get 3 individual rows!
 rows = torch.unbind(tensor, dim=0)
 print_header("Rows returned by unbind(dim=0):")
 for i, row in enumerate(rows):
     # print(repr(row))
     show_tensor(f"row {i}", row)
 
-# note it returns all elements along the row dimension, each as a separate row
+# it returns all elements along the row dimension, each as a separate row
 # the dimension is also removed and we get (4,) instead of (1,4) for each row!
 
 # sidenote:
@@ -2234,7 +2251,7 @@ for i, row in enumerate(rows):
 # while `expand()` creates a larger *view* of the same data without copying it.
 #
 # Both can produce tensors with the same shape, but they have very different
-# performance and memory characteristics and are intended for different use cases.
+# performance and memory characteristics and we used them for different use cases.
 
 vector = torch.tensor([1, 2, 3])
 
@@ -2641,7 +2658,7 @@ generator = torch.Generator(device=device).manual_seed(5)
 # To get an isolated stream of random numbers, we need to create our
 # own Generator with `torch.Generator().manual_seed(seed)`.
 
-#%% sidenote - appendix?:
+#%% Appendix for RNG discussion:
 # As the official documentation says: 
 # Some applications and libraries may use NumPy Random Generator objects, 
 # not the global RNG (https://numpy.org/doc/stable/reference/random/generator.html),
@@ -2803,7 +2820,10 @@ print(f'{output}')
 output = ((X @ W) + b).sigmoid()
 output = ((output @ W_output) + b_output).sigmoid()
 show_tensor("output", output)
-#%%
+
+# sidenote, there are many many more operations we can do in Pytorch
+# we see them in upcoming chapters
+#%% Appendix Logging discussion
 # Before we end our discussion here, I'd like to talk a bit about logging some extra
 # information about pytorch, and basically our stack. 
 # its always a good idea to log some amount of information about the current stack 
