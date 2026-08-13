@@ -3,8 +3,8 @@
 
 import torch 
 import numpy as np
-import torch.version 
 
+# bunch of utility functions for our tutorial ahead
 def print_header(title, width=40, fillchar='─', newline=True):
     if newline:
         print()
@@ -14,33 +14,65 @@ def show_tensor(name,t,newline=True):
     print_header(f"{name}", newline=newline)
     print(f"shape={tuple(t.shape)!s:<10}")
     print(t)
-#%% intro
+
 #%% Introduction
-# Before we start, we first need to get familiar with the library we'll be
-# using extensively, that is PyTorch.
-# or
-# We are going to learn Pytorch and build different kinds of models. Before 
-# we actually build and train neural networks, we first need to get familiar
-# with the library we'll be using, that is PyTorch.
+# We are going to learn Pytorch and build different kinds of models. 
+# but before we actually build and train anything, we first need to get familiar
+# with the library we'll be using, which is obviously PyTorch!
 #
 # So, what exactly is PyTorch?
 #
-# PyTorch is an open-source deep learning framework for tensor computation
+# PyTorch is an open-source deep learning framework we use for tensor computation
 # and deep learning. It provides us with a few important facilities that makes
 # building and training neural networks especially easy and efficient. Speaking 
 # of those facilities, PyTorch provides very fast and GPU accelerated tensor operations,
 # automatic differentiation (Autograd), and a rich ecosystem of tools for building 
 # and training neural networks.
 # 
-# Sidenote:
+# sidenote:
+# During this tutorial, you may encouter many concepts that you may not be familar with
+# dont worry at all, we will explain all of them later on, we may not immediately 
+# expand on them (many times we actually do using sidenotes) but we will cover them eventually.
+#
+#
+# sidenote:
+# There are a few different ways to calculate derivatives in a neural network.
+# we can do it manually, which obviously doesn't scale to large networks.
+# There's also symbolic differentiation, where we generate an algebraic
+# expression for the derivative. And then there's Automatic Differentiation (Autograd),
+# which is what PyTorch uses, specifically a tape-based approach.
+# The basic idea is that whenever we perform an operation on tensors,
+# say, an addition or a multiplication, Autograd records that operation,
+# in order, on a kind of virtual tape (think a stack, but more involved, more in a second)
+# Then, when we run backpropagation, it works backward through that tape,
+# starting from the end and applying the chain rule step by step.
+# so we don't have to manually calculate or keep track of all those
+# derivatives. Autograd figures out how each parameter contributed to
+# the loss and computes the corresponding gradients for us.
+# A good way to build an intuition for this is to think of an old cassette
+# tape: as we perform operations, we record them one after another.
+# Later, we rewind the tape and go backward through everything to figure
+# out how each value was produced.
+# This mechanism is a big part of what makes it practical to train neural
+# networks with tens of millions of parameters.
+# note when I said, you can think of a tape as like a stack but more involved,
+# I meant that although the way the data is stored and retrieved looks like a
+# stack, Pytorch doesnt simply use a stack to implement this. in practice 
+# Pytorch creates a graph (a computation graph) so it can keep track of how 
+# the tensors and operations are connected to each other! each operation is
+# represented as a node and these relationships are what Pytorch keeps track of
+# to be able to calculate the deriviature atuomatically hence why we call it 
+# tape based autograd!
+#
+# Sidenote2:
 # Pytorch wraps around the underlying `torch` library, which performs the actual
 # heavy lifting and is implemented primarily in C/C++ (along with CUDA support 
 # for NVIDIA GPUs). Pytorch as said before, is an ecosystem and is made of several
-# libraries beside torch. we will cover many of them in this book.
+# libraries beside torch. 
 # 
-# As we pointed out, Pytorch revolves around tensors. if you've worked with NumPy
-# before, you can think of a PyTorch tensor as something very similar to a NumPy 
-# array, but with a few important superpowers. 
+# Pytorch revolves around tensors. if you have already worked with NumPy before,
+# you can think of a PyTorch tensor as something very similar to a NumPy array(ndarray),
+# but with a few important superpowers. 
 # It basically gives us everything we need to create and manipulate tensors, 
 # perform fast numerical computations, automatically calculate gradients, and 
 # eventually build and train neural networks.
@@ -51,35 +83,31 @@ def show_tensor(name,t,newline=True):
 # popular deep learning framework written in the Lua programming language. 
 # PyTorch was later introduced as its spiritual successor, bringing the same 
 # ideas to Python.
-# Today, when people say torch or PyTorch, they almost always mean the Python
-# package built on top of the `torch` library. The lua version is long abandoned
-# and not used anymore. 
-# There are wrappers for other languages such as C++, such as libtorch.
+# Today, when you hear someone say torch or PyTorch, he/she almost always means 
+# the Python package built on top of the `torch` library. The lua version is long
+# abandoned and not used anymore. 
+# we have more wrappers for other languages such as C++, which is called libtorch.
 #
-# When we start working with PyTorch, you'll notice that many things in PyTorch
-# feels very familiar if you've worked with NumPy before. Its because
-# PyTorch intentionally follows many of NumPy's conventions, making it easy
-# to pick up. 
-# If you haven't used NumPy before, don't worry, we'll explain  everything 
-# we need as we go.
+# You may notice that many things in PyTorch feels very familiar if you've worked
+# with NumPy before. Its because PyTorch intentionally follows many of NumPy's 
+# conventions, simply because numpy is a hugely popular library and has been used 
+# extensively in scintific communities. this makes it easy to pick up torch when you
+# already know Numpy! If you haven't used NumPy before, don't worry, we'll explain
+# everything we need as we go.
 #
 # Moreover, since PyTorch is just another Python package, it works naturally
 # alongside other python packages and libraries such as NumPy, SciPy, OpenCV,
 # Matplotlib, PIL, etc.
-# In fact, many parts of its API were intentionally designed to resemble NumPy's.
-# If you're already comfortable with NumPy, you'll find many familiar functions 
-# and programming patterns.
 
 # Throughout this chapter, we'll gradually build our understanding of PyTorch.
 # We'll start by learning what tensors are and how to create them. Then we'll
 # learn how to inspect them, manipulate them, perform mathematical operations,
 # and understand how PyTorch keeps track of gradients behind the scenes.
 #
-# Don't worry if some of these terms sound unfamiliar right now. By the end of
+# Don't worry if some of these terms sound/feel unfamiliar right now. By the end of
 # this chapter they'll hopefully feel much more natural.
 #
-# So, let's start with the most fundamental building block in PyTorch:
-# the Tensor.
+# So, let's start with the most fundamental building block in PyTorch, the Tensors.
 
 # Quick Summary
 # PyTorch is a Python framework for tensor computation and deep
@@ -89,41 +117,41 @@ def show_tensor(name,t,newline=True):
 # 
 # Torch is the core library implemented in C/C++ that Pytorch is built upon.
 #
-# Before we dive into the details, it helps to have a general/holistic view
-# of the PyTorch ecosystem. We can think of PyTorch as a toolbox where each
-# module has a specific responsibility. We don't need to learn all of
-# them at once, but it is useful to know they exist and what problems
-# they solve.
+# Before we dive into the details, it'd help a lot to have a general/holistic view
+# of the PyTorch ecosystem. so lets first get a basic understanding about 
+# the Pytorch echosystem first and then continue our discussion on tensors.
+# 
+# We can think of PyTorch as a toolbox where each module has a specific responsibility.
+# We don't need to learn all of them at once, but it is useful to know they exist 
+# and what problems they solve.
 #
-# At the center of everything is torch itself.
-# This is where tensors live. It provides tensor creation, mathematical
-# operations, indexing, linear algebra, random number generation,
-# GPU support, and automatic differentiation. Basically the very foundation
-# we need to build a deep learning model, hence why we start with this!
+# At the center of everything is torch itself. This is where tensors live. 
+# It provides tensor creation, mathematical operations, indexing, linear algebra,
+# random number generation, GPU support, and automatic differentiation. 
+# Basically the very foundation we need to build a deep learning model, hence
+# why we start with this!
 # this is the part that will feel the most familiar if you already know NumPy.
 #
-# On top of torch sits torch.nn.
-# This module provides the building blocks used to construct neural
-# networks, such as Linear layers, Convolution layers, Recurrent layers,
-# activation functions like ReLU, normalization layers, pooling layers,
-# and loss functions. Instead of implementing these ourselves, we simply
-# combine them to build a model.
+# On top of torch sits torch.nn. This module provides the building blocks 
+# used to construct neural networks, such as Linear layers, Convolution layers,
+# Recurrent layers, activation functions like ReLU, normalization layers,
+# pooling layers, and loss functions. Instead of implementing these ourselves,
+# we simply combine them to build a model.
 #
-# Once we have a model, we need a way to optimize it.
-# That is the job of torch.optim.
+# Once we have a model, we need a way to optimize it. That is the job of torch.optim.
 # It implements optimization algorithms such as SGD, Adadelta, Adam, RMSProp,
 # AdamW and many others. These optimizers know how to update the
 # parameters of our neural network based on the gradients computed
 # during backpropagation.
 #
-# Another important module is torch.utils.
-# It contains utilities that make training much easier.
+# Another important module is torch.utils. It contains utilities that 
+# make training much easier.
 # The most commonly used ones are Dataset and DataLoader, which help
 # us load, preprocess, shuffle and batch our data efficiently.
 # Nearly every PyTorch project uses a DataLoader at some point.
 #
-# PyTorch also provides torch.autograd.
-# This is the automatic differentiation engine.
+# PyTorch also provides torch.autograd. This is the automatic differentiation engine
+# we briefly talked about earlier.
 # Instead of manually computing derivatives, autograd records the
 # operations we perform on tensors and automatically computes gradients
 # for us during backpropagation. This is one of the key technologies
@@ -163,33 +191,20 @@ def show_tensor(name,t,newline=True):
 # hardware acceleration -> torch.cuda and torch.amp
 # specialized domains   -> torchvision, torchaudio, torchtext, etc.
 #
-# Fortunately, we don't need to master the entire ecosystem before
+# fortunately, we dont need to master the entire ecosystem before
 # becoming productive. Most PyTorch projects spend the majority of
 # their time using only a handful of these modules. As we progress
-# through this book, we'll build up this toolbox gradually, learning
+# through this tutorial, we'll build up this toolbox gradually, learning
 # each module only when we actually need it. By the end, you'll not
 # only know how to use PyTorch, but also where to look whenever you
 # encounter a new problem.
 
 #%% section intro
 # we are going to cover a few  sections and by the end of this chapter
-# you should have a basic understanding of how to use torch and tensors 
+# we should have a basic understanding of how to use torch and tensors 
 # and will be ready to learn more advanced concepts about deeplearning 
 # training and implementation. 
-#
-# Section 1: What is a Tensor & How to Create Them
-# Section 1.1: Shared Memory vs. Copying (Bridging PyTorch and NumPy)
-# Section 2: Essential Tensor Attributes 
-# Section 3: Tensor Indexing, Slicing, and Boolean Masking
-# Section 4: Device Management & Custom Defaults
-# Section 5: Precise Data-Type Control & Casting
-# Section 6: Dimension Manipulation (Shape, Reshape, View, Resize, Squeeze, Unsqueeze & Permute)
-# Section 7: Tensor Operations (Math, Broadcasting & Reductions)
-# Section 8: Joining, Splitting and Repeating Tensors (Concatenation, Stacking & Repeating)
-# Section 9: Seeding & Reproducibility (RNG Management)
-# Section 10: Advanced Memory Management on CUDA
-# Section 11: Quick detour - Learn some utility functions(torch.print_options)
-# Appendix
+
 #%% Section 1: What is a Tensor and How to create one
 # The first concept we are going to learn about is Tensors, 
 # Tensor, is the most fundamental concept we will be dealing
@@ -723,8 +738,6 @@ print(f'Original tensor unchanged?             {tensor.dtype == torch.float32}')
 # module.eval()            # changes module state, no underscore
 
 #%%
-# add reshape/view section here, before tensor indexing cuz 
-# we talk about view a lot! or move this after reshape?!
 
 #%% Section 4: Device Management & Custom Defaults
 # 1.Accelerator
@@ -959,16 +972,6 @@ else:
     
 # revert back to CPU
 torch.set_default_device("cpu")
- 
-#%%TODO  we need to start each subsection with the problem first, not the technology
-# that is, we start with what the problem is, and they explain our way and introduce 
-# technologies. this should give us a much smoother read. 
-# as an example, for a section taling about dtypes e.g. we shouldnt start with sth like
-# pytorch supports x,y,z dtypes and methods! instead we should be saying sth like,
-# "so far we have been using default dtypes, but .... " and then start explaining why 
-# we need to be able to choose different dtypes and how we can do that. we dont just
-# say stuff like "the problem is," thats terrible! and not a good starting way.
-# anyway you get the idea, lets do that. 
 
 #%% Section 6: Dimension Manipulation (Shape, Reshape, View, Resize, Squeeze, Unsqueeze & Permute)
 # The tensors we have experimented with so far had a pre-specified
