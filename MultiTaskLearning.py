@@ -668,7 +668,11 @@ for imgs, _ in dataloader_test:
 #%%
 #%% 
 # In the name of God the most compassionate the most merciful
-# second version
+# sidenote:
+# this is a second version I wrote afew years later 
+# with a new dataset and a bit more explanation I left the original tutorial
+# until the new one covers all the points. go on ahead and read this aswell!)
+
 # In this part we are going to see how we can do multi-task learning in Pytorch
 # we may have two parts but I'm not sure yet. 
 # in the first example, we will build a multitask model that will do multi-label
@@ -689,6 +693,7 @@ import matplotlib.pyplot as plt
 
 # OK, I had to create a dataset myself. I used https://www.animecharactersdatabase.com/ to 
 # create a simple dataset of anime characters with different attributes.
+# you can download the dataset from here https://github.com/Coderx7/tiny_anime_hair_outfit_multiclass_multilabel_dataset
 # we are going to classify each image into several categories, for example, 
 # we want to know the gender, adulthood status, hair colors, stuff like that.
 # our dataset contains 949 images. theres no separate validation/test set, so we will have to
