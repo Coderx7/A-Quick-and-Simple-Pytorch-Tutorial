@@ -669,9 +669,11 @@ for imgs, _ in dataloader_test:
 #%% 
 # In the name of God the most compassionate the most merciful
 # sidenote:
-# this is a second version I wrote afew years later 
-# with a new dataset and a bit more explanation I left the original tutorial
-# until the new one covers all the points. go on ahead and read this aswell!)
+# this is a second version I wrote a few years later 
+# with a new dataset and a bit more explanation. I left the original tutorial
+# until the new one covers all the points. go on ahead and read this aswell!
+# its the same tutorial but with a new dataset and a bit of new information
+# i'll merge the two later probably!)
 
 # In this part we are going to see how we can do multi-task learning in Pytorch
 # we may have two parts but I'm not sure yet. 
@@ -699,26 +701,48 @@ import matplotlib.pyplot as plt
 # our dataset contains 949 images. theres no separate validation/test set, so we will have to
 # use torch.utils.data.SubsetRandomSampler() class to make up for that!
 
+# but before that, lets see how our dataset looks like! that is lets have a look at our .csv file!
+# that hosts our labels and path to our images
+# This is how it looks (animelist.csv):
+# 
+# ID, FileName, Gender, Adulthood,  Hair_Length,    Hair_Color, Outfit_Colors
+# 2,  0001_female_teen_short_yellow_blue_white_red_yellow_black_purple.png, female, teen, short, yellow, blue,white,red,yellow,black,purple
+# 3,  0002_female_teen_short_pink_green_cream.jpg,  female, teen,  short, pink, green,cream
+# 4,  0003_female_teen_short_white_red_white_gray_black_brown.jpg, female, teen, short, white, red,white,gray,black,brown
+# 5,  0004_female_teen_short_black_red_white_gray_purple.png,   female, teen,   short, black, red,white,gray,purple
+# ...
+# it has a header that specifies different columns role. 
+# looking at our data we see, we have several categories : hair color , genders, adulthood, and outfit colors,
+# etc among these categories, only outfit colors can have more than 1 value (that is their values are not mutually
+# exclusive. we can have both black ,blue gold and white at the same time) so outfit color is multilabel. 
+# for a normal single label classfication, we use crossentropy and in Pytorch, we simply use the index of 
+# the correct class and do not feed the one hot encoded representation of the true class. 
+# for a multi label case, we use BCE (BinaryCrossEntropy) and use the one hot encoded representation of 
+# labels. 
+# when building our dataset class, we need to provide labels in the proper form as well. 
+# so lets get busy!
+
 # for working with path, files and folders
 import os
-from pathlib import Path
-from collections import defaultdict
+# to read csv file we use csv module but we can
+# also use pandas, but for this specific example
+# its overkill so we stick to csv to keep it simple
 import csv
-# to read csv file we use pandas (we can
-# use csv module but pandas makes life easier for us)
-import pandas as pd
-# we use PIL.Image for reading an image! 
-# note that pytorch also now offers facilities
-# for reading images internally using torchvision.io
+# import pandas as pd
+
+# We use PIL.Image for reading an image! 
+# note that pytorch now also offers facilities
+# for reading images internally using torchvision module torchvision.io)
 # but it returns tensors which we dont need rightnow!
 import PIL.Image as Image
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import MultiLabelBinarizer
+# from sklearn.preprocessing import LabelEncoder
+# from sklearn.preprocessing import MultiLabelBinarizer
 
 class AnimeMTLDataset(torch.utils.data.Dataset):
     def __init__(self, csv_file_path, transformations) :
         super().__init__()
-        # we could also use Pathlib.Path, but I like the good old way better!
+        # to get the dirname we could also use Pathlib.Path,
+        # but os.path.dirname does just fine aswell.
         self.image_folder = os.path.dirname(csv_file_path)
         self.transforms = transformations
         self.column_names = None
@@ -735,7 +759,7 @@ class AnimeMTLDataset(torch.utils.data.Dataset):
             self.dataset = {}
             # we also want to grab colors and replace each color
             # with the corrosponding index, but it requires a separate
-            # loop over all the rows. but we can simply use the hardcoded
+            # loop over all the rows. we can simply use the hardcoded
             # list of them and save ourselves some time!
             self.colors_list={'white': 0, 'black': 1, 'brown': 2, 'blue': 3, 'red': 4, 'yellow': 5,
                     'gray': 6, 'green': 7, 'purple': 8, 'pink': 9, 'cream': 10, 'orange': 11}
@@ -829,7 +853,7 @@ def show_imgs( imgs, rows=3, cols = 11):
 
 #training:
 print('dataset size: {}'.format(len(anime_dataset)))
-img, labels = anime_dataset[0]
+img, labels = anime_dataset[125]
 print(f'{labels}')
 plt.imshow(unnormalize(img))
 
@@ -955,11 +979,10 @@ class Resnet18_multiTaskNet(nn.Module):
         self.fc_haircolor = nn.Linear(in_features, 12)
         self.fc_outfitcolors = nn.Linear(in_features, 12)
 
-        # initialize all fc layers to xavier
+        # initialize all fc layers with xavier initialization algorithm
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 torch.nn.init.xavier_normal_(m.weight, gain = 1)
-
 
     def forward(self, input_imgs):
         output = self.features(input_imgs)
@@ -987,19 +1010,18 @@ class Resnet18_multiTaskNet(nn.Module):
         prd_outfitcolors = self.fc_outfitcolors(output)
         return prd_gender, prd_adulthood, prd_length, prd_haircolor,prd_outfitcolors
     
-    def _set_freeze_(self, status):
+    def _set_grads(self, is_grad_required):
         for n,p in self.features.named_parameters():
-            p.requires_grad = status
+            p.requires_grad = is_grad_required
         # for m in self.features.children():
         #     for p in m.parameters():
         #         p.requires_grad=status    
 
-
     def freeze_feature_layers(self):
-        self._set_freeze_(False)
+        self._set_grads(False)
 
     def unfreeze_feature_layers(self):
-        self._set_freeze_(True)
+        self._set_grads(True)
 
 
 model = Resnet18_multiTaskNet(True, True)
