@@ -1,8 +1,9 @@
 #%%
 # in the name of God the most compassionate the most merciful
+#!edit add original papers for reference
 # in this part, we are going to learn about autoencoders and 
 # how we can implement them in Pytorch. 
-# Autoencoders are a kind of networks that map their input
+# Autoencoders are a type of network that map their input
 # to a new representation. this is usually refered to as 
 # compressing the input into a latent space representation,
 # this means, they accept the data, and then downsample it
@@ -10,6 +11,44 @@
 # and then upsample that feature vector gradually until they
 # reach to the original size, and then try to reconstruct the
 # input(so our input image acts as a label as well!). 
+
+# sidenote2: 
+# in other words, the encoder actually 'encodes' the input data with large dimensions, 
+# into a latent (i.e. hidden) representation space (usually called z),
+# with much smaller dimensions than the original dimensions of the data
+# This type of design is typically referred to as a 'bottleneck',
+# as the encoder needs to learn an efficient yet rich representation,
+# to compress data from the original higher dimensional space into this lower dimensional space.
+# this bottleneck structure creates what we call an undercomplete representation
+# (because the hidden layer has much fewer dimensions than input) which in turn makes 
+# it use/capture the essense/main bases of the input in order to be able to
+# reconstruct it. without capturing this essential information, our decoder wont
+# be able to accurately reconstruct the original data from the compressed
+# representation.
+# 
+# note that its not mandatory to downsample all the way to a vector(i.e lose spatial dimentionality),
+# although this has been the case for many classical works and networks, the bottleneck
+# design dictates to go to a lower dimension and then back up, like an hour-glass
+# design. we'll cover this in more detail and see what implications it has as we
+# familarize ourseleves with more complex architectures
+
+# !EDIT this - rewrite it 
+# sidenote2: 
+# its like a typical network we have already seen, a typical cnn,
+# it takes in an image (e.g. a 3d tensor of size(28,28,1)), 
+# and converts it to a much more compact and denser representation at the end
+# (e.g. 1d tensor of size 100). This dense representation is then
+# used by a classifier (can be a single fc layer, or multiple layers/ablock/etc)
+# to classify the image.
+# now the encoder does pretty much the same thing, 
+# it takes in an input and produces a much smaller representation (the encoding)), 
+# like in a cnn, this new dense representation needs to contain useful/necessary data
+# for the classifier to properly does it job.
+# the difference is that, instead of a classifer at the end, 
+# theres another network that does something else (in our case reconstructiong the input data
+# from that dense representation) so as you can see this is not something weird!
+#  
+# 
 # during this process of reconstructing the input data
 # from the compressed representation, the new representation is
 # developed and can be used for various applications. 
@@ -18,7 +57,7 @@
 # reconstructs the input from the mentioned feature vector is called
 # a "Decoder". 
 # when we have successfully trained our autoencoder, we can use its
-# new representation instead of our new data. so we can use it for 
+# new representation instead of our data. we can use it for 
 # dimensionality reduction just like PCA (if linear) and much more 
 # powerful than that when using a deep nonlinear autoencoder! 
 # we can use the new representation for lots of applications including
@@ -29,18 +68,68 @@
 # The usage is not limited to such usescases, we can get fancy and creative 
 # for example and make a black and white image , color again! or denoise our input
 # reconstruct missing parts, create new data/images, visualizations, etc!
-# there are lots and lots of use cases for autoencoders
-# However, note that, the notion of compression spoke here is different than that of
+# there are lots and lots of use cases for autoencoders(and in general generative models)
+# However, note that, the notion of compression spoken here is different than that of
 # what you find in different media formats such as jpeg, mp3, etc. 
 # Autoencoders do not work well on unseen data and thus usually have difficulties 
-# generalizing well to unseen data. more on this later  
+# generalizing well to unseen data.(more on this later) so the techniques and nature of
+#! work is different here (explain better!!)
+# 
 # There are different kinds of Autoencoders, they can be linear, or
 # nonlinear, shallow, or deep, convolutional, or not, etc
 # we will cover some of the most famous variants here. 
 # lets start
 
 # before we start lets get familiar with couple of concepts 
-
+#
+# sidenote: 
+# add a small reminder/refresher about undercomplte/overcomplete
+# heres a quick refresher about overcomplte/undercomplete terms we will be
+# facing ahead, 
+# if you recall, in linear algebra a basis for an ndimensional vector space
+# is a set of n linearly independent vectors. this is a "complete" set to 
+# span that space. that is we can represent any vector in that space as a unique 
+# linear combination of these basis vectors.
+#
+# so when we use "undercomplete", we simply mean we have fewer elements/parameters/features
+# or basically degrees of freedom available than what would be needed to fully 
+# capture the original complexity of the thing we are trying to represent or model.
+# simply put it means we are working with a restricted or reduced set of descriptors.
+# which has some implications such as we are dealing with loss of information obviously
+# and compression (which is usually what we are after) which in turn implies focusing on essential
+# building blocks/factors in input (otherwise the compression wouldnt be successful cuz we 
+# dont need redundant/noisy/useless features obviously) and more importantly, if
+# we are representing something from a larger space an undercomplete set of basis 
+# vectors will only span a subspace of that original space! that is if we for example
+# have an ndimensional space but only M basis vectors where M<N, these M vectors can
+# only span an M-dimensional subspace. we cant represent every point in the original
+# N-dimensional space. its like writting a 100 words summary of a 1000 page novel!
+# our summary is an undercomplete representation of the novel, we may be able to
+# get the novel main points across but not the whole thing in detail obviously!
+# (unless its a crappy novel with lots of useless/noisy fillers you get the idea)
+# 
+# now the overcompleteness should be self exlanatory, unlike the undercomplete, it 
+# means we have more elements/parameters/features or basically degrees of freedom 
+# available than the minimum required to represent the thing we are trying to model or represent.
+# this means there's redundancy in our descriptive system! which has some important 
+# implications, like we have redundancy in our representation! that is the same thing can 
+# be represented in multiple ways, our representation is not unique. this by itself
+# means we have more freedom/more flexibility in doing things! which if we rephrase it
+# in neural networks jargon, means our model now has more ways to capture 
+# little details in input and basically provide robustness! also since there are many
+# ways to represent something, we can find a representation where only a few of
+# the overcomplete elements are actively used (we come back to this in sparse autoencoders section a head).
+# that is for example if we have an N-dimensional space and we use M vectors where M>N
+# to try and form a basis, this set of vectors must be linearly dependent. it's an 
+# "overcomplete" set for spanning that N-dimensional space. we have more vectors than 
+# we strictly need. like for example in Farsi (any languages really) we have many synonyms 
+# and ways to express the same idea. this vocabulary can be seen as "overcomplete" for
+# conveying basic concepts, allowing for different nuance/style/emphasis.
+# and finally this might be more computationally intensive to work with.  this should 
+# suffice us, we dont dig deeper because up ahead we'll be covering more complex architectures
+# and I'll be explaining more when we get there.
+# 
+#
 # note :
 # https://www.statisticshowto.datasciencecentral.com/posterior-distribution-probability/
 # Posterior probability is the probability an event will happen after all evidence or 
@@ -110,10 +199,12 @@
 # lets start!
 
 import datetime
+import requests
 import numpy as np 
+import pandas as pd
 import torch
 import torchvision
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms as tf
 from torchvision.utils import save_image, make_grid
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -126,7 +217,7 @@ import matplotlib.pyplot as plt
 # We mentioned couple of examples/usecases for autoencoders, but why do we have to
 # shrink the size in the encoder part ? why do we gradually reduce the input size until
 # we reach a feature vector of some size? 
-# shrinking the size gradually, acts as a imposing a constraint on the input
+# shrinking the size gradually, acts as imposing a constraint on the input
 # by doing so, we are forcing the network to choose the important features in 
 # our input data, the features that has the essence of our input data and can later
 # be used to reconstruct the input. This is why the new resuling representation works 
@@ -146,15 +237,15 @@ import matplotlib.pyplot as plt
 
 # Ok, enough talking lets get busy and have our first auto encoder. 
 # before we continue, we should pickup a dataset. I chose MNIST as its simple enough
-# to be used in different types of autoencoders with quick training time. 
+# to be used in different types of autoencoders with short training time. 
 # after we created our dataset, we will implement different types of AutoEncoders 
-dataset_train = datasets.MNIST(root='MNIST',
+dataset_train = datasets.MNIST(root='./data/MNIST/',
                                train=True,
-                               transform = transforms.ToTensor(),
+                               transform = tf.ToTensor(),
                                download=True)
-dataset_test  = datasets.MNIST(root='MNIST', 
+dataset_test  = datasets.MNIST(root='./data/MNIST/', 
                                train=False, 
-                               transform = transforms.ToTensor(),
+                               transform = tf.ToTensor(),
                                download=True)
 batch_size = 128
 num_workers = 0
@@ -169,38 +260,121 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                num_workers = num_workers,
                                                pin_memory=True)
 
+def ensure_directory_exists(path, exist_ok=True):
+    # grab the directory part of the path excluding the filename (tail)
+    dir_path = os.path.split(path)[0]
+    # and create it if it doesnt already exists
+    os.makedirs(dir_path, exist_ok=exist_ok)
+    
 # lets view a sample of our images 
-def view_images(imgs, labels, rows = 4, cols =11):
+def view_images(imgs, labels, rows = 12, cols =11, figsize=(12,16), dpi=100, normalized=False, mean=[0.5,0.5,0.5],std=[0.5,0.5,0.5], fname_to_save_as=None, title=None, title_top_margine=0.99,title_fontsize=12):
     # images in pytorch have the shape (channel, h,w) and since we have a
     # batch here, it becomes, (batch, channel, h, w). matplotlib expects
     # images to have the shape h,w,c . so we transpose the axes here for this!
     imgs = imgs.detach().cpu().numpy().transpose(0,2,3,1)
-    fig = plt.figure(figsize=(8,4))
-    for i in range(imgs.shape[0]):
+    if normalized:
+        #unnormalized the image
+        #normalization is imgs-mean/std
+        #unnormalizing is imgs*std+mean
+        imgs = imgs * std + mean
+        # clip to [0-1]
+        imgs = imgs.clip(0,1) 
+    
+    # sidenote: note that if we use a large figsize, with a high dpi
+    # we may get an error complaining the image size is too big! it 
+    # refers to the whole matplotlib figure on which we are drawing 
+    # our images! so make sure you set the right numbers here!
+    # also note the figsize row,cols, if you use the wrong size
+    # there might not be enough space to display the labels at the top!
+    # (try (6,4) and see the result!)
+    # sidenote 2: the first number specifies the width and second specifies the 
+    # height of the plot! so it might be better to say figsize (cols,rows) or figsize(w,h)!
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    if title:
+        fig.suptitle(title, fontsize=title_fontsize, y=title_top_margine)
+    # plt.title('View Images') 
+    
+    max_plots = rows*cols
+    # make sure we don't face an error for trying to
+    # create more subplots than available
+    if imgs.shape[0]<max_plots:
+        num_plots = imgs.shape[0]
+    else:
+        num_plots = max_plots
+        print(f'Warning, number of images({imgs.shape[0]}) exceed figures plots({max_plots}). '
+              f'Only displaying the first {max_plots} images. (Hint: Increase rows/cols ())')
+    
+    for i in range(num_plots):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
         # since mnist images are 1 channeled(i.e grayscale), matplotlib
         # only accepts these kinds of images without any channesl i.e 
-        # instead of the shape 28x28x1, it wants 28x28
+        # instead of the shape 28x28x1, it wants 28x28,for color images
+        # the squeeze and cmap will be ignored(in newer version of matplotlib 
+        # this seems to be fixed so squeeze() can be omitted!)
         ax.imshow(imgs[i].squeeze(), cmap='Greys_r')
-        ax.set_title(labels[i].item())
-    plt.tight_layout(pad=1,rect= (0, 0, 40, 40))
+        lbl = labels[i]
+        lbl = lbl.item() if isinstance(lbl,torch.Tensor) else lbl
+        ax.set_title(lbl)
+    
+    # plt.subplots_adjust(top=0.90)    
+    # we can use plt.tight_layout(pad=1,rect= (0, 0, 2, 2)) to have nice
+    # compact figure, we could also simply use tight_layout and let 
+    # matplotlib handle the padding, and scaling, but in this case lets
+    # use rect to scale our images so they are larger in the plot!
+    # (try numbers like 0.8, 1, 2, 20!)
+    # sidenote, when using large numbers here, we may get an error if
+    # we have used a large figuresize with a large dpi, I made that
+    # clear just a few lines back, these are related!
+    # note: I couldnt get this to work for figsize(6,8) when we add a title
+    # to the figure. without a title, figsize(6,8) works great and tight_layout
+    # like below does the job, however, when we add the title, it messes up the
+    # title position, if I use tight_layout(), the figsize(6,8) doesnt look well
+    # anymore! so I have to increase the figsize 2x!, it works, but it makes the
+    # images larger, and is has more overhead! using plt.
+    if figsize == (6,8):
+        plt.tight_layout(pad=1,rect= (0, 0, 2, 2))
+    else:
+        # tight layout works well for larger fig_szes like (8,12)
+        plt.tight_layout()
+
+    # save the figure to the disk, this comes handy when we want to
+    # keep track of our progress, or later on create a gif out of these
+    # images. (basically keep traking how the model is doing in terms of
+    # reconstruction is essential when it comes to generative models!)
+    if fname_to_save_as:
+        ensure_directory_exists(fname_to_save_as)
+        # bbox_inches='tight' makes matplotlib to include all of 
+        # the elements of the figure even those that extend outside
+        # the default bounding box, without this only a portion of 
+        # our figure will be saved!
+        plt.savefig(fname_to_save_as, bbox_inches='tight')
+    
+    plt.show()
 
 # now lets view some 
 imgs, labels = next(iter(dataloader_train))
 view_images(imgs, labels,13,10)
+randns = torch.rand(size=(imgs.size(0),3,32,32))
+view_images(imgs=randns, 
+            labels=[f'num_{l.item()}' for l in labels], 
+            rows=13,
+            cols=10,
+            fname_to_save_as='./results/misc_visualizations/random_test.jpg',
+            # figsize=(12,16),
+            title='Random images')
 
 # good! we are ready for the actual implementation
 #%% 
-# The first autoencoder weare going to implement is the simplest one, 
+# The first autoencoder we are going to implement is the simplest one, 
 # a linear autoencoder.
 # creating an autoencoder is just like any other module we have seen so far, simply
-# inherit from nnModule and define the needed layers and call them in the forward()
+# inherit from nn.Module and define the needed layers and call them in the forward()
 # method the way you should. lets do this :
 class LinearAutoEncoder(nn.Module):
     def __init__(self, embedingsisze=32):
         super().__init__()
         # lets define our autoencoder we have two parts, an encoder 
-        # and a decoder. 
+        # and a decoder.
         # the encoder shrinks the input gradually until it becomes
         # a certain size, and the decoder accepts that as input and
         # gradually upsamples it to reach the actual input size. 
@@ -211,7 +385,7 @@ class LinearAutoEncoder(nn.Module):
         # accepts the input. since this is a linear layer,
         # we have to flatten the input and our 28x28 image
         # will simply have 28x28=784 input features 
-        # The simplest form can be an a one layered encoder
+        # The simplest form can be a one layered encoder
         # and a 1 layered decoder! of course we can add more
         # layers between them, but lets see how this performs
         self.fc1 = nn.Linear(28*28, embedingsisze)
@@ -219,7 +393,7 @@ class LinearAutoEncoder(nn.Module):
         self.fc2 = nn.Linear(embedingsisze, 28*28)
 
     def forward(self, inputs):
-        # our foward pass is nothing specially
+        # our foward pass is nothing special
         # simply feed these layers in order!
         # but before that, we must flatten our input!
         inputs = inputs.view(inputs.size(0), -1)
@@ -251,16 +425,17 @@ def train(model, dataloader, optimizer, scheduler, epochs, device):
             loss.backward()
             optimizer.step()
             if i% 2000==0:        
-                print(f'epoch: ({e}/{epochs}) loss: {loss.item():.6f} lr:{scheduler.get_lr()}')
+                print(f'epoch: ({e}/{epochs}) loss: {loss.item():.6f} lr:{scheduler.get_lr()[-1]:.6f}')
         scheduler.step()
     print('done')
 
 # Now lets see the output of our autoencoder
-def test(model,device):
+def test(model,device,rows,cols):
     imgs, labels = next(iter(dataloader_test))
     imgs = imgs.to(device)
+    model.eval()
     outputs = model(imgs)
-    view_images(outputs, labels)
+    view_images(outputs, labels,rows=rows,cols=cols)
 #%%
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -269,14 +444,14 @@ optimizer = optim.Adam(model_linear_ae.parameters(), lr = 0.1)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 train(model_linear_ae, dataloader_train, optimizer, scheduler, 20, device) 
-test(model_linear_ae, device)    
+test(model_linear_ae, device,rows=9,cols=5)
 # so this is the linear autoencoder! in order to make a vanila autoencoder
 # which may refer to a version with nonlinear activation functions, you 
-# only need to apply a transformation function .
-# in the fowarad pass and in order  to get a good result, you need to add a few more 
+# only need to apply a transformation function in the fowarad pass and 
+# in order  to get a good result, you need to add a few more 
 # layers .(we do this in the next architecture )
 # we can get better results with more epochs and decaying learnng rate,
-#  but it wont make a drastic change! specially on more complex data, as its 
+#  but it wont make a drastic change! especially on more complex data, as its 
 # just a linear model.
 #%%
 # in order to be able to capture more complex structures,... in  the input data
@@ -292,28 +467,169 @@ class MLPAutoEncoder(nn.Module):
         self.fc3 = nn.Linear(embedingsisze, 64)
         self.fc4 = nn.Linear(64, 28*28)
 
-
-    def forward(self, inputs):
-        inputs = inputs.view(inputs.size(0), -1)
+    # lets create encoder/decoder methods separately this time
+    # so we can use them easier later (for visualization etc) 
+    def encoder(self, inputs):
         # encoder part
+        inputs = inputs.view(inputs.size(0), -1)
         output = F.relu(self.fc1(inputs))
         output = F.relu(self.fc2(output))
+        return output
+    
+    def decoder(self, inputs):
         # decore part
-        output = F.relu(self.fc3(output))
-        # since the output is images, values should 
+        output = F.relu(self.fc3(inputs))
+        # since our output is image, values should 
         # be in the range [0, 1]!
+        #sidenote: note that unlike our previous example,
+        # we are now using a sigmoid transformation function here.
+        # this is needed as we have used transformation/activaion
+        # functions on several layers before, hence not linear
+        # anymore. using sigmoid gives us a clear image! as it
+        # enforces the values to be in range valid for images!
+        # removing the ghosting and other alike artifacts from the image.
+        # try removing sigmoid and running the example again
         output = F.sigmoid(self.fc4(output))
         output = output.view(-1, 1, 28, 28)
+        return output
+    
+    def forward(self, inputs):
+        output = self.encoder(inputs)
+        output = self.decoder(output)
         return output 
 
-model_mlp_ae = MLPAutoEncoder().to(device)
+model_mlp_ae = MLPAutoEncoder(32).to(device)
 print(model_mlp_ae)
 
 # criterion = nn.MSELoss()
 optimizer = optim.Adam(model_mlp_ae.parameters(), lr = 0.01) 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 train(model_mlp_ae, dataloader_train, optimizer, scheduler, 20, device)    
-test(model_mlp_ae,device)  
+test(model_mlp_ae,device,rows=13,cols=10)
+# note, the loss sometimes doesnt decrease which is expected 
+# rerun the experiment to get a better result!
+#%%
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+# lets also visualize the encodings/features learned by our encoder
+# and see how well these features are separated.
+# this kind of visualization specifically becomes intersting when we
+# start implementing other types of autoencoders such as VAE. 
+# when we get there we'll explain this further. 
+# to do this, one way is to use scatter plot and display
+# each sample, that way that is, we feed our images to the encoder,
+# grab the feature vector and then display it in a scatterplot.
+# since we are going to use scatter plot, our feature vector must be 2D
+# (that is it needs to have 2 numbers!) if its not, we need to use pca 
+# or tsne to project them into 2d.
+def plot_encoder_output_projection(model, dataloader_train, title='',use_pca=False):
+    model.eval()
+    # grab the device from model parameter
+    device = next(model.parameters()).device
+    # grab all the features, because tsne needs to be applied to 
+    # the whole dataset all atonce not batch by batch
+    all_features = []
+    all_labels = []
+
+    with torch.no_grad():
+        for imgs, lbls in dataloader_train:
+            imgs = imgs.to(device)
+            # Get feature vectors
+            feature_vectors = model.encoder(imgs).cpu().view(imgs.size(0), -1).numpy()
+            all_features.append(feature_vectors)
+            all_labels.append(lbls.numpy())
+
+    # concatenate all batches
+    all_features = np.concatenate(all_features, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    if use_pca:
+        reducer = PCA(n_components=2)
+        # since pca is sensitive to the scale of features and 
+        # if the features are not properly scaled (e.g. mean-centered and variance-normalized),
+        # it can produce poor projections we scale the features here!
+        scaler = StandardScaler()
+        all_features = scaler.fit_transform(all_features)
+    else:
+        reducer = TSNE(n_components=2, random_state=66, perplexity=30)
+
+    plt.figure(figsize=(10, 8))
+    # print(f'{all_features[0].shape[-1]}')
+    
+    if all_features[0].shape[-1] >2 :
+        # features2d are coordinates showing where each datapoint is
+        features2d = reducer.fit_transform(all_features)
+        # print(f'{features2d[:5]}')
+    else:
+        features2d = all_features
+    # tab10, is a colormap inwhich it has 10 colors, therefore its a prefect choice for us    
+    scatter = plt.scatter(features2d[:, 0], features2d[:, 1], c=all_labels, cmap='tab10', alpha=0.6)
+
+    # add class labels to each cluster for better visualization
+    # to do this we need t o calculate the centeroid(i.e. mean) of each cluster
+    # which is basically taking the average of all the points for that cluster
+    # and then use plt.text to add class numbers
+    
+    # note we dont need all the labels, just one for each cluster!
+    for label in list(range(10)):
+        # find the centroid of each cluster
+        # note that the values in features2d are coordinates(when using tsne),
+        # which are the 2D positions of the data points
+        # since our data are stored sequentially we know each row(class label) 
+        # in all_labels belong to a corresponding data point in features2d.
+        # that is for example, if all_labels[0] = 0, it means the first data point
+        # in features2d belongs to class 0.
+        # we use this to grab all the points belonging to a specific label one at a time 
+        centroid = np.mean(features2d[all_labels == label], axis=0)
+        # annotate the centroid with the class label
+        plt.text(centroid[0], centroid[1], str(label), fontsize=12, fontweight='bold',
+                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    title = f"\n{title}" if title else ''
+    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D{title}")
+    plt.colorbar(scatter, label='Class Label')
+    plt.show()
+#%%
+plot_encoder_output_projection(model_mlp_ae, dataloader_train, use_pca=False)
+# 
+# if we used embedding_dim=2 in our previous examples, we would get a drastically different image
+# try that and see the difference. 
+# TODO: note explain why tsne is a better choice here when our feature dim >2D
+# sidenote:
+# note that we use PCA, when we are dealing with linear relationships
+# which is not the case here (we are not doing a simple linear transformation here)
+# pca also tends to produce more overlapping clusters,(opposed to distinct/wellseparated ones)
+# when the data has complex, non-linear relationships (which is our case try use_pca=True))
+# because of this, tsne is the right choice here as its specifically designed 
+# for highdimensioal data. (it preserves local structures in high-dimensional data 
+# that is the relationships between nearby points is preserved
+# and it tries to keep points that are nearby in high-dimensional
+# space close together in the lower dimension (our 2D projection).
+# and its used extensively for visualizing clusters/groups in high dimensional data
+# (compared to pca, it produces more distinct and well-separated clusters 
+# in the 2D projection.
+# (also pca focuses on preserving global structures (i.e., the overall variance in the data).
+# and its less effective at preserving local relationships, which can make clusters less distinct
+# in the 2D projection.)
+
+# sidenote2: 
+# tsne hyperparameters like perplexity and learning rate, control 
+# the balance between preserving local and global structures.
+# so tuning them can improve the visualization.
+
+# ? or this
+# Note that PCA is typically used for data with linear relationships, 
+# which is not the case here, we are not just doing a simple linear transformation. 
+# PCA also tends to produce more overlapping clusters, especially when the data has complex,
+# non-linear relationships (as in our case, try use_pca=True).
+# Thats why t-SNE is the better choice here. Its specifically designed for high-dimensional data,
+# preserving local structures—meaning it keeps nearby points in high-dimensional space close 
+# together in the lower-dimensional (2D) projection. It’s widely used for visualizing clusters 
+# in such data, and compared to PCA, it generally produces more distinct and well-separated clusters.
+# Also, PCA focuses more on preserving global structure (i.e. overall variance), which makes it less
+# effective at capturing local relationships—and that can make clusters look less distinct in 2D.
+
 #%%
 # While our mlp model is more powerful than the previous model, it is not suitable for data such as images
 # for image like data, we use conv layers! and hence our new autoencoder is Convolutional AutoEncoder. 
@@ -322,10 +638,12 @@ test(model_mlp_ae,device)
 # your network gets deeper, you may see that your model may train sometimes and not the 
 # other times and the loss may not decrease. when you see this, you should know this is
 # happening becasue of the depth of your network.  use the batchnorm and all will be good. 
-# thats why I created two functions for this very purpose. try creating your network with
-# and without batchnormalization enabled and see the difference (try running for several 
-# times with the one with no batchnormalization to see that sometimes it may work and some 
-# times it will fail, but with batchnorm, it will always work!)
+# thats why I created two functions for this very purpose. 
+# try creating your network with and without batchnormalization enabled and see the difference
+# (try running for several times with the one with no batchnormalization to see that sometimes 
+# it may work and some times it will fail (the loss doesnt decrease it fluctuates around loss: 0.1xxx),
+# but with batchnorm, it will always work!(the loss decreases 100x more (around 0.001xx)))
+# remember to enable/disable batchnorm for both conv_bn() and deconv_bn()
 def conv_bn(in_,out_,k_size=3, s=2,pad=0,bias=False,batchnorm=True):
     layers = []
     layers.append(nn.Conv2d(in_,out_,kernel_size=k_size,stride=s,padding=pad,bias=bias))
@@ -364,6 +682,8 @@ class ConvAutoEncoder(nn.Module):
         self.deconv6 = deconv_bn(64, 128, 4, 2) 
         self.deconv7 = deconv_bn(128, 256, 5, 2)
         # and since our image is 1 channel, this last layer will produce a singe image!
+        # note we disable batchnorm for the last layer
+        # sidenote when using batchnorm, theres no need for a bias anymore! it becomes redundant!
         self.conv8 = deconv_bn(256, 1, 6, 1,0,True,False)
          
 
@@ -387,12 +707,12 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 optimizer = optim.Adam(model_c.parameters(), lr =0.001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 model_c = model_c.to(device)
-train(model_c, dataloader_train, optimizer, scheduler, 20, device)    
-test(model_c, device)  
+train(model_c, dataloader_train, optimizer, scheduler, 20, device)
+test(model_c, device,rows=13,cols=10)
 # As an excersize try to replace all ConvTranspose2d Layers with Conv2d+Upsample
 # and see how the outputs turn out !
 #%% 
-# Now lets create more powerful Convolutional AutoEncoders. the vanial convolutional autoencoder
+# Now lets create more powerful Convolutional AutoEncoders. the vanila convolutional autoencoder
 # is not that powerful. therefore we can use several variants such as:
 # denoising autoencoder, Sparse autoencoder, variational autoencoder
 
@@ -404,8 +724,10 @@ test(model_c, device)
 # prior to feeding it to our model and then compare the reconstructed image with the actual
 # original image which is noise free. in doing this, network will learn to remove noise from
 # images. we will use the same criterion. nearly 99% of what we saw until now is the same 
-# and we just will add a simplenoise lets see that 
-noise_threshold = 0.5
+# and we just will add a simplenoise lets see that.
+
+# here we specify how noisy our images become
+noise_intensity_threshold = 0.5
 epochs = 20
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # the quality and performance of our model in denoising will increase as we
@@ -417,10 +739,182 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 # before we go on lets view a sample of noisy images : 
 imgs,labels = next(iter(dataloader_test))
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+# To add noise to our images, we create a random tensor with the same shape 
+# as our image batch so we can easily add them together. we used torch.rand_like(), 
+# which generates random values from a uniform distribution between 0 and 1. 
+# we could have also used torch.randn_like(), (which generates random values 
+# from a normal distribution (Gaussian) with a mean of 0 and a standard deviation of 1). 
+# before adding them together though, we
+# use a number to specify how much noise we want to apply to our images
+# the smaller the threshold number, the fainter the noise (values) become
+# and therefore the less our image is affected, the larger the threshold
+# number, the stronger/heavier/more noticeable the noise becomes and therefore
+# our image is more affected. 
+# note that I named that number noise_intensity_threshold to make it apparent 
+# that it only affects the magnitude of our noise tensor. it does not specify
+# what precentage of the image is applied with the noise!(or how many pixels are affected)
+# rather it only specifies "how much" "every single pixel" in our images are affected
+# by the noise.
+# also after we added the noise to our images, we need to normalzie them so the images 
+# contain only valid values (values betwen 0-1). thats why we clamp the data afterward.
+
+# sidenote:
+# we said both of these methods(uniform and normal distributions) allow us to add noise, 
+# but they produce different types of noise, and you may ask, why would we want to choose
+# one over the other? or whats the difference between them? 
+# choosing between these two distributions, has different implications. 
+# like for example, uniform noise is evenly spread across a range, while  
+# Gaussian noise tends to cluster around the mean with some outliers.
+# this in turn means a few things:
+# For one, if we use a uniform distribution to generate noise,
+# it means we plan on generating noise where every value within a specified range (e.g., 0 to 1) 
+# is equally likely.
+# This results in noise that is evenly spread across the range, it doesnt favor any part
+# more than others, every part/range has the same importance, therefore creating a 
+# flat/consistent perturbation across the image.
+# Uniform noise is therefore useful for simulating random, unbiased distortions, 
+# such as sensor noise or quantization errors but it looks more "artificial" and is evenly distributed.
+# we also use uniform noise when we have no idea about the underlying distribution, 
+# and want to avoid introducing bias that could heavily affect the posterior distribution.
+# 
+# Unlike uniform distribution, we use normal distribution to generate noise from 
+# a Gaussian (normal) distribution with a mean of 0 and a standard deviation of 1.
+# This means the noise values are more likely to be close to the mean (0), with 
+# fewer extreme values (outliers). In other words, the noise favors values 
+# around the mean more than those farther away.
+# Gaussian noise is often used to simulate natural noise, such as thermal noise 
+# in electronic systems or subtle variations in lighting. Gaussian noise is thus 
+# more natural and resembles real-world noise.
+# 
+# and finally to answer the question of which one to use,we use whatever suites the job!
+# we usually use gaussian noise by default unless theres a reason to use uniform or other
+# types of noise.
+# Gaussian noise was and still is the most widely used type of noise in denoising autoencoders.
+# because it is still our best choice for modeling natural noise, and many real-world noise
+# sources (e.g., camera sensor noise, audio noise) are well-approximated by Gaussian distributions.
+# in applications such as image denoising, audio denoising, and signal processing, 
+# Gaussian noise is the default choice.
+# 
+# sidenote3:
+# it should be obvious that if we use real world noise instead of gaussian noise, we may
+# see a good improvement. but catching real world noise is not always an easy, and
+# gausian noise does a pretty good job, so thats why we dont see a lot of papers doing it
+# however, there are several cases that do such as : 
+# DnCNN: Beyond a Gaussian Denoiser: Residual Learning of Deep CNN for Image Denoising 2017
+# CBDNet: Toward Convolutional Blind Denoising of Real Photographs 2019
+# RIDNet: Real Image Denoising with Feature Attention 2019
+# etc 
+# there are more papers that tried to use realworld noise. but in case we wanted to do that 
+# how would we go about it and capture real world noise?
+# for images, to capture real world noise, we take photos or videos in noisy conditions 
+# (low-light conditions or with high ISO settings where noise is more pronounced).
+# we capture several images of a "static" scene (e.g. a blank wall or a dark room) 
+# using the same camera settings. we then take the mean image to estimate the clean signal.
+# and subtract it from each individual image and save result which is the noise for each sample.
+# (I'd like to emphasise on the static part! as otherwise it will contain other information
+# about the scene which will obviously interfere and fail this method! (remember we want to 
+# capture noise! so the image must be as simple as possible).
+# the steps are nearly the same for audio or prety much anything else. 
+# for example for audio: 
+# we record audio in environments where the noise is present (e.g., a busy street, a crowded room).
+# record as many samples as we need in the said environment,
+# use a filtering or signal processing (spectral analysis) to isolate the noise component and 
+# save the noise samples or even better, record the environment sound alone, when the main sound
+# source is not present, (like record the street without anyone speaking into the microphone,
+# or record a crowded room or ecord the hum of an air conditioner or a computer fan directly, 
+# stuff like that!) and then during training, use these noise samples and add them to clean data. 
+# note that clean data may not be that clean, (unless you make sure it is, either synthetically generated
+# or generated in a noise free environment whatever the case is)
+# and thats how we go about it. as you can see its a lengthy and pretty involved task, hence why
+# nearly everyone opts to use normal noise instead!
+
+#%%
+imgs = imgs + (noise_intensity_threshold * torch.rand_like(imgs))
 imgs.clamp_(0,1)
 view_images(imgs,labels)
+# sidenote: TODO: (shorten the long explanations and stop repeating the same thing over and over again!)
+# we usually use smaller noise thresholds (e.g., 0.1 or 0.2) for tasks like denoising, 
+# where our goal is to remove subtle noise, we can use more intense noise as well, but 
+# but the likelihood of removing fine details in the images during the denoising process 
+# increases drastically.
+# The noise threshold determines the level at which noise is separated from the true signal
+# so smaller thresholds are used when the noise level is low, this ensures the denoising 
+# process doesnt mistakenly remove fine image details or important structures, 
+# which could otherwise be interpreted as noise and removed consequently.
+# For autoencoders, introducing smaller noise levels during training 
+# (e.g. Gaussian noise scaled with small thresholds like 0.1) can improve the denoising
+# performance on low-noise images.
+# we use larger noise thresholds (e.g. 0.5) for other usecases such as data-augmentation, 
+# but not excessivly large (e.g. .7, 0.9, 1.0).
+# larger values (e.g. 1.0+) are usually used for specific usecase like for example to test
+# the robustness of our models against heavily corrupted samples.
+# 
+# sidenote2: 
+# What we described here is known as noise scaling and its usually done 
+# for controlling the intensity or strength of the noise, and not the proportion/precentage
+# of the image that is affected.
+# 
+# When we scale the noise by a factor like 0.5, we are controlling the magnitude
+# of the noise values, not the percentage of the image that is affected. 
+# To make this a bit more clear lets take a step back, and see how we create random values
+# and what implications follow/it entails. 
+# 
+# To create a random value, we usually either use a uniform distribution or a normal distribution
+# (we briefly talked about them in basic pytorch introduction chapter, 
+# and we know there are many other distributions, but for what we are dealing with here,
+# these are the two distributions that we normally use(rand/randn)). 
+# 
+# In pytorch we either use torch.rand_like(imgs) or torch.randn_like(imgs) to create a
+# random tensor with the same shape as our input tensor.  
+# torch.rand_like(imgs) generates random values uniformly distributed between 0 and 1.
+# while torch.randn_like(imgs) generates random values from a Gaussian (normal) distribution 
+# with a mean of 0 and a standard deviation of 1.
+# 
+# Now, when we multiply the noise by a number like 0.5, we are in fact scaling the magnitude
+# of the noise values, which for the uniform noise, the noise values would now range between 0 and 0.5.
+# and for gaussian/normal noise, the standard deviation of the noise would become 0.5 (it shrinks by half
+# !explain more).
+# 
+# when we add this scaled noise to the original image, this means every pixel in the image
+# is affected by the noise, but the strength of the noise depends on the scaling factor.
+# The scaling factor (noise_intensity_threshold) determines how much the noise affects
+# the image, i.e.if we use a smaller value (e.g., 0.1), the noise will be subtle and less noticeable
+# and the image remains mostly intact, with only slight variations introduced by the noise.
+# (i.e. noise_intensity_threshold = 0.1 adds very faint noise)
+# whereas if we use a larger value (e.g., 0.5 or 1.0) the noise will be much stronger and
+# more noticeable, and the image becomes significantly affected/distorted, with more pronounced 
+# variations(i.e. noise_intensity_threshold = 0.5 adds moderate noise, while noise_intensity_threshold = 1.0 
+# adds a strong noise)
+# so the scaling of the noise does not affect the percentage of the image that is noisy.
+# rather,every pixel in the image is affected by the noise and the scaling factor 
+# only determines how much each pixel is altered, not how many pixels are altered.
+# For example: If noise_intensity_threshold = 0.5, every pixel in the image will have 
+# noise added, but the noise values will range between 0 and 0.5.
+# If noise_threshold = 1.0, every pixel will still have noise added, but the noise values 
+# will range between 0 and 1.0.
+# we can visualize this effect easily as well
+# lets grab an image and apply different levels of noise threshold/intensity
+imgs = next(iter(dataloader_train))[0][0].unsqueeze(0)
+noise_thresholds = [0.1, 0.2, 0.5, 0.7, 1.0, 2.0]
+fig, axes = plt.subplots(1, len(noise_thresholds), figsize=(16,4))
+for i, threshold in enumerate(noise_thresholds):
+    noisy_imgs = imgs + threshold * torch.rand_like(imgs)
+    noisy_imgs = noisy_imgs.clamp(0, 1)
+    axes[i].imshow(noisy_imgs[0, 0], cmap='gray')
+    axes[i].set_title(f'Noise Threshold = {threshold}')
+    axes[i].axis('off')
+    # plt.tight_layout(pad=1,rect=[0,0,2,2])
+plt.show()
 
+# to make things tidier lets create a simple function to do the job
+def add_noise(imgs, noise_intensity_threshold=0.5, uniform_distribution=False):
+    noise_tensor = torch.rand_like(imgs) if uniform_distribution else torch.randn_like(imgs)
+    return imgs + (noise_intensity_threshold * noise_tensor)
+
+noise_threshold = 0.5
+uniform_dist = True
+
+print(f'Training with {noise_threshold=:.4f} and {"uniform" if uniform_dist else "normal"} distribution')
 print(model)
 for e in range(epochs):
     loss_epoch = 0.0
@@ -428,7 +922,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
 
         #apply noise to our image 
-        imgs_noisy = imgs + noise_threshold * torch.rand_like(imgs)
+        imgs_noisy = add_noise(imgs, noise_threshold, uniform_dist)
         # clip all values outside of 0,1 becasue our image values 
         # should be in this range!
         imgs_noisy = imgs_noisy.clamp(0,1)
@@ -439,18 +933,18 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
         loss_epoch += loss.item()
-    print(f'epoch: {e}/{epochs} loss: {loss.item()} lr: {scheduler.get_lr()}')
+    print(f'epoch: {e}/{epochs} loss: {loss.item():.4f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 # lets see how the network does on noisy image!
 imgs,labels = next(iter(dataloader_test))
 imgs = imgs.to(device)
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
-
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 new_noise_free_imgs = model(imgs)
 view_images(new_noise_free_imgs,labels)
+# note that we can improve our results with a better training regime(optimizer/shceduler/architecture)
 #%%
 # you may ask, so far we have been starting with a large number of channels, 
 # and gradually decreased and at the same time shrunk the spatial extend, what if we do
@@ -473,9 +967,9 @@ class ConvolutionalAutoEncoder_v2(nn.Module):
     def forward(self, inputs):
         output = self.encoder(inputs)
         return self.decoder(output)
-                               
 
 noise_threshold = 0.5
+uniform_dist = True
 epochs = 20
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # the quality and performance of our model in denoising will increase as we
@@ -487,7 +981,7 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5)
 
 # before we go on lets view a sample of noisy images : 
 imgs,labels = next(iter(dataloader_test))
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 
@@ -498,7 +992,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
 
         #apply noise to our image 
-        imgs_noisy = imgs + noise_threshold * torch.rand_like(imgs)
+        imgs_noisy = add_noise(imgs, noise_threshold, uniform_dist)
         # clip all values outside of 0,1 becasue our image values 
         # should be in this range!
         imgs_noisy = imgs_noisy.clamp(0,1)
@@ -509,35 +1003,94 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
         loss_epoch += loss.item()
-    print(f'epoch: {e}/{epochs} loss: {loss.item()} lr: {scheduler.get_lr()}')
+    print(f'epoch: {e}/{epochs} loss: {loss.item():.4f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 # lets see how the network does on noisy image!
 imgs,labels = next(iter(dataloader_test))
 imgs = imgs.to(device)
-imgs = imgs + noise_threshold * torch.rand_like(imgs)
+imgs = add_noise(imgs, noise_threshold, uniform_dist)
 
 imgs.clamp_(0,1)
 view_images(imgs,labels)
 new_noise_free_imgs = model(imgs)
 view_images(new_noise_free_imgs,labels)
 #%%
+plot_encoder_output_projection(model, dataloader_train, use_pca=False)
+#%%
 # sparse autoencoder: these kinds of autoencoders simply use a regularizer term so that
-# the features are more sparse! usually l1 loss is used! 
-#  In the previous examples, the representations were only constrained by the size of the
+# the features are more sparse! usually l1 loss is used!(more on this later)
+# In the previous examples, the representations were only constrained by the size of the
 # hidden layers. In such a situation, what typically happens is that the hidden layer is
-# learning an approximation of PCA (principal component analysis).
+# learning an approximation of PCA (principal component analysis).(see note below)
 # But another way to constrain the representations to be compact is to add a sparsity 
 # contraint on the activity of the hidden representations, so fewer units would "fire" 
 # at a given time.
-# in order to have sparsity, we need to have overcomplete representations. so lets 
-# implement a sparse autoencoder in this section and see how it performs. 
+# 
+# update:
+# previously I had said/writen, in order to have sparsity, we needed to have overcomplete
+# representations, this was wrong, we dont "need" to have an overcomplete representation 
+# (i.e. our hidden layer has more neurons than input) for sparsity to be a thing, rather
+# it becomes most useful and interesting when its applied to overcomplete representations.
+# because it allows the network to learn a rich set/dictionary of features but only activate a small 
+# subset for any particular input. we can apply a sparsity constraint to an undercomplete 
+# autoencoder(i.e. fewer neurons in our hidden layer than input (basically a bottleneck layer!))
+# but the primary compression is already happening due to the bottleneck.() 
+# The main benefit of sparse autoencoders shines when they are overcomplete, as they can
+# learn more features than the input dimension without simply learning an identity function
+# (which a non-regularized overcomplete autoencoder might do).
+# (that is if we just have an overcomplete autoencoder without any regularization (like sparsity),
+# it can easily cheat by learning the identity function. for example imagine our input is 100 
+# dimensions and our hidden layer is 500, then it could simply copy the 100 input values to 
+# the first 100 neurons and set the other 400 neurons to zero, and then the decoder would just
+# copy those first 100 neurons back to the output! the reconstruction loss would be perfect,
+# but the hidden layer wouldn't have learned anything meaningful about the data. it just learned
+# to be a cheat its way out by copying the input! this is why sparsity shines here, as now
+# the network has the capacity to learn a large set/dictionary of diverse set of features. 
+# like for example some neurons might learn to detect horizontal edges, others vertical edges, 
+# specific curves, textures, small circles, etc, basically a much richer set/dictionary than we could 
+# learn with only few neurons in an undercomplete case, again imagine we apply sparsity
+# constraint (L1 penalty e.g.) on these 500 neurons in our hidden layer. this will force
+# most of these 500 neurons to be zero (actually very close to zero) for any given input
+# now to reconstruct a specific input image (for example a picture of a cat), our autoencoder
+# can't simply copy it instead it now needs to find a small combination of its 500 learned features 
+# that best represents the cat. for cat, the model may activate neurons corresponding to fur texture,
+# pointed ear shape, whisker, and the likes, while neurons for other features that represent other
+# objects like "car tire" or fin, mirror, etc  remain silent)
+# So its more accurate to say sparsity is particularly effective and usually designed with overcomplete
+# representations.
+# 
+# so lets implement a sparse autoencoder in this section and see how it performs. 
 # as I said earlier, aside from the normal reconstruction loss, we need a new regularizer
-# lets create this regularizer now. We are going to create a Function object that applies
-# l1penalty we inherit from autograd.Function class for this. 
-# good exlanation https://www.youtube.com/watch?v=7mRfwaGGAPg
+# lets create this regularizer now. we'll be expanding on this a bit more later on, but for
+# now lets keep it simple, this should suffice it!
+# 
+# sidenote 1:
+# this is only the case if the autoencoder has a single hidden layer and uses linear
+# activation functions and is trained with mse loss,otherwise as we already pointed out,
+# nonlinear ones learn much more complex representations)
+# 
+# sidenote2(only a simple anecdote maybe):
+# initially I used set of features when I was writing this, but later on,
+# I found out dictionary is a much better choice, because it has a very good connotation/implications
+# like for example dictionary of features (or dictionary learning) is a term we
+# usually see pop up when talking about sparse representations(especially so).
+# and the analogy for that goes like this, we have a large dictionary of words (i.e. the features/
+# basis vectors) and we want to represent a sentence (i.e. the input signal) using
+# only a few words from that dictionary also dictionaries are usually larger than
+# needed to span the space so it also implies overcompleteness. moreover the words in 
+# the dictionary are like basis elements that can be combined and finally the goal 
+# is to find a sparse linear combination of dictionary elements to represent the 
+# input which dictionary (of features) makes a much better choice therefore!
+# 
+#
+# we are going to create a Function object that applies l1-penalty .
+# we inherit from autograd.Function class for this.
+# good exlanation 
+# andrew ng standford classnotes 2011: https://web.stanford.edu/class/cs294a/sparseAutoencoder_2011new.pdf
+# a good video worth watching: https://www.youtube.com/watch?v=7mRfwaGGAPg
 
-import copy # sed for deep copy of our weights
+import copy # used for deep copy of our weights
 from torch.autograd import Function  # used for implementing l1_lenalty 
 class L1Penalty(Function):
     # we override the forward method with our own arguments (input, l1_weight)
@@ -583,112 +1136,560 @@ class L1Penalty(Function):
         # we return None
         return grad_input, None
 
+
 # now lets create our architecture 
 class SparseAutoEncoder(nn.Module):
     def __init__(self, embeddingsize=400, tied_weights = False):
         super().__init__()
         self. tied_weights = tied_weights
 
-        self.encoder = nn.Sequential(nn.Linear(28*28, embeddingsize),
-                                    nn.Sigmoid())# or relu
+        self.encoder = nn.Sequential(nn.Flatten(),# instead of flattening the input in forward, we do it in encoder!
+                                     nn.Linear(28*28, embeddingsize),
+                                     nn.Sigmoid())# or relu
         self.decoder = nn.Sequential(nn.Linear(embeddingsize, 28*28),
-                                    nn.Sigmoid())
+                                     nn.Sigmoid())
         # you may see some people, use the shared weights between encoder
         # and decoder, i.e. decoder uses the transposed weightmatrix of the 
-        # encoder. for doing this  there are couple of ways. 
+        # encoder. for doing this  there are couple of ways.
         # one of way is to use the functional form and simply 
         # use one weight and its transpose like this 
         # weight = nn.Parameter(torch.rand(input_dim, output_dim))
-        # self.encoder = F.linear(input, weight, bias=False)
-        # self.decoder = F.linear(input, weight.t(), bias=False)
+        # self.encoder = F.linear(input, weight, bias=bias_param)
+        # self.decoder = F.linear(input, weight.t(), bias=bias_param2)
         # we can also simply define our new weight and assigne it to both modules
+        # note that this nonfunction method is nuisanced! and you need to be aware
+        # of that. (see my explanations ahead)
         if self.tied_weights:
-            weights = nn.Parameter(torch.randn_like(self.encoder[0].weight))
-            self.encoder[0].weight.data = weights.clone()
-            self.decoder[0].weight.data = self.encoder[0].weight.data.t()
-        
-
-    def forward(self, input):
-        input = input.view(input.size(0), -1)
+            self.weights = nn.Parameter(torch.randn_like(self.encoder[1].weight))
+            # note we use .data, so we directly link the underlying storage
+            # for encoder weight to our parameter storage. if we dont use .data
+            # we'll get an error saying we have to use nn.Parameter()!
+            # or we will have to use the functional form instead.
+            self.encoder[1].weight.data = self.weights
+            # note that if we use id() we see they are different, 
+            # however, this is expected as this is a just a view, 
+            # not a new parameter, the actual underlying data is the same
+            # and we can see this during training and after it
+            # when we visualize the weights 
+            # see the explanation ahead where I gave a more in depths explanation to ptove
+            # this!
+            self.decoder[0].weight.data = self.weights.t()
+            # print(f'{id(self.weights)=}\n{id(self.weights.t())=}')
+    
+    # if we were to use the functional form
+    # we would have these instead of the linear modules
+    # def encoder(self, input):
+    #     return F.sigmoid(F.linear(input, weight=self.weights,bias=encoder_bias))
+    
+    # def decoder(self, input):
+    #     return F.sigmoid(F.linear(input, weight=self.weights.t(),bias=decoder_bias))
+    
+    def forward(self, input, apply_gradient_constraint=False, l1_weight=0):
+        # input = input.view(input.size(0), -1) # replaced it with flatten in encoder
         output_enc = self.encoder(input)
+        # we apply the L1penalty during forward pass
+        # we have to do this in order for the altered gradients
+        # to take effect in training, during loss calculation we simply
+        # just use the reconstruction loss
+        if apply_gradient_constraint:
+            output_enc = L1Penalty.apply(output_enc, l1_weight)
+        
         rec_imgs = self.decoder(output_enc)
         rec_imgs = rec_imgs.view(input.size(0), 1, 28, 28)
         return output_enc, rec_imgs
 
+#%%
+# heres a test to show that our way of sharing weights is actually correct
+# and is the same as using the functional form! 
+# sidenote/tldr:
+# both functional and nonfunctional forms share the weights and they both work
+# prefectly fine. however theres a catch here, in our nonfunctional method, we 
+# bypass pytorch's autograd system (gradient tracking), but as I explain later, 
+# this doesnt pose an issue for us in this case. 
+# but it causes some inconsitencies which are not desired
+# (such as wasted parameters). itd be safer to use functional form especially if 
+# we plan on working something more complex! see the explanation at the end
+# 
+class SharedWeightsAE(nn.Module):
+    def __init__(self, input_dim=4, embedding_dim=2):
+        super().__init__()
+        self.encoder = nn.Linear(input_dim,embedding_dim)
+        self.decoder = nn.Linear(embedding_dim,input_dim)
+        # define a single weight and assign it to both encoder and decoder
+        self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
+        # note we use .data to directly access the underlying storage and link
+        # shared weight parameter's underlying storage with encoder/decoder's together
+        # note that, by doing this, we are bypassing pytorchs autograd system ,
+        # and causes it not to be able to track this operation and therefor track
+        # the gradients. This will in-turn make the gradients for the shared_weight
+        # to be None!
+        # this however doesnt pose an issue for us, as the grad property for each module will
+        # be populated properly during training (though the shared_weight wont have any gradients
+        # for this reason, but since the underlying storage is linked, the changes will take
+        # place in the same storage and everything will be fine, see my final explanation at the end)
+        self.encoder.weight.data = self.shared_weight
+        self.decoder.weight.data = self.shared_weight.t()
+        
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return encoded, decoded
 
-def sparse_loss_function(outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
+# heres the functional version
+class SharedWeightsAEFunctional(nn.Module):
+    def __init__(self, input_dim=4, embedding_dim=2):
+        super().__init__()
+        # a single weight parameter is used for both encoder and decoder
+        self.shared_weight = nn.Parameter(torch.randn(embedding_dim, input_dim))
+        # since we use the functional form of linear layer, 
+        # we also prepare a separate bias parameter for 
+        # the encoder and decoder as well(they are not shared obviously!)
+        self.encoder_bias = nn.Parameter(torch.zeros(embedding_dim))
+        self.decoder_bias = nn.Parameter(torch.zeros(input_dim))
+
+    # instead of a module, we now create a method to easily call them
+    # just like the previous version
+    def encoder(self, x):
+        return F.linear(x, self.shared_weight, self.encoder_bias)
+
+    def decoder(self, x):
+        return F.linear(x, self.shared_weight.t(), self.decoder_bias)
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return encoded, decoded
+
+torch.manual_seed(5)
+def main(use_functional=True):
+    print('-'*40)
+    print(f"Using {'Functional' if use_functional else 'Non-Functional'} Form")
+
+    if use_functional:
+        model = SharedWeightsAEFunctional(input_dim=4, embedding_dim=2) 
+    else:
+        model = SharedWeightsAE(input_dim=4, embedding_dim=2)
+
+    # our input
+    x = torch.randn(3, 4)
+
+    # forward pass
+    _, decoded = model(x)
+
+    # lets check weight sharing before we directly update the weights
+    print('\nBefore update:')
+    encoders_weight = model.shared_weight if use_functional else model.encoder.weight
+    decoders_weight = model.shared_weight.t() if use_functional else model.decoder.weight
+    print(f'Encoders Weight:\n {encoders_weight.detach().numpy()}')
+    # note that since transposing(calling .t()) creates a temporary view
+    # the id() will be different (values order are obviously different because
+    # the shape is different after transposing!) so to better show that the 
+    # underlying data is indeed the same, we transpose it back!
+    # to get the same view as the original shared_weight used by encoder
+    print(f'Decoders Weight(transposed):\n {decoders_weight.t().detach().numpy()}')
+
+    # now lets update the shared weight directly!
+    # this should reflect in both the encoder and decoder weights
+    model.shared_weight.data += 1.0
+    # model.encoder.weight.data += 1.0
+    # model.decoder.weight.data += 1.0
+
+    print('\nAfter direct update:')
+    print(f'Encoders weight:\n {encoders_weight.detach().numpy()}')
+    print(f'Decoders weight(transposed):\n {decoders_weight.t().detach().numpy()}')
+    # Heres another check to make sure they all match!
+    assert torch.eq(encoders_weight, decoders_weight.t()).all(),'They must match!'
+
+    # lets see how gradients are affected/properly accumulated
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    loss = F.mse_loss(decoded, x)
+    loss.backward()
+
+    print('\nGradient check:')
+    # shared_weight only has grads when using functional form,
+    # in nonfunctional form its grads are None!
+    print(f'shared_weight Gradients:\n{model.shared_weight.grad}')
+    if not use_functional:
+        # in nonfunctional form, the gradients are accumulated properly for 
+        # respective parameters as they are part of linear layer and autograd
+        # system handles it normally
+        print(f'Encoder Gradients:\n{encoders_weight.grad}')
+        print(f'Decoder Gradients:\n{decoders_weight.grad.t()}')
+        
+    # now lets take one sgd step and see how the shared weights
+    # are affected. this shows us whether they are truly shared or not!
+    optimizer.step()
+
+    print('\nAfter the optimizer update:')
+    print(f'Encoders weight:\n {encoders_weight.detach().numpy()}')
+    print(f'Decoders weight(transposed):\n {decoders_weight.t().detach().numpy()}')
+    
+    print(f'Weight Norms:')
+    print(f' shared_weight:   {model.shared_weight.norm()}')
+    print(f' encoders_weight: {encoders_weight.norm()}')
+    print(f' decoders_weight: {decoders_weight.t().norm()}')
+    
+    # Heres another check to make sure they all match!
+    assert torch.eq(encoders_weight, decoders_weight.t()).all(),'They must match!'
+
+    # note the difference in param count between the two methods
+    # this is another of those nuisaunses we face when we bypass the autograd system!
+    print(f'\nmodel param count: {sum(p.numel() for p in model.parameters()):,}')
+    for name,param in model.named_parameters():
+        print(f'{name}:{id(param)} {tuple(param.shape)}')
+
+main(use_functional=True)
+main(use_functional=False)
+
+# ! edit
+# Ok! so to recap here
+# by doing self.encoder.weight.data = self.shared_weight directly we assign 
+# the storage of self.shared_weight to self.encoder.weight and as a result
+# both self.encoder.weight and self.shared_weight reference the same 
+# underlying memory so updates to one will reflect in the other aswell.
+# the same rule applies to our decoder's weight (self.decoder.weight) 
+# and self.shared_weight.t() (.t() just creates a temporary view, 
+# the underlying stoage is the same hence why theres no issue in using transposing in our .data trick!)
+# we saw that by doing so Pytorchs autograd system doesnt see/track this manual
+# .data assignment, and therefore wont be able to do certain things properly like before
+# like tracking these manual operations involved and their gradients however,
+# this doesnt pose any issues as gradients are computed independently 
+# for self.encoder.weight and self.decoder.weight during backpropagation(because they are
+# part of linear module, and autograd system knows them and properly does its job there).
+# self.shared_weight.grad remains None though because self.shared_weight 
+# isnt directly part of the computation graph anymore (because of .data assignment we did)
+# but the encoder and decoder gradients accumulate correctly in self.encoder.weight.grad
+# and self.decoder.weight.grad anyway since they are tracked as parameters of their 
+# respective layers.
+# we also used another check to make sure the weights were shared
+# which was the encoder, decoder, and shared weight norms match because
+# their storage is shared.
+# updates to any one of these will reflect in the others.
+# (when optimizer.step() is called, the optimizer updates self.encoder.weight and 
+# self.decoder.weight using their respective gradients. since these weights share 
+# the same storage as self.shared_weight, the shared weight is implicitly updated as well.)
+# 
+# recap of recap!:d
+# so using .data to share weights allows value synchronization but in doing so it bypasses 
+# the autograd system aswell which leads to our gradients not being computed for self.shared_weight
+# and unlike functional form, we will have independent gradients for self.encoder.weight and
+# self.decoder.weight.
+# 
+# this way, gradients for self.shared_weight are effectively distributed between
+# self.encoder.weight.grad and self.decoder.weight.grad.
+# If we need gradients for self.shared_weight, we use the functional form or 
+# explicitly ensure self.shared_weight is part of the computation graph.
+# all things said, itd be better to basically try to avoid .data assignment trick 
+# for weight sharing beucase it can lead to weird behaviors, especially in more 
+# complex architectures
+#%%
+# Todo: 
+# !edit make this short, and move the full explanation to after the code
+# so it doesnt clutter the whole thing!
+# also theres a lot of repition and this really needs to be addressed!
+
+# now lets get back to what we were doing and write the loss function.
+# but before we commit to that, we need to understand there are two types of sparsity
+# when it comes to implementation details.  
+# its either sparsity on parameters(weights) or sparsity on representations(activations)
+#  
+# each of these types serves different purposes and are achieved differently.
+# sparsity on parameters (parameter/weight sparsity) as the name suggests targets
+# the weights of the network and aims to set many of the weights to exactly zero or very close to it.
+# this is done by using L1 regularization as an additional penalty term 
+# alongside the reconstruction loss (e.g. MSE loss) in our loss function.
+# L1 regurlarization term penalizes the absolute values of the weights and
+# makes the network try to favor more important features, and make other 
+# less important ones to go towards zero during training.
+# 
+# sidenote1:
+# we also have sparsity on activation where instead of weights, we use activations values,
+# while some of the effects can overlap, they are not the same, and their goals 
+# and mechanisms differ.
+# we will see this in a moment when we talk about sparsity on representation(more explanation in a moment)  
+
+# this, in theory, will result in a model with fewer effective connections which help 
+# the model to generalize better by focusing only on the important
+# features instead of memorizing everything. it also helps save memory since 
+# fewer weights need to be stored, and will also reduce computation overhead
+# becasue fewer weights need calculations.
+# it also makes the model more interpretable because a sparse model is obviously
+# simpler now and naturally focuses on the most important connections, making it
+# easier to identify which features or patterns(relationships/connections) the 
+# model relies on. 
+# (note we said, in theory, as in practice, the majority of weights dont end up exactly zero!
+# their value will be near zero, meaning thier contribution still present is minimal. 
+# to actually achieve this behavior in this context, we need a more involved process, for example a separate
+# pruning stage is needed to get rid of the near-zero weights, and rebalance the network
+# to use remaining weights. so when we say that, look at the bigger picture and get the idea!)
+# 
+#!edit sidenote2: 
+# This is why, we can say, in many cases sparsity effectively performs implicit 
+# feature selection. (by eliminating irrelevant or redundant features. (e.g. weights connected to unimportant
+# input features may be pruned, which highlights the critical variables that influence 
+# the models predictions)
+
+# therefore parameter sparsity is very useful for things like model compression,
+# where we want our models to be light and efficient.
+# (also visualizing and analyzing the learned relationships/weight connections will
+# be much better/easier as there are fewer interactions to analyze,
+# which makes its also useful from the interpretability and analysis of the model point of view
+# (give example about llm usgae (like https://transformer-circuits.pub/2024/scaling-monosemanticity/)))
+# 
+# sparsity on representation (or sparse representation/activation) on the other hand,
+# aims to make sure only a small number of neurons in the hidden layers are active for
+# a given input.
+# like the previous method, this is also done by adding an extra term for sparsity constraint
+# to the loss function. 
+# this term is usually based on KL divergence and tries to keep the activations low on average(
+# each neuron only fire for a subset of inputs. more explanation later on).
+# this is done to force the network to focus on capturing the most important features 
+# while ignoring redundant stuff.
+# 
+# sidenote 4:
+# note that neurons with sparse activations usually end up having weights that are 
+# specialized for certain inputs or patterns, but this doesnt necessarily mean 
+# the weights themselves are sparse. for example, a single neuron may very well 
+# have dense weights (i.e. non-zero connections to many input features) but activate 
+# only for specific patterns in the input.) so sparsity of activations doesnt necessarily
+# mean sparsity in weights (although we might see some sparsity there, but its a sideeffect
+# not the explicit /direct/intentional effect of this type of sparsity)
+# 
+# this kind of sparsity therefore is useful for tasks like dimensionality
+# reduction, feature extraction, or unsupervised learning when we are trying to learn
+# compact and meaningful representations.
+
+# !todo remove 
+# sidenote : (from andrewng's standford classnotes on sparse autoencoders 2011)
+# ...we will think of a neuron as being "active" (or as "firing")
+# if its output value is close to 1, or as being "inactive" if its output value is
+# close to 0. We would like to constrain the neurons to be inactive most of the
+# time)
+# the sparse Autoencoder proposed by Andrew NG() 
+# is able to learn a sparse representation and it is well known that l1 regularization
+# encourages sparsity on parameters.
+
+#
+# ok to recap what we have just covered:
+# in sparsity on activations the goal is to make the neuron activations sparse, 
+# that is only a small subset of neurons in a layer get to be active (i.e. non-zero)
+# for a given input.
+# This is achieved by adding a sparsity term like KL divergence to the
+# loss function, which encourages neurons to have low average activation
+# (which using sigmoid means fire only for a few samples in the batch (explained more in detail ahead!)).
+# 
+# we also learned neurons with sparse activations often end up with weights that are specialized
+# for certain inputs or patterns, but this doesn’t necessarily mean the weights 
+# themselves are sparse.for example, a single neuron may have dense weights 
+# (non-zero connections to many input features) but activate only for specific 
+# patterns in the input.
+#
+# In sparsity on parameters however, the goal is to directly make the "weights" sparse,
+# setting many of them to exactly zero(or very close to zero making them practically inactive(i.e. zero!)), 
+# regardless of the activations.(more accurately pushing many of them towards zero, as many in practice do not endup zero, but very close to it!)
+# This is achieved by explicitly penalizing the absolute values of weights (using L1 regularization).
+# furthermore, sparse weights can indirectly lead to sparse activations because if many 
+# connections are pruned (set to zero), the input to some neurons will also 
+# be reduced. However, this is not guaranteed nor is it the primary goal of sparsity on parameters.
+# their primary goal is to lead to fewer effective connections in the model.
+# 
+# recap2:merge or remove the repeteated explanation here
+# we mentioned that sparsity on activations may result in some weights becoming redundant 
+# (effectively sparse) but it doesn't explicitly enforce weight sparsity while 
+# sparsity on parameters directly enforces zero weights but may or may not result in
+# sparse activations.
+# we also noted that sparsity on activations can help in learning compact and meaningful 
+# representations which is especially useful in dimensionality reduction and feature-
+# extraction while sparsity on parameters on the other hand can reduce model size, 
+# computational cost and memory usage making it suitable for resource-constrained 
+# environments like mobile or edge devices.
+# though today we have other means to make models suitable for such environments, 
+# post trainig quantizations and pruning are two examples we will also cover in a 
+# later chapter inshaallah)
+
+# TODO summarize our explanation - its too long!!! 
+# now that we know a bit about how this works, lets implement these cases here 
+# we will be implementing both the sparsity on parameter and activations. 
+# using l1 regurlarization, gradient sparsity and we also implement kl divergence
+# version as well which should give us the best result
+
+#TODO this is ugly as hell, use proper keywords, and better merge this with the actual
+# architecture (model) so we dont have seaprate bits and pieces scattered all over!
+
+# we need model to access its parameters as well, so we add model as parameter here
+def sparse_loss_function(model, outputs_enc, reconstructed_imgs, imgs, penalty_type=0, l1_weight=0.01, Beta=1):
     """
     penalty_type : 
-    0: sparsity on activations 
-    1: sparsity using l1 penalty using gradient enforcemet
-    2: sparsity using kl divergence
+    0: sparsity on parameter
+    1: sparsity on activations 
+    2: sparsity using l1 penalty using gradient enforcemet
+    3: sparsity using kl divergence
     """
+    
+    # in all losses here we have the basic reconstruction loss, for sparsity
+    # we add an additional term.
     criterion = nn.MSELoss()
-    loss = criterion(reconstructed_imgs, imgs)
+    reconstruction_loss = criterion(reconstructed_imgs, imgs)
+    
+    if penalty_type == 0: # sparsity on parameter
+        # we enforce a constrain on the model weights/parameters
+        # we add all the trainable parameters magnitudes 
+        parameters_sum = sum(torch.sum(torch.abs(p)) for p in model.parameters() if p.requires_grad)
+        # we can normalize the result so the number of parameters doesnt
+        # skew our result (our choice of lambda/Beta)
+        # param_count = sum(p.numel() for p in model.parameters())
+        sparsity_loss = parameters_sum #/param_count
+        # print(f'{reconstruction_loss:.6f} {sparsity_loss=:.6f} {parameters_sum}')
+        return reconstruction_loss + (Beta*sparsity_loss)
 
-    if penalty_type == 0:
-        sparsity_loss = torch.mean(abs(outputs_enc))
-        return loss + sparsity_loss
-    elif penalty_type == 1:
+    elif penalty_type == 1: # sparsity on parameter-using gradient enforcement
         # apply the l1penalty on the weights of our encoder
-        # through added term in backpropagation
-        output = L1Penalty.apply(outputs_enc, l1_weight)
-        return loss
-    else:
-        # use kl divergence, calculate ro^ which is the
-        # mean of activations in our hidden layer in which
-        # we want sparsity
-        # the idea here is that each neurons activation should be sparse
-        # that means, its values need to be zero or close to zero. now 
-        # how do we do that? we set a threshold, we call it ro and set it
-        # to a value e.g. 0.05 and then check the mean of each neurons 
-        # activations, and call it ro_hat, we compare our ro_hat against
-        # our threshold which is ro! then we penalize all neurons that 
-        # their ro_hat is larger than the threshold. but how do we compare 
-        # them? we use kl divergence. why? we can model two distributions (bernolli)
-        # being p and q with the probability of success ro and ro_hat respectively
-        # the idea is, to ensure the predicted distribution is as close to the 
-        # actual one and we can model this with kl divergence
+        # through added term in backpropagation during forward pass
+        # here we simply grab the reconstruction loss
+        # Compute gradients of encoder output w.r.t. input
+        # gradients = torch.autograd.grad(outputs_enc.sum(), model.encoder[0].weight, create_graph=True)[0]
+        # print(f'{output.shape=}') # (128,400)
+        return reconstruction_loss
+    
+    elif penalty_type == 2: # sparsity on activation
+        sparsity_loss = torch.mean(abs(outputs_enc))
+        return reconstruction_loss + sparsity_loss
+    
+    elif penalty_type == 3:# sparsity on representation/activation
+        # for this loss we need to use KL divergence, and
+        # calculate what we refer to here as ro^ (ro_hat) which is the
+        # mean of activations in our hidden layer (in fact any layer we want sparsity to be
+        # enabeled/enforced) and then compare it with a threshold and if its larger than that we penalize the neurons.
+        # basically the idea here is that each neuron's activation should be sparse (that is 
+        # the activation values need to be close to zero most of the time, but not always(obviously!) and only a few of them be active)
+        # this makes/encourages the model to learn and detect more distinct and meaningful features in our traing data.
+        # and it goes like this, we first specify a sparsity level/threshold, 
+        # which we call ro(ρ) (we choose this threshold (e.g 0.05 to specify 
+        # the ratio of sparsity) and it represents the ideal probability of a neuron
+        # being active (non-zero). that is we like our neurons to be active 5% of the 
+        # times(or 5% of the inputs in ourbatch) and for the remaining 95% of the inputs, 
+        # its output should be close to zero.
+        #
+        # (sidenote: 
+        # when we say a neuron is active, we mean that the neuron's output (after the activation function, 
+        # i.e sigmoid in our case) is significantly greater than zero.
+        # in other words, the neuron is firing (values close to 1) and
+        # contributing to the learning process for a particular input. 
+        # by setting ro to 0.05, we are basically saying that, on average, each neuron 
+        # should be active for only 5% of the inputs or in other words, it should average 
+        # to 0.05 across all inputs in the batch which. 
+        # (note that averging to 0.05 and being active for 5% of neurons can only be synomous if 
+        # two assumptions hold here. first our activation function outputs near-zero values for 
+        # most inputs and second, the non-zero activations are significantly larger and sparse (e.g. sigmoid values near 1, by sparse we mean they are few here as the rest are nearly zero! when we have few activations near 1, then by defnition its sparse!).
+        # only then the mean (0.05) aligns with the proportion of inputs for which the 
+        # neuron is active. 
+        # (again think about it this way, if the neurons activation in our batch
+        # averages to be around 0.05, it means the absolute majority of its activations have been really
+        # tiny (near zero), but a few of them had very large values (close to 1) that averaging them all 
+        # resulted in 0.05. if we consider sigmoid here, which outputs 0-1, and can be treated as a probability
+        # then we can also say, our neuron here, was active for 5% of the inputs in our batch, hopefully
+        # this is clear now!) 
+        # this encourages the neuron to be selective in its responses, firing strongly for specific inputs
+        # while remaining close to zero for most others.
+        #
+        # sidenote2: 
+        # what if instead of sigmoid we used something liek relu(an unbounded activation 
+        # function that doesnt result in probablities)
+        # what happens then? as we know in relu, activations are non-negative and unbounded (0 to infinity)
+        # in this case, ρ/ro no longer represents a probability but instead it reflects 
+        # the desired average activation magnitude across all inputs in the batch.
+        # for example, if we set ρ(ro)=0.05, it means the neuron should output values 
+        # whose mean is around 0.05, even though individual activations might vary 
+        # greatly (some large, some small, many zeros). the sparsity constraint still 
+        # works similarly and it encourages most activations to be small or zero,
+        # while occasionally allowing higher values.
+        # in practice, however, KL divergence is more naturally suited to bounded, 
+        # probabilistic outputs (i.e. when we are dealing with probablities and hence using sigmoid/softamx outputs)
+        # for other cases, we use other methods for indirectly enforcing sparsity on weights
+        # which we covered before (like l1 regularization).
         #  
+        # next, we calculate the actual mean activation of each neuron across 
+        # the batch. we call this ro_hat (ρ̂).
+        # the idea is to compare ro_hat to our target ro. if ro_hat deviates 
+        # from ro, we apply a penalty. neurons with ro_hat much larger than ro 
+        # are overactive and need to be penalized to push their activations 
+        # closer to the target sparsity. 
+        # but how do we compare ro_hat and ro? this is where KL divergence comes in. 
+        # KL divergence measures the difference between two probability distributions
+        # we treat ro as the "true" distribution and ro_hat as the "predicted" 
+        # distribution. we want to minimize the KL divergence between them to 
+        # ensure that ro_hat is as close to ro as possible.
+        # notice ro_hat is a scalar since torch.mean reduces all elements to a single value
         ro_hat = torch.mean(outputs_enc).to(imgs.device)
-        ro = torch.ones_like(ro_hat).to(imgs.device) * l1_weight
+        # ro is also a scaler, or a weight/threshold
+        # previously I had done # ro = torch.ones_like(ro_hat).to(imgs.device) * l1_weight
+        # which was unnecessary as ro_hat was a scaler all along!
+        ro = l1_weight
         # ro and ro_hat must be probablities, what we have now is just logits
         # so we use softmax to turn our logits into probabilties
         # remember our activation function must be sigmoid 
         # print(ro.shape, ro_hat.shape)
-        
+        # now that we have ro and ro_hat as probabilities, 
+        # we calculate the KL divergence between them.
+        # remember, the KL divergence for Bernoulli distributions is defined as:
+        # KL(p || q) = p * log(p / q) + (1 - p) * log((1 - p) / (1 - q))
+        # where p is ro and q is ro_hat. this tells us how "far" ro_hat 
+        # is from ro. ideally, we want this value to be as small as possible.
+        # note that we need to sum up the KL divergence across all neurons, as we want 
+        # the overall sparsity penalty for the layer, not just for individual neurons.
         kl = torch.sum(ro * torch.log(ro / ro_hat) +
                       (1 - ro) * torch.log((1 - ro) / (1 - ro_hat)))
-        return loss + (Beta * kl)
-
-
-epochs = 50
-penalty_type = 0
+        # this sparsity penalty can now be added to the total loss,
+        # alongside the reconstruction loss
+        # this ensures that the network not only learns its primary task but also 
+        # maintains sparsity in the hidden layer.
+        return reconstruction_loss + (Beta * kl)
+    else:
+        raise Exception(f'Unknown penalty type ({penalty_type}) entered!')
+    
+#%%
+# now lets train!
+epochs = 20
+# penalty_type = 0
 # ro 0.01 ~ 0.05 or l1_weight 
-sparsity_ratio = 0.1
-loss_type = 2
+# for gradient based constrained the ratio
+# needs to be small for our example around 0.0001~1e-4
+sparsity_ratio = 1e-4
+loss_type = 3
+tied_weights = True
 # at the end read the Cyclical Annealing Schedule section to get a very good idea about
 # how you can achieve better result and why!
-Beta = 3 
+# for sparsity on parameters lambda = 1e-6 (loss=0)
+# for sparsity on representation(kl divergance) 2
+Beta = 1e-6
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sae_model = SparseAutoEncoder(embeddingsize=400,                             
-                              tied_weights=True).to(device)
-optimizer = torch.optim.Adam(sae_model.parameters(), lr = 0.1) 
+                              tied_weights=tied_weights).to(device)
+optimizer = torch.optim.Adam(sae_model.parameters(), lr = 0.01) 
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10) 
 
-print(sae_model)        
+print(sae_model)
+print(f'param count: {sum(p.numel() for p in sae_model.parameters()):,}')
 # lets save the weights of our encoder and decoders before we train them 
 # and then compare them with the new weights after training and see how
 # they changed!
-init_weights_encoder = copy.deepcopy(sae_model.encoder[0].weight.data) 
+init_weights_encoder = copy.deepcopy(sae_model.encoder[1].weight.data) 
 init_weights_decoder = copy.deepcopy(sae_model.decoder[0].weight.data)
 imgs_list =[]
-# now lets start training ! 
+# now lets start training!
 for e in range(epochs):
     for imgs,_ in dataloader_train:
         imgs = imgs.to(device)
-        output_enc, rec_imgs = sae_model(imgs)
-        loss = sparse_loss_function(output_enc, rec_imgs, imgs, loss_type, sparsity_ratio, Beta)
+        output_enc, rec_imgs = sae_model(imgs,
+                                         apply_gradient_constraint=(loss_type==1),
+                                         l1_weight=sparsity_ratio)
+        loss = sparse_loss_function(sae_model,
+                                    output_enc,
+                                    rec_imgs, 
+                                    imgs, 
+                                    penalty_type=loss_type,
+                                    l1_weight=sparsity_ratio,
+                                    Beta=Beta)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -698,8 +1699,55 @@ for e in range(epochs):
     # for viewing later on to see how the training affects the
     # result we get
     imgs_list.append((imgs[0],rec_imgs[0]))
-#%% 
-# now lets first visualize the image/reconstruction pairs and how they look : 
+#%%
+plot_encoder_output_projection(sae_model, dataloader_train, use_pca=False)
+#%%
+# note that using tied weights we get a better result and much lower loss, as this acts as a regularizer on
+# its own which is not the case when weights are independant and require more trainig/regularization
+# also note that the parameter count is not decreased even though we are using shared weights
+# this is another nuasce of the nonfunctional method where autograd system is bypassed!
+# 
+# now lets see how sparse our weights have become
+# to calculate this we can simply get the number of zero weights
+# and divide them by the total number of weights!
+def calculate_sparsity(model, tolerance=1e-5):
+    # total parameter count
+    total_weights_cnt = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # treat values within our tolerence as zero
+    # (i.e. values too close to zero are treated as zero)
+    # we do this because of floating point number imprecisness! (we dont get exact matches)
+    zero_weights_cnt = sum(torch.sum(torch.abs(param) < tolerance).item() for param in model.parameters())
+    sparsity_percentage = (zero_weights_cnt / total_weights_cnt) * 100
+    return sparsity_percentage
+
+# to make it a bit more detailed, lets show them in a layerwise fashion
+def display_layer_wise_sparsity(model, tolerance=1e-5):
+    for name, module in model.named_children():
+        sparsity_precentage = (calculate_sparsity(module, tolerance))
+        print(f'Layer {name}: Sparsity: {sparsity_precentage:.4f}%')
+
+tolerance=1e-4
+sparsity_precentage = calculate_sparsity(sae_model, tolerance)
+print(f'sparsity_precentage={sparsity_precentage:.6f}')
+display_layer_wise_sparsity(sae_model,tolerance)
+
+# now lets first visualize the sparsity, image/reconstruction pairs and how they look : 
+# lets simply show a histogram of our models weights this should give us a good idea 
+# about how sparse the weights have become  
+def plot_weight_distribution(model):
+    all_weights = list(p.detach().cpu().numpy().flatten() 
+                       for p in model.parameters() 
+                       if p.requires_grad)    
+    all_weights = np.concatenate(all_weights)
+    # the range affects our plot so we choose a number that better shows the behavior
+    plt.hist(all_weights, bins=100, range=(-0.4, 0.4))
+    plt.title("Weight Distribution")
+    plt.xlabel("Weight Value")
+    plt.ylabel("Frequency")
+    plt.show()
+
+plot_weight_distribution(sae_model)
+#%%
 def visualize(imgs_list, rows=5, cols=10):
     fig = plt.figure(figsize=(15,2))
     plt.subplots_adjust(wspace=0,hspace=0)
@@ -720,34 +1768,144 @@ visualize(imgs_list)
 # we had the initial weights saved so lets subtract them
 # from the trained one and see the diffs , it will show us
 # where the changes happened 
+#%%
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 
-def visualize_grid(imgs, rows=20, cols=20):
-    fig = plt.figure(figsize=(20, 20))
+# def visualize_grid(imgs, label, rows=20, cols=20):
+#     fig = plt.figure(figsize=(10, 10))
+#     imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+#     plt.title(label)
+#     for i in range(imgs.shape[0]):
+#         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
+#         img = imgs[i]
+#         # normalize to 0-1 range
+#         # Add small epsilon to avoid division by zero
+#         img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
+#         # print(f'{img.min()=:.4f} {img.max()=:.4f}')
+#         ax.imshow(img, cmap='Greys_r')
+# 
+# lets make it a bit better and add a colorbar so 
+# we can make out the color values
+def visualize_grid(imgs, label, rows=20, cols=20):
+    fig = plt.figure(figsize=(10, 10))
     imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
-    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.title(label)
+    # normalize the colorbar scales based on the image min/max values
+    # since we need to work with 1 min/max we use the global min/max
+    # but here we inidividually normalize the images int 0-1 so we
+    # we can ignore this
+    # global_min = np.min(imgs)
+    # global_max = np.max(imgs)
+    # norm = Normalize(vmin=global_min, vmax=global_max)
     for i in range(imgs.shape[0]):
         ax = fig.add_subplot(rows, cols, i+1, xticks=[], yticks=[])
-        ax.imshow(imgs[i], cmap='Greys_r')
+        img = imgs[i]
+        # normalize to 0-1 range (already normalized globally using `norm`)
+        # if we were to use the global min/max we would do 
+        # img = norm(img)
+        # but now we do this like before
+        img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
+        ax.imshow(img, cmap='gray')
+
+    # Add a single color bar to the right side (left, bottom, width, height)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  
+    # we would have used norm, here if we used the global norm, but since we didnt
+    # we can simply use None!
+    cbar = plt.colorbar(ScalarMappable(norm=None, cmap='gray'), cax=cbar_ax)
+    cbar.set_label('Pixel Value Range')  # Label for the color bar
+    plt.subplots_adjust(wspace=0.0, hspace=0.0, right=0.9)  # Adjust space to fit color bar
+    plt.show()
+
+# we could combine all images and get a final image, everything stays the same!
+def visualize_grid0(imgs, label, rows=20, cols=20, normalize=True):
+    # normalize the images
+    imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+    # we add a + 1e-8 so in case we have 0 in the denominator, we dont face any errors
+    imgs = [(img - img.min()) / (img.max() - img.min() + 1e-8) for img in imgs]
+    # combine all the images into a single big image
+    height, width = imgs[0].shape[:2]
+    
+    # the placeholder for our larger image which contains all our images
+    big_img = np.zeros((height * rows, width * cols), dtype=np.float32)
+    for idx, img in enumerate(imgs):
+        if idx >= rows * cols:
+            break
+        row, col = divmod(idx, cols)
+        big_img[row * height:(row + 1) * height, col * width:(col + 1) * width] = img
+
+    # plot the image
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(1, 1, 1, xticks=[], yticks=[])
+    ax.imshow(big_img, cmap='gray')
+    ax.set_title(label)
+    # images are already normalized so no need for a normalizer here
+    # sidenote: 
+    # the colormap Greys is not the same as gray!
+    # using the gray colormap (cmap='gray'), by default maps 
+    # lower intensity values (0) to black and higher intensity values (1) to white.
+    # In Greys, the color mapping is reversed, with lower intensity values (0) mapped
+    # to white and higher intensity values (1) mapped to black.
+    # when using the outcome may look the same, but the interpertation differs)
+    cbar = plt.colorbar(ScalarMappable(norm=None, cmap='gray'), ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Pixel intensity (Normalized)' if normalize else 'Pixel Intensity')
 
 
-def visualize_grid2(imgs, label, normalize=True):
+# we can also do this using opencv and can easily see the pixel values
+# by zooming in!(press q to close the current image window and see the next ones)
+import cv2
+def visualize_grid_cv2(imgs, label, rows=20, cols=20):
+    # normalize the images
+    imgs = imgs.cpu().numpy().transpose(0, 2, 3, 1).squeeze()
+    imgs = [(img - img.min()) / (img.max() - img.min() + 1e-8) for img in imgs]
+    # combine all the images into a single large image
+    height, width = imgs[0].shape[:2]
+    big_img = np.zeros((height * rows, width * cols), dtype=np.float32)
+    for idx, img in enumerate(imgs):
+        if idx >= rows * cols:
+            break
+        row, col = divmod(idx, cols)
+        big_img[row * height:(row + 1) * height, col * width:(col + 1) * width] = img
+
+    # convert to 0-255 (uint8)
+    big_img = (big_img * 255).astype(np.uint8)
+    
+    cv2.imshow(label, big_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# and finally we could have also used pytorch's makegrid to do the same thing
+# note that the image is different because of the way the images are normalized
+# in pytorch using global normalization, ie. unlike what we have done so far,
+# it first combines the images, creating a big image, and then normalizes that
+# big image with the min/max of it which is the min and max among all images
+# this is obviously different than normalizing each image individually using its onw
+# min/max lvaues. 
+def visualize_grid0(imgs, label, normalize=True):
     fig = plt.figure(figsize=(10, 10))
     imgs = imgs.cpu()  
     plt.subplots_adjust(wspace=0, hspace=0)
-    x = torchvision.utils.make_grid(
+    
+    img_grid = torchvision.utils.make_grid(
         imgs, nrow=20, normalize=normalize).numpy().transpose(1, 2, 0)
+    # print(img_grid.min(), img_grid.max())
+    # normalize the colorbar scales based on the image min/max values
+    if normalize:
+        norm = Normalize(vmin=0, vmax=1)
+    else:
+        norm = Normalize(vmin=img_grid.min(), vmax=img_grid.max())
+        
     ax = fig.add_subplot(1, 1, 1, xticks=[], yticks=[])
-    ax.imshow(x)
+    ax.imshow(img_grid,'gray')
     ax.set_title(label)
+    
+    cbar = plt.colorbar(ScalarMappable(norm=norm, cmap='gray'), ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Pixel intensity (Normalized)' if normalize else 'Pixel Intensity')
 
-trained_W_encoder = sae_model.encoder[0].weight.data.cpu(
-).clone().view(sae_model.encoder[0].out_features, 1, 28, 28)
-trained_W_decoder = sae_model.decoder[0].weight.data.cpu(
-).clone().view(sae_model.decoder[0].in_features, 1, 28, 28)
-init_weights_encoder = init_weights_encoder.view(
-    sae_model.encoder[0].out_features, 1, 28, 28).cpu()
-init_weights_decoder = init_weights_decoder.view(
-    sae_model.decoder[0].in_features, 1, 28, 28).cpu()
+trained_W_encoder = sae_model.encoder[1].weight.data.cpu().clone().reshape(sae_model.encoder[1].out_features, 1, 28, 28)
+trained_W_decoder = sae_model.decoder[0].weight.data.cpu().clone().reshape(sae_model.decoder[0].in_features, 1, 28, 28)
+init_weights_encoder = init_weights_encoder.reshape(sae_model.encoder[1].out_features, 1, 28, 28).cpu()
+init_weights_decoder = init_weights_decoder.reshape(sae_model.decoder[0].in_features, 1, 28, 28).cpu()
 
 w_diff_encoder = init_weights_encoder - trained_W_encoder
 w_diff_decoder = init_weights_decoder - trained_W_decoder
@@ -756,52 +1914,57 @@ w_decoders_transposed = sae_model.decoder[0].weight.data.cpu().clone().t()
 
 # in order to see that decoders weight is infact the same as
 # encoders, lets transpose it again and reshape it.
-# here I show both the encoders, weight and our decoders weight
+# here I show both the encoders weight and our decoders weight
 # transposed! 
-print(trained_W_encoder.shape)
-print(w_decoders_transposed.shape)
-w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[0].out_features, 1, 28, 28)
+print(f'{trained_W_encoder.shape=}')
+print(f'{w_decoders_transposed.shape=}')
+w_decoders_transposed = w_decoders_transposed.view(sae_model.encoder[1].out_features, 1, 28, 28)
 # note that the decoder weights (in terms of original data) will be smoothed encoders weights
 # (also in terms of original data)
-# info from : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
+# good intro : https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932 
 # end of the page, in the ppt slide image
 
-print(init_weights_encoder.shape)
-visualize_grid2(init_weights_encoder, 'Initial weights')
-visualize_grid2(trained_W_encoder, 'Trained weights(Encoder)')
-visualize_grid2(w_diff_encoder, 'weights diff (Encoder)')
-visualize_grid2(trained_W_decoder,'Trained Weights (Decoder)')
-visualize_grid2(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
-# the black shows negative values, and white show positive values
-# and the gray shows zero values.
+print(f'{init_weights_encoder.shape=}')
+visualize_grid(init_weights_encoder, 'Initial weights')
+visualize_grid(trained_W_encoder, 'Trained weights(Encoder)')
+visualize_grid(w_diff_encoder, 'weights diff (Encoder)')
+visualize_grid(trained_W_decoder,'Trained Weights (Decoder)')
+visualize_grid(w_decoders_transposed,'Trained Weights (Decoder-transposed)')
+# after normalization, the white spots denote 1/255, and black areas denote 0 (close to 0)
+# anything in between (i.e. gray) shows the numbers in between.
+# (if unnormalized the black shows negative values, and white show positive values
+# and the gray shows zero values.)
 # we start from a high positive and high negative values in our initial
 # weights. and then after training and imposing sparsity we can see that
 # we are mostly seeing gray colors which indicate the values are zero!
-# and that is what we were after!
+# and that is what we were after!(unnormalized visualization)
 # if you look at the w_diff, you can see that there are lots of high and
 # low (negative) values as well. this is becsaue  in order to make the
 # weights have more reasonable weights, they had to be decreased/increased
-#%% 
+#%%
+#! edit choose different types and see which one gives us the best pretraiing result
+#! this should give us a better intuition as which one is best for this if we had the right intuition before(explanation in loss section)
+# 
 # the cool thing about autoencoders are that we can use them to pretrain
 # our weights on our data and then use that for classification or etc. 
 # this was actually done a lot back in the day until 2014/2015. 
 # in that era, the use of xavier initialization algorithm accompanied by 
 # batchnormalization killed the need for pretraining in this way. but lets 
-# see how we can do this if the needs be. 
+# see how we can do this if the needs be.
 # its simple, just like finetuning, we may add/remove the layers we want
 # here we will remove the decoder part and instead add a classifier
-# lets remove the decoder 
+# lets remove the decoder
 layers_before_decoder = list(sae_model.children())[:-1]
 sae_model2 = nn.Sequential(*layers_before_decoder)
 # since we created a sequential model here, we should add a new module
-# using add_module. because if we simplt do sth like : 
+# using add_module. because if we simplt do sth like:
 # sae_model2.classifier = nn.Linear(sae_model2[0].out_features, 10)
-# classifier will be just an attribute, and for the forward pass we 
-# need to do sth like 
+# classifier will be just an attribute, and for the forward pass we
+# need to do sth like
 # output=sae_model2.forward(input)
 # output = sae_model2.classifier(output)
-# so this is not ideal at all. therefore we do : 
-sae_model2.add_module('classifier', nn.Linear(sae_model2[0][0].out_features, 10))
+# so this is not ideal at all. therefore we do:
+sae_model2.add_module('classifier', nn.Linear(sae_model2[0][1].out_features, 10))
 print(sae_model2)
 #%% now that we have our model built lets run trainng and pay attention
 # what is the first accuracy we get
@@ -826,59 +1989,905 @@ for e in range(epochs):
         loss.backward()
         optimizer.step()
     acc = acc/len(dataloader_train)
-    print(f'epoch: ({e}/{epochs}) acc: {acc*100:.4f} loss: {loss.item():.6f} lr: {scheduler.get_lr():.6f}')
+    print(f'epoch: ({e}/{epochs}) acc: {acc*100:.4f} loss: {loss.item():.6f} lr: {scheduler.get_lr()[-1]:.6f}')
     scheduler.step()
 
 
 # now you can try it without running the autoencoder training and 
 # see how it performs.
-# Important note : 
-# There is a difference between sparsity on parameter and sparsity on representation.
-# Sparse Autoencoder proposed by Andrew NG is able to learn a sparse representation 
-# and it is well known that l1 regularization encourages sparsity on parameters.
-# They are different lets explain this in more detail!
+# without pretraining (i.e. trainig sparseautoencoder first)
+# this is what we get:
+# epoch: (0/20) acc: 70.3653 loss: 0.887669 lr: 0.100000
+# epoch: (1/20) acc: 79.6976 loss: 0.591737 lr: 0.100000
+# epoch: (2/20) acc: 82.3894 loss: 0.516348 lr: 0.100000
+# epoch: (3/20) acc: 84.0965 loss: 0.648719 lr: 0.100000
+# epoch: (4/20) acc: 85.3295 loss: 0.411724 lr: 0.100000
+# epoch: (5/20) acc: 85.9312 loss: 0.439958 lr: 0.001000
+# epoch: (6/20) acc: 86.0341 loss: 0.512782 lr: 0.010000
+# epoch: (7/20) acc: 86.1232 loss: 0.448194 lr: 0.010000
+# epoch: (8/20) acc: 86.2333 loss: 0.557446 lr: 0.010000
+# epoch: (9/20) acc: 86.3046 loss: 0.428177 lr: 0.010000
+# epoch: (10/20) acc: 86.3592 loss: 0.440234 lr: 0.000100
+# epoch: (11/20) acc: 86.3648 loss: 0.394169 lr: 0.001000
+# epoch: (12/20) acc: 86.3776 loss: 0.358289 lr: 0.001000
+# epoch: (13/20) acc: 86.3904 loss: 0.359354 lr: 0.001000
+# epoch: (14/20) acc: 86.3877 loss: 0.469507 lr: 0.001000
+# epoch: (15/20) acc: 86.3971 loss: 0.460794 lr: 0.000010
+# epoch: (16/20) acc: 86.3977 loss: 0.474029 lr: 0.000100
+# epoch: (17/20) acc: 86.4016 loss: 0.335743 lr: 0.000100
+# epoch: (18/20) acc: 86.4005 loss: 0.519619 lr: 0.000100
+# epoch: (19/20) acc: 86.4055 loss: 0.347018 lr: 0.000100
+# but if we first trained our sparseautoencoder and then ran the classification
+# we would get 
+# epoch: (0/20) acc: 87.8931 loss: 0.334116 lr: 0.100000
+# epoch: (1/20) acc: 90.2050 loss: 0.276905 lr: 0.100000
+# epoch: (2/20) acc: 91.3398 loss: 0.350305 lr: 0.100000
+# epoch: (3/20) acc: 92.1424 loss: 0.247515 lr: 0.100000
+# epoch: (4/20) acc: 92.6760 loss: 0.159887 lr: 0.100000
+# epoch: (5/20) acc: 92.9753 loss: 0.202914 lr: 0.001000
+# epoch: (6/20) acc: 93.0326 loss: 0.191703 lr: 0.010000
+# epoch: (7/20) acc: 93.1244 loss: 0.269451 lr: 0.010000
+# epoch: (8/20) acc: 93.1579 loss: 0.239176 lr: 0.010000
+# epoch: (9/20) acc: 93.2074 loss: 0.252368 lr: 0.010000
+# epoch: (10/20) acc: 93.2336 loss: 0.353381 lr: 0.000100
+# epoch: (11/20) acc: 93.2353 loss: 0.301774 lr: 0.001000
+# epoch: (12/20) acc: 93.2347 loss: 0.390216 lr: 0.001000
+# epoch: (13/20) acc: 93.2347 loss: 0.303082 lr: 0.001000
+# epoch: (14/20) acc: 93.2336 loss: 0.321064 lr: 0.001000
+# epoch: (15/20) acc: 93.2375 loss: 0.203758 lr: 0.000010
+# epoch: (16/20) acc: 93.2370 loss: 0.294605 lr: 0.000100
+# epoch: (17/20) acc: 93.2347 loss: 0.250669 lr: 0.000100
+# epoch: (18/20) acc: 93.2364 loss: 0.270309 lr: 0.000100
+# epoch: (19/20) acc: 93.2370 loss: 0.173221 lr: 0.000100
+# not only we started with a much higher accuracy(~20% higher), 
+# we also achieved higher accuracy at the end.obviously we used
+# the bareminimum, using better architecture, better training regime
+# the results can get better.
 
-# Notes: 
-# For imposing the sparsity constraint instead of l1 norm, we can
-# also use KL divergance the principle is the same, where we took 
-# the average of the activations at each layer that we want their 
-# weights to be sparse, this time we calculate
-# the kl-loss  which is like this : 
-# def kl_divergence(p, p_hat):
-#     funcs = nn.Sigmoid()
-#     p_hat = torch.mean(funcs(p_hat), 1)
-#     p_tensor = torch.Tensor([p] * len(p_hat)).to(device)
-#     return torch.sum(p_tensor * torch.log(p_tensor) - p_tensor * torch.log(p_hat) + (1 - p_tensor) * torch.log(1 - p_tensor) - (1 - p_tensor) * torch.log(1 - p_hat))
 
 # finally  this was a simple autoencoder, we can have several layers
 # and also you can use batchnormalization, etc for your deep autoencoders as well
-
+# needless to say, from coding prespective we have a horrible code base
+# which can be improved a lot! but for now it suffices as we were after the
+# core concepts of the autoencoders for a real world scenario we take our time
+# and code properly so it is maintainable and easy to understand and follow!
+# !TODO: refactor codes, and make them more presentable while keeping it simple
 
 #%%
-# -VAE (Variational Autoencoders) 
-# -Creating MNIST Like digits 
+# -VAE (Variational Autoencoders)
+# -Creating MNIST Like digits
 # -The Reparametrization Trick
-# Variational Autoencoders (VAEs) have one fundamentally unique property that 
-# separates them from vanilla autoencoders, and it is this property that makes
-# them so useful for generative modeling: their latent spaces are, by design,
-# continuous, allowing easy random sampling and interpolation.
+# edit read An Introduction to Variational Autoencoders https://arxiv.org/pdf/1906.02691  (very good read)
 
-# It achieves this by doing something that seems rather surprising at first: 
-# making its encoder not output an encoding vector of size n, rather, outputting
-# two vectors of size n: a vector of means, μ, and another vector of standard
-# deviations, σ
-# They form the parameters of a vector of random variables of length n, with 
-# the i-th element of μ and σ being the mean and standard deviation of the i-th
-# random variable, X_i, from which we sample, to obtain the sampled encoding 
-# which we pass onward to the decoder:
-# This stochastic generation means, that even for the same input, while the mean
-# and standard deviations remain the same, the actual encoding will somewhat vary
-# on every single pass simply due to sampling.
+# intori shoro konim
+# I guess if we started the introduction with intuitions it would be better so lets do just that!
+# When reading about VAEs, we come accross two different view points.
+# (there are two common themes when you search for vae explantions in general)
+# one that involves the underlying differences between VAEs and other types of autoencoders, 
+# and the other, a somewhat higher level prespective which is more involved 
+# in terms of how the architecture works from distribution point of view. 
+# I'll be explaining these two common view points, and hopefully at the end
+# we will have an in-depth and rigiours understanding of VAE fundamentals and 
+# their inner workings. this should give us a much better understanding that 
+# should come in handy later in our researches in the field at least I hope so!
+# I have rewritten parts of this article neumerous times, each time adding new information
+# that in my opinion made the whole picture more accurate and understandable
+# I however might have gone overboard by reiterating certain things over and over
+# yet I havent been able to properly edit this so I include every bit that matters
+# for the time being.
+#
+# TLDR-brief introduction:
+# The Variational Auto Encoders(VAE) are different with conventional autoencoders in that,
+# the encoder does not create a single latent vector representation, instead, it creates
+# two! 
+# one for mean and another for standard deviation. these are in fact parameters that are 
+# used to sample from a normal/gaussian distribution from which we get the actual latent
+# vector and the decoder accepts as input and tries to reconstructs the input from.
+# The encoder creates different mean/stds for each class by which we can generate
+# samples similar to said classes. more importantly, because of the way a VAE is built,
+# its possible to go from one class to another in a gradual manner, which means we can
+# actually have new variations in input that do not exist in the dataset explicitly [by themselevs].
+# with this overal and coarse introduction of the VAE out of the way, lets get to the finer
+# details!
+# 
+# In depth explanation:
+# VAEs, clustering of latent representation/spaces? 
+# Where does a VAE concept comes from? 
+# 
+# As we initially briefly pointed out, we can view VAEs from different standpoints, 
+# lets talk about just that and start by asking ourselevs where does a VAE concept comes from?
+# From an application point of view, initially we wanted to create 
+# random images just like the ones in our datasets, this was usually to create 
+# synthetic data for training purposes, or extracting somewhat meaningful features
+# or pretraining our model before doing the actual training 
+# this was especially the case back in the day, most of the time, as training was
+# very hard due to vanishing/exploding gradient issues at the time. its still used as 
+# well especially in LLM domain! though not for the mentioned issues, but 
+# having a basic knowledge base for further manipulation.
+# A bit later we found that, creating random data(images mostly at first) isnt 
+# really that attractive, and we can actually do much more and much better, 
+# for one, we could be experimenting with controling the generation process 
+# and attemping to create all sorts of things!
+# this becomes especially useful/important if we can change or alter the data we 
+# already have! for example, imagine adding/removing different aspects to/from your
+# image, retouching it, editing it anyway you like. for example, see how
+# you look with glasses on, have a beard, certain clothing, a different season, place, etc. all kinds of possibilities,
+# as you can imagine, this is a lot more useful and has a lot of real-world applications.
+# VAEs and the likes (conditional VAEs, other types of generative models for that matter)
+# have come for this goal(sort of!)
+
+#!EDIT
+# what does make VAE especial you may ask? 
+# So far we have implemented and trained different types of autoencoders, regardless of their
+# main differences, (sparse/denoising/etc) one thing that they had in common was that
+# when we look closer at their latent representations, we notice the encoder latent representation
+# (encodings) formed distinctly clustered subspaces for each class. 
+# if you think about it, this makes prefect sense, as distinct encodings for each image 
+# type(or any data really) makes it much easier for the decoder to decode it
+# it also aligns very well with our goal of replicating the same images.
+# However, when we decide to build a generative model, where we want to create
+# different 'variations' of the same image class or data, we dont just want to generate
+# the same image we find in our dataset. 
+# to this end, we would like to be able to generate variations on an input image, variations
+# from the whole dataset, that does not explicitly show up in one image, 
+# it would be great if we could combine different features from different classes, 
+# and still have a pretty realistic outcome. 
+# this means from a technical prespective, to be able to move smoothly in the latent space,
+# and be able to sample from any part of it. 
+# sampling like this means, we could generate completely new images that dont exist explicitly
+# in our dataset, depending on where we sample from in our latent space, between which latent clusters.
+#   
+# our latent space therefore needs to be continuous otherwise, if it has
+# gaps between clusters or in other words, discontinuities, and we try to generate a 
+# variation from there part, the decoder will simply generate an unrealistic output, 
+# because it does not know how to deal with that region of the latent space 
+# since during training, it never saw encoded vectors coming from that region!
+# this is why having a 'continuous' latent space is crucial here. 
+# This is what that differntiates VAEs from conventional autoencoders (basically any generative 
+# model for that matter). this is the core idea behind a VAE, having a smooth continuous latent space
+# where we can freely sample from!
+#
+#! sidenote: edit this and add a plot to make it concrete
+# to have a better mental image, you can think of continuous in its raw form, imagine it and contrast it against the discrete!
+# like, imagine if we have a 2d plot, and we plot different samples, lets say dogs, in point a 
+# and point b, a cat in point c, a car in point e, etc when we say we want a continuouse space,
+# it means, all the points between point a and point b, should be valid points, and result in
+# dogs as well(thats interpolating gives us valid samples all the way from a to b)! 
+# in descrete mode, its dog a, nothing, and then suddenly dog b, likewise, from 
+# point b to c we should see inifint points from b up to c,which shows us dogs, all the way
+# to a cat (as we get close to c, dogs look more like cats, until ultimately its just our cat
+# we plotted in point c! sampling allows us to do this! does it now make sense?)
+#  
+#
+# VAEs offer an intersting approach here, instead of mapping inputs to fixed points in
+# the latent space (like traditional autoencoders), they say lets map inputs to probability
+# distributions! specifically, a Gaussian/Normal distribution.
+# This way we ensure the latent space is continuous and smooth, without any gaps or discontinuities.
+# Therefore, when we randomly sample from the latent space, the decoder can generate 
+# realistic outputs, even for points it has not explicitly seen during training.
+# as the decoder has learned to generalize across the entire latent space, rather than just
+# memorizing specific points.
+#
+# That is the gist of the vae, the actual process is very simple for the most part, 
+# during training, the encoder doesnt just output a single latent vector, instead, 
+# it predicts two vectors, the mean(μ) and standard deviation(σ) of a Gaussian distribution
+# for each input(x_i).
+# The latent representation vector(z_i), is then sampled from this distribution. 
+# (in practice however we need to use a process called the reparameterization trick 
+# to get around a technical detail we will be getting into other than that this is 
+# pretty much it!)
+# This ensures that the latent space is smooth and continuous, as each point in the 
+# latent space corresponds to a valid potential data point.
+# 
+# sidenote: (edit)
+# The sampling process (also refered to as stochastic generation by some reasearchers)
+# means, the actual encoding will be different slightly at each forward pass,
+# even for the same input, with the same mean and standard deviation, hence the name!
+# we see the implication of this and why this is desirable for us in a moment)
+#  
+# what we do here, is in fact a form of regularization. this regulariziation allows VAEs
+# to have meaningful interpolation and sampling. for example, if we move smoothly between
+# two points in the latent space, the generated output transitions naturally between the
+# two corresponding data points.
+# also randomly sampling points from the latent space produces realistic variations,
+# as every region of the space has been trained during the models learning process 
+# (this works even if the combination of some attributes does not exist in our dataset
+# explicitly, infact this is the actual case here, this is what we were after all along!).
+# 
+# (sidenote: this happens if and only if the model is trained prefectly, we can see this 
+# in easy/simple datasets more easily, but for complex datasets it becomes very hard, we'll
+# see this in our experiments first hand!)
+#
+# This regularization effect is achieved using a KL divergence loss, which encourages the
+# learned latent distributions to remain close to a standard Gaussian prior (i.e., 
+# a standard normal distribution). (informally speaking, this means the latent variables 
+# cluster around the center of the space (around 0), resembling the properties of a 
+# standard normal distribution)
+# 
+# (why? see the explanation in implementation below)
+# This ensures latent space is well organized and nearby points in the latent space 
+# correspond to similar outputs. This not only avoids gaps in the latent space but also
+# encourages the model to generalize better when generating new data.
+#
+# sidenote- second prespective (application prespective/underthehood - explained more):
+# lets view this from another angle, why does this makes sense?
+# why would we want to have a distribution instead of fixed points, what do we get by doing it?
+# lets make this more tangible by an example.
+# remember we said earlier we want to be able to control variations in our input data? 
+# like we want to make for example a person smile, or we want to add a mustache to 
+# someones face. having a distribution instead of a fixed point allows us to 
+# have different smiles, different mustaches and not just a single one.
+# like mona lisa is also smiling, marlyn monroe(add her pic!) is also smiling, they are clearly 
+# different smiles so a distibution for smile, would allow us to sample different samples of smiles
+# for the lack of a better word and for our mustache example, we can specify different kinds of 
+# mustaches small, big, fancy, etc and this applies to just everything and the great thing about it is, 
+# there does not have to be an explicit image in our dataset for it! 
+# imagine mona lisa sporting a mustache!:))
+# the mustache is in the dataset, there are many images of men having mustaches of different kinds
+# but no mona lisa!(or women for that matter hopefully!) or imagine glasses, hats, beard, etc! you get the point. 
+# this happens because, as we previously mentioned, the latent space is smooth and continuous and 
+# the decoder has also learned to generalize across the entire latent space, instead of just memorizing
+# specific points in said latent space. add these to the fact that each point in the 
+# latent space also corresponds to a valid potential data point, and we get the ability to roam that sapce
+# and sample from it! all forms of variations can be achieved using this, gradually moving from one thing
+# in one subspace toward another thing(subspace), and yet have a somewhat sensible output. 
+# is what this gives us!
+# 
+# (sidenote: in practice however, this is extremely hard to achieve for anything mildly complex! 
+# we have much better chocies than vae, but from theorectical point of view, this is what we 
+# expect given the concept and whats involved. (the training can be notouuriously hard to get
+# things working, lets not get ahead of ourselevs, and for now lets keep building intuition 
+# for now))now back to the main point: 
+
+
+# I find jeremy's phenamonal writeup on vaes to be especially great: 
+# ref https://www.jeremyjordan.me/variational-autoencoders/
+#
+# so to recap: 
+# our encoder recieves the input and produces two vectors
+# one for mean and another for std(in fact our encoder creates log variance which we
+# then convert to standard deviation to then use for sampling, so technically
+# speaking it creates mu and logvar in the network, but for doing its job it creates std!).
+# this is in contrast to how a traditional autoencoder works, a traditional autoencoder
+# creates a set of atttibutes in its final representation vector(e.g attributes or features
+# describing concepts such as, eye, smile, beard, gender, has glasses etc) in an input
+# image of faces for example.
+# the idea here is the autoencoder (hopefully) learns descriptive attributes 
+# of the input(in the case of faces this may be skin color, whether or not the person
+# is wearing glasses, is female, etc) to describe an observation(i.e. our input image)
+# in a compressed representation.
+# 
+# for example one such latent vector could be something like (gender:-0.73, smile:0.99,
+# glasses: 0.002, etc) which is basically describing the input image in terms of its 
+# latent attributes, each of which are described by a 'single value'.(note this, its 
+# important for our discussion)
+#
+# (sidennote:(edit maybe its better if I add them as footnote?! or atleast some of these sidenotes are btter off as footnotes?!)
+# in reality, however, we can not rely on this intuition that a single feature directly
+# describes a single feature in the input, most often, its the combinations of several features
+# that specifies the existence of a certain feature in the input data, but for the sake of explanation
+# imagine this is the case so we can convey the idea behind it)
+# 
+# However, this may not reflect the variety/dynamic range of our input properly(this may
+# be very limiting), because the compression by nature limits the amount of attributes 
+# we can encode.
+# to get a broader range, we would need to have a larger number of attributes, and that
+# would mean less compression, and in turn less desired(varied) output, soon we will 
+# be standing before a crossroad/decision, to what extend can we compress and what 
+# features(diversity) can we have? do we use smaller number of attibutes and be limted?
+# or use a larger number and face more training issues!
+# 
+# therefore we may prefer to represent each latent attribute as a 'range of possible values'
+# instead of simply a 'single' one.
+# this would relax the previous limitation, as it can now encode a broader range of 
+# variation/retain dynamicity! all while the number of attributes per say would remain
+# intact!/unchanged!
+#
+# Suppose for example, we want to assign a value for the smile attribute for the image
+# of mona lisa, what 'single value' should we assign to reflect her smile? its there, but
+# at the same time its very underdefined! as if shes not smiling at all!
+# if we were to use attributes that indicate the existance of a feature in input, her smile,
+# would expectedly get a small value, and be treated as non existant) if we assigne somewhat
+# higher value, then it would mess with the existing established rule/attributes that rightfully
+# detect images that have defined smiles and would lead the network to incorrectly classify similar 
+# features as smile!
+# hence why having a range of values would be very benificial to us where we can describe
+# different types of an attribute (here smile e.g.). we can achieve this by using probabilistic
+# terms in our work.
+# the mean and variance that we produce in a vae encoder, is used exactly for this very 
+# reason. using them, we are learning 'a distrubution' for 'each attribute' and thus 
+# mu and variance specify a range of values for each attribute.
+# 
+# [With this approach, we'll now be able to represent each latent attribute for a given
+# input as a probability distribution. when decoding from the latent representation we'll
+# randomly sample from each latent attribute distribution to generate a vector as input
+# for our decoder.]
+# !edit(excessive or misplaced?)
+# thats why later on, we use these means, variances(actually std) along with an epsilon(act as a random variable)
+# to reconstruct the input image.
+# 
+# this means by producing probablity distribution for each latent attribute, 
+# "we're essentially/practically enforcing a continuous, smooth latent space representation"
+# This means the decoder should be able to accuractly reconstruct the input by sampling from
+# these latent distributions. This also implies that the values that are close
+# to eachother, in latent space will correspond to very similar reconstructions(i.e. 
+# should result in similar reconstructions)
+# 
+# all of this is made possible by using the mean and variance produced in the encoder. 
+# the mean controls where the encoding (value) for an input should be centered around, while
+# the standard deviation controls/specifies the (valid) area (of change) around it, i.e. 
+# how much from/how far from the mean the encoding can vary.
+# sampling using mean and std is akin to randomly generating the encodings inside a circle (distribution)
+# which causes the decoder to learn that not only a single point in the latent space 
+# refers to a sample of a calss, but also all nearby points do as well!
+# not only this allows the decoder to decode single specific encodings in the latent space 
+# but also the ones that slightly vary too(i.e. the ones close to it) as the decoder is 
+# exposed to a range of variations of the encoding of the same input during training 
+# (each time we feedforward a specific sample, the sampling process introduces a slightly
+# different value using the same mu,std (it wont be the same number) although the input 
+# sample is the same)
+# This exposes the model to a certain degree of local variations, resulting in a smooth latent 
+# space locally (that is for similar samples) but at the same time leaves the decodable
+# latent space discontinuous so different classes can form their own subspaces, 
+# otherwise if they all are mushed up, it would become meaningless! and nearly impossible for 
+# the decoder to reconstruct accurately (more on this later))
+#
+# aside from that/moreover, we'd also want overlap between samples that are not very 
+# similar aswell in order to interpolate between classes.
+# However, since by default there is no constraint enforcing mean(μ) and std(σ) vectors 
+# to have specific values, the encoder can learn to generate different means μ for different classes, 
+# clustering them apart, and at the same time minimize std(σ), leading to the encodings that don’t
+# vary much for the same sample (which translates to less uncertainty for the decoder and thus 
+# easier decoding).
+# This allows the decoder to easily reconstruct the training data, but it is not desirable for us,
+# as we discussed before we want the encodings to be as close as possible yet be still distinct, 
+# allowing smooth interpolation between them, allowing for creating new samples.
+# Therefore in order to prevent this, we introduce the KL divergence term and use it in
+# the loss function. The KL divergence measures how much two probablity distributions diverge
+# (differ) from each other.
+# !edit
+# Minimizing it means the probability distribution parameters (μ and σ) need to closely resemble
+# that of the target distribution(i.e. our original input data).
+# that is they need to be as close as possible (basically resemeble the original data)
+# 
+# from a visualization point of view, (if we try to visualize the encodings spaces we see) 
+# it encourages the encoder to distribute all encodings (for all types of inputs) evenly 
+# around the center of the latent space (this makes the encodings to be distributed evenly 
+# around the center of latent space (visually speaking) (edit: basically to have mean 0, 
+# (which means a normal distribution, which again because natural images follow normal 
+# distribution so it makes sense!) hence why they cluster at the center)).
+# the encoder will therefore be penalized when/if it tries to cluster them apart into 
+# specific regions, away from the origin.
+# 
+# However, in practice, with this change, the decoder will have a very hard time to get 
+# reconstructions right if any at all! simply because the encodings are now simply densely 
+# placed randomly, near the center of the latent space, with little to no regard for 
+# similarity among nearby encodings.
+# to the decoder, this simply doesnt make much sense! based on our previous intuitions, 
+# nearby points in latent space should resemble similar inputs, but now, after such enforcement,
+# they are being placed at random places! where they have no bussiness being!)
+# !edit
+# therefore, we use another term in our loss function to circumvent/to get rid of/address this issue. 
+# the reconstruction loss, like standard autoencoders will be made of both the BCE loss(because it treats
+# pixels as probabilities and prevents blurry outputs and usually results in better performance.) 
+# and the kl loss (constraining term). this results in [the generation of] a latent space that 
+# addresses both of our concerns and fullfills them both!, maintaining the similarity of nearby
+# encodings locally (on the local scale) by clustering and yet globally, densely packing them 
+# near the latent space origin (see visualization).
+# 
+# It is this fine balance reached by the cluster-forming nature of the reconstruction loss, 
+# and the dense packing nature of the KL loss, which forms distinct clusters that the decoder
+# can decode.
+# !edit remove- excessive, already mentioned it
+# This means when randomly generating, if we sample a vector from 
+# the same prior distribution of the encoded vectors, N(0, I),(natural images have
+# normal distribution (unit normal distribution? applies to them as well)) 
+# the decoder will successfully decode it. And if we're interpolating, there are 
+# no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
+
+# 
+# !edit sidenotes have become too large, maybe its better to incorporate them into a dedicated section and
+# !only keep a very quick/summary? (if so then I may not get the points across!? maybe if I post them
+# !as side chapters would do? )
+#
+# sidenote:
+# Concerning the loss function, both BCE and MSE losses can and are used.
+# The choice between them may not seem that important/trivial at first but its a fundamental choice that needs our careful attention!
+# We use BCE because the original paper uses BCE, but you can find some implementations that use MSE!
+# BCE is the preferred loss here not just because the original paper uses it and it makes sense to accuractly
+# implement the paper, but rather from a technical point of view choosing one over the other has different 
+# implications, moreover this choice changes based on the data we are dealing with.
+#
+# In cases where we are dealing with normalized images between 0 and 1 such as binary or 
+# grayscale images we can treat each pixel value as a probablity of being 0 or 1 (i.e. black or white),
+# therefore going with BCE allows us to predict whether a pixel is closer to black(0) or white(1), making it especially suitable here.
+# BCE also penalizes small differences more strongly (when they are at extremes) which leads to a sharp reconstruction in our case
+# MSE on the other hand, assumes continuous values and has an implicit assumption about the data having a normal/gaussian distribution.
+# This has a few implications we'll get to in a moment  but aside from that, MSE loss might lead to a blured reconstruction
+# due to averaging nature of it, taking the average of multiple possible outputs and uses it for pixel value (we see this in our trainig-more in a moment)
+# note that the original paper uses grayscale datasets such as MNIST and Frey Face and it normalizes
+# the dataset to 0-1 range(this still makes the values continuous so mse can be used, for being binarized
+# it has to be strictly 0-1! in either case, we can use both BCE (even if its not binarized) and MSE because
+# its continuous, however its a bit nuasanced and needs further clarification which we will get to it in a moment)
+#
+# !edit - move to the end of discussion as recap? excessive? add this note at the end? or remove because we already talked about it
+# (if we want sharper reconstructions for images and are willing to accept that pixel values
+# are pushed towards extremes, BCE can be a good choice even for continuous [0,1] data,
+# if we believe that a blurry average is a more faithful representation of uncertainty 
+# or if our data truly has continuous variations best captured by a Gaussian, MSE might be a better choice)
+#
+#
+# Sidenote example for MSE vs BCE 
+# we can develop an intuitive understanding by going over the two losses with a simple example, 
+# recall that MSE Loss is (y_true - y_pred)^2 (for a single sample (pixel in our case), mean is 
+# only involved when there are several samples since we are doing this for a single pixel no average/mean is required). 
+# Now the gradient with respect to our prediction(y_pred) will be -2(y_true - y_pred). 
+# BCE on the other hand is -[y_true * log(y_pred) + (1-y_true) * log(1-y_pred)]
+# if the label is true(y_true=1) bce will be bce=-log(y_pred) and its gradient with respect to
+# y_pred will be y_pred = -1/y_pred (reminder: the derivative of log(u)=1/u)
+# if label is false(y_true=0), bce will be -log(1-y_pred) and its gradient with respect to y_pred
+# will be 1/(1-y_pred) 
+# 
+# Now imagine our pixel=1 if our prediction=0.9 (error=0.1) the MSE gradient will be -2(1-0.9)=-0.2
+# but the BCE gradient will be -1/0.9=-1.11
+# if our prediction=0.8 (error=0.2) the MSE gradient will be -2(1-0.8)=-0.4
+# while the BCE gradient will be -1/0.8=-1.25
+# 
+# As we can see BCE yields a much stronger gradient signal (result in a larger loss) compared to MSE 
+# especially for small deviations from the correct asnwer.
+# if our prediction was 0.1 (error is high(0.9) which means our model is very confident with 
+# its wrong answer) this impact will be compounded, we'll see the mse gradient becomes -2(1-0.1) =-1.8
+# while the bce gradient becomes several times larger! (-1/0.1=-10.0)!
+# !edit 
+# simply put this makes BCE highly sensitive to the model being very confident yet wrong!
+# this can be good as it forces quicker correction during trainig, but at the same time, it can also 
+# lead to instability if the learning rate is set too high.
+# 
+# tooltip/extra clarification:
+# (the log term log(p) means that if the model predicts a probability very close to 0 
+# while the answer is 1 (i.e. the event that did happen (label=1)) or log(1-p) where it is close to
+# 1 while the answer is 0 (i.e the event that didn't happen (label=0)) the loss is huge. (punishes the model harshly!)
+# this forces the model to make confident predictions towards 0 or 1 which leads to sharper reconstructions in our case,
+# this is especially the case for data that is inherently binary or has strong contrasts. 
+# interestingly it works on color images as well as we'll see in our experiments)
+# This very strong push towards the extremes (0 or 1), is what often leads to sharper reconstructions!
+# 
+# !edit: add note about the gradient magnitude not being necessarily a sign of larger loss between bce/mse
+# (scale is different so comparision may not be waranted?)
+#
+# Concerning how mse manages to blur the images, remember that averaging is involved and average by nature
+# can lead to bluring!
+# !edit add a better example,
+# for example, imagine the underlying data for a pixel is 0.2 or 0.8 with equal probability, and rarely
+# 0.5, if we use MSE loss it might encourage the model to predict 0.5 to minimize the average squared 
+# error across many samples. this will result in an "average" or "blurry" output. so at the very core 
+# of it, this difference comes from the fact how each loss handle distributions and encourages (or doesn't 
+# encourage) outputs at the extremes.
+# 
+# Having said all of that, we arrive to the core differentiating creteria betwen the two
+# lets view this from a fundamental point of view and hopefully get a crystal clear intuition of whats 
+# causing all this. 
+# 
+# earlier we briefly mentioned that MSE and BCE also differ in their assumption about the data/error distribution.
+# that is choosing between either of the two implies an underlying assumption about the distribution of data/error
+# When we are using either of them, we are making an implecit assumption that the underlying data/error(repeatative?)
+# we are dealing with are either gaussian/normal (in case of MSE) or a Bernoli distribution in the case of BCE. 
+# we are creating a generative model after all and it means we are trying to learn a probablity distribution.
+# more precisely, for the reconstruction part of the model, the decoder is trying to learn the probablity 
+# of observing input image x given the latent code z or p(x|z).
+# to define this probablity, we must assume/define a specific type of probability distribution for the output
+# if we assume each pixel from the original image is drawn from a bernoli distribution, (parameterized
+# by p_i the corrosponding output pixel from the decoder after sigmoid nonlinearity) then maximizing the likelihood (or minimizing the
+# negative log-likelihood) leads to binary cross-entropy loss. 
+# that is : 
+# p(x_i | z) = Bernoulli(x_i | p_i)
+# NLL = -log(p(x_i | z)) = -[x_i log(p_i) + (1-x_i)log(1-p_i)] (its bce loss)
+#
+# now if we assume each pixel is drawn from a normal/guassian distribution, then given that a normal/gaussain
+# distribution is defined by a mean and a variance, if we assume our decoder outputs a μ_i for each pixel(see note*) 
+# which we take/interpret as the mean for this normal distribution, and if for simplicity's sake, we 
+# assume the variance is fixed and is equal to 1, (or we could assume std is constant for all pixels and
+# datapoints so it doesnt need to be learned) the probablity density function for input x_i given
+# μ_i and fixed variance(σ²=1) will be :
+# p(x_i | z) = N(x_i | μ_i, σ²) = (1/sqrt(2πσ²))*exp(-(x_i-μ_i)²/(2σ²))
+# we want to maximize this likelihood (p(x|z)=prod(p(x_i|z))) (product over all pixels assuming independce)
+# then maximizing likelihood is equivalent to minimizing negative log-likelihood
+# so : 
+# NLL = -log(Πp(x_i | z) )
+# NLL = - Σ log(p(x_i | z)) (sum over all pixels)
+# NLL = - Σ log((1/sqrt(2πσ²)) * exp(-(x_i - μ_i)² / (2σ²)))
+# subtituting the multiplication to log addition (converting probablities to log probablities)
+# NLL = - Σ [log(1/sqrt(2πσ²)) + log(exp(-(x_i - μ_i)²/(2σ²)))]
+# # simpliying and solving the formula (log(exp()) cancel each other out, )
+# NLL = - Σ [-log(sqrt(2πσ²)) - (x_i - μ_i)²/(2σ²)]
+# and we get to 
+# NLL = Σ [log(sqrt(2πσ²)) + (x_i - μ_i)²/(2σ²)]
+# 
+# as we can see the term log(sqrt(2πσ²)) is a constant, the term 1/(2σ²) is also a constant
+# and therefore minimizing the NLL will be equivalent to minimizing 
+# Σ(x_i - μ_i)²
+# This is exactly the sum of squared errors. The mean squared error is simply this sum divided by the
+# number of pixels, which is a scaling factor(constant) that doesn't change where the minimum occurs.
+# so, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
+# that the data (or more accurately, the error x_i - μ_i) is drawn from a normal/gaussian distribution
+# with mean 0 and some "fixed variance σ²" (we assumed 1).
+#
+# note*
+# i.e. the value our decoder outputs for each pixel we assume it is actualy a mean,  
+# the decoder outputs the parameters of the probability distribution of the reconstructed data
+# if we accepted that the data is coming from normal/gaussian distribution, then our decoder needs to
+# output parameters required for such distribution, these parameters are the mean and variance. 
+# When we "treat the output as the final image," we are typically taking the mean of this distribution
+# as the reconstruction since we assumed variance is fixed/constant(we assumed it to be 1 but any constant will do aswell).)
+#
+# or
+# from an interpertation point of view, when we use MSE, we are implicitly saying our decoder is trying
+# to predict the mean of a Gaussian distribution for each pixel.
+# some advanced VAEs actually learn both the mean μ_i and the variance σ_i² for each output pixel. 
+# in this case, the loss function is precisely the Gaussian NLL shown above (without dropping the 
+# log(σ) terms), and the model learns to express its uncertainty about its own reconstructions. 
+# if the model is very certain, it can predict a small σ_i², if uncertain, a larger σ_i².
+# 
+# !edit choose v1 or v2 for this section
+# version 2 :
+# (also concerning the connection between MSE and a gaussian/normal assumption, it comes from the principle
+# of maximum likelihood estimation(MLE))
+# lets start from the very begining, 
+# in many modeling scenarios, especially with generative models like VAEs, we're trying to learn a 
+# probability distribution. for the reconstruction part of the vae, the decoder is trying to learn 
+# the probability of observing the input x given the latent code z or p(x|z).
+# to define p(x|z), we need to assume a specific type of probability distribution for the output.
+# if we assume each pixel(x_i) (from the original image) is drawn from a Bernoulli distribution 
+# parameterized by p_i (the corresponding output pixel from the decoder with a sigmoid at the end),
+# then maximizing the likelihood (or minimizing the negative log-likelihood) leads to the Binary-
+# Cross-Entropy (BCE) loss: 
+# p(x_i|z) = Bernoulli(x_i|p_i)
+# NLL = -log(p(x_i|z)) = -[x_i log(p_i) + (1-x_i)log(1-p_i)] (its bce loss)
+# 
+# now, what if we assume each pixel x_i is drawn from a gaussian/normal distribution?
+# we know a gaussian/normal distribution is defined by a mean (μ) and a variance (σ²)
+# let's say our decoder outputs a value μ_i for each pixel, which we interpret as the mean of 
+# this gaussian. for simplicity (in the standard MSE case), we often assume a fixed variance, 
+# say σ² = 1 (or that σ is constant across all pixels and data points, and doesn't need to be 
+# learned). the probability density function (PDF) for x_i given mean μ_i and variance σ² is:
+# p(x_i|z) = N(x_i|μ_i, σ²) = (1/sqrt(2πσ²))*exp(-(x_i-μ_i)²/(2σ²))
+# we want to maximize this likelihood p(x|z) = Π p(x_i|z) (product over all pixels, 
+# assuming independence). Maximizing likelihood is equivalent to minimizing the negative log-likelihood 
+# (NLL):
+# NLL = -log(Πp(x_i | z) )
+# NLL = - Σ log(p(x_i | z)) (sum over all pixels)
+# NLL = - Σ log((1/sqrt(2πσ²)) * exp(-(x_i - μ_i)² / (2σ²)))
+# NLL = - Σ [log(1/sqrt(2πσ²)) + log(exp(-(x_i - μ_i)²/(2σ²)))]
+# NLL = - Σ [-log(sqrt(2πσ²)) - (x_i - μ_i)²/(2σ²)]
+# NLL = Σ [log(sqrt(2πσ²)) + (x_i - μ_i)²/(2σ²)]
+# Now, if we're trying to find the model parameters that minimize this NLL:
+# The term log(sqrt(2πσ²)) is a constant with respect to μ_i (our model's prediction).
+# The term 1/(2σ²) is also a positive constant.
+# Minimizing the NLL is therefore equivalent to minimizing:
+# Σ (x_i - μ_i)²
+# This is exactly the Sum of Squared Errors. The Mean Squared Error is just this sum divided by the
+# number of pixels, which is a constant scaling factor that doesn't change where the minimum occurs.
+# So, minimizing the MSE is equivalent to performing Maximum Likelihood Estimation under the assumption
+# that the data (or more accurately, the error/residual x_i - μ_i) is drawn from a Gaussian distribution
+# with mean 0 and some fixed variance σ².
+#
+# 
+#note2:
+# note that images in 0-1 range are still continuous values, they are not binarized (strictly 0 and 1)
+# to be only used with bce, we can use mse as well the thing is, going bce
+# has the effect that pixel values are pushed towards extremes, and can lead to sharper reconstructions
+# (or oversaturation like in vqvae 2 experiments?!)
+# so if its acceptable then bce is ok, otherwise we can use mse! (we can see this behavior in vqvae,
+# if we use bce, we get saturated images! check if this is the case?!)
+# 
+# why do we care? 
+# in short, because it determines our model's results!
+# If the underlying assumption is wrong(i.e. its is not Gaussian), then MSE is no longer guaranteed to
+# be the MLE, its not gauranteed to work! even worse it may even fail the model!
+# for example, imagine we have a dataset where 99% of errors are small, but 1% are massive, MSE will be
+# dominated by that 1%. The resulting model might be terrible for the 99% of typical cases. 
+# another example is trainig a binary classifier with MSE, we can do it, but it's generally much 
+# less effective than using BCE because BCE's log term heavily penalizes confident wrong answers, 
+# which is crucial for classification. 
+# Even in our own usecase, VAEs, the choice between MSE and BCE has a very visible impact on the sharpness/blurriness
+# of generated images.
+# Having said all that, the optimality of MSE being tied to the Gaussian error assumption is a theoretical foundation.
+# whether deviations from this assumption drastically affect the outcome in practice depends on how much
+# the true error distribution deviates, the nature of the data and task, and what aspect of the outcome we care about the most.
+# There are many real-world scenarios where choosing a loss function more aligned
+# with the (assumed) true nature of the data's "noise" or desired output characteristics leads to visibly 
+# better practical results (e.g. sharper images, more robust predictions, better classification/etc).
+# Often, especially in deep learning, the choice is also guided by empirical results and desired qualitative outcomes
+# (like sharpness) in addition to strict adherence to probabilistic theory. 
+# However, understanding the theory helps explain why certain loss functions tend to work better for certain types of problems.
+# so we make an an initial assumption about the distribution of the data itself (or the noise inherent
+# in its observation) when considering p(x|z). this assumption directly dictates the form of the likelihood,
+# and minimizing the negative log-likelihood gives us our loss function.
+# 
+# For example if we have frequent large errors (heavy-tailed noise distribution, like a Laplace distribution),
+# MSE will be heavily influenced by these outliers because it squares the error, in this case L1 loss 
+# (Absolute Error), which corresponds to assuming Laplacian noise, is more robust to outliers.
+# also if our pixel values are truly probabilities or binary (0/1), a Gaussian assumption is fundamentally
+# mismatched. a Gaussian is unbounded, but our data is bounded. A Bernoulli (for binary) or Beta distribution
+# (for continuous [0,1] probabilities) would be more appropriate, which would lead to losses like BCE. 
+# Using MSE here forces the model to fit a Gaussian shape to data that isn't Gaussian, leading to
+# predictions outside the valid range (e.g. <0 or >1 if not clipped) and the blurriness we discussed 
+# (as it tries to find a "mean" for bimodal data)!
+#  
+# recap:
+# as we saw, the loss function dictates the gradients used for backpropagation.
+# in MSE the gradient is proportional to (x_i - μ_i) its a "linear" error response.
+# in BCE however, the gradient for p_i when x_i=1 is -1/p_i (if p_i is the sigmoid output) 
+# and it has a very steep gradient when p_i is small but x_i is 1 (i.e. confidently wrong)
+# These different gradient landscapes mean the model learns differently. A mismatched loss can
+# lead to slower convergence, instability, or suboptimal results because the "guidance" it gets 
+# from the loss isn't well aligned with the true data generation process.
+# 
+# in short, while MSE can be used as a simple, intuitive measure of difference, its deeper
+# justification comes from MLE with a Gaussian noise assumption. Understanding this helps us 
+# choose loss functions more deliberately based on the nature of our data and the probabilistic 
+# model we are trying to build. when the assumption holds, MSE is great. When it doesn't,
+# other loss functions derived from different distributional assumptions (like BCE from Bernoulli)
+# are often better.
+# 
+# 
+# we can see MSE being used with color images(especially in GANs), especially
+# the ones that are not normalized in 0-1 (they are either unbounded, or are normalized [-1,1] 
+# it produces smoother but sometimes blurrier reconstructions)
+# so MSE tends to work better for smooth images, while BCE works well when pixel values behave
+# like probabilities (high contrast regions, thresholded images, etc).
+# !EDIT 
+# (we used mse with cifar10 dataset and with images in range (0-1) so its not a hard requirement
+# though it might be a good idea to follow and get good result?!)
+
+
+#! add edits from the second part of explanations, where I talka bout posterior distribution(q(z|x)
+# to make the explanations here clearer for everyone.())
+############################
+    # recap2 (more technical explanation):
+    # our encoder(denoted as qθ(z∣x) (i.e. given this input data x, what is the
+    # probability distribution of the latent variable z (i.e. whats the mu,var)
+    # (note its in log form!but anyway lets carry on(add this as footnote))) 
+    # will return two vectors one for μ(mu) and another for standard deviation σ(sigma).
+    # using these two parameters, we sample our z representation vector(latent vector)
+    # which will be used by the decoder to reconstruct the input.
+    # 
+    # sidenote:
+    # you may see phrases such as "The lower-dimensional space is stochastic" or 
+    # "the latent representation is stochastic", these and similar phrases 
+    # simply refer to the fact that that the representation in the
+    # lower-dimensional space(z) is not deterministic or fixed as we already discussed
+    # instead, it involves randomness/uncertainty because its modeled probabilistically.
+    # our encoder doesnt directly output z it outputs the parameters of the probability
+    # distribution qθ(z∣x) which we then use to sample from to produce the latent vector z 
+    # hence the phrase stochastic, because sampling is involved and it changes each time
+    # (it changes each time even for the same input because we use a random variable along side thme!)
+    #
+    #
+    # new edit:
+    # The decoder (denoted as pϕ(x∣z)) will take a latent vector z,
+    # sampled using the mean (mu) and standard deviation (std) from the previous step (encoder's output).
+    # The decoder output is the parameters of the probability distribution of the reconstructed data.
+    # that is, the decoder outputs parameters (i.e. probabilities) for each pixel in the image.
+    # to make this more intuitive and easier to understand, consider the MNIST dataset
+    # as an example. MNIST images are grayscale(.i.e. balck and white), and each pixel
+    # is represented as a value between 0 and 1. 
+    # the probability distribution of a single pixel can then be modeled as a bernoulli
+    # distribution. (becasue we have two outcomes (its either 0 or 1))
+    # furthermore, MNIST images are 28x28x1, meaning each image has 784 pixels in total, which
+    # translates to an input dimensionality of 28x28x1 = 784.
+    # The decoder takes the latent representation z as input and ultimately outputs a vector 
+    # of size 784. This vector represents 784 bernoulli parameters, one for each pixel in the image.
+    # simply put, the decoder 'decodes' the numbers in vector z into 784 numbers between 0 
+    # and 1 in the output, where each number corresponds to the probability of a pixel being 
+    # "on" (1) or "off" (0).
+
+    # region sidenote:
+    # The information from the original input (784-dimensional vector in our case) can not be
+    # perfectly preserved, because the decoder only has access to a compressed summary of the
+    # original data represented as the lower-dimensional vector z.
+    # This lossy compression expectedly leads to some loss of details (depending on the amount
+    # of compression of course), as z is designed to only capture the most essential features 
+    # of the input and discard the less important/ less critical ones.
+    # Therefore the quality of this representation depends on how well the encoder-decoder
+    # pair is trained to balance reconstruction accuracy with the constraints of the 
+    # lower-dimensional space (i.e the right choice for the amount of compression (size of vector z,
+    # as too few parameters may very well be insufficient to yield the desired output)
+    # 
+    #! sidenote2:!Edit - excessive remove
+    # we can measure the quality of the reconstruction process and see how well
+    # our model is doing by using the log-likelihood logpϕ(x∣z), which quantifies how well
+    # the decoder has learned to map the latent representation z back to the original input x. (use latent vector z instead?)
+    # The units of logpϕ(x∣z) are nats(its measure of information content).
+    # Higher values mean the reconstructed data closely matches the original, signifying 
+    # the decoder is capturing the underlying structure of the data effectively.
+    # in the same fashion, the lower values imply more information is lost during
+    # the compression and reconstruction process.
+    # 
+    #!edit sidenote3:(too excessive ?)
+    # technically speaking, logpϕ(x∣z) measures how probable the original data x is under 
+    # the distribution parameterized by the decoder, given z.
+    # Higher log-likelihood means the decoder effectively captures the structure of 
+    # x from z while lower values indicates greater reconstruction loss.
+    # sidenote4:
+    # note that in this approach we assume the features in the latent space are independent, 
+    # that is, each dimension of z(each feature) contributes independently to the decoded 
+    # output. this way, we are effectively reducing our model complexity (i.e. the complexity
+    # of the relationships between features) and no more need to model complex
+    # relationships between each feature. this simplifies the whole process of sampling 
+    # and reconstruction as we will see in a moment)
+    # 
+    # it should be obvious/its a given that this assumption may not fully capture the true structure 
+    # of the data but its a practical trade-off we are willing to pay in order to have 
+    # much better computational efficiency in training the decoder.
+    # without this we have to face a huge computation burden and a complex sampling process. 
+    # 
+    # why do we need this simplification? 
+    # if we do not use this simplification we have to undertake heavy calculations and overhead!
+    # technically speaking, what we are doing here, is assuming a diagonal covariance matrix in
+    # a multivariate Gaussian distribution(that is features are independent of each other hence
+    # diagonal values and everything else is 0)
+    # 
+    # This assumption impacts both the computational costs involved and how sampling is done in 
+    # 2 major ways:
+    # First of all a full covariance matrix in an n-dimensional multivariate Gaussian distribution 
+    # has n^2 elements, because it includes both variances (n diagonal elements) and covariances 
+    # (n(n-1)/2 off-diagonal elements). 
+    # without the simplification, the encoder would need to estimate all n^2 parameters
+    # of the covariance matrix, which includes variances and covariances.
+    # however, with the simplification, only n parameters (the variances) need to be learned 
+    # because covariances are assumbed to be zeros.
+    # this dramatically reduces the number of parameters the model has to estimate, especially 
+    # for high dimensional data (take our simple MNIST example e.g. with latent dimensions n=50 vs n^2=2500 parameters and imagine
+    # what would be the cost for larger/more complex datasets).
+    # 
+    # moreover, the multivariate Gaussian's log-likelihood involves the inverse of the covariance matrix(i.e.the term 1/Sigma).
+    # computing the inverse of a `nxn` covariance matrix has a computational complexity 
+    # of O(n^3) while for our simplifed case (a diagonal covariance matrix), it is trivial,
+    # its just O(n) (we just need to take the reciprocal of each diagonal element).
+    # 
+    # second of all, and more importantly, sampling from a general multivariate Gaussian requires decomposing 
+    # the covariance matrix to generate correlated samples. this decomposition operation is also O(n^3).
+    # for our simplified case however, no decomposition is needed, as the features(dimensions) are independent. 
+    # sampling is also as simple as generating univariate Gaussian samples for each dimension,
+    # which is O(n).
+    # 
+    # sidenote:
+    # to be more specific, to generate a sample from a general multivariate Gaussian, 
+    # the covariance matrix Sigma is used to create correlations between dimensions.
+    # that is after generating uncorrelated Gaussian samples, they are transformed 
+    # into correlated samples using the decomposition result.
+    # 
+    # while for our simple case, since each dimension of z is modeled as an independent
+    # Gaussian distribution with its own mean mu_i and variance sigma_i^2 sampling is as simple as:
+    # generating a sample from N(mu_i, sigma_i^2) independently for each dimension i. 
+    # since theres no correlation between dimensions, no additional transformations 
+    # are needed.
+    # 
+    # Why is this useful in VAEs?
+    # so to cut a long story short, it boils down to learning fewer parameters and easier sampling.
+    # Its fewer parameters because (only mu and diagonal Sigma is used)(less work for forward/backward passes)
+    # moreover it avoids overfitting by simplifying the model, especially when working with limited data
+    # And its easier sampling because, the encoder predicts mu(mean vector) and sigma(standard deviation vector)
+    # from it, derived from diagonal variances) and sampling from N(mu, sigma) is done directly.
+    # 
+    # 
+    # sidenote:
+    # reminder univariate vs multivariate gaussian distribution 
+    # "multivariate" in multivariate gaussian distribution means the distribution
+    # involves more than one variable (or feature)
+    # it generalizes the concept of a univariate Gaussian distribution (which is a
+    # normal distribution with a single variable) to cases where there are 
+    # multiple variables that may or may not be correlated.
+    # in mathematical terms, a multivariate Gaussian distribution for n-dimensional
+    # data is defined by a mean vector and a covariance matrix(sigma).
+    # the mean vector (mu) is an n-dimensional vector, where each element represents
+    # the mean of one variable.
+    # the covariance matrix (Sigma) is an nxn matrix, where the diagonal elements (Sigma_{ii})
+    # represent the variance of each variable and the off-diagonal elements (Sigma_{ij}) 
+    # represent the covariance between pairs of variables.
+    # 
+    # a uivariate Gaussian distribution on the other hand, is simply a normal distribution 
+    # with a single variable.
+    # its defined by a single mu(mean) and a single sigma^2 (variance).(σ^2)
+    # while a multivariate Gaussian distribution is a distribution with two or more variables.
+    # and its defined by a mean 'vector' mu and a covariance 'matrix' Sigma.
+    # 
+    # for a multivariate Gaussian, the number of dimensions corresponds to the 
+    # number of variables/features. (that is for example, a 2D Gaussian involves
+    # two variables and has a 2x2 covariance matrix, a 3D Gaussian involves three 
+    # variables and has a 3x3 covariance matrix and so on)
+    # 
+    # moreover, The covariance matrix Sigma determines how the variables are correlated
+    # If Sigma is diagonal, the variables are uncorrelated (no covariance).
+    # If Sigma has non-zero off-diagonal elements, the variables are correlated.
+    # 
+    # The shape of the probability density function depends on the covariance matrix,
+    # in 2D, if the variables are uncorrelated (diagonal covariance matrix),
+    # the contours of the distribution are circular or elliptical.
+    # If the variables are correlated, the contours are tilted ellipses.
+    #
+    # Univariate Gaussian:A distribution of a single variable x.
+    # p(x) = (1/sqrt(2*pi*sigma^2))*exp(-((x-mu)^2)/(2*sigma^2))
+    # 
+    # Multivariate Gaussian (2D case):
+    # p(x) = (1/((2*pi)^(n/2)*|Sigma|^(1/2)))*exp(-0.5*(x-mu)^T * Sigma^(-1) * (x-mu))
+    # Here, x is a vector (e.g., [x1, x2]), mu is the mean vector (e.g., [mu1, mu2]),
+    # and Sigma is the covariance matrix.
+    # 
+    # recap:
+    # the term "multivariate" in "multivariate Gaussian distribution" means that the
+    # distribution models more than one variable.
+    # it describes both the individual behavior of each variable (via the mean vector mu)
+    # and their relationships (via the covariance matrix Sigma).
+    # 
+    # In simpler terms:
+    # in a typical multivariate Gaussian distribution, we would need to define both variances
+    # and covariances (how different features are related to each other).
+    # However, by assuming the features are independent (diagonal covariance matrix), we only
+    # need to define the variances of each feature, which simplifies the model significantly.
+    # The decoder samples from this simplified Gaussian distribution and uses the latent vector
+    # to generate a reconstruction of the input data.
+    # Why is this assumption useful?
+    # Using a diagonal covariance matrix (i.e. independent features)
+    # reduces the complexity of the model. We don't need to estimate the covariances between 
+    # features, which would require more parameters and computation.
+    # also assuming independence between features makes the latent space easier to interpret, 
+    # as each dimension of the latent vector corresponds to an independent
+    # variable.
+    # This assumption is common in practice, (especially in VAEs) because
+    # it allows for easier training and implementation while still capturing useful underlying 
+    # structure in the data.
+    #endregion 
+
+
+    # As we briefly pointed out before, this sampling process wont work as is, and it 
+    # requires a clever trick to work as expected.
+    # When training the model, we need to be able to calculate the relationship 
+    # of each parameter in the network with respect to the final output loss using backpropagation. 
+    # 
+    # However, we simply can not do this for a "random sampling process". (not that we cant, we absolutly can,
+    # but it doesnt calculate what we want! which is computing an estimate of the derivative!)
+    # this is where we have to use the previously mentioned trick, commonly known as reparametrization trick
+    # its selfexplanetory once you get the idea behind it:d,
+    # basically it says that we randomly sample ε from a unit Gaussian, and then shift the 
+    # randomly sampled ε by the latent distribution's mean μ and scale it by the 
+    # latent distribution's variance σ, which is effectively the same as using our initial mean and variance,
+    # with the exception now, that, the epsilon itself is treated as a mere input (identity) and wont need backprogapation
+    # (the same way you dont backpropagate to the input images) and the mu,variances will be treated as paramaters
+    # and will be correctly incorporated into the computational graph and backpropagated properly. hence the name re-parameter-ziation. got it?)
+    #
+    # With this reparameterization, we can now optimize the parameters of the distribution
+    # while still maintaining the ability to randomly sample from that distribution.
+    # as to why this doesnt give us the proper estimate, think of it as the difference betweeen
+    # stochastic gradient descent vs gradient decent, the stochastic part referts to the mini batches,
+    # instead of the full training set as one batch, which each of them(mini batches) give an estimate
+    # of the actual gradients, so if the estimate of these mini batches are not close, as we continue,
+    # we get further away from the actual direction of the changes and fail to converge.
+    # kingma argues in paper that, this is why this change, makes the model to have the right estimate
+    # for mu/variances (more on this later)
+
+##############################
+
+# !edit I should split them in separate parts because its got too large!
+# 
+
+
+# 
+#! edit add note to use BCE for reconstruction loss instead of MSE as it has better performance
+# especially for larger datasets
+#
+
+#! edit this, only use refs, because I have incorporated way more information now
+# it covers all the points discussed in these links if not more!
+# but they still are a great resource that I used myself, just tidy things up
+# I explained kingma and reprarmeterization trick so we dont really need it h ere agian!
+
 # read more  : https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
 # There are other resouces for this as well. its highly recommened to read them: 
 # https://www.jeremyjordan.me/variational-autoencoders/
 # https://jaan.io/what-is-variational-autoencoder-vae-tutorial/
-# https://www.youtube.com/watch?v=uaaqyVS9-rM
+# https://www.youtube.com/watch?v=uaaqyVS9-rM 
 # http://blog.shakirm.com/2015/10/machine-learning-trick-of-the-day-4-reparameterisation-tricks/
 # https://www.reddit.com/r/MLQuestions/comments/dl7mya/a_few_more_questions_about_vaes/
 
@@ -887,294 +2896,430 @@ for e in range(epochs):
 # for vision domain. i.e. on mnist dataset
 
 # note: 
-# For variational autoencoders, the encoder model is sometimes referred to as
-# the 'recognition model' whereas the decoder model is sometimes referred to as 
-# the 'generative model'.
+# in variational autoencoders, the encoder part is sometimes referred to as
+# the recognition part while the decoder part is referred to as the generative part/model.
 
 # if you havent read the links I gave you, go read them all. each single one of them
 # will help you grasp one aspect very good!
-#  
-# now lets define our VAE model . 
 
 
-class VAE(nn.Module):
-    
+# sidenote: a much clearer implementation which I wrote for pytorch examples repo at the time: 
+# https://github.com/Coderx7/examples/blob/vae-example-branch/vae/main.py
+# maybe not!
+#
+# 
+# read this https://deepai.org/machine-learning-glossary-and-terms/manifold-hypothesis 
+# before revising the whole thing. gives a very good picture of the whole thing imho
+# 
 
-    def conv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
-        return nn.Sequential(nn.Conv2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
-                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-                             nn.ReLU())
 
-    def deconv(self, in_dim, out_dim, k_size=3, stride=2, padding=1, batch_norm=True, bias=False):
-        return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, k_size, stride, padding, bias=bias),
-                             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
-                             nn.ReLU())
-    def __init__(self, embedding_size=100):
+# note : why do we really want the epsilon in reparameterization trick? 
+# what is the intuition behind it : https://youtu.be/9zKuYvjFFS8?t=415
+# read in depth technical reasons here :
+# all answers contain great explanations 
+# https://stats.stackexchange.com/questions/199605/how-does-the-reparameterization-trick-for-vaes-work-and-why-is-it-important
+# https://stats.stackexchange.com/questions/429315/why-is-reparameterization-trick-necessary-for-variational-autoencoders
+# https://stats.stackexchange.com/questions/342762/how-do-variational-auto-encoders-backprop-past-the-sampling-step/342815#342815
+# https://blog.neurallearningdymaics.com/2019/06/variational-autoencoders-1-motivation.html
+# http://ruishu.io/2018/03/14/vae/
+# 
+# reading this links up until now, you show have been convinced 
+# that we use reparameterization trick solely 
+# because otherwise we couldnt backprop to random node! 
+# this however is not the whole story!
+# from Kingma: 
+# This reparameterization is useful for our case since it can be used to rewrite an 
+# expectation w.r.t qϕ(z∣x) such that the Monte Carlo estimate of the expectation is 
+# differentiable w.r.t. ϕ. 
+# The issue is not that we cannot backprop through a “random node” in any technical sense. 
+# Rather, backproping would not compute an estimate of the derivative. 
+# Without the reparameterization trick, we have no guarantee that sampling large numbers of z
+# will help converge to the right estimate of ∇θ.(i.e. its there to avoid a very bad (high variance) estimate.))
+# 
+# read in more detail here: 
+# http://gregorygundersen.com/blog/2018/04/29/reparameterization/
+# if you want to know about expectation and what it is, this may help 
+# https://revisionmaths.com/advanced-level-maths-revision/statistics/expectation-and-variance)
+
+
+# now lets implement our VAE 
+
+# first lets define conv and deconv blocks,
+# we use two simple functions to this!
+
+def conv(in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False, act=nn.ReLU()):
+    return nn.Sequential(nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+                            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                            act)
+
+def deconv(in_dim, out_dim, kernel_size=3, stride=2, padding=1, act = nn.ReLU(), batch_norm=True, bias=False):
+    return nn.Sequential(nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+                            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                            # important note for the last layer there should be no relu
+                            # even if you put a sigmoid after the relu, it wont work!
+                            act)
+
+# a simplistic res module
+class conv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2)):
         super().__init__()
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
 
+    def forward(self, x):
+        out = self.conv_block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+class deconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
+        super().__init__()
+        self.deconv_block = nn.Sequential(
+            nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # nn.GroupNorm(1,out_dim) if batch_norm else nn.Identity(),
+            act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.deconv_block(x)
+        if self.residual_connection:
+            out += x  
+        return out
+
+# !edit remove or let it be as an impl note?
+# instead of deconv, for getting better result, it doesnt work for me! i keep getting cuda error
+# I guess its because of my choice of kernels! i need to get this to work!
+# class PixelShuffleBlock(nn.Module):
+#     def __init__(self, in_dim, out_dim, upscale_factor=2, act=nn.LeakyReLU(0.2), batch_norm=True):
+#         super().__init__()
+#         self.block = nn.Sequential(
+#             # for pixelshuffle to work, we multiply the outdim by upscalefactor
+#             # and then feed the result to pixelshuffle with the upscalefactor
+#             # it will rearange the channels,upsample the image with the original outdim
+#             # so the networks outputdim stays the same
+#             nn.Conv2d(in_dim, out_dim * (upscale_factor ** 2), kernel_size=3, padding=1),
+#             # use PixelShuffle to rearrange channels into spatial upsampling.
+#             nn.PixelShuffle(upscale_factor),
+#             nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+#             act
+#         )
+#         self.residual_connection = (in_dim == out_dim)
+#
+#     def forward(self, x):
+#         out = self.block(x)
+#         if self.residual_connection:
+#             out += x
+#         return out
+
+# since I might disable batchnorm for decoder, I enable bias by default
+# otherwise id leave it at false!
+class upconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, scale_factor=2, padding=1, 
+                 act=nn.LeakyReLU(0.2), batch_norm=True, bias=True):
+        super().__init__()
+        self.block = nn.Sequential(nn.Upsample(scale_factor=scale_factor, mode='nearest'),
+                                   nn.Conv2d(in_dim, out_dim, kernel_size, stride=1, padding=padding, bias=bias),
+                                   nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+                                   act)
+        # residual connection only makes sense when no spatial change is applied
+        self.residual_connection = (in_dim == out_dim and scale_factor == 1)
+
+    def forward(self, x):
+        out = self.block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+# the overall structure of the VAE is roughly the same it consits of an encoder section 
+# and a decoder section. lets implement them, well explain each part when implementing them
+class VAE(nn.Module):
+
+    def __init__(self, embedding_size=100, input_channels=1):
+        super().__init__()
         self.embedding_size = embedding_size
-        # our encoder will give two vectors one for μ and another for σ.
-        # using these two parameter, we sample our z representation vector
-        # which is used by the decoder to reconstruct the input. 
-        # So we can say that The encoder ‘encodes’ the data which is 784-dimensional
-        # into a latent (hidden) representation space z, which is much less than 784
-        # dimensions. This is typically referred to as a ‘bottleneck’ because the 
-        # encoder must learn an efficient compression of the data into this 
-        # lower-dimensional space. Let’s denote the encoder qθ(z∣x). 
-        # We note that the lower-dimensional space is stochastic: 
-        #>> the encoder outputs  parameters to qθ(z∣x), which is a Gaussian probability
-        #   density. 
-        # We can sample from this distribution to get noisy values of the 
-        # representations z .
+        # number of input channels
+        self.input_channels = input_channels
 
-        self.fc1 = nn.Linear(28*28, 512)
-        self.encoder = nn.Sequential(self.conv(3,768),
-                                     self.conv(768,512),
-                                     self.conv(512,256),
-                                     nn.MaxPool2d(2,2),#16
-                                     self.conv(256,128),
-                                     self.conv(128,64),
-                                     nn.MaxPool2d(2,2),#8
-                                     self.conv(64, 32),
-                                     nn.MaxPool2d(2,2),#4
-                                     self.conv(32, 16),
-                                     nn.MaxPool2d(2,2),#2x2
-                                     self.conv(16, 8),
-                                     nn.MaxPool2d(2,2),#1x1
-                                     )
-
-        self.fc1_mu = nn.Linear(8, self.embedding_size) # mean
+        self.encoder = nn.Sequential(conv(self.input_channels, 32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,128,stride=2),#3x3
+                                     conv(128,256,stride=2),#2x2
+                                     # note: its best not to shrink too much and at least 
+                                     # retain some spatial dimensions (like 2x2,4x4 (in some cases based on the network even 7x7 is good))
+                                     conv(256,self.embedding_size,stride=2,padding=1),#1x1
+                                     # nn.Linear(28*28, self.embedding_size)
+                                    )
+        
+        # 1x1 is the spatial dims of the output of the last encoder layer
+        # we can use an extra fc layer to get the flattened encoderoutput
+        # and use the 1d output of this extra fc layer and decouple them!
+        # but I simply didnt do that here!(i simply forgot when I was trying to get this to work initially!)
+        bottleneck_size = self.embedding_size*1*1 
+        # mean
+        self.fc1_mu = nn.Linear(bottleneck_size, self.embedding_size) 
         # we use log since we want to prevent getting negative variance
-        self.fc1_std = nn.Linear(8, self.embedding_size) #logvariance
+        #logvariance
+        self.fc1_logvar = nn.Linear(bottleneck_size, self.embedding_size) 
 
-        # our decoder will accept a randomly sampled vector using
-        # our mu and std. 
-        # The decoder is another neural net. Its input is the representation z,
-        # it outputs the parameters to the probability distribution of the data,
-        # and has weights and biases ϕ. The decoder is denoted by pϕ(x∣z). 
-        # Running with the handwritten digit example, let’s say the photos are 
-        # black and white and represent each pixel as 0 or 1. 
-        # The probability distribution of a single pixel can be then represented 
-        # using a Bernoulli distribution. The decoder gets as input the latent 
-        # representation of a digit z and outputs 784 Bernoulli parameters,
-        # one for each of the 784 pixels in the image. 
-        # The decoder ‘decodes’ the real-valued numbers in z into 784 real-valued 
-        # numbers between 0 and 1. Information from the original 784-dimensional 
-        # vector cannot be perfectly transmitted, because the decoder only has 
-        # access to a summary of the information 
-        # (in the form of a less-than-784-dimensional vector z). 
-        # How much information is lost? We measure this using the reconstruction 
-        # log-likelihood logpϕ(x∣z) whose units are nats. This measure tells us how 
-        # effectively the decoder has learned to reconstruct an input image x given
-        # its latent representation z.
-        self.decoder = nn.Sequential(nn.Linear(self.embedding_size, 8*1*1),
-                                    deconv(8, 768,kernel_size=4,stride=2),
-                                    deconv(768,512,kernel_size=4,stride=2),
-                                    deconv(512, 256 ,kernel_size=4,stride=2),
-                                    deconv(256,128,kernel_size=4,stride=2),
-                                    deconv(128,3,kernel_size=4,stride=2),
-                                    # deconv(64,32,kernel_size=4,stride=2),
-                                    # deconv(32,3,kernel_size=4,stride=2),
-                                    nn.Sigmoid())
-        # self.decoder = nn.Sequential( nn.Linear(self.embedding_size, 512), 
-        #                               nn.ReLU(),
-        #                               nn.Linear(512, 28*28),
-        #                               # in normal situations we wouldnt use sigmoid
-        #                               # but since we want our values to be in [0,1]
-        #                               # we use sigmoid. for loss we will then have  
-        #                               # to use, plain BCE (and specifically not BCEWithLogits)
-        #                               nn.Sigmoid())
-
-
-
-    # Rather than directly outputting values for the latent state as we would 
-    # in a standard autoencoder, the encoder model of a VAE will output 
-    # "parameters(mean μ,variance σ) describing a distribution for each dimension in 
-    # the latent space". 
-    # Since we're assuming that our prior follows a normal distribution, we'll output
-    # two vectors describing the mean and variance of the latent state distributions.
-    # If we were to build a true multivariate Gaussian model, we'd need to define a
-    # covariance matrix describing how each of the dimensions are correlated. 
-    # However, we'll make a simplifying assumption that our covariance matrix only 
-    # has nonzero values on the diagonal, allowing us to describe this information 
-    # in a simple vector.
-    # Our decoder model will then generate a latent vector by sampling from these
-    # defined distributions and proceed to develop a reconstruction of the original
-    # input.
-    # However, this sampling process requires some extra attention. When training 
-    # the model, we need to be able to calculate the relationship of each parameter 
-    # in the network with respect to the final output loss using backpropagation. 
-    # However, we simply cannot do this for a "random sampling process". Fortunately,
-    # we can leverage a clever idea known as the "reparameterization trick" which 
-    # suggests that we randomly sample ε from a unit Gaussian, and then shift the 
-    # randomly sampled ε by the latent distribution's mean μ and scale it by the 
-    # latent distribution's variance σ.
-    # With this reparameterization, we can now optimize the parameters of the distribution
-    # while still maintaining the ability to randomly sample from that distribution.
-    # Note: In order to deal with the fact that the network may learn negative values
-    # for σ, we'll typically have the network learn log(σ) and exponentiate(exp)) this value 
-    # to get the latent distribution's variance.
+        #!
+        # we can use dropout/bn to have better training!
+        # sidenote: 
+        # if we start our decoder with a linear layer,
+        # we need to note 2 things:
+        #1. preferably do not shrink too much in decoder, 
+        # like at least retain some spatial dimension (like 4x4)
+        # if we didnt, then in the decoder start with a larger spatial dim
+        # we add the desired spatial dim in form of multiplication 
+        # like (nn.Linear(self.embedding_size, 128*4*4)) 4*4 being the spatial dims
+        # (and is a good choice usually dont go smaller unless you know what youre doing)
+        # next we need to reshape the output properly so the next deconv layers get the
+        # proper input.
+        # we can do this in several ways, but one way would be to do this in forwardpass in
+        # feed the flattened z from encoder to the first layer of decoder (Which is our linear layer)
+        # and then reshape it so the z has the proper 4d shape
+        # z = self.decoder[0](z).reshape(input.size(0),-1,1,1)
+        # then feed the new z to the rest of the layers
+        # reconstructed_img = self.decoder[1:](z)
+        # which is not ideal so we use a simple deconv layer!
+        # so instead we simply use nn.UnFlatten() which makes our lives much easier!
+        # we needed to reshape to deconv layer had proper 4d input tensor
+        # sidenote 2: 
+        # during upsampling stage, we can use different kernel sizes ranging from 
+        # 2 and up. larger kernels can capture more spatial information 
+        # but may introduce artifacts, 
+        # upsampling from very small spatial dimensions (like 1x1) can also result 
+        # in visible artifacts in the reconstructed image. and might lead to 
+        # blurry outputs unless carefully tuned so keep this in mind!
+        # sidenote3 :
+        # to calculate the deconvs output at each stage we use this formula
+        # h is the input dimension (in our case is 2 (our input is 2x2))
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # (h=1,k=4,s=2,p=1) 1-1*2+4-2*1)=2/
+        # (h=2,k=4,s=2,p=1) 2-1*2+4-2*1)=4/
+        # (h=4,k=4,s=2,p=1) 4-1*2+4-2*1=8/ 
+        # (h=8,k=2,s=2,p=1) 8-1*2+2-2*1=14/ 
+        # (h=14,k=4,s=2,p=1)14-1*2+4-2*1=28/ 
+        self.decoder = nn.Sequential(nn.Linear(self.embedding_size, 256*1*1),
+                                     nn.ReLU(),
+                                    #  nn.Dropout(0.1),
+                                     nn.Unflatten(1,(256,1,1)),
+                                     deconv(256,256,kernel_size=4),#2
+                                    #  nn.Dropout(0.05),
+                                     deconv(256,128,kernel_size=4),#4
+                                    #  nn.Dropout(0.01),
+                                     deconv(128,64,kernel_size=4),#8
+                                     deconv(64,32,kernel_size=2),#14
+                                     # remember we dont use batchnorm at the last later
+                                     # beacuse it will destroy the image by trying to normalize it!
+                                     # more importantly dont use relu! even though you use a sigmoid at the end
+                                     # it will prevent the loss to go down. 
+                                     # this simple mistake took a lot of my time! because
+                                     # I simply forgot to check deconv!
+                                     deconv(32,self.input_channels,kernel_size=4,batch_norm=False,act=nn.Sigmoid()),#28
+                                     # in normal situations we wouldnt use sigmoid
+                                     # but since we want our values to be in [0,1]
+                                     # we use sigmoid. for loss we will then have  
+                                     # to use, plain BCE (and specifically not BCEWithLogits)
+                                    #  nn.Sigmoid()
+                                    )
+    
+    # Note: (I used latex-input extension for vscode to have somewhat better formatting)
+    # ! edit use this instead of the old one
+    # new updated explanation 
+    # variance(σ^2) must always be positive because it represents squared differences!
+    # our network can learn negative values for σ if we directly try to predict it
+    # without any constraints. so we make the network learn the logvariance(log(σ²))
+    # instead and exponentiate it (exp) to get back the actual latent distribution's
+    # variance.
+    # torch.exp() converts logvar(log(variance) which our network produces) back to
+    # variance (sigma^2) but we want standard deviation not variance! so we have a 
+    # multiplication by 0.5 and then exponentiation (the multiplication by 0.5 before exponentiation is key)
+    # this is equivalent to computing the square root of the variance (its 
+    # as if we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
+    # remember log(a^b) = b.log(a) so log(√𝜎²)=log((𝜎²)^0.5)=0.5.log⁡(𝜎^2)
+    # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
+    # so it becomes standard deviation.
+    # moreover, variance (also standard deviation) can take very small or large values, 
+    # that can lead to overflow or underflow in floating-point computations, therefore
+    # representing it as log⁡(σ^2) is to avoid that issue!
+    # 
+    # sidenote2:
+    # the standard deviation represents the 'scale' of the distribution in the same
+    # units as the data (z = μ+σ⋅ϵ, ϵ∼N(0,I)) while the variance represents the overall
+    # spread of the distribution.
+    # For sampling we use the standard deviation (σ) not variance(σ^2)!,because multiplying
+    # by variance (σ^2) wouldn't make sense dimensionally and it would lead to an incorrect 
+    # scaling.
+        
+    # old explanation:
+    # In order to deal with the fact that the network could also learn negative values
+    # for σ(if we directly tried to predict σ without constraints), we'll have the 
+    # network learn log(σ^2) and exponentiate(exp) it to get the latent distribution's
+    # variance!
     def reparamtrization_trick(self, mu, logvar):
-        # note : why do we really want the epsilon? 
-        # what is the intuition behind it : 
-        # watch this : https://youtu.be/9zKuYvjFFS8?t=415
-        # we divide by two because we are eliminating the negative values
-        # and we only care about the absolute possible deviance from standard.
-        # read in depth technical reasons here : 
-        # all answers contain great explanations 
-        # https://stats.stackexchange.com/questions/199605/how-does-the-reparameterization-trick-for-vaes-work-and-why-is-it-important
-        # https://stats.stackexchange.com/questions/429315/why-is-reparameterization-trick-necessary-for-variational-autoencoders
-        # https://stats.stackexchange.com/questions/342762/how-do-variational-auto-encoders-backprop-past-the-sampling-step/342815#342815
-        # https://blog.neurallearningdymaics.com/2019/06/variational-autoencoders-1-motivation.html
-        # http://ruishu.io/2018/03/14/vae/
-        # up until now, you show have been convinced that we use reparameterization trick solely 
-        # because otherwise we couldnt backprop to random node! this however is not the whole story!
-        # Kingma: This reparameterization is useful for our case since it can be used to rewrite an 
-        # expectation w.r.t qϕ(z∣x) such that the Monte Carlo estimate of the expectation is 
-        # differentiable w.r.t. ϕ.
-        # The issue is not that we cannot backprop through a “random node” in any technical sense. 
-        # Rather, backproping would not compute an estimate of the derivative. 
-        # Without the reparameterization trick, we have no guarantee that sampling large numbers of z
-        # will help converge to the right estimate of ∇θ.
-        # read in more detail here: 
-        # http://gregorygundersen.com/blog/2018/04/29/reparameterization/
-        # if you want to know about expectation and what it is, this may help 
-        # https://revisionmaths.com/advanced-level-maths-revision/statistics/expectation-and-variance)
+        # !edit combine them in one paragraph, we have too many sidenotes that we can 
+        # !incorporate into the actual text I guess! 
+        # torch.exp() converts logvar(log(variance) which our network produces) back to
+        # variance (sigma^2) but note that here, we have the multiplication by 0.5 and
+        # then exponentiation(the multiplication by 0.5 before exponentiation is key)
+        # this is equivalent to computing the square root of the variance (its 
+        # asif we wrote exp(0.5*log(σ^2))) which gives us back the standard deviation
+        # remember log(a^b) = b.log(a) so log(√𝜎^2)=log((𝜎^2)^0.5)=0.5.log⁡(𝜎^2)
+        # since we have logvar and not var, we simply exponantiate it with 0.5 multiplied
+        # so it becomes standard deviation.
+        # 
+        # sidenote:
+        # variance(σ^2) must always be positive because it represents squared differences!
+        # we dont directly optimize variance (σ^2) or standard deviation (σ) instead we 
+        # work with log(σ^2) (logvar). 
+        # we do this to to make sure the computed variance (σ^2=exp(logvar)) is always 
+        # positive even if logvar takes negative values. (exp() returns positive)
+        # moreover, variance (also standard deviation) can take very small or large values, 
+        # that can lead to overflow or underflow in floating-point computations, therefore
+        # we represent it as log⁡(σ^2) to avoid that issue!
+        # 
+        # sidenote2:
+        # the standard deviation represents the 'scale' of the distribution in the same
+        # units as the data (z = μ+σ⋅ϵ, ϵ∼N(0,I)).
+        # note here for sampling we use the standard deviation (σ) not variance(σ^2)!
+        # because multiplying by variance (σ^2) wouldn't make sense dimensionally
+        # and it would lead to an incorrect scaling.
+        # we use variance (σ^2) in the KL divergence term(in our loss) during optimization though
+        # (when representing the overall spread of a distribution).
+        #
         std = torch.exp(0.5*logvar)
         # epsilon sampled from normal distribution with N(0,1)
+        # we use epsilon so we put the stochasity/randomness in the epslilon itself
+        # so we dont need to calculte gradient for it, we treat it as an input and
+        # this way only optimize mu/std parameters
         eps = torch.randn_like(std)
         # How to sample from a normal distribution with known mean and variance?
         # https://stats.stackexchange.com/questions/16334/ 
-        # (tldr: just add the mu , multiply by the var) . 
-        # why we use an epsilon, ? 
-        # you should know by now, if not read the former links I provided.
-        # basically there are 2 main explanations, the first one (Which is not true) is
-        # because without it, backprop wouldnt work.
-        # for  the random part we sample from normal distribution N(0,1)
+        # (tldr: just add the mu , multiply by the standard deviation std) . 
+        
+        # !edit old explanation, already explained before, remove it
+        # why we use an epsilon?
+        # you should know by now, if not read the former explanations.
+        # basically there are 2 main explanations, the first one (Which is not accurate) is
+        # because without it, backprop wouldnt work atall, its impossible to backprop!(which 
+        # is not really accurate, its possible and it works, but with a caveat!).
+        # for the random part we sample from normal distribution N(0,1)
         # and treat this as a mere input. (like the images that are input and we dont 
         # calculate the gradients for) 
         # we then shift this new sample with the mean and std we have and effectively
         # reach the very same result. that is we add our mu and scale it by std 
         # (since our eps has 0 mean and std 1, adding it with mu, and scaling it by std
-        # will make it N(mum std) which is what we want. our expression also now can be
+        # will make it N(mu, std^2) which is what we want. our expression also now can be
         # easily backpropagated. 
-        # also you need to know that, it is also said this reparameterization trick is only done for 
-        # numerical stability and actually  the basic way can be done as well! 
-        # and finally, the actual reason was given above, we actually do this to guarantee the right estimate 
-        # of ∇θ. without this, we have no guarantee that sampling large numbers of z, will help convertence
-        # to the right estimates of ∇θ.
+        # also you need to know that, it is also said this reparameterization trick 
+        # is only done for numerical stability and actually the basic way can be done as well!
+        # and finally, the actual reason was given above, we actually do this to guarantee 
+        # the right estimate of ∇θ. without this, we have no guarantee that sampling large 
+        # numbers of z, will help convertence to the right estimates of ∇θ.(think about 
+        # stochastic gradident decent vs gradient decent and how the former gives us an estimate
+        # for the latter (a good estimate) and if it fails to do so,it would no more represent
+        # the gradient decent/the actual gradient.)
+        
+        #update: June 2025!
+        # it seems my explanation is not prefectly correct and this is more about lowering the
+        # estimates variance. basically the reparameterization trick provides us a lower-variance
+        # estimator for the gradient ∇θ E_q(z|x) [log p(x|z)] compared to score function estimators.
+        # this leads to a more stable and efficient training.
+        # 
+        # now what does all of that mean?  
+        # lets get an intuitive insight about all of this. 
+        # imagine we are trying to figure out the best way to adjust the knobs(i.e. parameters θ) 
+        # on a complex machine (our VAE model) to make it produce good results. 
+        # The "good results" part involves a bit of randomness (z from q(z|x)) and how well the 
+        # machine can reconstruct the input given that random element (log p(x|z)).
+        # 
+        # Now we have 3 terms to explain, the ∇θ E_q(z|x) [log p(x|z)], the estimator and variance of 
+        # the estimator
+        # ∇θ E_q(z|x) [log p(x|z)]: This is the "true direction" we want to turn our knobs to. 
+        # It's an average (E_q(z|x)) of how good the reconstruction (log p(x|z)) is over all possible
+        # random choices (z), and how our knobs (θ) affect this average.
+        # 
+        # Estimator: we can't try all possible random choices z, that's infinite! So, we take a few 
+        # samples of z and calculate an estimate of that true direction.
+        # 
+        # Variance of the estimator: How much does our estimated direction jump around each time we 
+        # take a new set of random samples for z? 
+        # We have two types of estimators, high variance Estimators like score function estimators
+        # and low variance estimators like reparametrization trick.  
+        # For high variance estimator, imagine trying to aim a cannon, but the cannonball's launch 
+        # direction is slightly random each time we try to calculate the aim. So, one estimate tells
+        # us to aim "a bit left," the next "way right," the next "slightly up-left". 
+        # The estimates are all over the place it's hard to get a reliable sense of the true target
+        # This is what score function estimators can be like they work, but the gradient signals are
+        # very noisy.
+        #!edit pick one explanation
+        # For low variance estimator (e.g. reparameterization trick), imagine now we've stabilized
+        # the cannon's launch mechanism the randomness is still there (it's essential for the VAE), 
+        # but it's introduced in a cleaner way. (or imagine now the cannon itself is stable, but the way
+        # we incorporate necessary randomness (like wind, which is essential but we account for it 
+        # differently) is much smarter).
+        # now, when we estimate our aim, the estimates are much more consistent: "a bit left", 
+        # "a tiny bit left", "just a smidge left", They are clustered much more tightly this is what
+        # the reparameterization trick gives us.
+        # 
+        # now why is low variance better? and how does each affect our training?
+        # in the high variance case, if our gradient estimates are very noisy, our training process
+        # will be like a drunken walk. we will take big steps in random-ish directions. we might 
+        # overshoot the optimal settings, then undershoot, and it will take a long time to settle down,
+        # if it ever does properly.
+        # in the low variance case, with more consistent gradient estimates, our training steps are more 
+        # reliable and direct. we are taking steadier steps towards the best knob settings. 
+        # The training process is smoother and less likely to get stuck or oscillate wildly.
+        # 
+        # how does that result in training efficiancy?
+        # in high variance case, to compensate for the noisy estimates, we often need to use very small
+        # learning rates (tiny steps) or average over many, many samples of z for each update, 
+        # which makes training slow.
+        # in the low variance case, because each gradient estimate is more reliable, we can often use
+        # larger learning rates or fewer samples of z per update, making the whole training process
+        # faster.
+        #
         return mu + eps*std
     # 
     def encode(self, input):
-        # input = input.view(input.size(0), -1)
-        # output = F.relu(self.fc1(input))
-        output = self.encoder(input)
-        # we dont use activations here
+        output = self.encoder(input).view(input.size(0),-1)
+        # note we dont use activations for mu/std
         mu = self.fc1_mu(output)
-        log_var = self.fc1_std(output)
-
-        # In its original form, VAEs sample from a random node z which is 
-        # approximated by the parametric model q(z∣ϕ,x) of the true posterior.
-        # Backprop cannot flow through a random node. Introducing a new parameter 
-        # ϵ allows us to reparameterize z in a way that allows backprop to flow 
-        # through the deterministic nodes. this is called reparamerization trick
+        log_var = self.fc1_logvar(output)
         z = self.reparamtrization_trick(mu, log_var)
         return z, mu, log_var
 
     def forward(self, input):
-        
-        # our encoder recieves the input and produces two vectors
-        # mean and std. a normal autoencoder, creates a set of atttibutes
-        # in its representation vectot(e.g attributes or features describing
-        # concepts such as, eye, smile, beard, gender, has glasses etc) in 
-        # an input image of faces. so in other words, An ideal autoencoder 
-        # will learn descriptive attributes of faces such as skin color, 
-        # whether or not the person is wearing glasses, is female, etc. in
-        # an attempt to describe an observation(input image) in some compressed representation.
-        # for example a vector could be like (gender:-0.73, smile:0.99, glasses: 0.002, etc )
-        # In the example above, we've described the input image in terms of its latent 
-        # attributes using a 'single value' to describe each attribute. 
-        # However, we may prefer to represent each latent attribute as a 'range of possible values'.
-        # For instance, what 'single value' would you assign for the smile attribute if you feed
-        # in a photo of the Mona Lisa? Using a variational autoencoder, 
-        # we can describe latent attributes in probabilistic terms.
-        # the mean and variance that we produce here, is used exactly for this very reason
-        # using them, we are learning a distrubution for each attribute and thus mu and variance
-        # specify a range of values for each attribute.
-        # [With this approach, we'll now represent each latent attribute for a given input 
-        # as a probability distribution. When decoding from the latent state, we'll randomly
-        # sample from each latent state distribution to generate a vector as input for our decoder.]
-        # thats why later on, we use these means, variances along with an epsilon(act as a random variable)
-        # to reconstruct the input image. 
-        # So By constructing our encoder model to output a range of possible values 
-        # (a statistical distribution) from which we'll randomly sample to feed into our decoder
-        # , we're essentially enforcing a continuous, smooth latent space representation.
-        # For any sampling of the latent distributions, we're expecting our decoder 
-        # to be able to accurately reconstruct the input. 
-        # Thus, values which are nearby to one another in latent space should correspond
-        # with very similar reconstructions.
-        # Intuitively, the mean vector controls where the encoding of an input should be 
-        # centered around, while the standard deviation controls the “area”, how much from 
-        # the mean the encoding can vary. As encodings are generated at random from anywhere
-        # inside the “circle” (the distribution), the decoder learns that not only is a
-        #  single point in latent space referring to a sample of that class, 
-        # but all nearby points refer to the same as well. 
-        # This allows the decoder to not just decode single, specific encodings in the 
-        # latent space (leaving the decodable latent space discontinuous), but ones that 
-        # slightly vary too, as the decoder is exposed to a range of variations of the
-        # encoding of the same input during training. 
-        # The model is now exposed to a certain degree of local variation by varying the 
-        # encoding of one sample, resulting in smooth latent spaces on a local scale, that is,
-        # for similar samples. Ideally, we want overlap between samples that are not very 
-        # similar too, in order to interpolate between classes. 
-        # However, since there are no limits on what values vectors μ and σ can take on,
-        # the encoder can learn to generate very different μ for different classes, 
-        # clustering them apart, and minimize σ, making sure the encodings themselves don’t
-        # vary much for the same sample (that is, less uncertainty for the decoder). 
-        # This allows the decoder to efficiently reconstruct the training data.
-        # What we ideally want are encodings, all of which are as close as possible to each
-        # other while still being distinct, allowing smooth interpolation, and enabling the
-        # construction of new samples.
-        # In order to force this, we introduce the Kullback–Leibler divergence 
-        # (KL divergence[2]) into the loss function. The KL divergence between two probability
-        # distributions simply measures how much they diverge from each other. 
-        # Minimizing the KL divergence here means optimizing the probability distribution
-        # parameters (μ and σ) to closely resemble that of the target distribution.
-        # Intuitively, this loss encourages the encoder to distribute all encodings 
-        # (for all types of inputs, eg. all MNIST numbers), evenly around the center 
-        # of the latent space. If it tries to “cheat” by clustering them apart into 
-        # specific regions, away from the origin, it will be penalized.
-        # Now, using purely KL loss results in a latent space results in encodings densely 
-        # placed randomly, near the center of the latent space, with little regard for 
-        # similarity among nearby encodings. The decoder finds it impossible to decode 
-        # anything meaningful from this space, simply because there really isn’t any meaning.
-        # Optimizing the two together, however, results in the generation of a latent space
-        # which maintains the similarity of nearby encodings on the local scale via clustering,
-        # yet globally, is very densely packed near the latent space origin 
-        # (compare the axes with the original).
-        # Intuitively, this is the equilibrium reached by the cluster-forming nature of the
-        # reconstruction loss, and the dense packing nature of the KL loss, forming distinct
-        # clusters the decoder can decode. This is great, as it means when randomly generating,
-        # if you sample a vector from the same prior distribution of the encoded vectors, N(0, I), 
-        # the decoder will successfully decode it. And if you’re interpolating, there are 
-        # no sudden gaps between clusters, but a smooth mix of features a decoder can understand.
         z, mu, logvar = self.encode(input)
-        # decoder 
         reconstructed_img = self.decoder(z)
+        # print(f'{reconstructed_img.shape=}')
         return reconstructed_img, mu, logvar
 
-# Note :
-# In my experience working on the VAE, the KL annealer helps to train the model.
-# To be more specific, when training your encoder and decoders right off the 
-# bat variationally (KL-term constant) can lead to a lot of instability while 
-# training. So a good first step is to train them as a AE and at some moment 
-# slowly switch on the KL term. It allows the model to arrive to a 'decent' 
-# spot (trained as AE) before going VAE. A similar pattern lies with ORGAN, 
-# you need to train pre-train your generators so that they are in a decent 
-# spot before competing with the discriminator. There are many ways of doing
-# this, most are just engineering, hence MOSES's approach also works.
-# For the original VAE i think around epoch 30 we start the KL annealing.
+# test the vae and the output shape, making sure 
+# we didnt mess sth up in encoder/decoder
+input_channels=1
+model = VAE(embedding_size=100, input_channels=input_channels)
+img_re, _,_ = model(torch.randn(size=(5,input_channels,28,28)))
+print(f'{img_re.shape=}')
 
+# Note :
+# for proper training, dont incorporate kl term at the begining. 
+# first train with the reconstruction loss, and then gradually introduce the kl term
+# this should allow the model to arrive at a decent spot! otherwise it wont work properly
+# (except maybe somehow account for the scale of the kl term, which if you do add a scaler 
+# term, would essentially become a disentangled vae which is an improvement over the
+# this (vanilla) version, but would still face some issues such as posterior collapse.
+# we'll explain this in amoment, but before that, lets keep this simple for now.
 
 # Also read : https://github.com/jxhe/vae-lagging-encoder
 # The code seperates optimization of encoder and decoder in VAE, and performs 
@@ -1183,17 +3328,25 @@ class VAE(nn.Module):
 # model, without changing model components and training objective.
 
 # for calculating loss, we can have several options 
-# 1. use mse for reconstruction loss 
-# 2. use BCE for reconstruction loss   
+# 1. use mse for reconstruction loss
+# 2. use BCE for reconstruction loss
 # when using bce we have two options, we can use reduce='sum'
-# or we can use reduce='mean'. 
+# or we can use reduce='mean'.
 # if we want to use BCE with reduce='sum' we only calculate the kl
 # with sum. but when we want to use BCE with reduce='mean' or mse
-# we use sume(,-1) and then use torch.mean(loss_recons+kl)
+# we use sum(,-1) and then use loss_recons+torch.mean(kl)
 # we also need to normalize our reconstruction loss by the input dim
-# ension size. 
-
-def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False):
+# ension size.
+#!edit lets not use beta here and show how hard it can get to train a vae,
+# and later on we introduce beta and other techniques to fight the issues?
+# sidenote:
+# beta is usually discussed when we talk about β-VAE to control the influence
+# of KL divergence.we'll be discussing it later. the original VAE assumes beta=1, 
+# but using a tunable beta as a weighting mechanism can help balance 
+# our loss (the reconstruction term vs kl regularization term) I removed it from 
+# this part but we'll cover it in detail up ahead shortly.
+def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = False, normalize=True):
+    outputs = outputs.view(*inputs.shape)
     if reduction == 'sum':
         criterion = nn.BCELoss(reduction='sum')
         reconstruction_loss = criterion(outputs, inputs)
@@ -1201,93 +3354,219 @@ def loss_function(outputs, inputs, mu, logvar, reduction ='mean', use_mse = Fals
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
         # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return reconstruction_loss + KL
+        # since we are using sum as reduction for our reconstruction loss (all samples loss sum)
+        # our kl loss needs to be summed over all dimensions and all batch 
+        # which gievs us a single scalar value.
+        # the bad thing is, since its summed over batch, the batchsize affects the training
+        # we need to use different lr for different batchsizes
+        # because the gradients also scale with the batchsize, 
+        # therefore learning rate needs to be ajusted accordingly)
+        # also this means more instability as its harder to balance the two terms like this
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return reconstruction_loss + kl_loss
     else:
-        if use_mse:
-            criterion = nn.MSELoss()
-        else: 
-            criterion = nn.BCELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
         reconstruction_loss = criterion(outputs, inputs)
-        # normalize reconstruction loss
-        reconstruction_loss *= 28*28
-        KL = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        return torch.mean(reconstruction_loss + KL)
-
-
+        # here for the kl loss we only sum over the latent dimensions,
+        # this gives us a single loss for each sample, 
+        # we need to take the mean of the whole batch and this makes it independent of 
+        # the batchsize and should give us a more stable loss, this is more aligned with
+        # our reconstruction loss which we do the same thing (take the mean of the whole batch (i.e. reduction=mean))
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+        # we also need to normalize the reconstruction/kl loss otherwise kl will overpower it!
+        # and we would get nonsens as output, (since the image is averaged pixelwise, but
+        # kl is summed for each sample its not balanced properly)
+        # we need to either divide kl loss by the image dimensions, 
+        # or multiply reconstruction loss by the image dimensions to scale it up a bit
+        # todo use input dims instead of hardcoded dims
+        # scaler = 28*28 if normalize else 1
+        _,h,w,c = inputs.shape
+        scaler = h*w*c if normalize else 1
+        # note since we sumed over the latent dimension, we will have batchsize of losses
+        # which we need to average to get a single loss value
+        # this is a bit more stable than our previous version, but it will still be hard
+        # to train properly, we will see in a moment how that goes. to fix it, a quick way
+        # would be to use the beta variant, which we will cover shortly.
+        return scaler*reconstruction_loss + kl_loss.mean()
 #%%
+#
 # I set this option to see the full stack-trace when a weird error occurs
 # its good practice to get accustomed to the debugging/profiing facilities provided
 # by pytorch, I might dedicate a separate section for this later on
 # torch.autograd.set_detect_anomaly(True)
 # torch.set_printoptions(profile='full')
-#%%
+#
 # now lets train :
+# mnist dataset is a very simple dataset, and using embsize=2 we get good results right of the bat
+# but this is not the case all the time, if we use more complex datasets, we quickly see 
+# no matter how much we try we dont get good results with this implementation, its expected, 
+# (as the original vae came in 2013(https://arxiv.org/pdf/1312.6114) and was only used on two
+# datasets mnist and frey face dataset both of which are grayscale and very simple datasets.)
+# but for now, lets not get ahead of ourselves, and stick to mnist for now, just try 
+# different embeddingsize and hyperparamters to see how far you can get. even with mnist
+# we will be facing issues here, we'll be discussing the issues we face here shortly and fix them all
+# I also added cifar10 example (we made our model so it can handle both 1 and 3 input channels
+# I just resized cifar10 so the changes is minimal here ))
 epochs = 50
-dataset_train = datasets.CIFAR10('cifar10', train=True, download=True,transform=transforms.ToTensor())
-dataset_test = datasets.CIFAR10('cifar10', train=False, download=True,transform=transforms.ToTensor())
 
+dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True,transform=tf.ToTensor())
+dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True,transform=tf.ToTensor())
+
+## uncomment these lines to test with cifar10 
+## (only do this after you ave experimented with mnist)
+# transformations = tf.Compose([tf.Resize(28), tf.ToTensor()])
+# dataset_train = datasets.CIFAR10('CIFAR10', train=True, download=True,transform=transformations)
+# dataset_test = datasets.CIFAR10('CIFAR10', train=False, download=True,transform=transformations)
+
+#TODO
+# display the manifold for encoder encodings during training and make a gif out of it?
 dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=128,shuffle=True)
 dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=128,shuffle=False)
 
-embeddingsize = 2
+# imgs, lbls = next(iter(dataloader_train))
+# print(f'{imgs.shape=}')
+# make sure the images are in range(0,1)
+# print(f'range = ({imgs.min()},{imgs.max()})')
+
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_channel = 1 if isinstance(dataset_train,datasets.MNIST) else 3
+embedding_size = 2#2,10
+reduction='mean'#mean
+# to see how it affects our result, when using using reduction='mean'
+# set normalization to False, without normalization we wont learn 
+# anything meaningful! (reduction='sum' doesnt use normalization)
+normalize = True #False
+# whether to use mse instead of bce in our loss
+use_mse = False
 interval = 2000
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = VAE(embeddingsize).to(device)
-reduction='mean'
-optimizer = torch.optim.Adam(model.parameters(), lr =0.001)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 50)
+print(f'Done!')
+#%%
+model = VAE(embedding_size, input_channel).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr =0.01,weight_decay=1e-4)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [5,10,25,45,50])
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+checkpoint_path = f"./weights/vae/vae1_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+ensure_directory_exists(checkpoint_path)
+
+print(f'Training date:   {datetime.datetime.now().strftime("%Y_%m_%d, %H:%M:%S")}')
+print(f'Checkpoint path: {checkpoint_path}')
+print(f'Input channel:   {input_channel}')
+print(f'Embedding size:  {embedding_size}')
+print(f'Reduction:       {reduction}')
+print(f'Normalize:       {normalize}')
+print(f'Use MSE:         {use_mse}')
+print(f'Device:          {device}')
 
 for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
-
-        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=False)
-        
+        loss = loss_function(preds, imgs, mu, logvar, reduction=reduction, use_mse=use_mse, normalize=normalize)
         optimizer.zero_grad()
         loss.backward()
-        optimizer.step() 
+        optimizer.step()
         if i% interval ==0:
-            loss = loss/len(img) if reduction=='sum' else loss
             print(f'epoch {e}/{epochs} [{i*len(imgs)}/{len(dataloader_train.dataset)} ({100.*i/len(dataloader_train):.2f}%)]'
                   f'\tloss: {loss.item():.4f}'
-                  f'\tlr: {scheduler.get_lr()}')
+                  f'\tlr: {scheduler.get_lr()[-1]}')
     scheduler.step()
-
-#%% 
-# save the model
+# save the final model
 torch.save({"states":model.state_dict(),
+            "epochs":epochs,
             "embedding_size":model.embedding_size,
+            "reduction":reduction,
+            "normalize":normalize,
+            "use_mse":use_mse,
             "optimizer":optimizer.state_dict(),
             "scheduler":scheduler.state_dict()},
-            f"vae_{model.embedding_size}_mean_bce.pth")
+            checkpoint_path)
 print('model saved!')
-#%%
-# load the model 
-states = torch.load(f"vae_{model.embedding_size}_mean_bce.pth")
+print(f'Training is complete!')
+
+#%% load from checkpoint
+weight_filename = checkpoint_path
+# weight_filename = './weights/vae/vae1_2_mean_normalized_bce_20250601_200757.pth'
+embd_sz, reduction, normalization, loss,*_ = weight_filename.split("_")[1:]
+states = torch.load(weight_filename)
+
+embedding_size = states.pop("embedding_size", embd_sz)
+reduction = states.pop("reduction", reduction)
+normalize = states.pop("normalize", normalization=='normalized')
+use_mse = states.pop("use_mse", loss != 'bce')
+
+print(f"Loading Checkpoint  '{weight_filename}'")
+print(f"Embedding_size:     {embedding_size}")
+print(f"Reduction:          {reduction}")
+print(f"Normalize:          {normalize}")
+print(f'Use_MSE:            {use_mse}')
+
+# load the model
+model = VAE(embedding_size, input_channel).to(device)
 model.load_state_dict(state_dict=states['states'])
+model.eval()
 print('weights loaded')
 #%%
-# generate sth
-from torchvision import utils
-interval = 1000
-embeddingsize = 2
-sample = torch.randn(size=(32, embeddingsize)).to(device)
-# sample *= 0.5+ 0.5
-model.eval()
-imgs = model.decoder(sample)
-print(imgs.shape)
-imgs = imgs.view(-1, 1, 28,28)
-img = utils.make_grid(imgs,nrow=8,normalize=True).cpu().detach().numpy().transpose(1,2,0)
-plt.imshow(img, cmap='Greys_r')
+# now lets write some functions for visualization and see how our model performs
+#  
+# we can generate random images by randomly sampling from a normal distribution!
+# simply generating some random numbers using randn (i.e. randomly sampling from
+# a normal distribution) in the form of our input, gives us random classes!
+# we can further influence our generation by imposing different means/stds, but
+# we'll see much better ways for steering/controling the generation process a head!
+@torch.no_grad()
+def generate_random_images(model:VAE, count:int=32, rows:int=8, img_shape=(1,28,28)):
+    c = img_shape[0]
+    sample = torch.randn(size=(count, model.embedding_size)).to(device)
+    # play with the numbers and see how it affects the outcome (remember
+    # this acts as sampling we are essentially doing eps*std+mean here)
+    # sample *= 0.01 + 0.1
+    model.eval()
+    imgs = model.decoder(sample)
+    # print(f'{imgs.shape=}')
+    imgs = imgs.view(-1, *img_shape)
+    img = make_grid(imgs,nrow=rows,normalize=True).cpu().detach().numpy().transpose(1,2,0)
+    # only use cmap=Greys_r for grayscale images
+    plt.imshow(img, cmap='Greys_r' if c ==1 else None)
+    plt.title('randomly sampled generation')
+
+generate_random_images(model, count=32)
 #%%
-# test
-test_set_size = len(dataloader_test.dataset)
-img_pairs = []
-losses = []
-interval = 10
-with torch.no_grad():
+# good! now lets display the original images next to their reconstruction for the
+# whole testset this hsould give us a good idea how good our modle is trained and
+# is performing
+def display_imgs_recons(img_pairs, title='testset reconstruction', save_result= True, save_dir='results',nrows=8, rows=20, cols=1):
+    img_cnt = len(img_pairs)
+    rows = img_cnt//cols +1 if img_cnt>rows*cols else rows
+    # print(f'{rows=} {cols=}')
+    # print(f'{img_cnt=}')
+    # print(f'{rows=} {cols=}')
+    fig = plt.figure(figsize=(64, 64))
+    
+    if save_result:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+    for i in range(img_cnt):
+        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
+                            nrow=nrows,
+                            normalize=True)
+        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
+        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
+        ax.set_title(f'{title}-{i}')
+
+        if save_result:
+            save_image(grid_imgs, f'{save_dir}/imgs_{i}.jpg')
+    plt.show()
+
+@torch.no_grad()
+def evaluate_on_testset(model, dataloader_test, sample_count=20, img_shape=(1,28,28), save_dir='./results/'):
+    test_set_size = len(dataloader_test.dataset)
+    img_pairs = []
+    losses = []
+    interval = 10
+    model.eval()
+
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
@@ -1295,158 +3574,2456 @@ with torch.no_grad():
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
-            f'\tloss: {(loss).item():.4f}')
+            f'\tLoss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
-            imgs = imgs[:20].cpu().detach().numpy()
-            recons = reconstructeds[:20].numpy()
+            reconstructeds = preds.cpu().view(-1, *img_shape)
+            # grab the first few images and their reconstructions
+            # sidenote: when we use no_grad, theres no gradients, so no need for .detach()!
+            imgs = imgs[:sample_count].cpu().numpy()
+            recons = reconstructeds[:sample_count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
-#%%
-# plot the losses using pandas! 
-# this actually is very neat and comes handy very often!
-# we can have a list of dictionaries, where each value is 
-# attributed by a key. this way, our keys will be used as
-# legends and we have a simple plot with minimum hassle
-import pandas as pd 
-pd.DataFrame(losses).plot()
+
+    # plot the losses using pandas! 
+    # this actually is very neat and comes handy very often!
+    # we can have a list of dictionaries, where each value is 
+    # attributed by a key. this way, our keys will be used as
+    # legends and we have a simple plot with minimum hassle
+    import pandas as pd
+    ax= pd.DataFrame(losses).plot()
+    ax.set_title('testset loss')
+    plt.show()
+    
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols=1, save_dir=save_dir)
+
+# evaluate_on_testset(model, dataloader_test)
+
+#! edit choose better function names! 
+# lets plot the latent space encodings and see how the encoded
+# representation look in the latent space, how well separated 
+# they are which shows how well our model is trained! 
+# note that we visualize the first two features here, even if
+# our embedding size is well beyond 2!
+@torch.no_grad()
+def plot_2d_latent_space(model, batch_size = 10000):
+
+    dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
+                                                   batch_size=batch_size,
+                                                   num_workers=num_workers,
+                                                   pin_memory=True)
+    imgs, labels = next(iter(dataloader_test2))
+    imgs = imgs.to(device)
+    z_test,*_ = model.encode(imgs)
+    # since we are using torch.nograd, 
+    # theres no gradients so we dont need to use .detach()
+    # otherwise we had to use it here
+    z_test = z_test.cpu().numpy()
+
+    plt.figure(figsize=(12,10))
+    print(z_test.shape)
+    plt.scatter(x=z_test[:,0],
+                y=z_test[:,1],
+                c=labels.numpy(),
+                alpha=.4,
+                s=3**2,# point size, the biggger the value, the larger the points on the canvas
+                cmap='viridis')
+    plt.colorbar()
+    plt.xlabel('Z[0]')
+    plt.ylabel('Z[1]')
+    plt.title('Latent space encodings of 2 dimensions')
+    plt.show()
+
+# lets now see how the latent space looks like with tsne
+# the previous version `plot_encoder_output_projection` is identical
+# to this one, but it would look at the encoders output, 
+# before it was used to create the latent vector z.
+# in this version, we use the latent vector z itself(like 
+# the plot_2d_latent_space() but not limited to 2 features!), 
+# so hopefully this gives us a better picture and see if its
+# radically different than the encoders output itself!
+# since they work on different things we choose a different name
+# to reflect that differnce. 
+# also we can do much better and refactor this into one function 
+# but for now this copy/paste is ok!
+#!edit refactor these two functons properly!
+@torch.no_grad()
+def plot_latentspace_clusters(model, dataloader_train, title='', use_pca=False):
+    model.eval()
+    # grab the device from model parameter
+    device = next(model.parameters()).device
+    # grab all the features, because tsne needs to be applied to 
+    # the whole dataset all atonce not batch by batch
+    all_features = []
+    all_labels = []
+
+    for imgs, lbls in dataloader_train:
+        imgs = imgs.to(device)
+        # Get feature vectors
+        latent_feature_vectors,*_ = model.encode(imgs)
+        all_features.append(latent_feature_vectors.cpu().view(imgs.size(0), -1).numpy())
+        all_labels.append(lbls.numpy())
+
+    # concatenate all batches
+    all_features = np.concatenate(all_features, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    if use_pca:
+        reducer = PCA(n_components=2)
+        # since pca is sensitive to the scale of features and 
+        # if the features are not properly scaled (e.g. mean-centered and variance-normalized),
+        # it can produce poor projections we scale the features here!
+        scaler = StandardScaler()
+        all_features = scaler.fit_transform(all_features)
+    else:
+        reducer = TSNE(n_components=2, random_state=66, perplexity=30)
+
+    plt.figure(figsize=(10, 8))
+    # print(f'{all_features[0].shape[-1]}')
+    
+    if all_features[0].shape[-1] >2 :
+        # features2d are coordinates showing where each datapoint is
+        features2d = reducer.fit_transform(all_features)
+        # print(f'{features2d[:5]}')
+    else:
+        features2d = all_features
+    # tab10, is a colormap inwhich it has 10 colors, therefore its a prefect choice for us    
+    scatter = plt.scatter(features2d[:, 0], features2d[:, 1], c=all_labels, cmap='tab10', alpha=0.6)
+
+    # add class labels to each cluster for better visualization
+    # to do this we need to calculate the centeroid(i.e. mean) of each cluster
+    # which is basically taking the average of all the points for that cluster
+    # and then use plt.text to add class numbers
+    
+    # note we dont need all the labels, just one for each cluster!
+    for label in list(range(10)):
+        # find the centroid of each cluster
+        # note that the values in features2d are coordinates(when using tsne),
+        # which are the 2D positions of the data points
+        # since our data are stored sequentially we know each row(class label) 
+        # in all_labels belong to a corresponding data point in features2d.
+        # that is for example, if all_labels[0] = 0, it means the first data point
+        # in features2d belongs to class 0.
+        # we use this to grab all the points belonging to a specific label one at a time 
+        centroid = np.mean(features2d[all_labels == label], axis=0)
+        # annotate the centroid with the class label
+        plt.text(centroid[0], centroid[1], str(label), fontsize=12, fontweight='bold',
+                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    title = f"\n{title}" if title else ''
+    plt.title(f"{'PCA' if use_pca else 'TSNE'} Projection to 2D{title}")
+    plt.colorbar(scatter, label='Class Label')
+    plt.show()
+
+#!edit this only works with embds==2, for anything larger
+# we can pick the two dims and use those to create the grid
+@torch.no_grad()
+def generate_latent_space_grid(model, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28)):
+    # lets see if the transition in our latent space is smooth
+    # that is we should be able to smoothly transition from one
+    # class to the other, at least this is what we are tryting
+    # to see.
+    # we create a vector of equally spaced values, and try to
+    # visualize these vectors, (they act as our latent vector z)
+    # since they are equally spaced, we can see how they change
+    # gradually, ideally we want them to have a smooth transition
+    # from one class to another.
+    # so lets see how our interpolation turns out
+    # n means we want a figure with nxn digits
+    model.eval()
+    # we are basically creating a z vector, with n, equally spaced value
+    # starting from lowerbound, up until upperbound (e.g from -2 to 2)
+    # we create 2 such vectors, so we can create a grid of numbers
+    # treating one z for xaxis and another for the yaxis. 
+    z1 = torch.linspace(lower_bound, upper_bound, n)
+    z2 = torch.linspace(lower_bound, upper_bound, n)
+    # using np.meshgrid, we create our grid, meshgrid, simply 
+    # expands z1 and z2 into 2D grids, by first repeats z1 values in
+    # x-axis (rows) and then repeats the z2 values in y-axis(columns),
+    # and finally using np.dstack, they are combined and the result 
+    # will be a 3dgrid where each xy is made up of z1 and z2 values.
+    # (test with a small example like linspace(-2,2,5), and see how it goes)
+    z_grid = np.dstack(np.meshgrid(z1, z2))
+    z_grid = torch.from_numpy(z_grid).to(device)
+    z_grid = z_grid.reshape(-1, model.embedding_size)
+    # print(f'{z_grid.shape=}')
+    x_pred_grid = model.decoder(z_grid)
+    x_pred_grid= x_pred_grid.cpu().view(-1, *img_shape)
+    x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
+    plt.figure(figsize=(20, 20))
+    plt.xlabel('Z_1')
+    plt.ylabel('Z_2')
+    plt.imshow(x)
+    plt.title(f'latent space grid of numbers({n}x{n})')
+    plt.show()
 
 #%%
-# lets plot the classes in the latent space!
-batch_size = 10000
-dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size = batch_size,
-                                               num_workers = num_workers,
-                                               pin_memory=True)
-imgs, labels = next(iter(dataloader_test2))
-imgs = imgs.to(device)
-z_test,_,_ = model.encode(imgs)
-z_test = z_test.cpu().detach().numpy()
+#note try these with embds=2 and larger numbers and see how they affect the outcome
+img_shape=(1,28,28)
+generate_random_images(model, count=32, img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, img_shape=img_shape,save_dir='./results/vae/vae1')
+plot_2d_latent_space(model)
+plot_encoder_output_projection(model, dataloader_train, title='Encoder output projection',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2, img_shape=img_shape)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2, img_shape=img_shape)
+#%%%
+# now if you try to play with parameters, you'll see its really 
+# hard to get it working! and our results can quickly get either blury
+# or too similar/generic. so lets talk about these issues we are facing 
+# and try to address them and hopefully get them fixed!
+#
+# During training a VAE we may face something called posterior collapse,
+# it can happen for several reasons, but primarily, it happens
+# when the decoder is more powerful than the encoder(or encoder is too weak!)
+# and the latent space stops encoding meaningful information and the decoder ignores
+# the latent features during reconstruction.
+# in its extreme form, the decoder wont even rely on the encoded representation
+# and will only rely on the prior itself (i.e. the learned latent distribution
+# collapses to the prior distribution (i.e. q(z|x) ≈ p(z) i.e. they almost are the same!))
+# as a result, the latent features will contain little to no useful information,
+# leading to reconstructions that are too generic or blurry.
+# 
+# 
+# its worth noting that sometimes, you get clear and near prefect reconstructions, at train
+# test time, but random generation is just nonsense. so it would be more accurate to say
+# we will have blurry, nonsensical (blobs of color!/random noise) randomly sampled outputs
+# because this is a sign of meaningless latent space! as we will see in our experiments shortly
+# we can get great reconstrutions(like by using skipcon) but absolutely awful generations!(vanilla vaes by nature can not 
+# produce crystal clear/sharp images when it comes to compelx datasets! so a blurry output
+# is what we can hope for as best, (the amount of blurryness can be improved but dont expect much!)) 
+# having said this, when the posterior collapse happens, both reconstructions and generations
+# suffer greatly! theoutput is just bad! details minimal or nonexistant, images are eaither not
+# formed, or are malformed(miss parts), etc. 
+#
+# !#edit move them at the end of the discussion? 
+# (recap sidenote:
+# posterior collapse occurs when the encoder ignores the latent space,
+# in a way that the learned latent distribution becomes close to the prior
+# distribution (e.g. a standard normal distribution (N(0,I)), regardless 
+# of the input images. 
+# in other words, the encoder ignores the input data! therefore the decoder 
+# reconstructs the data primarily from its learned prior or noise, rather than 
+# utlizing meaningful information encoded in the latent space. 
+# (it uses the patterns it learns from the prior distribution))
+# 
+# (recap sidenote2: posterior collapse leads to uninformative z. if z is uninformative,
+# the decoder has two choices:
+# 1.generate the average of the dataset (blurry/generic reconstructions and samples).
+# 2.if the decoder is very powerful, it might learn to ignore z and reconstruct x well
+# (appearing to work fine on reconstruction, but z is still useless, leading to bad new samples).
+# This is the "decoder too powerful" scenario.)
+# 
+# sidenote reminder:
+# to refresh our memory :
+# the posterior distribution (q(z|x)) represents the distribution 
+# of the latent variable(vector) (z) conditioned on the input data (x).
+# in other words, it means given this input data x, what is the
+# probability distribution of the latent variable (z) (i.e. whats the (mu,sigma)?
+# the encoder  approximates this posterior (q(z|x)) using a
+# learned distribution, parameterized as a Gaussian distribution 
+# that is q(z|x) = N(mu(x), sigma(x))
+# where the encoder learns the mean (mu(x)) and variance (sigma(x)) for each input (x).
+# 
+# now, the prior distribution p(z) is a simple, predefined distribution 
+# over the latent space (z). we chose the prior to be p(z) = N(0, I)
+# which if you remember means z is assumed to come from a multivariate
+# Gaussian distribution with mean 0 and identity covariance (diagnol covariance/independent dimensions! see the previous discussion!)
+# 
+# the kl term enforces a regularization on the latent space, ensuring that
+# 1. q(z|x) i.e. posterior distribution does not deviate too far from the simple prior p(z).
+# 2. the latent space stays smooth and meaningful, making it easier to sample from.
+# 
+# Why is it bad if the posterior becomes too close to the prior?
+# if it gets too close to the prior distribution it means mu(x) ≈ 0
+# and sigma(x) ≈ I for all inputs, which is when we say it collapses
+# to exactly match the prior (p(z)). 
+# basically it says the inputs (X) are ignored!(the whole point was to learn mu,sig for each x
+# and now, it treats as if they dont exist at all! it simply models N(0,I), i.e. noise!)
+# 
+# When this happens technically speaking we say:
+# the latent space becomes uninformative because q(z|x) no longer depends
+# on the input x. 
+# it means the encoder gives up on learning meaningful latent representations, 
+# and the decoder reconstructs the data purely from noise sampled from (p(z) = N(0,I)),
+# or directly learns shortcuts from the reconstruction loss(this happens whne we us skip con forexample).
+# The vae essentially fails to use the latent space for encoding useful information
+# about the data.
+# 
+#
+# !edit
+# This happens because the KL divergence is minimized too quickly and thus it
+# overpowers the reconstruction loss from the begining.(if the KL term quickly
+# goes to zero, it means q(z|x) has become identical to p(z)! at this point, 
+# there's no 'pressure' from the KL term for the encoder to do anything other
+# than output μ=0, σ=I. if the decoder is also very powerful, it might find it
+# easier to reconstruct x by ignoring z (which is now just noise) and minimizing
+# the reconstruction error directly rather than forcing the encoder to learn 
+# useful representations in z)
+# 
+# we want the posterior q(z|x) to be "close enough" to the prior p(z) for regularization,
+# but not so close that it practically makes the model ignore x.
+# The reconstruction loss job is to make sure the posterior q(z|x) encodes 
+# meaningful information about the input x, while the KL divergence's job is 
+# to make sure the latent space remains smooth and aligned with the prior.
+# (we dont want our posterior to deviate from the prior, because
+# we assumed given our prior we can regenerate the samples that look like our input)
+# 
+# now you know why we dont just minimize the KL loss alone because it would collapse q(z|x)
+# to p(z), causing no meaningful relationship between x and z (posterior collapse)
+# and also it would cause the decoder to reconstruct data from noise or directly 
+# minimize reconstruction loss without using the latent space.
+#
+# so we use both losses together and balance reconstruction and KL loss:
+# loss = reconstruction_loss + beta . kl_loss(q(z|x) | p(z))
+# this ensures the latent space is regularized (via KL),
+# and the encoder learns meaningful encodings of the data (via reconstruction loss).
+# 
+# # !edit
+# recap (excessive? repeatative block?)
+# so for short: 
+# The prior distribution p(z) is fixed and simple (N(0, I)).
+# The posterior distribution q(z|x) is learned and depends on the data x using reconstruction loss in encoder.
+# The goal of the KL divergence is not to minimize it to zero, 
+# but to balance it with the reconstruction loss to maintain a useful latent space.
+# posterior collapse happens when the KL divergence dominates, leading the encoder 
+# to ignore (x) and match the prior directly.
+# note that posterior collapse can happen for several reasons, a simple or underpowered 
+# encoder is one of the possible causes. However, its often the result of an interplay 
+# of factors rather than just the simplicity of the encoder.
+# to be more precise, this happens when the kl divergence term dominates the loss.
+# kl divergence job is to ensur the latent space follows a prior (i.e. a Gaussian N(0, I))  
+# but when the kl term is too strong, the model learns to set q(z|x) ≈ p(z) )(i.e., 
+# the posterior collapses to the prior), making z uninformative.
+# as we pointed out this usually happens when we use a powerful decoder
+# that can reconstruct the data directly from the prior distribution,without 
+# needing latent variables.
+# 
+# edit: obvious?/excessive? -no techincal information here, though we could trim the inrto a bit better
+# if the decoder is too powerful, it can learn to reconstruct x without 
+# relying on z at all which means even if z contains no useful information,
+# the decoder can still reconstruct well, leading to collapsed latents.
+# thats not the only reason though, if we use a large scaler/factor to normalize the loss 
+# (the kl term and reconstruction loss (its especially the case in beta-vaes(distenagled vaes) 
+# which we will also cover)), a large scaler in the kl term forces the latent distribution 
+# too close to the prior, increasing the risk of posterior collapse.
+# when the scaler is too high, the vae prioritizes regularization over 
+# learning meaningful latent representations.
+# 
+# the issue could also stem from the reparameterization trick,
+# if you recall, the reparameterization trick job was to introduce 
+# randomness when sampling from (q(z|x)), if the model learns to 
+# reduce this randomness (e.g. by making standard deviation very small),
+# the latent space may become degenerate. its worth noting that if the 
+# latent space is too small, it may also be forced to collapse.
+# 
+# so it could be several things that can contribute to this issue, altogether or alone. 
+# likewise, there are several solutions/techniques that can help mitigate this issue
+# and in a way they all do this by balancing the reconstruction quality and latent space 
+# learning properly. 
+# 
+# the first and most obvious one is to reduce the kl scaler/weighting if its
+# set too high, if this is not the case, and we still face issues during training, 
+# then we can use a gradual approach, that is instead of a fixed scaler, 
+# gradually increase it over time (e.g. use a kl annealing schedule).
+# this should prevent the model from collapsing too early and should give meaningful
+# latent encodings(i.e. we start with a very small beta (e.g like 0.0001) and increase it slowly to beta=1)
+# practically starting with no kl constraint, and gradually increasing it little by litlle
+# so we get to a good spot)
+#
+# we can also instead of minimizing kl loss entirely, enforce a minimum kl value per
+# latent dimension (e.g. 0.1) this forces the model to use latent encodings
+# even when kl regularization is high. (we dont want our kl term to be 0 or near zero
+# so enforcing a minimum value of kl for each dimension essentially means we are making
+# that dimension to do somework and contribute a bit so cllectively, the latent space
+# gets to have at least some useful information for the decoder to utilize)
+# 
+# using a less powerful decoder is another obvious choice, since if its too powerful,
+# it may learn to ignore latent vector z altogether. this is straightforward
+# we just start using fewer layers or smaller networks or use a stronger bottleneck
+# constraint.(this is only the case if we know for sure our encoder is working properly
+# and its not the simplistic one between the two, because obviously if its encoder that
+# needs more capacity, reducing decoders capacity wouldnt help!)
+# also increasing latent space size(if its too small) can also help distribute 
+# information across more dimensions and fix the issue.(usually reduces the severity of the issue)
+# 
+# we can also add skip connections between the encoder and decoder so
+# that reconstruction does not fully rely on latent vector z.
+# by doing so, we allow some direct flow of information
+# from the encoder to the decoder which reduces the decoder's 
+# reliance on a potentially collapsed z, encouraging meaningful latents)
+# the idea is if the decoder still gets useful low-level 
+# features even if z is uninformative, we can prevent posterior collapse!
+# however, most often than not, if we dont tune this properly, it will cause 
+# a posterior collapse itself! as it will make the decoder completely ignore the
+# latent variables, and therefore they would not get the chance to get properly 
+# tuned! it will result in getting near prefect reconstructions, but the random generation
+# would be terrible, a sign of garbage/uninformative/collapsed latent space!
+#
+# 
+# sidenote:
+# !EDIT include the paper names/urls/refs
+# this doesnt really belong here, because it belongs to heirarchial vaes
+# but since the idea makes sense, I guess I include it here. (it really should 
+# be explained in its own section). anyway lets explain this as well: 
+#
+# Assuming the latent vector z follows a simple Gaussian prior,
+# p(z)=N(0,I) (i.e. all latent dimensions are independent and normally distributed
+# around 0 with unit variance) as we already discussed, 
+# can be too simplistic for complex data such as faces, natural images, sentences etc,
+# if we relax this constraint by using a more structured latent space(e.g 
+# hierarchical priors), we should get a much better result, 
+# that is instead of assuming a single Gaussian prior ,
+# we introduce a structured or hierarchical latent representation.
+# this allows latent variables to be dependent on each other, 
+# leading to a more flexible and powerful model.
+# (that is, instead of just one latent variable z, we introduce multiple
+# latent levels, higher level latents control more abstract/global 
+# features, while lower levels refine details.
+# !edit paper link
+# sidenote:
+# this idea comes from hierarchical vae paper,which proposed instead of one 
+# latent vector z we use multiple latent vectors! the latters depending on the previous ones.
+# (assuimg we use 2 latent vectors, the second mu,logvar would use the first latent vector z 
+# to create the second set of mu and logvar which we would then use to create latent vector z2
+# using reparameterization trick! and ultimately use this second z to reconstrcut the image)
+# the idea was having multiple layers of latent variables with
+# dependencies between them would improve expressiveness of
+# the latent space, and help the network to model complex multimodal distributions
+# and more importanty reduce posterior collapse, as higher layers 
+# retain the global structure while lower layers capture 
+# the finer details(z1 learns higher level global features and z2 
+# learns lowerlevel fine-grained features ideally! in practice we can have multiple
+# and therefore this lowlevel/highlevel featres can get a bit nuisaunced! but you get the idea
+# multi-level of features/independent of others, practically trying to get arund the simplistic
+# assumption in our default vae imple,enttaion without introducing the overhead we discussed earlier!)
+# (we dont bother going this route though!)
+# !Edit add refs/papers- check papers/refs
+# ref https://arxiv.org/abs/1705.07120
+# a similar approach was introduced by VampPrior (Variational Mixture of Gaussians)
+# which argued, instead of a single Gaussian prior, use a mixture of Gaussians.
+# this captures multi-modal distributions (e.g. different facial expressions in images)
+# the abstract reads: 
+# Many different methods to train deep generative models have been introduced in the past. 
+# In this paper, we propose to extend the variational auto-encoder (VAE) framework with a
+# new type of prior which we call "Variational Mixture of Posteriors" prior, 
+# or VampPrior for short. The VampPrior consists of a mixture distribution 
+# (e.g., a mixture of Gaussians) with components given by variational posteriors 
+# conditioned on learnable pseudo-inputs. 
+# We further extend this prior to a two layer hierarchical model and show that this
+# architecture with a coupled prior and posterior, learns significantly better models.
+# The model also avoids the usual local optima issues related to useless latent dimensions 
+# that plague VAEs. 
+# We provide empirical studies on six datasets, namely, static and binary MNIST, OMNIGLOT, 
+# Caltech 101 Silhouettes, Frey Faces and Histopathology patches, and show that applying the
+# hierarchical VampPrior delivers state-of-the-art results on all datasets in the unsupervised
+# permutation invariant setting and the best results or comparable to SOTA methods for the 
+# approach with convolutional networks. 
+# we dont implement this version either and instead go for a much better architecture.
+#
+# we can also use VQ-VAE (Vector Quantized VAEs) which came to solve the vae issues (like posterior collapse)
+# it replaces the continuous latent space with discrete latent embeddings, making the
+# model less prone to collapse. and it works much much better than vanilla vaes, and has been
+# very influential we'll cover this after we are done with the vanilla versions of vae!
 
-plt.figure(figsize=(12,10))
-print(z_test.shape)
-plt.scatter(x=z_test[:,0],
-            y=z_test[:,1],
-            c=labels.numpy(),
-            alpha=.4,
-            s=3**2,
-            cmap='viridis')
-plt.colorbar()
-plt.xlabel('Z[0]')
-plt.ylabel('Z[1]')
-plt.show()
+# so now lets rewrite our vae, this time with the enhancements we just talked about
+#
+
+#!edit use this instead of the above? or merge or use as recap?
+# quick recap (use it as a summary of all points we discussed so far/check we cover everything and do not explain
+# too much again as e already done that! just short notes as reminders)
+#
+# Posterior collapse can happen for several reasons, and yes, a simple 
+# or underpowered encoder is one of the possible causes. 
+# However, its often the result of an interplay of factors 
+# rather than just the simplicity of the encoder. 
+# we can categorize them as following:
+# 1.Overly powerful decoder:
+# if the decoder is too powerful (for the dataset/ or compared to encoder)
+# it can learn to reconstruct the data directly from the prior distribution(N(0,I)) 
+# or even from noise. the encoder then has no incentive to learn meaningful 
+# latent representations leading to collapse.
+# 
+# 2.Simple or underpowered encoder:
+# if the encoder is too simple (or it has too small latent dimensions),
+# it may fail to encode meaningful representations of the input data
+# this makes it easy for the latent space to drift toward the prior, 
+# as the kl loss dominates over the reconstruction loss.
+# the kl term job is to make the posterior align with the prior distribution
+# (minimize the distance between them) but if this term is given too much weight
+# (e.g with a large beta), the encoder will prioritize minimizing kl term over 
+# learning a meaningful posterior this forces the latent space to collapse to the prior.
+# 
+# 3.Poor training dynamics (learning rate, warmup,etc):
+# at the begining of the training, the decoder may dominate because it learns faster
+# than the encoder this can result in posterior collapse because the 
+# encoder gets stuck in a local minimum where it ignores the latent space entirely.
+# without a kl warmup schedule (i.e. gradually increasing the weight of kl term during training,
+# the kl term can overwhelm the reconstruction loss early on.
+# 
+# 4.Insufficient regularization in latent space:
+# if there are no mechanisms to ensure meaningful latent representations
+# (e.g. free-bits regularization, disentanglement techniques), 
+# the encoder might collapse to the simplistic/trivial solution of aligning the
+# posterior with the prior.
+# if the dataset is simple (e.g. small or low-dimensional), 
+# the decoder may easily reconstruct data without requiring meaningful latent codes.
+# this can be seen in datasets like MNIST where the decoder can perform well using 
+# only prior information.
+# 
+# What are the signs that show the encoder is too simple?
+# The kl term quickly drops to zero during training, even for complex data.
+# the reconstruction loss may improve, but the latent space doesn't 
+# encode useful information (latent codes are random or meaningless).
+# increasing the capacity of the encoder (e.g. deeper layers, more neurons)
+# significantly improves performance.
+# 
+# How to fix posterior collapse?
+# 1. (when the encoder is too simple) we increase encoder capacity like by adding
+# more layers or neurons to the encoder or use techniques like residual connections
+# or attention to make the encoder more expressive (though note that this can act 
+# like a double edged sword!)
+# 
+# 2.Regularize the decoder:
+# we reduce the decoder's capacity to prevent it from "cheating" and relying on the prior.
+# and add dropout or other regularization techniques to the decoder.
+# 
+# 3.Use a KL warm-up schedule:
+# we gradually increase the weight of the kl term during training so that the 
+# encoder learns meaningful representations before being forced to match the prior.
+# 
+# 4.Use Free-Bits Regularization:
+# we enforce a minimum KL loss for each latent dimension to ensure  that the encoder
+# uses the latent space effectively.
+# 
+# 5.Reduce beta as a high beta value can over amplify/over priortize the kl term.
+# 
+# 6.Change the Prior Distribution:
+# we use a more expressive prior (e.g. hierarchical or structured priors)
+# that better matches the data distribution, so the encoder doesnt
+# collapse to a simple normal distribution.
+# 
+# so a simple encoder can contribute to posterior collapse, but its not the only reason.
+# The issue typically arises from a combination of:
+# an expressive decoder,overweighting of the KL term, poor training dynamics, or simple data.
+# by addressing these factors holistically, we can prevent posterior collapse 
+# and ensure the model learns meaningful latent representations.
+
+class Print(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self, outputs):
+        print(f'{outputs.shape=}')
+        return outputs
+
+class VAE(nn.Module):
+    def __init__(self, embedding_size=100, input_channel=1, skip_connection=False, add_extra_noise=False, noise_weight=0.1, ema_decay=0.99):
+        super().__init__()
+        
+        self.embedding_size = embedding_size
+        self.input_channel = input_channel
+        # whether to use skip connection from encoder to decoder
+        self.use_skip_con = skip_connection
+        # update: ok this moving average thing didnt work! Im not sure
+        # If I implemented this incorrectly or what! I leave it be
+        # for reference though, ill get back to it later
+        # 
+        # if we use skip connections between encoder and decoder
+        # we will not be able to generate images using simple sampling
+        # because we would need encoder outputs to concat with latent vectorz
+        # and since there will be no image at first(cuz we are trying to generate some!
+        # ourselevs from latent vector z!) we will face issue.
+        # one way would be to use a image and use its encoderoutputs with our
+        # latent varibles, but this is not desired!, the other way would be
+        # to use the mean of our dataset! or a large batch and use that instead
+        # of any random image! this is not really desired either or 
+        # the third way, to have a running average of our encodersoutput
+        # during training, and use this, when theres no images. 
+        # this might give us a btter output. lets try this (I dont know if it works! im just trying!)
+        # we define self.ema_skipcon at the end, when we defined our network and 
+        # all sizes are determined!
+        self.ema_decay = ema_decay        
+        
+        # whether to use extra noise in latent vector z
+        # to make images more diverse(in fact prevent them from posterior collapse)
+        self.add_extra_noise = add_extra_noise
+        # a simple weight to control the amount of noise applied on our z
+        self.noise_weight = noise_weight
+        #note from fture:
+        # in retroaspect, I could have easily resized the 28x2x8 to 32x32 and have
+        # a much easier time doing downsampling/upsampling, but I obviously I hadnt
+        # and in doing so I show how to calculate and comeup with right numbers for
+        # anysize!
+        self.encoder = nn.Sequential(conv(self.input_channel,32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,128,stride=2),#3x3
+                                     conv(128,256,stride=1),#2x2 # for 4x4: 1
+                                     # set stride to 1 so the final output dim is 2x2
+                                     # it helps for more complex datasets, but for mnist
+                                     # a simple network would work, even a single fc layer!
+                                     # so I decided to add a few more convs so we can experiment
+                                     # with cifar as well
+                                     # Initially I would get blury outputs, so I removed batchnorm
+                                     # form the last layer of encoder and first layer of decoder
+                                     # and could finally train and get sharp reconstructions
+                                     # however, I also used larger spatial dms in encoders last layer
+                                     # I just used the batchnorm again and noticed I got good results
+                                     # I guess it was my choice of hypaerparameters as well.
+                                     # so my verdict is, if things dont work, after you tried everything
+                                     # try disabling batchnorm and see if it fixes the issue.
+                                     # using batchnorm for other layers is ok, but for this layer
+                                     # and encoders first layer might pose an issue (i'll edit this when my results are finalized)
+                                     # ok bn can sometimes introduce weirdness into logvar! so if we get
+                                     # huge values for mean/logvar (causes our kl loss to go nan!)
+                                     # bn could be at fault (we need to start initilizing them properly
+                                     # and see if it goes away if not disable bn and test again! see notes for logvar below)
+                                     conv(256, self.embedding_size,stride=1,padding=1,batch_norm=True),#1x1 #for 4x4:1 # for 2x2:1 #for 1x1:2
+                                    )
+        # retaining some spatial dimensions such as 2x2/4x4 helps
+        # when the dataset is more complex.
+        self.bottleneck_size = self.embedding_size*4*4
+        self.fc_mu = nn.Linear(self.bottleneck_size, self.embedding_size) 
+        self.fc_logvar = nn.Linear(self.bottleneck_size, self.embedding_size)
+        
+        self.drp = nn.Dropout(0.1)
+        # update:
+        # ok during training with certain choices of hyperparameters
+        # I noticed my kl loss goes to nan! 
+        # looking closer I found out the logvar value was extremely high (like 1198352117964.0283!),
+        # this happens because the slightest divergance
+        # from proper range in logvar shoots us in the foot by exp!
+        # so a common practice is to initialize the bias of the layer 
+        # that produces logvar to a small negative value (for example,-1 or-2 or 
+        # any small negative value we want for that matter)
+        # so that initially exp(0.5xlogvar) is close to 1. 
+        # for example using -1 forces the logvar to be std=exp(0.5x(−1))≈exp(−0.5)≈0.6065) 
+        # self.fc_logvar.bias.data.fill_(-1)
+        # ok this wasnt the issue! im clueless at this point! im removing bn now
+        # ok, bn is back, see logs ahead in the code for more information
+        
+        decoder_in_dim = self.embedding_size + self.bottleneck_size if self.use_skip_con else self.embedding_size
+        # we use the followng formula to determine the output size here
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # h is the height for encoders output dim (here 1x1)
+        # k is kernel , s is stride and p is for padding
+        # (h=1,k=4,s=2,p=1)
+        self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+                                     # this bn seems crucial for stabalizing large embdsizes (like 400+)
+                                     # without it loss shootsup alot! and reconstructions will be blurry
+                                     # 
+                                     nn.BatchNorm1d(256*4*4),
+                                    #  nn.GroupNorm(1,256*4*4),
+                                    # using leakyrelu early on makes the model more unstable!loss shoots us quickly!
+                                    # but other layers it seems ok to use leakyrelu
+                                     nn.ReLU(),
+                                    #  nn.Dropout(0.1),
+                                     nn.Unflatten(1,(256,4,4)),
+                                     # in encoderpart, relu seems to work better
+                                     # but in decoder, leakyrelu works better it seems
+                                     # batchnorm is especially important for large embdsizes
+                                     # also except the last layer, the later layers having
+                                     # bn makes somewhat sharper generations
+                                     deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(128,128,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(128,96,kernel_size=4,stride=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(96,96,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(96,64,kernel_size=4,stride=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+                                    #  Print(),
+                                    #  conv(64,64,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     deconv(64,32,kernel_size=2,stride=1,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+                                    #  Print(),
+                                    #  conv(32,32,kernel_size=3,stride=1,batch_norm=True),
+                                    #  Print(),
+                                     # while we use sigmoid here with bce, for more complex dataset
+                                     # using tanh with mse seems to give better result?, but
+                                     # note that, the input needs to be normalized as well (to -1,1)
+                                     # for our case we go with sigmoid anyway
+                                     deconv(32,self.input_channel,kernel_size=6,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+                                    )
+        
+        # not that different from deconv when all bn is used, but upsample avoids checkermarks
+        # self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+        #                              nn.BatchNorm1d(256*4*4),
+        #                              nn.ReLU(),
+        #                              nn.Dropout(0.1),
+        #                              nn.Unflatten(1,(256,4,4)),
+        #                              # in encoderpart, relu seems to work better
+        #                              # but in decoder, leakyrelu works better it seems
+        #                              upconv(256,128,kernel_size=2,scale_factor=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+        #                              upconv(128,96,kernel_size=4,scale_factor=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+        #                              upconv(96,64,kernel_size=4,scale_factor=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+        #                              upconv(64,32,kernel_size=4,scale_factor=2,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+        #                              # while we use sigmoid here with bce, for more complex dataset
+        #                              # using tanh with mse seems to give better result, but
+        #                              # note that, the input needs to be normalized as well (to -1,1)
+        #                              # for our case we go with sigmoid anyway
+        #                              upconv(32,self.input_channel,kernel_size=4,scale_factor=1,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6 # for 1x1:4
+        #                             )
+        
+        # self.decoder = nn.Sequential(nn.Linear(decoder_in_dim, 256*4*4),
+        #                              nn.BatchNorm1d(256*4*4),
+        #                              nn.ReLU(),
+        #                              nn.Dropout(0.1),
+        #                              nn.Unflatten(1,(256,4,4)),
+        #                              PixelShuffleBlock(256,128,upscale_factor=2,batch_norm=True),#4,2 #for 4x4: 2,2  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(128,96,upscale_factor=1,batch_norm=True),#4   #for 4x4: 4,1  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(96,64,upscale_factor=2,batch_norm=True),#8    #for 4x4: 4,2  #for 1x1:4,2
+        #                             #  Print(),
+        #                              PixelShuffleBlock(64,32,upscale_factor=2,batch_norm=True),#14    #for 4x4: 2,1  #for 1x1:2,2
+        #                             #  Print(),
+        #                              # while we use sigmoid here with bce, for more complex dataset
+        #                              # using tanh with mse seems to give better result, but
+        #                              # note that, the input needs to be normalized as well (to -1,1)
+        #                              # for our case we go with sigmoid anyway
+        #                              nn.Conv2d(32, self.input_channel, kernel_size=7, padding=1),#28 #for 4x4:6 # for 1x1:4
+        #                             # Print(),
+        #                             )
+        
+
+        # now lets define our ema_skipcon 
+        if self.use_skip_con:
+            # we use self.register_buffer so ema_skipcon is saved when we save our model
+            # and also its not included in computational graph
+            self.register_buffer("ema_skipcon",torch.zeros(size=(1,self.bottleneck_size)))
+
+    def reparamtrization_trick(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        z = mu + eps*std
+        if self.add_extra_noise:
+            # if the latent space is too smooth, it will create generic images(not varied enough)
+            # by making the latent encodings more random/adding more randomness, we introduce more
+            # diversity(the decoder should be able to create more diverse/different images (hopefully!))
+            # adding noise to latent vector forces latent space to be used aswll, (making it 
+            # more random makes decoder try harder and pay more attention to the latentspace
+            # to also model the noise, otherwise, it could follow a simple normal distribution and hence
+            #! ignore latent space altogether! (edit check my explanation/reasoning))
+            # I added a noiseweight so we can have finer control over the added noise!
+            z += self.noise_weight*torch.randn_like(z)
+        return z
+    
+    def calculate_ema(self, encoder_outputs):
+        # take the average of the whole batch
+        outputs_mean = encoder_outputs.mean(dim=0)
+        # this is standard ema calculation and works well, but 
+        # since we use 0s at first, it has a bias towards zero
+        # and it takes time to get it to accurate result
+        # self.ema_skipcon = (self.ema_decay * self.ema_skipcon) + ((1-self.ema_decay)*outputs_mean)
+        # by the way since we are using buffer, we cant use direct assignment 
+        # so instead we use copy_ to have inplace operation to retain the buffer nature
+        # of ema_skipcon, otheriwse it will be replaced by a tensor!
+        # we could also use inplace ops like mul_,add_, etc as well but I guess copy_ is easier
+        # the formula is readable and we get the job done!)
+        self.ema_skipcon.copy_(self.ema_decay * self.ema_skipcon + (1 - self.ema_decay) * outputs_mean)
+    
+    def encode(self, input):
+        # todo: add heirarchical z
+        output = self.encoder(input)
+        # print(f'{output.shape=}')
+        output = output.view(input.size(0),-1)
+        # dont use drpout on mu, it makes everything worse!
+        mu = self.fc_mu(output)
+        log_var = self.fc_logvar(output)
+        # log_var=self.drp(log_var)
+        z = self.reparamtrization_trick(mu, log_var)
+        # if we use skip connection, lets update the moving average
+        if self.use_skip_con:
+            self.calculate_ema(output)
+        
+        return z, output, mu, log_var
+
+    def decode(self, z, encoder_output):
+        if self.use_skip_con:
+            # use a moving average if theres no image/encoder-output
+            if encoder_output is None:
+                # since ema_skipcon is one vector, we need to repeat it
+                # for the whole batch, so we can concat each row!
+                # using repeat() function we can specify the repetition factor
+                # for each dimension positionally, since in our case we have
+                # a 2d vector, we use z.size(0) for the first dim as the batch dim
+                # and use 1 for the second dim meaning we dont want to touch it!
+                # leave it be as is!
+                encoder_output = self.ema_skipcon.repeat(z.size(0),1)
+            z = torch.cat([z, encoder_output], dim=-1)
+        reconstructed_img = self.decoder(z)
+        return reconstructed_img
+    
+    def forward(self, input):
+        z, encoder_output, mu, logvar = self.encode(input)
+        reconstructed_img = self.decode(z, encoder_output)
+        return reconstructed_img, mu, logvar
+
+    def calculate_loss(self, outputs, inputs, mu, logvar, beta, reduction='sum', use_mse=False, use_freebits=False, min_kl=0, normalize=True):
+        b,h,w,c = inputs.shape
+        outputs = outputs.view(*inputs.shape)
+        criterion = nn.MSELoss(reduction=reduction) if use_mse else nn.BCELoss(reduction=reduction)
+        reconstruction_loss = criterion(outputs, inputs)
+        # weight for reconstruction loss 
+        # we apply it only when reduction='mean'(I explaned below)
+        scaler = 1
+        # !edit
+        # free bits regularization technique from https://arxiv.org/abs/1611.02731
+        # ref https://stats.stackexchange.com/questions/267924/explanation-of-the-free-bits-technique-for-variational-autoencoders
+        # enforcing a minimum kl loss value for each latent dimension  
+        # prevents the kl term from going below min_kl value, essentially
+        # making sure each latent dimension contributes at least some fixed
+        # amount of information(at least some information is stored in latent space)
+        # and therefore prevents the encoder from collapsing all 
+        # latent dimensions to zero variance
+        # # freebits ensures each latent dimension carries some information, clamp KL loss to min value
+        if use_freebits:
+            #! check if my implementation is correct/ if explanation is correct
+            # calculates kl term for each dimensions (shape: (batch, latent_dim)
+            kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+             # enforce minimum kl per each dimension for the whole batch (does it make it wosre?!)
+            # kl_loss = torch.sum(torch.clamp(kl_per_dim, min=min_kl))
+            # or we can only sum over the dimensions only and average that!?(which one?)
+            kl_loss = torch.clamp(kl_per_dim, min=min_kl).sum(dim=-1).mean()
+            # scale reconstructions?
+            scaler = h*w*c if normalize else 1
+        else:
+            if reduction == 'sum':
+                # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+                # since we are using sum as reduction for our reconstruction loss (all samples loss sum)
+                # our kl loss needs to be summed over all dimensions and all samples in the batch 
+                # which gievs us a single scalar value.
+                # the bad thing is, since its summed over batch, the batchsize affects the training
+                # we need to use different lr for different batchsizes because the gradients also
+                # scale with the batchsize, therefore learning rate needs to be ajusted accordingly)
+                # also this means more instability as its harder to balance the two terms like this
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            else: #reduction == 'mean'
+                # here for the kl loss we only sum over the latent dimensions,
+                # this gives us a single loss for each sample, 
+                # we need to take the mean of the whole batch and this makes it independent of 
+                # the batchsize and should give us a more stable loss, this is more aligned with
+                # our reconstruction loss which we do the same thing (take the mean of the whole batch (i.e. reduction=mean))
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+                # we also need to normalize the reconstruction/kl loss otherwise kl will overpower it!
+                # and we would get nonsens as output, (since the image is averaged pixelwise, but kl is summed for each sample
+                # its not balanced properly)
+                # we need to either divide kl loss by the image dimensions, 
+                # or multiply reconstruction loss by the image dimensions to scale it up a bit
+                # todo apply scaler to the freebits as well?
+                scaler = h*w*c if normalize else 1
+                # reconstruction_loss *= scaler
+                # note since we sumed over the latent dimension, we will have batchsize of losses
+                # which we need to average to get a single loss value
+                kl_loss = kl_loss.mean(dim=0)
+
+        # having a large weight for kl term (i.e. beta>1) can encourage a
+        # structured and more meaningful latent space, but we need careful tuning
+        total_loss = (scaler*reconstruction_loss) + (beta*kl_loss)
+        return total_loss, reconstruction_loss, kl_loss
+
+# test the vae and the output shape, making sure 
+input_channel=3
+test_model = VAE(embedding_size=100, input_channel=input_channel)
+img_re, *_ = test_model(torch.randn(size=(5,input_channel,28,28)))
+print(f'{img_re.shape=}')
 #%%
+# lets train our model again
+# but this time, lets make things a bit tidier!
+# todo make this for each epoch I guess thats better
+def plot_training_metrics(mu_list, std_list, kl_losses, losses):
+    epochs = range(len(mu_list))
+    lists = (mu_list,std_list,kl_losses,losses)
+    labels = ('Mean (μ)',"Standard Deviation (σ)", "KL Loss" , "Total Loss")
+    colors = ['blue','orange','green','red']
+    fig = plt.figure(figsize=(12, 8))
+    for i,(lst,label) in enumerate(zip(lists, labels)):
+        ax = fig.add_subplot(2, 2, i+1,)
+        ax.plot(epochs, lst, color=colors[i], label=label)
+        ax.set_title(f'{label} Over Time')
+        ax.set_xlabel('Iterations')
+        ax.set_ylabel(label)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-#%%
-# display a 2D manifold of the digits
-embeddingsize = model.embedding_size
-n = 20  # figure with 20x20 digits
-digit_size = 28
+import math
+# we use this schedule to gradually increase beta, initially I used 
+# a simple, linear scheduler but didnt get satisfactory results so I
+# instead went for a bit better version
+def beta_schedule(beta_max, epoch, total_epochs, midpoint=0.50, k=15):
+    # scale epoch to [0,1]
+    progress = epoch / total_epochs  
+    # value goes from near 0 to near 1 around the midpoint.
+    # by subtracting midpoint(0.5), we're shifting the range so that when progress is 0.5 
+    # (i.e. halfway through training), the argument to the exponential is zero.
+    # at this point, the sigmoid function yields half of its maximum value 
+    # (when scaled by beta_max). this effectively means that the increase in 
+    # beta is centered around the middle of training, with a slow start, 
+    # a rapid increase around the halfway mark, and then a plateau as 
+    # training approaches the end.
+    current_beta = beta_max / (1 + math.exp(-k * (progress - midpoint)))
+    return current_beta
+# print(f'{[beta_schedule(0.5,i,100,k=10) for i in range(100)]}')
+# k=15 seems ok!
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.5, k=15)) for i in range(100)]}')
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.85, k=15)) for i in range(100)]}')
+# print(f'{[(i,beta_schedule(0.5,i,100,midpoint=0.85, k=10)) for i in range(100)]}')
 
-z1 = torch.linspace(-2, 2, n)
-z2 = torch.linspace(-2, 2, n)
+def train(model:VAE, dataloader_train, optimizer, scheduler, device, epochs, beta, reduction, normalize, use_mse, interval, kl_anealing, use_freebits, min_kl=0):
 
-z_grid = np.dstack(np.meshgrid(z1, z2))
-z_grid = torch.from_numpy(z_grid).to(device)
-z_grid = z_grid.reshape(-1, embeddingsize)
+    # a clear sign of posterior collapse is an extremely low kl term.
+    # so if kl loss is close to zero, its a sign of collapse.  
+    # so we keep track of it
+    kl_losses=[]
+    losses = []
+    # also if all latent dimensions have almost zero variance,
+    # it means they are not encoding useful information 
+    # (they are roughly zero which means no learning is going on!!)
+    # so by checking their values we can also get a hint!
+    mu_list = []
+    std_list = []
+    
+    print(f'Date:            {datetime.datetime.now().strftime("%H:%M:%S - %Y/%m/%d")}')
+    print(f'Dataset:         {"CIFAR10" if model.input_channel==3 else "MNIST"}')
+    print(f'Epochs:          {epochs}')
+    print(f'embedding_size:  {model.embedding_size}')
+    print(f'use_skip_con:    {model.use_skip_con}')
+    print(f'add_extra_noise: {model.add_extra_noise}')
+    print(f'beta:            {beta}')
+    print(f'reduction:       {reduction}')
+    print(f'normalize:       {normalize}')
+    print(f'use_mse:         {use_mse}')
+    print(f'kl_anealing:     {kl_anealing}')
+    print(f'use_freebits:    {use_freebits}')
+    print(f'min_kl:          {min_kl}')
+    print(f'optimizer:       {optimizer}')
+    print(f'scheduler:       {scheduler.state_dict()}')
+    print(f'interval:        {interval}')
+    
+    model.train()
+    for e in range(epochs):
+        for i, (imgs, labels) in enumerate(dataloader_train):
+            imgs = imgs.to(device)
+            reconst_imgs,mu, logvar = model(imgs)
+            
+            # kl annealing prevents kl loss from overwhelming early training,
+            # so we increase its beta gradually
+            if kl_anealing:
+                # a large kl term will cause posterior collapse, especially at begining
+                # because before the model gets the chance to learn meaningful features
+                # to reconstruct properly, the kl term had already forced it
+                # to match the simplistic normal distribution(i.e. q(z|x) = (p(z)),)
+                # so we start with a small scaler/beta and gradually increase it at 
+                # each epoch this should allow our model to first learn reconstruction 
+                # and then gradually apply the kl term (which mind you is a regulariziation term)
+                # without it dominating the whole loss
+                # linear one wasnt helping much, so I got a new one!
+                # beta = min(beta,e/epochs)
+                beta_current = beta_schedule(beta,e,epochs,k=15)
+            else:
+                beta_current = beta
+            loss, recon_loss, kl_loss = model.calculate_loss(reconst_imgs, imgs, 
+                                                             mu, logvar,
+                                                             beta=beta_current, 
+                                                             reduction=reduction,
+                                                             use_mse=use_mse,
+                                                             use_freebits=use_freebits,
+                                                             min_kl=min_kl,
+                                                             normalize=normalize
+                                                             )
+            
+            losses.append(loss.item())
+            # ideally, the kl loss should be balanced 
+            # not too small and not too large
+            # and defninetly nothing close to 0!
+            kl_losses.append(kl_loss.item())
 
-x_pred_grid = model.decoder(z_grid)
-x_pred_grid= x_pred_grid.cpu().detach().view(-1, 1, 28,28)
-x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
-plt.figure(figsize=(10, 10))
-plt.xlabel('Z_1')
-plt.ylabel('Z_2')
-plt.imshow(x)
-plt.show()
+            # grab mean/stds 
+            # if the standard deviation becomes too small and 
+            # goes to nearly zero, the model isnt 
+            # effectively using its latent space,
+            # we should have a diverse range of latent activations
+            # (again zero/close to zero, is a sign of 
+            # not learning/contributing much to the whole process)
+            # as for what we should be expecting, 
+            # if the mean is always near 0 and std is near 1,
+            # this means the model ignores the latent space 
+            # (it means it has learned the prior (normal distribution N(0,I))!)
+            mu_list.append(mu.mean().item())
+            std_list.append(torch.exp(logvar*0.5).mean().item())
 
-#%%
-def display_imgs_recons(img_pairs, nrows=8, rows=20, cols=1):
-    img_cnt = len(img_pairs)
-    print(img_cnt)
-    fig = plt.figure(figsize=(28, 28))
-    for i in range(img_cnt):
-        grid_imgs = make_grid(torch.from_numpy(img_pairs[i]),
-                            nrow=nrows,
-                            normalize=True)
-        ax = fig.add_subplot(rows, cols, i+1, xticks=[],yticks=[])
-        ax.imshow(grid_imgs.numpy().transpose(1,2,0))
-        save_image(grid_imgs, f'results/imgs_{i}.jpg')
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step() 
+            if i% interval ==0:
+                print(f'Epoch {e}/{epochs} [{i}/{len(dataloader_train)}]'
+                    f' | Loss: {np.mean(losses):.4f}'
+                    f' | KL-Loss: {np.mean(kl_losses):.4f}'
+                    f' | (μ,σ): ({np.mean(mu_list):.4f} , {np.mean(std_list):.4f})'
+                    f' | lr: {scheduler.get_last_lr()}')
+        scheduler.step()
+    # plot mu/std, klloss and see how they behaved
+    plot_training_metrics(mu_list, std_list, kl_losses, losses)    
 
-display_imgs_recons(img_pairs, nrows=10, rows=8, cols = 1)
-#%% 
+def save_model(modelname, kwargs):
+    try:
+        ensure_directory_exists(modelname)
+        torch.save(kwargs, modelname)
+        print(f"{modelname} saved!")
+    except Exception as ex:
+        print(f'An Exception has occured: {str(ex)}')
+
+def load_model(model, modelname, key='states'):
+    # load the model 
+    states = torch.load(modelname)
+    model.load_state_dict(state_dict=states[key])
+    print(f"{modelname}'s {key} loaded")
+    # no need to return it, but do it in case we assign it
+    return model
+
+#! edit merge these two together? since we can display the diff
+# next to plots as well!?
+# some introspection functions to see if our model has collapsed!
+def check_latent_representation_diversity(model:VAE, dataloader):
+    # if we compare two different inputs latent vectors
+    # and they are nearly the same, it means our model 
+    # has collapsed! the encodings for different classes
+    # must be very different.
+    # if the difference is close to 0, the latent space 
+    # is collapsing! there should be noticeable variation
+    # between different images
+    device = next(model.parameters()).device
+    imgs,labels = next(iter(dataloader))
+    # grab two random classes
+    classes = torch.randint(0,10,size=(2,))
+    # get the indexes for said classes
+    indices = torch.where((labels == classes[0]) | (labels == classes[1]))[0]
+    # and pick only two images for comparison
+    imgs = imgs[indices[:2]]
+    imgs = imgs.to(device)
+    zs,_,mus,logvars = model.encode(imgs)
+    # could do: 
+    # difference = mus.diff(dim=0).abs().mean().item()
+    # but since we have 2 its easier to read we do:
+    difference = (mus[0]-mus[1]).abs().mean().item()
+    print(f'difference between two latent images: {difference:4f}')
+    # could use math.close(difference,0,abs_tol=1e-6) aswell
+    # but this should do it as well (doesnt need an extra import!)
+    collapsing = abs(difference)<1e-6
+    print(f'Collapsing!!!' if collapsing else 'No collapsing. all is OK!')
+    
+# check if our latent space is smooth and gives us 
+# smooth iterpolation between classes
+def check_laten_representation_interpolation(model:VAE, dataloader, interpolation_steps=10):
+    device = next(model.parameters()).device
+    imgs,labels = next(iter(dataloader))
+    # grab two random classes
+    classes = torch.randint(0,10,size=(2,))
+    # get the indexes for said classes
+    indices = torch.where((labels == classes[0]) | (labels == classes[1]))[0]
+    # and pick only two images for comparison
+    imgs = imgs[indices[:2]]
+    imgs = imgs.to(device)
+    latent_vectors,encoder_outputs, *_ = model.encode(imgs)
+    
+    #lets create a nicely stepped vector of values
+    # and use it to feed our decoder to see how our
+    # our decoder interpolates between the latentvectors
+    # with these values and whether the interpolation is 
+    # smooth and final result looks good
+    alphas = torch.linspace(0, 1, steps=interpolation_steps).to(device)
+    interpolated_z = torch.lerp(latent_vectors[0], latent_vectors[1], alphas[:, None])
+    # generate 10 interpolated images between our given latent vectors
+    interpolated_images = model.decoder(interpolated_z)
+    grid = make_grid(interpolated_images, nrow=interpolation_steps, normalize=True)
+    plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
+    plt.title("Latent Space Interpolation")
+    plt.axis("off")
+    plt.show()
+
+@torch.no_grad()
+def evaluate_on_testset(model:VAE, dataloader_test, sample_count=20, img_shape=(1,28,28), save_dir='./results/', **kwargs):
+    test_set_size = len(dataloader_test.dataset)
+    img_pairs = []
+    losses = []
+    interval = 10
+    # remove the klanealing from kwargs so we can send it to calculate_loss
+    kl_anealing = kwargs.pop('kl_anealing')
+    model.eval()
+        
+    for i, (imgs, labels) in enumerate(dataloader_test):
+        imgs = imgs.to(device)
+        labels = labels.to(device)
+        reconst_imgs, mu, logvar = model(imgs)
+        loss,*_ = model.calculate_loss(reconst_imgs, imgs, mu, logvar, **kwargs) #beta, reduction, use_mse, use_freebits, min_kl, normalize)
+        losses.append({'val_loss':loss.item()})
+        
+        print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
+            f'\tLoss: {(loss).item():.4f}')
+
+        if i%interval==0:
+            reconstructeds = reconst_imgs.cpu().view(-1, *img_shape)
+            # grab the first few images and their reconstructions
+            # sidenote: when we use no_grad() decorator, theres no gradients, so no need for .detach()!
+            imgs = imgs[:sample_count].cpu().numpy()
+            recons = reconstructeds[:sample_count].numpy()
+            pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
+            img_pairs.append(pairs)
+    
+    print(f'Testset Loss: {np.mean([entry["val_loss"] for entry in losses]):.4f}')
+    # plot the losses using pandas! 
+    # this actually is very neat and comes handy very often!
+    # we can have a list of dictionaries, where each value is 
+    # attributed by a key. this way, our keys will be used as
+    # legends and we have a simple plot with minimum hassle
+    import pandas as pd
+    ax= pd.DataFrame(losses).plot()
+    ax.set_title('testset loss')
+    plt.show()
+    
+    display_imgs_recons(img_pairs, nrows=10, rows=8, cols=1, save_dir=save_dir)
+
+@torch.no_grad()
+def generate_latent_space_grid(model:VAE, n=20,lower_bound=-2, upper_bound=2, img_shape=(1,28,28), img:torch.Tensor=None):
+    print(f'using {lower_bound=} and {upper_bound=}')
+    # lets see if the transition in our latent space is smooth
+    # that is we should be able to smoothly transition from one
+    # class to the other, at least this is what we are tryting 
+    # to see.
+    # we create a vector of equally spaced values, and try to
+    # visualize these vectors, (they act as our latent vector z)
+    # since they are equally spaced, we can see how they change
+    # gradually, ideally we want them to have a smooth transition
+    # from one class to another. 
+    # so lets see how our interpolation turns out
+    # n means we want a figure with nxn digits (note we assume our latent vector dim is 2)
+    model.eval()
+    # we are basically creating a z vector, with n, equally spaced value
+    # starting from lowerbound, up until upperbound (e.g from -2 to 2)
+    # we create 2 such vectors, so we can create a grid of numbers
+    # treating one z for xaxis and another for the yaxis. 
+    z1 = torch.linspace(lower_bound, upper_bound, n)
+    z2 = torch.linspace(lower_bound, upper_bound, n)
+    # using np.meshgrid, we create our grid, meshgrid, simply 
+    # expands z1 and z2 into 2D grids, by first repeating z1 values in
+    # x-axis (rows) and then repeating the z2 values in y-axis(columns),
+    # we finally using np.dstack, combined them and the result 
+    # will be a 3dgrid where each xy is made up of z1 and z2 values.
+    # (test with a small example like linspace(-2,2,5), and see how it goes
+    # visualizing it gives you a pretty good idea whats happening here)
+    z_grid = np.dstack(np.meshgrid(z1, z2))
+    z_grid = torch.from_numpy(z_grid).to(device)
+    # print(f'{z_grid.shape=}')# nxnx2
+    z_grid = z_grid.reshape(-1, model.embedding_size)
+    print(f'{z_grid.shape=}')#(nxn, embdsize) 
+    # 
+    # todo think about skipconnection visualization
+    # we cant simply use zeros for fake encoder output, 
+    # because decoder is codnitioned on it
+    # and it must have valid values, because it relies 
+    # upon some extra information present in it, 
+    # so one way is to maintain a running_mean/average 
+    # of all encoder outputs during training and use that mean
+    # during testing for generating purposes, I tested it
+    # and it doesnt work! we get nonsense (the code is 
+    # commented out in our model for future references (maybe im doing it wrong here!))
+    # the other way that came to my mind was to use an 
+    # actual image, get its encoders output and use that instead.
+    # this gives us the image, but theres no variation happeing!
+    # another way that came to mind was to use several images,
+    # a batch of images to be precise! that is take a batch of images,
+    # their mean, feed this to the encoder and use its outputs
+    # with our generation! this doesnt work either!
+    # 
+    # imgs,_ = next(iter(dataloader))
+    # imgs = imgs.to(device)
+    # img_mean = imgs.mean(0)
+    # z,output,*_ = model.encode(imgs[0].unsqueeze(0))
+    # print(f'{z_grid.shape=} {output.shape=} ')
+    # how to concat? z_grid is 10x10x2, ours is 1xd (we need to repeat ours 10x10 times!
+    # so they have the same batch dim and then concat them)
+    # we need to reshape zgrid to have (-1,embdsize)
+    # by default since our embdsize=2, it aligns prefectly
+    # with the default 10x10x2 which is 100x2, but when embdsz
+    # is bigger than 2, it falls apart. 
+    # when we have more, we have to align them properly as z1,z2,z3,etc form. 
+    # so if we want square, we need to take sqroot of embdsize
+    # I guess (that wouldnt be possible though, because a grid is by nature 2d, xy and yx
+    # anything larger than that doesnt make sense, because we cant have xyz, xzy, zxy,yzx, etc)
+    # you get the idea, unless we create separate 2d grids for each combo which is nuts!
+    # leaving us to use an embd size that when reshaped, aligns prefectly, ie. 
+    # imgs,_ = next(iter(dataloader))
+    # imgs = imgs.to(device)
+    # z,output,*_ = model.encode(imgs[0].unsqueeze(0))
+    # img_mean = imgs.mean(0)
+    # z,output,*_ = model.encode(img_mean.unsqueeze(0))
+    output=None
+    if model.use_skip_con:
+        z,output,*_ = model.encode(img)
+        output = output.repeat(z_grid.size(0),1)
+        # print(f'{z_grid.shape=} {output.shape=} ')
+    # ema_skipcon = model.ema_skipcon.expand(z_grid.shape[0], -1)
+    x_pred_grid = model.decode(z_grid,output)
+    x_pred_grid= x_pred_grid.cpu().view(-1, *img_shape)
+    x = make_grid(x_pred_grid,nrow=n).numpy().transpose(1,2,0)
+    plt.figure(figsize=(32, 24))
+    plt.xlabel('Z_1')
+    plt.ylabel('Z_2')
+    plt.imshow(x)
+    plt.title(f'Latent space grid of numbers({n}x{n})')
+    plt.show()
+
+# lets see what each classes mean/std looks like
+# each have their own different mean,
+# the mean is drastically different than other classes
+# though otherwise it shows the model has not been trained properly
+# we can use this to generate as many images we want for each class
+# we can create as many 0s, 1s or any classes we want! using their mean/std
+# (as you will see in a moment the variation needs some work but overall
+# lets see how they look!)
+# ! edit make samples more varied by altering std a bit
+@torch.no_grad()
+def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
+    c,h,w=input_img.shape
+    if len(input_img.shape) == 3:
+        input_img = input_img.unsqueeze(0)
+
+    # grab the device from our model parameters
+    device = next(model.parameters()).device
+    model.eval()
+
+    input_img = input_img.to(device)
+    # grab the mu/logvar for the image class
+    z0, enc_outputs, mu, logvar = model.encode(input_img)
+    # convert the logvariance to std
+    std = torch.exp(0.5*logvar)
+    # create latent vectorz by sampling using the mu/std
+    # using random noise(epsillon) to create randomness in output
+    epsillon = torch.randn_like(std)
+    z_random = mu + epsillon * std
+    # how mu+std sample looks like
+    z_plain = mu + std
+    # instead of a single epsilon, we can create as many as
+    # we like, and therefore generate as many images. just
+    # make sure the size matches
+    epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
+    # by changing the std, we can generate slightly different variatations
+    # a higher std introduces more randomness, leading to more diverse outputs,
+    # a lower value generates outputs closer to the mean(mu) which means less variation
+    # we can change this in steps and create a morphing effect
+    # from one image into another. (we will be implementing this in a moment)
+    # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
+    # print(f'{scaler=}')
+    # epsillons *= scaler
+    # print(f'{epsillons=}')
+    z_batch = mu + epsillons * std
+
+    z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
+    # generate images for each latent vector
+    img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
+    # reshape the decoder outputs to the proper image dims
+    img_random, img_plain, img_batch = (img.view(-1,c,28,28) for img in (img_random, img_plain, img_batch))
+    # combine the images as one so we can display them as one big image
+    # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
+    imgs_combined = torch.dstack([input_img,img_random,img_plain])
+    # combine all images as one so we can better visualize and inspect them
+    img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
+    
+    mu = mu.cpu().numpy().flatten()
+    std = std.cpu().numpy().flatten()
+
+    plt.figure(figsize=(8, 4))#(12,8)
+    
+    plt.subplot(2,3,1)
+    plt.plot(mu, label="Mean (μ)")
+    plt.title("Mean (μ)")
+    plt.xlabel("Latent dimension")
+    plt.ylabel("Value")
+    plt.legend()
+
+    plt.subplot(2,3,2)
+    plt.plot(std, label="Std (σ)", color="orange")
+    plt.title("Std (σ)")
+    plt.xlabel("Latent dimension")
+    plt.ylabel("Value")
+    plt.legend()
+    
+    plt.subplot(2,3,4)
+    imgs_combined = imgs_combined.squeeze().cpu().numpy()
+    imgs_combined = imgs_combined if c ==1 else imgs_combined.transpose(1,2,0)
+    plt.imshow(imgs_combined, cmap="gray")
+    plt.title("Input image")
+    plt.axis("off")
+        
+    plt.subplot(2,3,5)
+    plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
+    plt.title("Similar images")
+    plt.axis("off")
+        
+    plt.tight_layout()
+    plt.show()
+
 # now lets generate new images by stepping through the latent space
 import matplotlib.animation as animation
-fig = plt.figure()
-ax = fig.add_subplot(111)
+@torch.no_grad()
+def create_interpolation_animation(model:VAE, filename='vis', sample_count=30, fps=30,mu=0.02,std=0.02):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    z = torch.randn(size=(sample_count, model.embedding_size)).to(device)
+    model.eval()
+    def animate(i):
+        # change the latent vector at each step so we get different image
+        # and ultimately a cool animation showing each image morphing into another!
+        # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
+        # so it changes faster. the more farther away from mean, the more different
+        # it becomes from that image
+        imgs = model.decoder(z*(i*std)+mu)
+        b,c,h,w = imgs.shape
+        imgs2 = imgs.view(imgs.size(0), c, h, w)#1x28x28 or 3x28x28
+        new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+        ax.clear()
+        ax.imshow(new_img)
 
-plt.rcParams["animation.convert_path"] = r"C:\Program Files\ImageMagick\convert.exe"
-z = torch.randn(size = (30, model.embedding_size)).to(device)
-model.eval()
-def animate(i): 
-    imgs = model.decoder(z*(i*0.03)+0.02)
-    imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
-    new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
-    ax.clear()
-    ax.imshow(new_img)
+    anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True, repeat_delay=1000)
+    # save the git using pillow
+    anim.save(f'{filename}.gif', writer="pillow", fps=fps)
+    plt.show()
 
-anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
-anim.save('vis.gif', writer="imagemagick", extra_args="convert", fps=20)
-plt.show()
+#%%
+# before we start our training lets have a quick review:
+# if kl loss is too small we can use kl annealing or Free Bits  
+# if latent space is unstructured we can use beta>1  
+# if the decoder is too strong we need to reduce decoder capacity(large dropout,fewer layers etc)
+# if all outputs look the same, we can add noise to z to fix that
+# now lets start training!
+
+# whenever you face CUDA error we try to debug it using this
+# if we are using jupyter notebook, otherwise we can simply execute our script
+# in terminal like this: 
+# CUDA_LAUNCH_BLOCKING=1 python ourscript.py 
+# but since we are in jupyternotebook environment, we do this in code:
+# import os
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
+def select_dataset(dataset_name='mnist', batch_size=128, size=28):
+    if dataset_name.lower() == 'mnist':
+        dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True,transform=tf.ToTensor())
+        dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True,transform=tf.ToTensor())
+    
+    elif dataset_name.lower() in ['cifar','cifar10']:
+        # for cifar10 a better architecture and training regime is required
+        transformations_tr = tf.Compose([tf.Resize(size),
+                                                 tf.RandomHorizontalFlip(),
+                                                 tf.ToTensor(),])
+        transformations = tf.Compose([tf.Resize(size), tf.ToTensor(),])
+        dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, download=True,transform=transformations_tr)
+        dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, download=True,transform=transformations)
+   
+    else:
+        raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
+    
+    dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
+    dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
+
+    return dataset_train, dataset_test, dataloader_train, dataloader_test
+
+dataset = 'mnist'
+# # dataset = 'cifar10'
+# batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                   batch_size=batch_size)
+imgs,lbls=next(iter(dataloader_train))
+view_images(imgs,lbls)
+#%%
+# mnist test 
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
+epochs = 50#50,100
+interval = 2000
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_channel = 1 if dataset =='mnist' else 3
+# for mnist, 2 works(of course its not optimal, but works nonetheless), try different 
+# embedding sizes here and see their effects for yourself(learning rate also affects 
+# the results so its not just the embeddingsize its the whole package!!)
+# choose something even, it makes visualization easier(especially 
+# for generate_latent_space_grid function since we use 10x10/20x20
+# by default, but you can use larger or smaller grids as well, just 
+# make sure the dims match up with embeddingsize so visualization 
+# works well.(ultimately 10x10 is 100 and for visualization we do (-1, embdsize)
+# and this specifies the number of samples, when ebdsize=2, it gives us 10x10 grid
+# but when embdsize is larger, as you can see, the number of samples and grid follow
+# our reshape (-1,embdsize) you get the idea) 
+embedding_size = 2#,10,20,50
+# in theory beta>1 forces the model to
+# use latent space more efficiently,
+# but larger beta may make the image 
+# blurrier! so we use smaller beta
+# try different betas and see their effect on
+# both interpolation quality and latent space formation
+# (the choice of beta becomes challanging with more complex datasets i.e. cifar10!)
+beta=1 #0.001,1,2,4,
+# reduction mean works much better than sum, 
+# its batch invariant and is much more stable
+reduction='mean'
+use_mse=True
+normalize = True # for reduction='mean'
+kl_anealing=False
+use_skipconnection=False
+add_extra_noise=False
+use_freebits=False
+min_kl=0.5
+
+model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
+
+# note high loss like the ones in the thousands(when using sum e.g.),
+# will be compounded by large lr (it will cause the model to make 
+# too large of updates causing it to never learn)
+# this may not show itself that much in mnist, but when switching to other more 
+# complex datasets it will definitely show, so one must use a much much lower lr!
+# 
+# remember too of a large lr will make the network diverge, 
+# it will show itself as mean going toward 0 and std to 1,
+# the kl loss will also be around 0, all showing 100% collapse.
+# so if our training goes properly, and we see loss decrease properly we're fine!
+# this shows itself in more complex datasets such as cifar. we talked about
+# the sign to know which part needs attention, dont forget about rudimentary things like lr, and 
+# other proper techniques in training! I took care of them here to some extend so we can
+# get somewhat that works, but its not by any means optimal. give it a try and see for yourself!
+# 
+lr =0.01
+weight_decay = 1e-3
+scheduler_steps = [20,30,40,45]#[20,45,65,85] # [20,35,45,49]
+optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
+
+train(model, dataloader_train, optimizer=optimizer, 
+      scheduler=scheduler,
+      device=device,
+      epochs=epochs, 
+      beta=beta,
+      reduction=reduction,
+      normalize=normalize,
+      use_mse=use_mse,
+      interval=interval,
+      kl_anealing=kl_anealing,
+      use_freebits=use_freebits,
+      min_kl=min_kl)
+
+kwargs = {"states": model.state_dict(),
+          "epochs": epochs,
+          "embedding_size":model.embedding_size,
+          "use_skipconnection":use_skipconnection,
+          "beta":beta,
+          "kl_anealing":kl_anealing,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "reduction":reduction,
+          "normalize":normalize,
+          "use_mse":reduction,
+          "optimizer":optimizer.state_dict(),
+          "scheduler":scheduler.state_dict()}
+
+timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+modelname = f"./weights/vae/vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+save_model(modelname=modelname, kwargs=kwargs)
+#%%
+# load the model to make sure we are dealing with the right model!
+load_model(model, modelname=modelname)
+img_shape=(input_channel,28,28)
+kwargs = {"img_shape":img_shape,
+          "beta":beta,
+          "reduction":reduction,
+          "use_mse":reduction,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "kl_anealing":kl_anealing,          
+          "normalize":normalize}
+check_latent_representation_diversity(model, dataloader_train)
+# fix these two for skipcon version
+check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+generate_random_images(model, count=32,img_shape=img_shape)
+evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/mnist/')
+# this generation is broken for skipcon for now,
+# we can send an input img, for the sake of running it 
+# without errors, but the output doesnt work as we expect it
+# I need to fix it!
+generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+plot_2d_latent_space(model)
+plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# lets view some images and generate
+# some only for a specific class
+# note that our current approach only
+# gives us little control over this kind of
+# generation, in order to get diverse output
+# even for the same class, we need to put an effort!
+imgs,labels = next(iter(dataloader_test))
+view_images(imgs,labels)
+# mu/std slightly changes for different instance of a class
+# but overall they are roughly the same, they
+# however change dirastically from class to class
+generate_similar_images(model, imgs[3])#0
+generate_similar_images(model, imgs[13])
+generate_similar_images(model, imgs[25])
+generate_similar_images(model, imgs[2])#1
+generate_similar_images(model, imgs[5])
+generate_similar_images(model, imgs[14])
+generate_similar_images(model, imgs[1])#2
+generate_similar_images(model, imgs[32])#3
+generate_similar_images(model, imgs[4])#4
+generate_similar_images(model, imgs[15])#5
+generate_similar_images(model, imgs[11])#6
+generate_similar_images(model, imgs[0])#7
+generate_similar_images(model, imgs[8])#8
+generate_similar_images(model, imgs[7])#9
+# the animation maynot work inside jupyternotebook, but the gif file works
+create_interpolation_animation(model, filename=f'./results/vae/vae2/mnist_{timestamp}')
+
+#%%
+# torch.autograd.set_detect_anomaly(False)
+# import os
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+
+# cifar10 test
+dataset = 'cifar10'
+batch_size = 32
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                                                batch_size=batch_size,
+                                                                                )
+
+epochs = 100#50,100
+interval = 2000
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# if its mnist use 1 if its cifar10 use 3 for input channel
+input_channel = 1 if dataset =='mnist' else 3
+
+# 50 seems a fair choice for cifar10 example,
+# larger values need more regularization though
+# good choice is 384, but for visualization 200 is better for now
+embedding_size = 600 #2,10,20,50,70,90,100,128,256,384,512
+# in theory beta>1 forces the model to
+# use latent space more efficiently
+# but for our quick tests here, especially in cifar10,
+# we set it to 0.001 for this to work for us (otherwrise
+# using higher values would give us blurrier images which
+# again signals us we need to work more on the hyperparameters!)
+# at least in my experiments so far this has been the case.
+# note:
+# that tiny beta is actually cumbersome, it doesnt allow us
+# to have proper generation/interpolation. we need to
+# have a healthy amount of beta, cuz that small amount 
+# means the kl term is effectively nonexistant! or very weak
+# 
+# larger beta values result in blurier output (try beta=1 vs 0.001)
+# when you experiment with hyperparameters, only change one parameter at a time
+# otherwise you wont beable to know what each parameters effects are on your model
+# 
+# if images are blury then we need to increase the embeddingsize
+# 
+# sidenote:
+# Initially I tested no batchnorm for the
+# last layer of encoder and first layer of decoder, because
+# I couldnt get sharp reconstrcutions, if we dont use batchnorm
+# for the last layer of encoder and first layer of decoder 
+# we will get nans, and to get around this issue, 
+# we need to make sure to lower the lr (0.001 seems ok)
+# or use freebits. 
+# However, I usually try a few times before I decide its too much 
+# this is especially the case when no bn is used
+# because when bn is used the training is stable,
+# so as a rule of thumb I retry a few times, and 
+# only if it doesnt work I lower the lr again.
+# usually it works on the 3rd or 4th attempt and 
+# it starts conveging without spitting out any nans!(or huge kl values!) 
+# this way the results are sharp and clearer than others so far.
+# 
+# However, after many more experiments I noticed I 
+# didnt have to remove bn for those layers, 
+# I had to do some other modifications
+# which I'll be pointout in a moment)
+# if we use bn for last layer of encoder this wont happen, 
+# but beta still has effect on the output and makes it blurrier. 
+# this tiny value causes the latent space to be squashed around 0(center)
+# as a tiny mass,all encodings squashed together 
+# (see model vae_cifar10_100_mean_normalized_mse_09_40_42_2025_02_10.pth
+# load it and visualize the latentspace to see what im talking about)
+# and compare it with vae_cifar10_100_mean_normalized_mse_09_49_53_2025_02_10.pth
+# where beta=1 is used, see how the latentspace is more expanded!
+# 
+
+# 
+beta=0.2#0.0001 #0.0001, 0.001,1,2,4,
+# reduction mean works much better for both mnist and cifar,
+# its much more stable! especially for cifar10
+reduction='mean' #mean
+# mse seems to work better for cifar if skipcon isused
+# but during our tests, bce gives sharper images!
+use_mse=False #True
+normalize = True # True for reduction='mean'
+# when we remove batchnorm from layers,
+# especially the last layer of encoder
+# the loss can become really unstable
+# kl annealing can help, but it depends
+# on other parameters as well(lr formost,
+# then skipcon and beta value)
+# using bce, it doesnt help,
+kl_anealing=True #False
+# skipcon is especially effecive when training 
+# cifar10 for example(without kl-annealing)
+# (especially if encoding has spatial dims>1 like 2x2 or 4x4
+# infact we dont get very blury reconstructions if we use 1x1
+# using 2x2 dims for the encoder outupt improved the result,
+# but it was 4x4 that made it for me, gave me the sharpest reconstructions)
+# the problem with skipconnection is, it prevents us from easily
+# creating generations, because we dont use any encoders, and thus
+# theres no encoder output to incorporate into latentvector z!
+# also it can make the network ignore latent vector!
+# we can easily see that using skipconnection with mnist can 
+# result in extreme posterior collapse! 
+# I had to completely turn off kl to get somewhat working output!
+# we couldnt reconstruct properly
+# (its expected if you think about it, 
+# using skipcon the decoder can ignore the z completely, and
+# reconstruct the input, therefore when we try to generate 
+# something using sampling it will be garbage! cuz they were
+# not trained properly to have meaningful values)
+# #sidenote: any mention of skipcon from now on being required belongs
+# to old experiments and is not valid for the reason I later (above)
+# mentioned.
+# (old note: skipcon is necessary for getting sharp/clear images, 
+# without it we will get very blury images
+# also the training will be more unstable. so for 
+# more stable training and sharper reconstructions we 
+# enable skipcon)
+use_skipconnection=False #True
+# adding extra noise didnt do much for me, at least
+# in my experiments, I had the most luck with other 
+# techniques though
+add_extra_noise=False #False
+# with beta values larger than 0.01(like 1), using freebits 
+# make training more stable, it makes images somewhat
+# better, but not that much by itself only. 
+# I still prefer beta=0.001 without freebits.
+# and I need to enable skipcon regardless of this option
+# when enabled using freebits, makes images a bit blurier
+# especially with high min_kl values
+use_freebits=True #False
+# by using bce, and activiating freebits
+# we get sharper image(0.4 initially seems sharper than 0.5)
+min_kl=0.4 #0.5
+
+# sidenote from past (before bn)
+# for cifar10 these are the best settings so far
+# we might face nans a few times(if we dont use bn),
+# but try running and it will hopefully converge!
+# the curcial things is to have larger featuremaps at the
+# end of the encoder (4x4 in our case) and not using bn for
+# last layer of encoder and first layer of decoder. 
+# forget it, bn was not the issue, infact using bn 
+# makes training more stable, and theres no issues
+# in using it!
+# embedding_size = 50
+# beta=0.001 # beta=1 works, but the result is a bit blurier and less detailed. beta 0.001 gives the best details so far
+# reduction='mean'
+# use_mse=True
+# normalize = True # for reduction='mean'
+# kl_anealing=True # # it seems disabling klanealing makes training more stable with our current settings!
+# use_skipconnection=True
+# lr =0.002
+# weight_decay = 1e-3
+# scheduler_steps = [35,45,49]
+#!use more embeddings withou skipcon?
+# using bce gives us sharper images compared to mse!
+# 
+model = VAE(embedding_size, input_channel, use_skipconnection, add_extra_noise).to(device)
+
+#0.01 when bn is used, 0.001/0.002 
+# when bn is not used. (it works when bn is used as well)
+# also using large betas (betas>1)
+# will also make training unstable 
+# and you need to lower lr further!(if no bn is used!)
+
+# lastnote:
+# using bce,lr=0.001,beta=0.0001, no skipcon, and
+# no kl-annealing and spatial dim=4x4 we got much better
+# result than mse. also our latent vectors are being used
+# previously it was horrible, it wont use anything and mean/std was always 0-1
+# with current settings we are learning but we still need improvement
+# both in scheduler, embdsize and proper architecture. I noticed in my
+# previous test, by mistake decoder was using 256x1x1, instead of 256x4x4
+# which constrained the network. after fixing it we got good improvements
+# next test can be using larger fmaps in decoder (instead of 4x4 lets go 8x8)
+# (without changing encoders output dim!)
+# then try using larger inputs, like 32/38/42/64 instead of 28! and see how that affects it
+# then try using larger embeddings,
+# or use -1/1 with mse and see if that helps
+# or now use skipcon with bce and see if that works ths time with moving average trick!
+# use larger batch instead of 32!
+# update:
+# increasing the embdsz from 50 to 70 decreased our loss from 1370 to 1361 
+# and images became sharper! embds=90 made it 1355 and images are more formed(and sharper)
+# using embdsz=100, got us to 1353! but I decided to work on embds=90 and with change to 
+# epochs=100 and scheduler (30,35,55,75) it got down to 1353! 
+# with [30,35] its down to 1351, but I guess the ebmdssz=100 gives more detailed images (although with
+# the same loss, at least I think so!) with [30,50] its 1351 as well(loss/klloss) are more smooth!
+# compared to [30,35]!
+# with embdsz=120 and [30,50] we get 1345. jumping to embdsz=256 the loss stayed at 1345 but
+# images now have much more details.
+# now we increase beta to 0.001 and see how that affects it (loss becomes 1393!) and makes it(reconstructions) worse
+# so beta remains at 0.0001(0.0002 is also a bit worse, so increasing beta is no brainer at this point).
+# lowering it to 0.00001 is also not improving things, it increases the loss initially to 3000 and then
+# gradually decreases, but diverges quickly, shooting the loss to 10000! and then trying to lower it down
+# basically it fluctuates badly and doesnt improve! ultimately the final loss is 13014! and the results
+# are blury as hell)
+# also disabling freebits ruins the results making them very blury
+# so freebits(0.4) is absolutely necessary (with beta 0.0001). 
+# freebits=0.8 lowers our loss to 1335! but I guess the image quality is so so, not very different
+# than the 0.4 version one! but I might be wrong. trying freebits=0.2 gives us 1335 as well!
+# the result isnot good (that is not better than 0.4) (sidenote, from time to time, the loss incresaed
+# very high due to very high kl loss, but normally they start in 1400s! and decrease). ok
+# freebits=0.4 also achieved 1336! so I guess higher minkls may get higher values afterall 
+# (using embdsz=200, we get 1335/1338/1339 (*3 runs) by the way, images are sharp but not sharper than 256, 
+# * 1335 was achieved after disabling bn for first layer of decoder
+# !edit move this part down
+# but random generation doesnt produce good images yet (images are blurry and 
+# interpolation is not smooth yet),but using mean/std we can replicate the samples!)
+# sidenote( I guess its because our kl weight is too small!
+# cuz the reconstructions look okay on real data but random samples from 
+# the prior (normal distribution we sample from) look blurry or nonsensical,
+# it usually means the learned latent space is not well aligned with 
+# the standard normal distribution we sample from. 
+# 
+#
+# using embdsz=512 we get a loss=1332, the images are sharper, but not by a lot, lets do [30,50,50]
+# and see if it improves further,(with increasing embds im seeing more diverging, loss shoots up at the
+# very begining , and I have to restart trainig so it starts from a good place (usually restarting training fixes it)
+# ok with new schedules, we got 1333 and results are abit blurry I think!
+# trying embds=400, we get a loss=1334, the results are like before. 
+# 
+# trying embdsz=384 we got 1334 the quality is a bit better( a second try its 1333)
+# with beta=0.001 and we got 1335! the quality is not that different!(though its blurier! but still not bad! pretty legible!)
+# at this point I guess its enough, more effort can be put and make the results improve
+# we covered the principles and main factors and saw their effects.
+# the random generation is not ideal, but we can see images formed, although they are heavily
+# blured, and its as if we are looking into old, moldy image frames from 1800s! Iguess trainig
+# longer should fix this
+# 
+# before we finish lets talk about random generation issues
+# i noticed we get somewhat dark with visible checkerboard patterns
+# they are not visible in reconstructed image, just in randomly generated ones
+# it might be from the transposed conv (Deconv) because it introduces checkerboard patterns
+# because of the way different kernels/paddings/strides are used. to avoid it we can use
+# conv2d-upsample combo, or use pixelshuffle. 
+# test this as well: 
+# also not using batchnorm in decoder might help. I guess we first try no bn in decoder
+# and see if that works.(ok it was bn for the decoders first layer! removing it we now only
+# get a green overlay on images! )
+# we can also try mse and skipcon at the very end as well
+# ok I removed bn from first layer of decoder! with embdsz=200 and beta=0.0001 lets see 
+# how random generation and recnstruction looks- the loss decreased and the weird blackness
+# is also gone.but theres a green hue everywhere! maybe its the right track?
+# use embdsz=384 and try random generation for seeing if our changes work, thisway we make sure
+# recons are sharp, and network learns a good latent, instead of using already blurry 200embds 
+# version (user larger betas? check to make latent space well formed? separated)
+# !add classification loss to the bunch and see if that helps in separating things!?
+# ! also edit the above
+# starting with embdsz=384 and no bn in decoder: it made loss to shoot up to 400k!
+# the reconstructions are expectedly very blurry, the generated images however, look more
+# colorful, but very very rough, you can see the images, but they are heavily distorted with noise
+# and discoloration.
+# next im going to enbale some bns for middle layers in decoder 
+# to stabalize loss a bit: with the last three two layers (except the last layer) of decoder
+# with bn=true, the loss seems to be back to normal range we got 1340, larger than our previous
+# 1333, the reconstructions are better now, but not as good as all bn version obviously, the
+# generation is still not good, but seems much less crazy! but still not clear or legible
+# note for bigger embdsz like 400+ we need to bn for all layers (except the last layer)
+# otherwise, loss will shoot to 20K-200k+!
+# 
+# i noticed we have been using leakyrely with decoder, I changed to relu with all bns and see
+# how it does: we got 1338, so leaky relue seems better in decoder!(1333 vs 1338)
+# using conv-upsample: with all bns enabled, we got a loss=1331! (with beta=0.001 its 1333)
+# which is better than default deconv, but the reconstructions seem more blury than before (dconv version)
+# also the generation didnt change from before! still greenish, blury noisy images that i cant
+# make anything out of them really unless im paying a lot of attention to make out a shape!
+#
+# im using embds=400 instead of 384 from now on, because its close to 384 and also multiple of 200
+# which we can easily use with our visualizations. the generation with all bns are very blurry
+# and lots of black spots, but theres no green overlay! 
+# 
+# disabling bn for last 3 layers od decoder: this made reconstructions less detailed, more blurry
+# it also worsened the generation, I cant no longer identify anything, they are brown/blackish blurry
+# blobs now. I guess bn for later layers helps a lot lets enable them back!
+# 
+# disable only the second layer, all others except the last layer have bn=True: loss=1334, generation is aweful, checkermarks
+# are very apparent, details are illegible, its basically blurry blobs, its almost like tghe previous test, its as bad
+#  maybe a bit less, but with more checkermarks, and completely useless, so the first layers are
+# important!
+# using upconv again this time with all bns enabled except last layer: we got 1333, reconstruction
+# isnt any different than deconv, and the generation is brown blurry blobs(probably because batchnorm
+# steers/biased towards the average color/brightness in out dataset, hence the darker/brownish color I guess),
+# so we use deconv lets use pixelshuffle! it doesnt work, it crashes the cuda!
+# 
+# removing drp from first layer of decoder: embds=400,got loss=1331, more details in reconstructions
+# but random generations are still like before
+# 
+# use (-1,1) and tanh and horizontalflip : cudaerror! its getting ridiculous! torch 2.5 is buggy as hell!
+# use mse -skipped because of cuda-device-side-error (after a few kernel resets, it started working!)
+# use 0-1,sigmoid and horizontalflip: loss got 1331, but reconstruction is roughly the same
+# as without using horizionalflip.the random sampling is checkermarked and blurry blobs like before
+# using mse, doesnt change anything , the loss magnitude decreases, but the overall its the same
+# range(-1,1) mse and tanh: loss:34, everything else seems like before
+# 
+# adding more convs between deconvs didnt change anything loss:1332, and aside from that nothing
+# changed!
+# use groupnorm(1,outdim) insteadof batchnorm in deconvs: loss is 1332, reconstructions blurrier than when using bn
+# the random generation however, is now a colorful mess! there are lots of vibrant colored blobs
+# I cant detect any images, seems like pure blurry bloby mess to me!
+# use groupnorm(4,outdim) insteadof batchnorm in deconvs:1337 still the same,
+# use groupnorm(outdim,outdim) instead of batchnorm for all layers: loss doesnt decrease!
+#
+# revert back to deconv,sigmoid,(0-1),embds=400, now this time remove dropout
+# after mu in encoder: the loss is down to 1323! the images are now much sharper(nearly prefect I'd say?! details are visible unlike before)!
+# silly me completey forgot about removing it! however, the generations are still blurry messes
+# they are too blurry infact!
+# using crossentropy loss with other losses didnt change much, got 1325! it made reconst blurrier
+# so its not good.
+#
+# using beta=0.001 its roughly the same, the loss is 1326, the colors are a bit fader compared to 
+# beta=0.0001, the generation is now shows a lot more checkermarks, black checkermarks. 
+# still very blurry, with a tiny faint touch of images, its really faint, but if I look closely
+# I can see its an image, a heavily, blured, noisy image, still cant properly tell what they all
+# maybe a plane? its obviously somewhat more detailed than the previous beta(0.0001).
+# 
+# using beta=0.01 loss=1334(kl loss is now in 1300s),recons-images are considerably blurrier, no significant change in latent space
+# is visible,(i.e. no visible improvements in formation of subspaces) but random generations
+# now show more refined images/still heavily blurred with chekermarks, but its clear they 
+# are images, you can tell they are heavily noisy/distorted images.
+# 
+# using beta=0.1 ,loss=1368 (kl loss is now in 200s, its inversly related to beta value, smaller beta means larger kl loss!)
+# expectedly image recons are getting blurrier, but at the same time, random
+# generations are getting better, now I can see blurry but colorful, images, no checkermarks or
+# black bars in the images are visible. the images are very blurry though
+# 
+# using beta=1 (might be time to use klanealing so image recons is not affected that much!): loss
+# 1536(kl loss 166 nearly intact the wholetimme), it decreased from 1900s, but didnt go down 
+# much. the img recons are very very blurry!its very bad, some are not even formed properly.random generations
+# is got better as well, but images like recons are still blurry, but they are better formed,with
+# vibrant colors
+# 
+# trying beta=1, klanealing:  added new beta schedule instead of linear one which used too high
+# values! now with beta=1, klanealing loss is 1441 (klloss 443) and it seems we have over fitted
+# image recons is awful! expectly, many images are not even formed properly and the whole image is
+# is very blurry. random regeneation is not good either, cant say its better than previous case!
+# 
+# using beta=0.5, klannealing: loss is 1394 (kl loss is 618). we overfitted half way!
+# and mean got close to 0 and std close to 1 which is not good, it needs more regularization I guess
+# as for the outputs, the image reconsts is much better than previous test(beta=1), but as expected
+# due to higher beta at the end of training, images are blurry and less detailed, but much detailed
+# and less blurry than previous case!(you get the idea) so slight segmentations can be noticed
+# in latent space, not much, but its defnitely there).random generations are better than before
+# some images clearly show the objects, though very blurry but its like the img recons quality
+# while others are more jumbled!
+# 
+# using beta=0.5, kl anealing, usin midpoint=0.85 ineats of 0.5:loss is 1349(kl loss is5048)
+# the mean is close to 0, and we see sign of overfitting, the image recon is much better than
+# before, (before they looked like smudged abd blurry!) but this has structures, and details
+# but obviously its very blurry, and images are not formed completely, and they lack details
+# but still better than before. the generation is not good either, cant say its better than before
+# it seems we need to hit a balance between kl and recon using
+# precise annealing to get a good output
+# using beta=0.5, kl anealing, usin midpoint=0.70:loss=1368(kl loss=1450), we got overfitted badly
+# mean is nearly 0 which is bad! image recons is bad as well, blurry, smudged, very rough, not detailed!
+# this is not good for us
+# 
+# using beta=0.3 no kl annealing: loss 1414 (klloss=192), imag recons are blurry, colors are not
+# accurate, and shapes are not formed properly, but is worse than previous one!random generation is also 
+# not good and very blurry!but some images seem well-formed, but very very blurry! (i can spot
+# a car, a dogs head, a cat, a horse, but its exretemely blurry!) ran again, its pretty much the same thing!
+# mean is near zero, and std is around 0.7, both of which show not ideal situation(nearning collapse).
+#
+# using beta=0.3, klannealing(midpoint=0.5,k=15): loss is 1373(klloss=677 ), mean=0.std=0.4
+# we have overfitted it seems again, the image recons though still very blurry, is better than
+# before, we still have not formed images,very blurry images, but compared to previous, its better
+# random generation is not that different from before. but i could see interpolations improved
+# it seems we just need to play with hyperparameters at this point! which means Im fine 
+# ive already put a lot of effort into this, so we can do parameter tuning nexttiem
+# 
+# using beta=0.1 klannealing(midpoint=0.5,k=15):loss is 1347(klloss=1074),image recons is obviously
+# way better as we used a smaller beta, still blurry, but way better,random generation is a bit
+# chaotic, you can spot the object, like horse, car, but they are clutered blurry images
+# using beta=0.2 klannealing(midpoint=0.5,k=15):loss is 1361(klloss=823), image recons are a bit worse
+# than before, but id say acceptable given what we haveseen so far, the random generation 
+# is better than before, images are less clutered and can be spotted more easily (though still
+# blurry and need a long way to get better. but better than before). i stop here its good enugh!
+# vae dont create sharp images like that! we need to us emore powerful variants!
+# 
+# try with embds=400, disabled drpout after logvar: (forgot to remove it when
+# I removed mu dropout!): loss:1356(kllos:677) img recons details are overall better imho
+# generations are much better now, still a long way to crisp images. however, the interpolation
+# and random generation youcan more easily see the object, for example in interpolation we can
+# see a car, morphing into another car, its blurry and rough but its there and its much 
+# clearer than before, using higher embdsz(like 600) can give betetr result, for exampe
+# with embds=600 the loss got 1364, but the generation and interpolation was good (like e.g. in -1,1 range)
+# i conclude this here, we can improve this using other techniques we talked about like heirarchical latent variables
+# but I dont want to spend too much time on it , as we can get much better results using other methods
+#  
+# for future refrence, I first started with embdsz=50 and everythin set to False
+# except normalize, then tried with mse with basically every options, it only worked
+# with skipcon enabled and beta=0.001 Iguess. I got near prefect reconstruction but
+# the latent space was smushed into a tiny little circle around 0, and I couldnt interpolate
+# or create meaningful reconstructions using sampling. one because we have to use something
+# to get encoding output for our decoder becasue of skipcon(the latent vector was conditioned on it)
+# I tried moving average of all encoders outputs to use duirng test time, it didnt work, if I used
+# any image and use its encodings in decoder with a random latent vector z, it would only create 
+# the said image, if I used a mean of a batch of images, I would get back the mean. basically the
+# encodings would dictate the outcome, skipcon, had made latent representation to be ignored completely
+# and hence it couldnt play any role. thats why I switched to bce this time. upon switching to bce
+# I got way more clearer images than mse. and from there continued and enabled freebits and noticed
+# the images got much better and clearer, playing with lr a bit and a bit of schedules, I got good results quickly
+# from there when improvements stopped, I increased the embdsz and got great results. noticed the loss
+#persay doesnt tell exactly if the output is good, it rouhghly saysso a loss of 1300 has a very good
+# reconstruction.  also increasing the spatial dim both in encoder and decoder (both start from 4x4)
+# positively affects the reconstruction and loss. I also made a mistake once, encoder output was 4x4
+# but decoder started at 256x1x1, it adversly affected the result, when i made it 256x4x4 (everything else intact)
+# it got good result, showing decoder starting with larger fmaps helps as well.
+# over all we can improve this a lot hopefully
+#
+# sidenote:
+# !todo check this and fix it
+# you may face difficulties during training if you spot loss(exploding) exceeding
+# 1700 and not going down asap (reach 1400/1350ish for example quickly)
+# it means your training is going south!(the loss will be in the hunderdthousands or even milions!)
+# try restarting the training, usually after a few times, it should start from
+# a good state and you'll see it drop from 1700 to 1400 and it goes down from there
+# (for me on the 4th try it started training properly! sometimes it starts well
+# at the first attempt so keep that in mind in case the loss explodes at the very
+# beginning)
+
+lr =0.001#0.001 0.002
+weight_decay = 1e-3
+scheduler_steps = [30,50]#,55,75]#[20,45,65,85] # [20,35,45,49]
+optimizer = torch.optim.Adam(model.parameters(), lr =lr, weight_decay=weight_decay)#1e-4
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, scheduler_steps)
+
+train(model, dataloader_train, optimizer=optimizer, 
+      scheduler=scheduler,
+      device=device,
+      epochs=epochs, 
+      beta=beta,
+      reduction=reduction,
+      normalize=normalize,
+      use_mse=use_mse,
+      interval=interval,
+      kl_anealing=kl_anealing,
+      use_freebits=use_freebits,
+      min_kl=min_kl)
+
+kwargs = {"states": model.state_dict(),
+          "epochs": epochs,
+          "embedding_size":model.embedding_size,
+          "use_skipconnection":use_skipconnection,
+          "beta":beta,
+          "kl_anealing":kl_anealing,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "reduction":reduction,
+          "normalize":normalize,
+          "use_mse":reduction,
+          "optimizer":optimizer.state_dict(),
+          "scheduler":scheduler.state_dict()}
+
+timestamp = datetime.datetime.now().strftime("%H_%M_%S_%Y_%m_%d")
+modelname = f"./weights/vae/vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+save_model(modelname=modelname, kwargs=kwargs)
+#%%
+# timestamp2 = timestamp
+# print(f'{timestamp2=}')
+print(f'{modelname=}')
+# modelname='./weights/vae/vae_cifar10_600_mean_normalized_bce_14_57_57_2025_02_17.pth'
+# modelname = './weights/vae/vae_cifar10_600_mean_normalized_bce_16_21_49_2025_07_10.pth'
+# save_model(modelname=modelname, kwargs=kwargs)
+# load the model to make sure we are dealing with the right model!
+load_model(model, modelname=modelname)
+
+img_shape=(input_channel,28,28)
+kwargs = {"img_shape":img_shape,
+          "beta":beta,
+          "reduction":reduction,
+          "use_mse":reduction,
+          "use_freebits":use_freebits,
+          "min_kl":min_kl,
+          "kl_anealing":kl_anealing,
+          "normalize":normalize}
+check_latent_representation_diversity(model, dataloader_train)
+plot_2d_latent_space(model)
+evaluate_on_testset(model, dataloader_test, **kwargs,save_dir='./results/vae/vae2/cifar10/')
+plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
+plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# fix these two for skipcon version
+if not model.use_skip_con:
+    # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+    generate_random_images(model, count=32,img_shape=img_shape)
+    # imgs,labels = next(iter(dataloader_train))
+    # view_images(imgs,labels,rows=12,cols=11)
+    # imgs = imgs.to(device)
+    # img_t = imgs[0].unsqueeze(0)
+#%%
+# Use multiple of embdsz to get better output for exampe for embds=600 we can use 60/120etc
+# for 400 its 20,40,etc, play with range as well, higher number(-10/10) may make the output worse
+# use different ranges to inspect the output (-1,1,-2,2,-0.9,0.9 etc)
+    generate_latent_space_grid(model,n=40,lower_bound=-2,upper_bound=2,img_shape=img_shape,img=None)
+    # shows a fade horse at the end,still blurry need to focus to spot it
+    generate_latent_space_grid(model,n=40,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=120,lower_bound=-1,upper_bound=1,img_shape=img_shape,img=None)
+    generate_latent_space_grid(model,n=120,lower_bound=-0.9,upper_bound=0.9,img_shape=img_shape,img=None)
+
+#%%
+    # lets view some images and generate
+    # some only for a specific class
+    # note that our current approach only
+    # gives us little control over this kind of
+    # generation, in order to get diverse output
+    # even for the same class, we need to put an effort!
+    imgs,labels = next(iter(dataloader_test))
+    view_images(imgs,labels)
+    # mu/std slightly changes for different instance of a class
+    # but overall they are roughly the same, they
+    # however change dirastically from class to class
+    generate_similar_images(model, imgs[3])#0
+    generate_similar_images(model, imgs[10])#0
+    generate_similar_images(model, imgs[21])#0
+    generate_similar_images(model, imgs[6])#1
+    generate_similar_images(model, imgs[9])#1
+    # generate_similar_images(model, imgs[14])
+    generate_similar_images(model, imgs[25])#2
+    generate_similar_images(model, imgs[0])#3
+    generate_similar_images(model, imgs[22])#4
+    generate_similar_images(model, imgs[12])#5
+    generate_similar_images(model, imgs[4])#6
+    generate_similar_images(model, imgs[13])#7
+    generate_similar_images(model, imgs[1])#8
+    generate_similar_images(model, imgs[23])#9
+
+    # the animation maynot work inside jupyternotebook, but the gif file works
+    create_interpolation_animation(model, filename=f'./results/vae/vae2/cifar10/cifar10_{timestamp}',mu=0.2,std=0.01)
+#%%
+# save the model
+# timestamp = datetime.datetime.now().strftime("%H_%M_%S")
+# modelname = f"vae_{"cifar10" if input_channel==3 else "mnist"}_{model.embedding_size}_{reduction}_{'normalized' if normalize else 'not-normalized'}_{'mse' if use_mse else 'bce'}_{timestamp}.pth"
+# torch.save({"states": model.state_dict(),
+#             "epochs": epochs,
+#             "embedding_size":model.embedding_size,
+#             "use_skipconnection":use_skipconnection,
+#             "beta":beta,
+#             "kl_anealing":kl_anealing,
+#             "use_freebits":use_freebits,
+#             "min_kl":min_kl,
+#             "reduction":reduction,
+#             "normalize":normalize,
+#             "use_mse":reduction,
+#             "optimizer":optimizer.state_dict(),
+#             "scheduler":scheduler.state_dict()},
+#             modelname)
+# print('model saved!')
+#%%
+# load the model 
+# states = torch.load(modelname)
+# model.load_state_dict(state_dict=states['states'])
+# print('weights loaded')
+
+# img_shape=(input_channel,28,28)
+# check_latent_representation_diversity(model, dataloader_train)
+# # fix these two for skipcon version
+# # check_laten_representation_interpolation(model, dataloader_train, interpolation_steps=10)#check5,10,20
+# # generate_random_images(model, count=32,img_shape=img_shape)
+# #todo use a kwargs for easier manipulation!
+# evaluate_on_testset(model, dataloader_test, img_shape=img_shape, beta=beta, reduction=reduction,use_mse=use_mse,use_freebits=use_freebits,min_kl=min_kl,normalize=normalize)
+# generate_latent_space_grid(model,n=10,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+# generate_latent_space_grid(model,n=20,lower_bound=-2,upper_bound=2,img_shape=img_shape,dataloader=dataloader_train)
+# plot_2d_latent_space(model)
+# plot_encoder_output_projection(model, dataloader_train, title='Encoder embedding',use_pca=False)
+# plot_latentspace_clusters(model, dataloader_train, title='Full latent clusters',use_pca=False)
+# wont work with skipconnection=True, todo: fix it
+
+# cifar10 loss
+# Files already downloaded and verified
+# Files already downloaded and verified
+# Date:            09:28:27 - 2025/02/10
+# Dataset:         CIFAR10
+# Epochs:          50
+# embedding_size:  50
+# use_skip_con:    True
+# add_extra_noise: False
+# beta:            0.001
+# reduction:       mean
+# normalize:       True
+# use_mse:         True
+# kl_anealing:     False
+# use_freebits:    False
+# min_kl:          0.4
+# optimizer:       Adam (
+# Parameter Group 0
+#     amsgrad: False
+#     betas: (0.9, 0.999)
+#     capturable: False
+#     differentiable: False
+#     eps: 1e-08
+#     foreach: None
+#     fused: None
+#     initial_lr: 0.002
+#     lr: 0.002
+#     maximize: False
+#     weight_decay: 0.001
+# )
+# scheduler:       Counter({15: 1, 25: 1, 35: 1, 45: 1})
+# interval:        2000
+# Epoch 0/50 [0/391] | Loss: 184.5746 | KL-Loss: 6.4882 | (μ,σ): (0.0427 , 1.0200) | lr: 0.002
+# /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:595: UserWarning: To get the last learning rate computed by the scheduler, please use `get_last_lr()`.
+#   _warn_get_lr_called_within_step(self)
+# Epoch 1/50 [0/391] | Loss: 40.8017 | KL-Loss: 276.7021 | (μ,σ): (-0.0077 , 0.4125) | lr: 0.002
+# Epoch 2/50 [0/391] | Loss: 29.7259 | KL-Loss: 157.6318 | (μ,σ): (-0.0066 , 0.3913) | lr: 0.002
+# Epoch 3/50 [0/391] | Loss: 24.4113 | KL-Loss: 116.6159 | (μ,σ): (-0.0056 , 0.3828) | lr: 0.002
+# Epoch 4/50 [0/391] | Loss: 21.1453 | KL-Loss: 96.5729 | (μ,σ): (-0.0042 , 0.3716) | lr: 0.002
+# Epoch 5/50 [0/391] | Loss: 18.8720 | KL-Loss: 85.3616 | (μ,σ): (-0.0030 , 0.3576) | lr: 0.002
+# Epoch 6/50 [0/391] | Loss: 17.2047 | KL-Loss: 78.9367 | (μ,σ): (-0.0024 , 0.3417) | lr: 0.002
+# Epoch 7/50 [0/391] | Loss: 15.9369 | KL-Loss: 75.1898 | (μ,σ): (-0.0019 , 0.3260) | lr: 0.002
+# Epoch 8/50 [0/391] | Loss: 14.9096 | KL-Loss: 72.9856 | (μ,σ): (-0.0018 , 0.3114) | lr: 0.002
+# Epoch 9/50 [0/391] | Loss: 14.0579 | KL-Loss: 71.6381 | (μ,σ): (-0.0015 , 0.2984) | lr: 0.002
+# Epoch 10/50 [0/391] | Loss: 13.3564 | KL-Loss: 70.9018 | (μ,σ): (-0.0013 , 0.2866) | lr: 0.002
+# Epoch 11/50 [0/391] | Loss: 12.7576 | KL-Loss: 70.5410 | (μ,σ): (-0.0012 , 0.2761) | lr: 0.002
+# Epoch 12/50 [0/391] | Loss: 12.2373 | KL-Loss: 70.3561 | (μ,σ): (-0.0012 , 0.2670) | lr: 0.002
+# Epoch 13/50 [0/391] | Loss: 11.7811 | KL-Loss: 70.2461 | (μ,σ): (-0.0011 , 0.2591) | lr: 0.002
+# Epoch 14/50 [0/391] | Loss: 11.3775 | KL-Loss: 70.1804 | (μ,σ): (-0.0010 , 0.2521) | lr: 0.002
+# Epoch 15/50 [0/391] | Loss: 11.0276 | KL-Loss: 70.2354 | (μ,σ): (-0.0009 , 0.2458) | lr: 2e-05
+# Epoch 16/50 [0/391] | Loss: 10.6327 | KL-Loss: 68.8279 | (μ,σ): (-0.0008 , 0.2460) | lr: 0.0002
+# Epoch 17/50 [0/391] | Loss: 10.2681 | KL-Loss: 66.5190 | (μ,σ): (-0.0008 , 0.2529) | lr: 0.0002
+# Epoch 18/50 [0/391] | Loss: 9.9409 | KL-Loss: 64.2191 | (μ,σ): (-0.0007 , 0.2611) | lr: 0.0002
+# Epoch 19/50 [0/391] | Loss: 9.6455 | KL-Loss: 62.0366 | (μ,σ): (-0.0007 , 0.2697) | lr: 0.0002
+# Epoch 20/50 [0/391] | Loss: 9.3726 | KL-Loss: 59.9974 | (μ,σ): (-0.0006 , 0.2782) | lr: 0.0002
+# Epoch 21/50 [0/391] | Loss: 9.1224 | KL-Loss: 58.1055 | (μ,σ): (-0.0006 , 0.2864) | lr: 0.0002
+# Epoch 22/50 [0/391] | Loss: 8.8944 | KL-Loss: 56.3752 | (μ,σ): (-0.0006 , 0.2940) | lr: 0.0002
+# Epoch 23/50 [0/391] | Loss: 8.6854 | KL-Loss: 54.7983 | (μ,σ): (-0.0005 , 0.3009) | lr: 0.0002
+# Epoch 24/50 [0/391] | Loss: 8.4898 | KL-Loss: 53.3354 | (μ,σ): (-0.0005 , 0.3074) | lr: 0.0002
+# Epoch 25/50 [0/391] | Loss: 8.3102 | KL-Loss: 51.9912 | (μ,σ): (-0.0005 , 0.3133) | lr: 2.0000000000000003e-06
+# Epoch 26/50 [0/391] | Loss: 8.1346 | KL-Loss: 50.6132 | (μ,σ): (-0.0005 , 0.3205) | lr: 2e-05
+# Epoch 27/50 [0/391] | Loss: 7.9700 | KL-Loss: 49.1474 | (μ,σ): (-0.0005 , 0.3299) | lr: 2e-05
+# Epoch 28/50 [0/391] | Loss: 7.8157 | KL-Loss: 47.7302 | (μ,σ): (-0.0004 , 0.3397) | lr: 2e-05
+# Epoch 29/50 [0/391] | Loss: 7.6717 | KL-Loss: 46.3787 | (μ,σ): (-0.0004 , 0.3494) | lr: 2e-05
+# Epoch 30/50 [0/391] | Loss: 7.5377 | KL-Loss: 45.0928 | (μ,σ): (-0.0004 , 0.3590) | lr: 2e-05
+# Epoch 31/50 [0/391] | Loss: 7.4114 | KL-Loss: 43.8685 | (μ,σ): (-0.0004 , 0.3684) | lr: 2e-05
+# Epoch 32/50 [0/391] | Loss: 7.2929 | KL-Loss: 42.7034 | (μ,σ): (-0.0004 , 0.3777) | lr: 2e-05
+# Epoch 33/50 [0/391] | Loss: 7.1814 | KL-Loss: 41.5948 | (μ,σ): (-0.0004 , 0.3867) | lr: 2e-05
+# Epoch 34/50 [0/391] | Loss: 7.0755 | KL-Loss: 40.5385 | (μ,σ): (-0.0004 , 0.3955) | lr: 2e-05
+# Epoch 35/50 [0/391] | Loss: 6.9756 | KL-Loss: 39.5326 | (μ,σ): (-0.0004 , 0.4040) | lr: 2.0000000000000004e-07
+# Epoch 36/50 [0/391] | Loss: 6.8801 | KL-Loss: 38.5736 | (μ,σ): (-0.0003 , 0.4124) | lr: 2.0000000000000003e-06
+# Epoch 37/50 [0/391] | Loss: 6.7904 | KL-Loss: 37.6644 | (μ,σ): (-0.0003 , 0.4203) | lr: 2.0000000000000003e-06
+# Epoch 38/50 [0/391] | Loss: 6.7048 | KL-Loss: 36.7987 | (μ,σ): (-0.0003 , 0.4279) | lr: 2.0000000000000003e-06
+# Epoch 39/50 [0/391] | Loss: 6.6244 | KL-Loss: 35.9735 | (μ,σ): (-0.0003 , 0.4353) | lr: 2.0000000000000003e-06
+# Epoch 40/50 [0/391] | Loss: 6.5475 | KL-Loss: 35.1865 | (μ,σ): (-0.0003 , 0.4423) | lr: 2.0000000000000003e-06
+# Epoch 41/50 [0/391] | Loss: 6.4740 | KL-Loss: 34.4351 | (μ,σ): (-0.0003 , 0.4491) | lr: 2.0000000000000003e-06
+# Epoch 42/50 [0/391] | Loss: 6.4047 | KL-Loss: 33.7182 | (μ,σ): (-0.0003 , 0.4557) | lr: 2.0000000000000003e-06
+# Epoch 43/50 [0/391] | Loss: 6.3379 | KL-Loss: 33.0329 | (μ,σ): (-0.0003 , 0.4619) | lr: 2.0000000000000003e-06
+# Epoch 44/50 [0/391] | Loss: 6.2739 | KL-Loss: 32.3772 | (μ,σ): (-0.0003 , 0.4680) | lr: 2.0000000000000003e-06
+# Epoch 45/50 [0/391] | Loss: 6.2129 | KL-Loss: 31.7499 | (μ,σ): (-0.0003 , 0.4737) | lr: 2.0000000000000007e-08
+# Epoch 46/50 [0/391] | Loss: 6.1540 | KL-Loss: 31.1492 | (μ,σ): (-0.0003 , 0.4793) | lr: 2.0000000000000004e-07
+# Epoch 47/50 [0/391] | Loss: 6.0986 | KL-Loss: 30.5740 | (μ,σ): (-0.0003 , 0.4846) | lr: 2.0000000000000004e-07
+# Epoch 48/50 [0/391] | Loss: 6.0450 | KL-Loss: 30.0226 | (μ,σ): (-0.0003 , 0.4897) | lr: 2.0000000000000004e-07
+# Epoch 49/50 [0/391] | Loss: 5.9936 | KL-Loss: 29.4936 | (μ,σ): (-0.0003 , 0.4946) | lr: 2.0000000000000004e-07
+#%%
+#! make two segments, one for mnist test
+#! and another for cifar10, so both results can be seen one after another
+# ok, now we got both mnist and cifar to work, for getting sharper outputs we need
+# a better model/training regime, but for our case it suffices
+# thankfully, we could replicate all scanrios and see how each issue could be solved
+# some issues wouldnt happen in simple datasets such as mnist, but when we used cifar10
+# we could clearly see the output and their effectiveness.
+# we can test with different embeddingsizes with larger epoch and lower epoch 
+# (with anealing and without, so the effect of epoch shows itself
+# (basically gradual decrease shows its potential when properly used not in small epochs (we could also use batches!))
+# withskipconnection and without
+# and show that simply one metric (like mean) doesnt show the full extend of the issue
+# and using several clues make it much easier to know whats wrong!
+# compare the visualizations, should give very good intuitions
+# check decoder with huge dropouts to simulate weaker version
+# use noise if images are similar
+# recap the info - with solutions for each issue 
+
+#recap
+# ok lets quickly recap what changes we included this time and why:
+# we said there are several issues that can cuz a posterior collapse
+# one sign was overly generic images or blury ones. 
+# 
+# another clear sign is an extremely low kl term.
+# if kl loss is close to zero, its a sign of collapse.  
+# (if it starts high and drops to near zero, its probably
+# a collapse, because means its too easy for the model to set q(z|x)
+# close to p(z)) a nonzero value is what we want during training.
+# freebits regularization would help because it makes sure 
+# each dimension is at least doing something!(contributing positively and
+# latent space actually does have some information!)
+# note that a large beta is not bad per say, its just that too large of 
+# a value especially at the begining hinders the model learning.
+# a properly large beta can force more structured latent space
+# and lead to meaningful separation in the latent space as well
+# (it makes the kl loss larger, the recostruction loss needs to do
+# a better job at separation to lower the loss otherwise everything goes south fast!).
+#
+# the third sign is, if the latent encodings standard deviation gets 
+# nearly zero, it means the model isnt using its 
+# latent space effectively, 
+# we should have a diverse range of latent activations
+# if the mean is always near 0 and std is near 1, 
+# it means the model ignores the latent space(its using the p(z) only!).
+# 
+# forth, we can check the encodings and see if the
+# latent encodings are almost identical(for different inputs)
+# or not, if they are, then it means the model isnt
+# using the latent space.
+# (simply encode two different images 
+# and compare their latent encodings,
+# if the difference is close to 0, the latent space is collapsing
+# there should be noticeable variation between different images)
+#
+# fifth, we can visualizing the latent space with t-sne(pca is not good, 
+# its linear and wont work properly for nonlinear relationships which is ourcase)
+# if all the points cluster together, it's collapsed,
+# (a good latent space should separate different categories, otherwise generation shows how bad it is)
+#
+# we can check the generated samples and tell if osmething is wrong!
+# if the generated images are nearly identical, regardless of input changes,
+# its a sign that the latent space is underutilized.
+# if all images look the same, posterior collapse is likely happening.  
+# a good VAE should generate diverse samples
+#(we can check how generation changes with latent space,
+# a properly trained VAE should smoothly interpolate between 
+# different points in latent space.not being able to do this means,
+# theres something wrong, depending on the severity, it could be a collapsed posterior,
+# or simply a bad training regime (needs more trainig, inefficent model, etc (well talk more about this))
+# if interpolation doesnt produce meaningful transitions, the latent space
+# isnt being used effectively.)
+#
+
+# recap of our recap(add for chapter summary?)!
+# why do we face posterior collapse? it happens when the encoder ignores the latent space 
+# and learns a simplestic/trivial distribution, making the decoder reconstruct only from noise. 
+# kl loss must not be close to 0 , it should be balanced (have nonzero values)
+# the variance must not be close to 0, we should have non-zero variance
+# different encodings must not be (nearly) identical, all encodings must be distinc
+# generated images  must not be identical, obviously we must have diverse generations/outputs
+# when using t-sne the latent space must not have a single cluster,  we must see  well-separated clusters
+# when interpolating we must not see abrupt/sudden/weird/unmeaningful changes, we must see smooth transitions from one class into another
+# 
+# as we saw in our experiments, detecting posterior collapse usually 
+# needs to check kl term value, the latent space variance, 
+# generated outputs and interpolation behavior.
+# The best way to avoid posterior collapse is to carefully tune the kl loss, 
+# use beta scaler, with kl anealing and avoid an overly powerful decoder(or a simple encoder!),
+# other techniques such as freebits regularization, noise addtion, skipconnection come next.
+
+
+#%%
+# lets see what each class'es mean/std looks like
+# each have their own different mean ,
+# the mean is drastically different than other classes though otherwise it shows
+# the model has not been trained properly
+# we can use this to generate as many images we want for each class
+# we can create as many 0s, 1s or any classes we want! using their mean/std
+# #! edit make samples more varied by altering std a bit
+# @torch.no_grad()
+# def generate_similar_images(model:VAE, input_img:torch.Tensor, count:int=64, rows:int=8):
+    
+#     if len(input_img.shape) == 3:
+#         input_img = input_img.unsqueeze(0)
+
+#     # grab the device from our model parameters
+#     device = next(model.parameters()).device
+#     model.eval()
+
+#     input_img = input_img.to(device)
+#     # grab the mu/logvar for the image class
+#     z0, enc_outputs, mu, logvar = model.encode(input_img)
+#     # convert the logvariance to std
+#     std = torch.exp(0.5*logvar)
+#     # create latent vectorz by sampling using the mu/std
+#     # using random noise(epsillon) to create randomness in output
+#     epsillon = torch.randn_like(std)
+#     z_random = mu + epsillon * std
+#     # how mu+std sample looks like
+#     z_plain = mu + std
+#     # instead of a single epsilon, we can create as many as
+#     # we like, and therefore generate as many images. just
+#     # make sure the size matches
+#     epsillons = torch.randn(size=(count, mu.shape[-1]), device=device)
+#     # by changing the std, we can generate slightly different variatations
+#     # a higher std introduces more randomness, leading to more diverse outputs,
+#     # a lower value generates outputs closer to the mean(mu) which means less variation
+#     # we can change this in steps and create a morphing effect
+#     # from one image into another. (we will be implementing this in a moment)
+#     # scaler = torch.linspace(0.01, 0.03, count).to(device).view(count,1)
+#     # print(f'{scaler=}')
+#     # epsillons *= scaler
+#     # print(f'{epsillons=}')
+#     z_batch = mu + epsillons * std
+
+#     z_random, z_plain,z_batch = (z.to(device) for z in (z_random, z_plain, z_batch))
+#     # generate images for each latent vector
+#     img_random, img_plain, img_batch = (model.decoder(z) for z in (z_random,z_plain,z_batch))
+#     # reshape the decoder outputs to the proper image dims
+#     img_random, img_plain, img_batch = (img.view(-1,1,28,28) for img in (img_random, img_plain, img_batch))
+#     # combine the images as one so we can display them as one big image
+#     # imgs_combined = torch.concat([input_img,img_random,img_plain],dim=3)
+#     imgs_combined = torch.dstack([input_img,img_random,img_plain])
+#     # combine all images as one so we can better visualize and inspect them
+#     img_batch_grid = make_grid(img_batch, nrow=rows, normalize=True)
+    
+#     mu = mu.cpu().numpy().flatten()
+#     std = std.cpu().numpy().flatten()
+
+#     plt.figure(figsize=(8, 4))#(12,8)
+    
+#     plt.subplot(2,3,1)
+#     plt.plot(mu, label="Mean (μ)")
+#     plt.title("Mean (μ)")
+#     plt.xlabel("Latent dimension")
+#     plt.ylabel("Value")
+#     plt.legend()
+
+#     plt.subplot(2,3,2)
+#     plt.plot(std, label="Std (σ)", color="orange")
+#     plt.title("Std (σ)")
+#     plt.xlabel("Latent dimension")
+#     plt.ylabel("Value")
+#     plt.legend()
+    
+#     plt.subplot(2,3,4)
+#     plt.imshow(imgs_combined.squeeze().cpu().numpy(), cmap="gray")
+#     plt.title("Input image")
+#     plt.axis("off")
+        
+#     plt.subplot(2,3,5)
+#     plt.imshow(img_batch_grid.squeeze().cpu().numpy().transpose(1,2,0), cmap="gray")
+#     plt.title("Similar images")
+#     plt.axis("off")
+        
+#     plt.tight_layout()
+#     plt.show()
+    
+# imgs,labels = next(iter(dataloader_test))
+# view_images(imgs,labels)
+# # mu/std slightly changes for different instance of a class
+# # but overall they are roughly the same, they
+# # however change dirastically from class to class
+# generate_similar_images(model, imgs[3])#0
+# generate_similar_images(model, imgs[13])
+# generate_similar_images(model, imgs[25])
+# generate_similar_images(model, imgs[2])#1
+# generate_similar_images(model, imgs[5])
+# generate_similar_images(model, imgs[14])
+# generate_similar_images(model, imgs[1])#2
+# generate_similar_images(model, imgs[32])#3
+# generate_similar_images(model, imgs[4])#4
+# generate_similar_images(model, imgs[15])#5
+# generate_similar_images(model, imgs[11])#6
+# generate_similar_images(model, imgs[0])#7
+# generate_similar_images(model, imgs[8])#8
+# generate_similar_images(model, imgs[7])#9
+
+#%%
+# # now lets generate new images by stepping through the latent space
+# import matplotlib.animation as animation
+
+# fig = plt.figure()
+# ax = fig.add_subplot(111)
+# z = torch.randn(size = (30, model.embedding_size)).to(device)
+# model.eval()
+# def animate(i):
+#     # change the latent vector at each step so we get different image
+#     # and ultimately a cool animation showing each image morphing into another!
+#     # note that by choosing a larger std(0.03 vs 0.01), we increase the randomness
+#     # so it changes faster. the more farther away from mean, the more different
+#     # it becomes from that image
+#     imgs = model.decoder(z*(i*0.02)+0.02)
+#     imgs2 = imgs.view(imgs.size(0), 1, 28, 28)
+#     new_img = make_grid(imgs2).cpu().detach().numpy().transpose(1,2,0)
+#     ax.clear()
+#     ax.imshow(new_img)
+
+# anim = animation.FuncAnimation(fig, animate, frames=100, interval=300, repeat=True,repeat_delay=1000)
+# # save the git using pillow
+# anim.save('vis.gif', writer="pillow", fps=30)
+# plt.show()
+#%%
+
+
+
+
 
 #%% 
 # Conditional VAE 
-# in vanilla VAE, the image generation is a random process and we have no control over it
-# in this version, we are going to create a conditional variation, so that we can create
-# images for a specific class/creteria.
-# Conditional Variational Autoencoder (CVAE) is an extension of Variational Autoencoder (VAE), a generative model that we have studied in the last post. We’ve seen that by formulating the problem of data generation as a bayesian model, we could optimize its variational lower bound to learn the model.
-# However, we have no control on the data generation process on VAE. 
-# This could be problematic if we want to generate some specific data. 
-# As an example, suppose we want to convert a unicode character to handwriting. 
-# In vanilla VAE, there is no way to generate the handwriting based on the character 
-# that the user inputted. Concretely, suppose the user inputted character ‘2’, how 
-# do we generate handwriting image that is a character ‘2’? We couldn’t.
-# Hence, CVAE [1] was developed. Whereas VAE essentially models latent variables and 
-# data directly, CVAE models lantent variables and data, both conditioned to some 
-# random variables. 
-# for this we use the labels as our conditional factor. lets see how it is done. 
+# in a vanilla VAE, the generation process is stochastic, we sample from a latent distribution 
+# (usually Gaussian), which means the output images are generated randomly without explicit 
+# control although we could try to steer the generation (for example, by manipulating the 
+# learned mu and std for each class, this approach is indirect and as we also saw is not precise.
+# in this version, we are going to implement a Conditional Variational Autoencoder (CVAE),
+# which allows us to generate images for a specific class or concept.
+# The key advantage of a CVAE is that it allows us to incorporates conditional information 
+# (like e.g. class labels) into both the encoder and the decoder, which enables more targeted 
+# and controlled generation.
+# usually labels are used as the conditional factor, but we're not limited to just that. 
+# for example, we can use textual descriptions (e.g. "a red sports car") to generate images
+# that match the detailed description, or we could even use another image as a condition to
+# guide the style or content of the generated output. Other types of data/attributes 
+# (such as color, texture, or any domain-specific features) can also be employed.
+# the implementation is very simple, for our case, all we need to do is to encode the label
+# and feed it to the encoder and decoder in the form of one_hot encoded array. this allows
+# both of them to be conditioned on the specific label, and later on, generate data based on
+# a given class.
+# unlike the previous implementation lets keep this simple
+# we now have a pretty good idea how to extend this if we want, 
+# so theres no need to extra details for now. 
+# lets see how its done
 class VAE_Conditional(nn.Module):
     def __init__(self, embedding_size=2, num_classes = 10):
         super().__init__()
         self.embedding_size = embedding_size
-        # we use this as our conditional factor
-        # note however that The conditional variable c could be anything. 
-        # We could assume it comes from a categorical distribution expressing
-        # the label of our data, gaussian expressing some regression target,
-        # or even the same distribution as the data 
-        # (e.g. for image inpainting: conditioning the model to incomplete image).
-        # here we are using class labels 
         self.num_classes = num_classes
         # encoder 
         self.fc1 = nn.Linear(28*28 + num_classes, 512)
         # we are actually adding the one_hot encoded length here. 
         self.fc_mu = nn.Linear(512, embedding_size )
-        self.fc_std = nn.Linear(512, embedding_size)
+        self.fc_logvar = nn.Linear(512, embedding_size)
         
         # decoder 
-        # our decoder will utilize our conditional factor along side our embedding
-        # so unlike vanilla vae, the decoder has embedding_size + condition
-        # dims and differs with the last layer of the encoder output dim
+        # our decoder also uses our conditional factor along side the embedding
+        # so it has embedding_size + condition dims and differs with the last 
+        # layer of the encoder output dim
         self.decoder = nn.Sequential(nn.Linear(embedding_size + num_classes, 512),
                                     nn.ReLU(), 
                                     nn.Linear(512 , 28*28),
                                     nn.Sigmoid())
 
     def encode(self, x, y):
-        # accepts input image, and outputs z using reparametrization 
         x = x.view(x.size(0), -1)
-        # y is a one hot encoded vector which we fuse(add) with our input
+        # y is a one hot encoded vector which we concat with our input
+        # y is used as the conditioning factor!
         inputs = torch.cat((x,y),dim=1)
         output = F.relu(self.fc1(inputs))
         mu = self.fc_mu(output) 
-        std = self.fc_std(output)
-        z = self.reparametrization_trick(mu, std)
-        return z, mu, std
+        logvar = self.fc_logvar(output)
+        z = self.reparametrization_trick(mu, logvar)
+        return z, mu, logvar
 
     def decode(self, z, y):
         z_cond = torch.cat((z,y), dim=1)
@@ -1455,52 +6032,51 @@ class VAE_Conditional(nn.Module):
         return output
 
     def reparametrization_trick(self, mu, logvar):
-        # since we need positive variance we devide by 2
         std = torch.exp(logvar * 0.5)
-        # sample from a normal distribution N(0,1)
         eps = torch.randn_like(std)
-        # produce z using mu and logvar
-        # shift it by mu and scale it by std 
         return mu + eps * std
 
     def forward(self, input, y):
-        z, mu, std = self.encode(input, y)
+        z, mu, logvar = self.encode(input, y)
         output = self.decode(z, y)
-        return output, mu, std
+        return output, mu, logvar
 
 def one_hot(input, num_classes=10):
-    result = torch.zeros(size=(input.size(0), num_classes))
-    result[range(0,input.size(0)), input[:]] = 1
-    return result
+    # previously in earlier versions of pytorch we had to do this
+    #result = torch.zeros(size=(input.size(0), num_classes))
+    #result[range(0,input.size(0)), input[:]] = 1
+    # but in modern pytorch we can simply use pytorchs builtin one_hot
+    # just note that we have to return float for labels
+    return F.one_hot(input, num_classes).float()
 
 # z = torch.randint(0,9, size=(5,))
 # print(z)
 # print(one_hot(z))
 def loss_function(outputs, imgs, mu, logvar, reduction='mean', use_mse=False):
-    # this loss has two parts, a construction loss and a KL divergence loss which
-    # shows how much distance exists between two given distrubutions. 
+    _,h,w,c=imgs.shape
     if reduction=='mean':
-        if use_mse:
-            criterion = nn.MSELoss()
-        else:
-            criterion = nn.BCELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
         recons_loss = criterion(outputs, imgs)
         # normalize the reconstruction loss
-        recons_loss *= 28*28
+        recons_loss *= h*w*c
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
         # -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        # when using mean, we always sum over the last dim
+        # when using mean, we always sum over the last dim 
+        # so we get a batch so we ultimately average the batch!
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        return torch.mean(recons_loss + kl)
+        return recons_loss + kl.mean()
     else:
         criterion = nn.BCELoss(reduction='sum')
         recons_loss = criterion(outputs, imgs)
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return recons_loss + kl
-
 #%%
 # now lets train 
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
 epochs = 50
 embedding_size = 2
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -1508,7 +6084,7 @@ model = VAE_Conditional(embedding_size).to(device)
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20)
 print(datetime.datetime.now())
-
+img_pairs=[]
 for e in range(epochs):
     for i, (imgs,labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
@@ -1536,104 +6112,120 @@ for i,(imgs, labels) in enumerate(dataloader_test):
         loss = loss_function(outputs, imgs, mu, logvar )
         if i % interval:
             print(f'iter: {i}/{len(dataloader_test)} loss: {loss.item():.4f}')
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
+            reconstructeds = outputs.cpu().view(-1, 1, 28, 28)
             count = 20 if imgs.size(0)>20 else imgs.size(0)
-            imgs = imgs[:count].cpu().detach().numpy()
+            imgs = imgs[:count].cpu().numpy()
             recons = reconstructeds[:count].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
 
 #%%
-# create a 2d manifold for z1 
-# for this we feed our models encoder our test data or whatever data we want to visualize its z 
-# latent space distrubution. then we use plt.scatter to plot the points
-batch_size = 10000
-dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size = batch_size,
-                                               num_workers = num_workers,
-                                               pin_memory=True)
-imgs, labels = next(iter(dataloader_test2))
-imgs = imgs.to(device)
-labels = labels.to(device)
-one_hot_labels = one_hot(labels).to(device)
-z, _,_ = model.encode(imgs, one_hot_labels)
+# create a 2d manifold for z1
+@torch.no_grad()
+def plot_latent_space_with_labels(dataset_test):
+    # for this we feed our models encoder our test data 
+    # or whatever data we want to visualize its z 
+    # latent space distrubution. 
+    # then we use plt.scatter to plot the points
+    batch_size = 10000
+    dataloader_test2 = torch.utils.data.DataLoader(dataset_test,
+                                                batch_size = batch_size,
+                                                num_workers = num_workers,
+                                                pin_memory=True)
+    imgs, labels = next(iter(dataloader_test2))
+    imgs = imgs.to(device)
+    labels = labels.to(device)
+    one_hot_labels = one_hot(labels).to(device)
+    z, _,_ = model.encode(imgs, one_hot_labels)
 
-z_= z.cpu().detach().numpy()        
-plt.scatter(x=z_[:,0], y=z_[:,1], c=labels.cpu().numpy(), alpha=.4,
-            s=3**2,cmap='viridis')
-plt.colorbar()
-plt.xlabel('Z[0]')
-plt.ylabel('Z[1]')
-plt.show()
+    z_= z.cpu().numpy()        
+    plt.scatter(x=z_[:,0], y=z_[:,1], c=labels.cpu().numpy(), alpha=.4,
+                s=3**2,cmap='viridis')
+    plt.colorbar()
+    plt.xlabel('Z[0]')
+    plt.ylabel('Z[1]')
+    plt.show()
+
+plot_latent_space_with_labels(dataset_test)
 # as you can see the shape this time looks really messy compared to the original
 # VAE. its becasue we are really modelig P(z|c) which c==y . 
 # https://wiseodd.github.io/techblog/2016/12/17/conditional-vae/
 # http://ijdykeman.github.io/ml/2016/12/21/cvae.html
 # To generate an image of a particular number, just feed that number into the decoder
-# along with a random point in the latent space sampled from a standard normal distribution. 
+# along with a random point in the latent space sampled from a gaussian distribution. 
 # Even if the same point is fed in to produce two different numbers, the process will work 
 # correctly, since the system no longer relies on the latent space to encode what number
 # you are dealing with. Instead, the latent space encodes other information, like stroke 
 # width or the angle at which the number is written.
+
 #%%
 # lets create new samples
-z = torch.randn(size=(3, model.embedding_size)).to(device)
-labels = torch.tensor([[1],[2],[1]])
+z = torch.randn(size=(8, model.embedding_size)).to(device)
+# labels = torch.randint(0,10,size=(8,))
+labels = torch.tensor([1,2,1,3,7,9,4,5])
+print(f'{labels.shape=}')
 labels = one_hot(labels).to(device)
 preds = model.decode(z, labels).detach().cpu()
 img = make_grid(preds)
 plt.imshow(img.numpy().transpose(1,2,0),cmap='gray')
 #%%
-# now lets see the digits 2d manifold
+# image reconstruction 
+display_imgs_recons(img_pairs,nrows=10,rows=23,cols=4,save_dir=f'results/vae/cvae/')
 
-# the normal interpolation that we used for vanila va wont work here
-# as we dont want to blend each class to each other, this simply wont happen
-# as each latent space is also conditioned on a class. by this class we are 
-# explicitly asking the network to create digits like it. so there is no point
-# in alterations like this. smaller alterations this way will distort the digit
-# you can uncomment this section and see it for your self. 
+# now lets see the digits 2d manifold
+# we cant have the interpolation we used for vanila vae, because for one
+# we dont want to blend a class into another since each latent space is 
+# conditioned on a class now. by this conditioning we are basically 
+# explicitly asking the network to create digits like it. 
+# so there is no point in interpolations like in vae.
+# if go ahead and try that, we see smaller changes this way
+# will distort the output
+@torch.no_grad()
 def vanila_vae_digits_manifold(n=10):
     z1 = torch.linspace(start=-9,end=9, steps=n)
     z2 = torch.linspace(start=-9, end=9, steps=n)
-    # lets create a grid out of these two variables 
-    # we use np.meshgrid and we stack them using dstack
+    
     grid = np.dstack(np.meshgrid(z1, z2))
     grid = torch.from_numpy(grid).to(device)
     grid = grid.view(-1, model.embedding_size)
-    labels = torch.randint(0,9,size=(grid.size(0),1))
+    labels = torch.randint(0,9,size=(grid.size(0),))
+    
     # remmember labels must be in one_hot encoded form!
     labels_one_hot = one_hot(labels).to(device)
-    print(grid.shape)
-    print(labels)
-    print()
+    print(f'{grid.shape=}')
+    print(f'{labels=}')
+    
     preds = model.decode(grid, labels_one_hot).cpu().detach()
     img = make_grid(preds,nrow=n)
     fig = plt.figure(figsize=(n,n))
+    plt.title(f'vanila vae digits manifold for cvae')
     ax = fig.add_subplot(111)
     ax.imshow(img.numpy().transpose(1,2,0))
 
-# image reconstruction 
-display_imgs_recons(img_pairs,nrows=10,rows=86,cols=1)
+vanila_vae_digits_manifold()
 
+def generate_samples(n=10, num_classes=10):
+    # number of digits 
+    # n = 10 
+    # num_classes = 10
+    z = torch.randn(size=(n*num_classes, model.embedding_size)).to(device)
+    print(z.shape)
 
-# number of digits 
-n = 10 
-num_classes = 10
-z = torch.randn(size=(n*num_classes, model.embedding_size)).to(device)
-print(z.shape)
+    labels_grid = torch.tensor([[i] * n for i in range(num_classes)])
+    print(labels_grid.flatten())
 
-labels_grid = torch.tensor([[i] * n for i in range(num_classes)])
-print(labels_grid.flatten())
+    labels_one_hot = one_hot(labels_grid.flatten()).to(device)
+    print(f'z: {z.shape} labels: {labels_one_hot.shape}')
 
-labels_one_hot = one_hot(labels_grid.flatten()).to(device)
-print(f'z: {z.shape} labels: {labels_one_hot.shape}')
+    preds = model.decode(z, labels_one_hot).cpu().detach()
+    img = make_grid(preds, nrow=n)
 
-preds = model.decode(z, labels_one_hot).cpu().detach()
-img = make_grid(preds, nrow=n)
+    fig = plt.figure(figsize=(n,n))
+    plt.title(f'Generate {n} samples for each class({num_classes})')
+    ax = fig.add_subplot(111)
+    ax.imshow(img.numpy().transpose(1,2,0))
 
-fig = plt.figure(figsize=(n,n))
-ax = fig.add_subplot(111)
-ax.imshow(img.numpy().transpose(1,2,0))
+generate_samples()
 
 #%%
 # Disentagled Variational Autoencoders or (β-VAE)
@@ -1643,15 +6235,19 @@ ax.imshow(img.numpy().transpose(1,2,0))
 # https://arxiv.org/pdf/1901.09415.pdf
 # https://arxiv.org/abs/1606.05579
 
-# The basic idea in disentagled vae is that, we want different neurons in our latent distribution
-# to be uncorollated, they all try to learn something different about the input data. In order to implement 
-# this, the only thing that needs to be added to the vanilla VAE, is a β term.
+# now here it is, the disentangled vae! we already talked about it in our vanilla vae section
+# we saw that the only difference was we added a factor/beta to the kl loss and that was it!
+# but whats the idea behind it?
+# The basic idea in disentagled vae is that, we want different neurons in our latent 
+# distribution to be uncorollated, they all try to learn something different about 
+# the input data. In order to implement this, the only thing that needs to be added
+# to the vanilla VAE, is a β term.
 # previously for the vanilla VAE we had : 
 #     L = E_q(z|X)[log_p(X|z)] - D_KL[q(z|X)||p(z))]
 # Now for the disentagled version (β-VAE) we just add the β like this : 
 #     L = E_q(z|X)[log_p(X|z)] - βD_KL[q(z|X)||p(z))]
-# so to put it simply, in a disentagled vae (B-Vae) the autoencoder will only use a varable if it 
-# its important 
+# so to put it simply, in a disentagled vae (B-Vae) the autoencoder will only 
+# use a varable if it its important.
 
 def fc_batchnorm_act(in_, out_, use_bn=True, act=nn.ReLU()):
     return nn.Sequential(nn.Linear(in_,out_),
@@ -1682,17 +6278,12 @@ class B_VAE(nn.Module):
         #                             nn.Sigmoid())
 
     def reparameterization_trick(self, mu, logvar):
-        # divide by two, since we want positive deviation only
         std = torch.exp(logvar * 0.5)
-        # sample epslion from N(0,1) 
         eps = torch.randn_like(std)
-        # sampling now can be done by shifting the eps by (adding) the mean 
-        # and scaling it by the variance. 
         return mu + eps * std
 
     def encode(self, imgs):
         imgs = imgs.view(imgs.size(0), -1)
-        # output = F.relu(self.fc1(imgs))
         output = self.encoder_entry(imgs)
         # remember we dont use nonlinearities for mu and logvar!
         mu = self.fc_mu(output)
@@ -1712,31 +6303,21 @@ class B_VAE(nn.Module):
         reconstructed_imgs = self.decode(z)
         return reconstructed_imgs, mu, logvar
 
-def loss_disentagled_vae(outputs, imgs, mu, logvar, Beta, reduction='mean', use_mse=False):
-    # this loss has two parts, a construction loss and a KL divergence loss which
-    # shows how much distance exists between two given distrubutions. 
-    if reduction=='mean':
-        if use_mse:
-            criterion = nn.MSELoss()
-        else:
-            criterion = nn.BCELoss(reduction='mean')
-        recons_loss = criterion(outputs, imgs)
-        # normalize the reconstruction loss
-        recons_loss *= 28*28
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-        # -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        # when using mean, we always sum over the last dim
-        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
-        # we use beta and multiply it by our kl term. this is specific to 
-        # disentagled vae and is actually the main reason why the disentaglement 
-        # work
-        return torch.mean(recons_loss + (Beta*kl))
-    else:
+def loss_disentagled_vae(outputs, inputs, mu, logvar, beta, reduction ='mean', use_mse = False, normalize=True):
+    outputs = outputs.view(*inputs.shape)
+    if reduction == 'sum':
         criterion = nn.BCELoss(reduction='sum')
-        recons_loss = criterion(outputs, imgs)
-        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return recons_loss + (Beta*kl)    
+        reconstruction_loss = criterion(outputs, inputs)
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return reconstruction_loss + (beta*kl_loss)
+    else:
+        criterion = nn.MSELoss(reduction='mean') if use_mse else nn.BCELoss(reduction='mean')
+        reconstruction_loss = criterion(outputs, inputs)
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), -1)
+        _,h,w,c = inputs.shape
+        scaler = h*w*c if normalize else 1
+        return (scaler*reconstruction_loss) + (beta*kl_loss.mean())
+
 
 epochs = 50
 
@@ -1744,7 +6325,7 @@ embeddingsize = 5
 interval = 2000
 reduction='mean'
 # beta is a value biger than 1 
-Beta = 5.
+beta = 5.
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = B_VAE(embeddingsize).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr =0.001)
@@ -1755,7 +6336,7 @@ for e in range(epochs):
         imgs = imgs.to(device)
         preds,mu, logvar = model(imgs)
 
-        loss = loss_disentagled_vae(preds, imgs, mu, logvar, Beta= Beta, reduction=reduction, use_mse=False)
+        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= beta, reduction=reduction, use_mse=False)
         
         optimizer.zero_grad()
         loss.backward()
@@ -1776,15 +6357,15 @@ with torch.no_grad():
     for i, (imgs, labels) in enumerate(dataloader_test):
         imgs = imgs.to(device)
         preds, mu, logvar = model(imgs)
-        loss = loss_disentagled_vae(preds, imgs, mu, logvar, Beta= Beta, reduction=reduction, use_mse=False)
+        loss = loss_disentagled_vae(preds, imgs, mu, logvar, beta= beta, reduction=reduction, use_mse=False)
         losses.append({'val_loss':loss.item()})
         
         print(f'[{i*len(imgs)} / {test_set_size} ({100.*i/len(dataloader_test):.2f}%)]'
             f'\tloss: {(loss).item():.4f}')
 
         if i%interval==0:
-            reconstructeds = preds.cpu().detach().view(-1, 1, 28, 28)
-            imgs = imgs[:20].cpu().detach().numpy()
+            reconstructeds = preds.cpu().view(-1, 1, 28, 28)
+            imgs = imgs[:20].cpu().numpy()
             recons = reconstructeds[:20].numpy()
             pairs = np.array([np.dstack((img1,img2)) for img1, img2 in zip(imgs,recons)])
             img_pairs.append(pairs)
@@ -1793,81 +6374,118 @@ with torch.no_grad():
 # pd.DataFrame(losses).plot()
 model.eval()
 # create sample image
-z = torch.randn(size=(3, model.embedding_size)).to(device)
-preds = model.decode(z).cpu().detach()
-img = make_grid(preds)
+z = torch.randn(size=(8, model.embedding_size)).to(device)
+reconstructed_imgs = model.decode(z).cpu().detach()
+img = make_grid(reconstructed_imgs)
 plt.imshow(img.numpy().transpose(1,2,0))
+plt.title('random generation for b-vae')
 #%%
-# visualize latent space
-n = 1 
-z = torch.randn(size=(n,model.embedding_size)).to(device)
-print(z.shape)
+# n = 1
+# z = torch.randn(size=(n,model.embedding_size)).to(device)
+# print(f'{z.shape=}')
+# fig = plt.figure()
+# ax = fig.add_subplot(111)
+# preds = model.decode(z).cpu().detach()
+# img_latent_space = make_grid(preds,nrow=5).numpy().transpose(1,2,0)
+# ax.imshow(img_latent_space)
 #%%
-fig = plt.figure()
-ax = fig.add_subplot(111)
-preds = model.decode(z).cpu().detach()
-img_latent_space = make_grid(preds,nrow=5).numpy().transpose(1,2,0)
-ax.imshow(img_latent_space)
-#%%
-def change_latentvariable(z, n=3, count = 3, dim=0):
-    z_new = torch.zeros(size=(n, count, z.size(-1)))
-    for i in range(count):
-        z_new[:,i,:] = z[:, :]
-        z_new[:,i, dim]=  z_new[:,i, dim] - (0.2*i)
+#! fix this
+def change_latentvariable(z, n=1, steps=3, scaler=0.2, dim=0):
+    # grab a single z if there are more than 1 sample
+    # print(f'{z.shape=}')
+    z = z[0]
+    # and use it as the base for variations to be applied on
+    # i.e. create 5 samples (row) each going through steps variations
+    z_new = z.repeat(n, steps, 1)
+    # print(f'{z_new.shape=}')
+    # create variation values all at once using linsapce and later apply
+    # it on the new latentvector_z(z_new)
+    values = torch.linspace(start=-scaler, end=scaler, steps=steps)
+    for i in range(steps):
+        # we are basically creating a n(series) x steps x z tensor and in each
+        # step, we fill one row of this tensor until all of them are filled
+        # we use the same initial z, but each time we ever so slightly change it
+        # so each row is different from the previous one, basically we are tryng
+        # to have smooth interpolation between these by introducing fixed steps
+        # into the latent vector.
+        # scale the latent vector by small amount
+        # so they are different in each step - we took care of it by linsapce already!
+        # so we simply assign the values here
+        z_new[:, i, dim] -= values[i]
     return z_new
 
-def show_manifold(z, n, count, dim , device):
+def show_manifold(z, n, steps, dim , device):
     fig = plt.figure(figsize=(5,5))
     ax = fig.add_subplot(111)
-    latent_space_manifold = change_latentvariable(z, n, count, dim).to(device)
-    print(latent_space_manifold.shape)
-    preds = model.decode(latent_space_manifold.view(-1,model.embedding_size)).cpu().detach()
-    img_latent_space_man = make_grid(preds,nrow=count).numpy().transpose(1,2,0)
+    latent_vectors = change_latentvariable(z, n, steps, dim).to(device)
+    # print(latent_vectors.shape)
+    preds = model.decode(latent_vectors.view(-1,model.embedding_size)).cpu().detach()
+    img_latent_space_man = make_grid(preds,nrow=steps).numpy().transpose(1,2,0)
     ax.imshow(img_latent_space_man)
-
-show_manifold(z, n=n, count=5, dim=3, device=device)
-show_manifold(z, n=n,  count=5, dim=1, device=device)
-show_manifold(z, n=n,  count=5, dim=2, device=device)
-show_manifold(z, n=n,  count=5, dim=3, device=device)
-show_manifold(z, n=n,  count=5, dim=4, device=device)
+n=1
+show_manifold(z, n=n, steps=5, dim=0, device=device)
+show_manifold(z, n=n,  steps=5, dim=1, device=device)
+show_manifold(z, n=n,  steps=5, dim=2, device=device)
+show_manifold(z, n=n,  steps=5, dim=3, device=device)
+show_manifold(z, n=n,  steps=5, dim=4, device=device)
 # visualize the 2d manifold 
 #%%
-# variations over the latent variable :
+# lets view some variations over the latent space
 z_dim = model.embedding_size
-sigma_mean = 2.0*torch.ones((z_dim))
+# we plan on seeing the variations for each latent dimension
+# so overall we would want to have z_dim rows, each displaying
+# variations over several steps so we can see how a number forexample
+# morphs into other numbers by simply varying the latent mu/std
 mu_mean = torch.zeros((z_dim))
+sigma_mean = 2.0*torch.ones((z_dim))
+# save generated variable images
+# number of steps of variations
+num_steps = 8
+gen_images = []
 
-# Save generated variable images :
-nbr_steps = 8
-gen_images = torch.ones( (nbr_steps, 1, 28, 28) )
-
-for latent in range(z_dim) :
-    #var_z0 = torch.stack( [mu_mean]*nbr_steps, dim=0)
-    var_z0 = torch.zeros(nbr_steps, z_dim)
-    val = mu_mean[latent]-sigma_mean[latent]
-    step = 2.0*sigma_mean[latent]/nbr_steps
-    print(latent, mu_mean[latent]-sigma_mean[latent], mu_mean[latent], mu_mean[latent]+sigma_mean[latent])
-    for i in range(nbr_steps) :
-        var_z0[i] = mu_mean
-        var_z0[i][latent] = val
-        val += step
-
-    var_z0 = var_z0.to(device)
-
-
-    gen_images_latent = model.decode(var_z0)
+for latent_idx in range(z_dim) :
+    # create a base for each row out of the mean
+    latent_vector_z = mu_mean.repeat(num_steps,1) # shape: (num_steps,zdim)
+    # create a lower and higher bound for linspace so we can  
+    # create a list of equally spaced values in latent space for visualization
+    start =  mu_mean[latent_idx] - sigma_mean[latent_idx]
+    end = mu_mean[latent_idx] + sigma_mean[latent_idx]
+    step_values = torch.linspace(start, end, steps=num_steps) # shape:(num_step)
+    
+    print(latent_idx, 
+          mu_mean[latent_idx]-sigma_mean[latent_idx],
+          mu_mean[latent_idx], 
+          mu_mean[latent_idx]+sigma_mean[latent_idx])
+    # 
+    for idx in range(num_steps) :
+        latent_vector_z[idx, latent_idx] = step_values[idx]
+                
+    latent_vector_z = latent_vector_z.to(device)
+    gen_images_latent = model.decode(latent_vector_z)
     gen_images_latent = gen_images_latent.cpu().detach()
-    gen_images = torch.cat( [gen_images, gen_images_latent], dim=0)
-
-img = make_grid(gen_images)
+    gen_images.append(gen_images_latent)
+    
+gen_images = torch.cat(gen_images, dim=0)
+img = make_grid(gen_images,num_steps)
 plt.imshow(img.cpu().numpy().transpose(1,2,0))
 #%%
-def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
+#! remove these visualizations, dont need them really I guess (I dont remember where
+# this function comes from!)
+# here we create a grid of images where each row corresponds to one latent dimension. 
+# Within each row, the latent dimension is varied across a range of values (from -3 to 3), 
+# while the rest of the latent vector is kept constant. 
+# One column in each row shows the output when the latent value is near its original value
+# (highlighted with a green border), and the other columns show how shifting that latent
+# dimension affects the generated image. 
+# This provides an intuitive way to understand and visualize the influence of each latent 
+# dimension in the model.
+@torch.no_grad()
+def latent_space_walk(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
     fig = plt.figure(figsize=(figure_width, image_height * num_rows))
     
     for i in range(num_rows):
         z_i_values = np.linspace(-3.0, 3.0, num_cols)
-        z_i = z[0][i].detach().cpu().numpy()
+        z_i = z[0][i].cpu().numpy()
         z_diffs = np.abs((z_i_values - z_i))
         j_min = np.argmin(z_diffs)
         for j in range(num_cols):
@@ -1877,7 +6495,7 @@ def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
             else:
                 z[0][i] = float(z_i)
                 
-            x = model.decode(z).detach().cpu().numpy()
+            x = model.decode(z).cpu().numpy()
             
             ax = fig.add_subplot(num_rows, num_cols, i * num_cols + j + 1)
             ax.imshow(x[0][0], cmap='gray')
@@ -1899,22 +6517,6230 @@ def plot_latentspace(num_rows,num_cols=9,figure_width=10.5,image_height=1.5):
         
     plt.tight_layout()
     fig.subplots_adjust(wspace=0.04)
+    
 num_rows = z.shape[-1]
-plot_latentspace(num_rows)
+latent_space_walk(num_rows)
 #%% 
+# VQ-VAE
+# ref : paper: Neural Discrete Representation Learning
+# there are two variants, the first paper came out in 2017 
+# and a followup work with some improvements came in 2019 
+# paper1?: https://arxiv.org/abs/1711.00937 2017
+# paper2 (pixelcnn, required for generation part-the conditional version) https://arxiv.org/abs/1606.05328
+# paper3(updated version): https://arxiv.org/abs/1906.00446 2019
+#! pytorch implementation from Aäron van den Oord (author of pixelcnn),
+# but overall the vq-vae explanation part is ok!): 
+# https://colab.research.google.com/github/zalandoresearch/pytorch-vq-vae/blob/master/vq-vae.ipynb
+# a good introductory video (doesnt get deep, doesnt cover all aspects of it
+# (so reading the whole paper is a must), but overall is good for a brief introduction):
+# https://www.youtube.com/watch?v=VZFVUrYcig0
+#
+# as exciting as the idea behind VAEs are, they are prune to posterior collapse
+# and we saw that first hand, we tried different methods to improve upon our basic
+# vae, but the outcome left a lot to be desired really! we saw that the basic vae was
+# originally only used with simple datasets such as mnist and frey face dataset, and for
+# anything more complex it wouldnt work.(rememeber the simplification we did in vae, its one of 
+# the issues that prevent us from performing well on complex datastes)
+# we saw that to get around these issues, different variants were proposed, we used some 
+# of them in our work and got much better results. so there are other variants which improve upon it, 
+# we didnt cover all of them here, because there are simply so many. so I try to only use the ones
+# that had substantially more novelties and improvements. 
+# the next variant we are going to cover is the VQ-VAE, a very influential paper, that came 
+# to resolve vae issues and was used in many high profile papers afterward (imagen, vqgan, etc)
+# VQ-VAE uses the same basic idea of the vae, however, it changes it in somewhat fundamental way
+# for one, it uses discrete latent representation instead of continuous one and rightfully argues 
+# that its a more natural appraoch toward modeling what we are dealing with in the real world
+# mostly because many important real world objects are discrete.
+# for example, we can imagine classes like a Cat or a Car, and notice that it really may not 
+# make sense to want to interpolate between these classes!(though we can find many other examples
+# that this makes prefect sense, I just wanted to also have some counter examples and see how that
+# helps us reach a new deduction) on top of that, discrete representations are
+# also easier to model unlike their continous counterparts where we'd need to learn the
+# dependencies between different variables which could be very complex(again there are defnitely
+# good cases/solutions to this like using hierarchical latents to address complex dependencies, and
+# the likes, but we cant hit everything with a hammer as not everything is a nail! we'll see this
+# shortly how this new understanding/assumpution allows us to get drastically better results).
+# !edit say vqvae is not generative itself, and it needs another model for pior? cite it from paper
+# directly or say it in our words?(use the following (at the end) explanations here?)
+# ! ADD introduction from paper, it says it good! 
+#
+# From paper, the abstract reads: 
+# Learning useful representations without supervision remains a key challenge in 
+# machine learning. In this paper, we propose a simple yet powerful generative model
+# that learns such discrete representations. 
+# Our model, the Vector Quantised-Variational AutoEncoder (VQ-VAE), differs from VAEs
+# in two key ways: the encoder network outputs discrete, rather than continuous, codes;
+# and the prior is learnt rather than static. 
+# In order to learn a discrete latent representation, we incorporate ideas from vector 
+# quantisation (VQ). Using the VQ method allows the model to circumvent issues of 
+# "posterior collapse" -- where the latents are ignored when they are paired with a 
+# powerful autoregressive decoder -- typically observed in the VAE framework. 
+# Pairing these representations with an autoregressive prior, the model can generate 
+# high quality images, videos, and speech as well as doing high quality speaker conversion
+# and unsupervised learning of phonemes, providing further evidence of the utility of the
+# learnt representations. 
+# 
+
+# how the model works?
+# we have 3 parts in a vq-vae architecture(vqvae itself, we need more than just vqvae
+# to generate images, more on this in a moment), an encoder, a quantizer and a decoder.
+# the encoder gets an image and maps it to a sequence of discrete latent variables
+# the decoder takes these latent sequences and tries to reconstruct the input
+# now what about the quantizer part you may ask?
+# well to be more specific, our encoder gets an rgb image, and outputs some outputs
+# (lets call it E(x)) we also have an embedding layer where we make sure the encoder's
+# ouput channels are the same as the dimentionality of this embedding layers.
+# to calculate the actual discrette latent variables, we need to use a trick, which is we 
+# instead of feeding the encoders output directly to decoder, we find the nearest embedding vector
+# and the encoders output, and grab its index.(grab the index of the embedding layer where
+# its closes to our encoders outputs) we use this index, and grab the corrosponding
+# embedding vector from our embedings, and feed that to our decoder, and decoder uses it to 
+# reconstruct the input. 
+# since our comparsion here (the neigherst neighbor between our encoder and embeddings) does
+# not have a real gradient, we cant backprop through it, (we cant have backward pass for that comparsion),
+# so instead we simply pass the gradients from the decoder to the encoder without changing them.
+# this is why we made our encoder output channels the same as embedding size, so we can compare
+# with it and use the decoders gradients for encoder.
+# the idea behind this is that since the encoders output representation and the input to the 
+# decoder(which is the embeddings) share the same channel dimensial space, the gradients 
+# contain useful information for how the encoder has to change its output to lower reconstruction
+# error.
+# basically if the encoders output is close to embeddings, then we should be able to treat them
+# as the same and hence we can use embeddings gradients for the outputs as well. 
+# we do this in quantizer part beftween encoer and decoder
+
+# !edit
+# note that the vqvae by itself is not a generative model, we cant generate anything with it.
+# It's for learning useful "discrete" representations/ good embeddings if you will.
+# to generate new data(we are not bound to only images, we can generate all sorts of data,
+# image, audio,etc), as its stated in the paper, we need to pair it with an autoregressive 
+# model like PixelCNN which the paper used or a transformer that can model the prior 
+# distribution over the discrete latent codes. 
+# (in the paper they used the PixelCNN architecture over the discrete latents to 
+# generate new sequences of codes, which are then fed to the decoder to produce images)
+# so to generate new images, we train the vqvae model to get a good embeddings and encoder-decoder.
+# if you remember vq-vae uses the vae framework, but so far we didnt specify any prior,
+# or the likes this is where the second model comes in, unlike the normal vae, where we 
+# specified a prior, here we learn it from data! 
+# so in our next step, we train a separate prior model (like PixelCNN) on the discrete 
+# latent codes and finally for the actual generation process, we now simply sample 
+# from the prior model we just trained and get a sequence of codes which we then use to 
+# decode them into an image.
+# we can condition our generation the same way we did for normal vae, and generate images
+# for certain class, to do this we'd need the prior model to be conditioned on the class
+# -label, that is we train the prior model to generate codes conditioned on the label, 
+# then decode those codes.(we can make it more intersting by conditioning it on a piece 
+# of text, so by describing what we want, we get an image!)
+# 
+#
+# sidenote: 
+# @excessive?
+# as we said, the vqvae model itself doesnt include the prior model in its training. the prior 
+# is learned separately so the vqvae focuses on reconstruction and learning the embedding(coodbook),
+# while the prior model handles the generation of the latent codes. this separation allows 
+# the vqvae to be used in different ways, depending on the prior model used(i.e. different
+# priors can be trained for different tasks, while the actual vqvae does not need retraining)
+# another thing to consider is that since the latent space is discrete, it might be more efficient
+# for certain types of data, like speech or music, where discrete representations are more natural.
+# For images, though, using a discrete latent space with a powerful decoder can still lead to 
+# high-quality reconstructions and generations when paired with a good prior model.
+# the use cases for vqvae include learning discrete representations for data compression,
+# unsupervised learning of useful features, and enabling controllable generation when paired with 
+# an appropriate prior model. 
+
+# a simplistic res module
+#-------------------------------DEBUG--------------------------------
+# sidenote from future:
+# batchnorm eps is set only for debugging ema calculation in quantzier when its run in fp16 mode
+# read update 10 in Quantizer and you'll know everything. by default dont pay attention to 
+# debug coments like this if you are reading this for the first time. 
+# eps by default is 1e-5
+#-------------------------------DEBUG--------------------------------
+class conv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=1, padding=1, batch_norm=True, bias=False,act=nn.LeakyReLU(0.2), eps=1e-5):
+        super().__init__()
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim,eps=eps) if batch_norm else nn.Identity(),
+            act,
+            # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
+            # nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.conv_block(x)
+        if self.residual_connection:
+            out += x
+        return out
+
+class deconv(nn.Module):
+    def __init__(self, in_dim, out_dim, kernel_size=3, stride=2, padding=1, act=nn.LeakyReLU(0.2), batch_norm=True, bias=True, eps=1e-5):
+        super().__init__()
+        self.deconv_block = nn.Sequential(
+            nn.ConvTranspose2d(in_dim, out_dim, kernel_size, stride, padding, bias=bias),
+            nn.BatchNorm2d(out_dim,eps=eps) if batch_norm else nn.Identity(),
+            # nn.GroupNorm(1,out_dim) if batch_norm else nn.Identity(),
+            act,
+            # nn.Conv2d(out_dim, out_dim, kernel_size=1, stride=1, padding=0, bias=bias),
+            # nn.BatchNorm2d(out_dim) if batch_norm else nn.Identity(),
+            # act
+        )
+        # residual connection needs input and output dimensions to match
+        self.residual_connection = (in_dim == out_dim and stride == 1)
+
+    def forward(self, x):
+        out = self.deconv_block(x)
+        if self.residual_connection:
+            out += x  
+        return out
+
+# sidenote:
+# I wrote the explanations a few times, each time fixing or making it clearer for myself.
+# below you will also see dbug sections which I wrote when I was debugging the model for fp16 trainig
+# normally you can disregard those parts completely and only read them if you want to know whats happening
+# and why I was doing that. I will most probably clear things out a lot by removing the debug logs
+# but for now im leaving it all here
+
+class Quantizer(nn.Module):
+    def __init__(self, num_embd, embd_size, beta_weight, use_ema=True, decay_rate=0.99, epsilon=1e-5):
+        super().__init__()
+        
+        self.num_embd = num_embd
+        self.embd_size = embd_size
+        self.beta_weight = beta_weight
+               
+        self.embeddings = nn.Embedding(self.num_embd, self.embd_size)
+        # lets normalize the weights uniformly
+        self.embeddings.weight.data.uniform_(-1/self.num_embd, 1/self.num_embd)
+        
+        # # -----------------------DEBUG---------------------
+        # # reason: fp16 doesnt work with ema enabled! checking which modules
+        # # are causing this issue. (although embeddings weight should be fine
+        # # here but im inspecting everything at this point
+        # # also as a sidenote, embedding weights values should be small, if 
+        # # they are large its an issue!)
+        # # update: this is ok
+        # print(f"Initial embedding min/max:"
+        #       f"{self.embeddings.weight.min().item()},"
+        #       f"{self.embeddings.weight.max().item()}")
+        # if not torch.isfinite(self.embeddings.weight).all():
+        #     print("!!! WARNING: NaNs/Infs in initial self.embeddings !!!")
+        # # -----------------------DEBUG---------------------
+
+
+        # using exponential moving average to update the embedding
+        # vectors instead of an auxillary loss can seemingly improve
+        # the convergence a lot and prevents low preprelxity (more about this in a moment!)
+        # so we implement it as well and see how it works!
+        # from Aäron van den Oord implementation: 
+        #  using ema has the advantage that the embedding updates are
+        #  independent of the choice of optimizer for the encoder, 
+        #  decoder and other parts of the architecture. 
+        #  For most experiments the EMA version trains faster than the non-EMA version.
+        self.use_ema = use_ema
+        self.decay_rate = decay_rate
+        self.epsilon = epsilon
+        # as we briefly explained, in vq-vae each embedding is actually acting as a prototype 
+        # or a representative point in the latent space which during the quantization process, 
+        # we assign the encoder outputs to the nearest of such embeddings. if you think about it
+        # its just like how we assign data points to the closest centroid in a typical clustering algorithm 
+        # like k-means. 
+        # here we plan on keeping track of this process, basically how often each cluster is assigned,
+        # in other words, we are basically tracking how many times each embedding (or cluster center) 
+        # is chosen during the assignment process.(see more explanation a head)
+        # we use self.register_buffer so ema_cluster_size is saved when we save our model
+        # and also its not included in computational graph
+        # sidenote: instead of ema_cluster_size, ema_assignment_frequency, or ema_cluster_frequency could be better! should we change it?
+        self.register_buffer('ema_cluster_size', torch.zeros(self.num_embd))
+        self.ema_w = nn.Parameter(torch.Tensor(self.num_embd, self.embd_size))
+        self.ema_w.data.normal_()
+        
+    def forward(self, encoder_outputs:torch.Tensor):
+        # print(f'{encoder_outputs.shape=}')
+        # we need to change our encoder_outputs shape from bchw to bhwc 
+        # basically moving the channel to the last dim, so that when we
+        # flatten the whole thing, we get each separate channels,
+        # so if our input shape is [16,64,32,32] we ultimately get
+        # [16*32*32, 64] or [16384,64] which means we are quantizing
+        # each 16384 vectors independently, in otherwords, the channels
+        # are used as space in which it gets quantized (so it matches embedding size)
+        encoder_outputs = encoder_outputs.permute(dims=(0,2,3,1)).contiguous()
+        encoder_outputs_shape = encoder_outputs.shape
+        encoder_outputs_flatten = encoder_outputs.view(-1, self.embd_size)
+        
+        # print(f'{encoder_outputs_flatten.shape=}')
+        # print(f'{self.embeddings.weight.shape=}')
+        # lets calculate the distance between them (squared euclidean distance)
+        # which is Σᵢ(zᵢ - eᵢ)² which if we expand it will be 
+        # d(z,e) = ∣∣z∣∣² + ∣∣e∣∣² − 2z⋅eᵀ
+        # that is taking the l2 norm of the encoders output and embeddings which are (N,D)
+        # N being our sample count(note its not batchsize, as we flattened it) and D being 
+        # the embedding size followed by a dotproduct between the two (equation 1 from paper)
+        # note we want an (N,num_embds) to be our final tensor shape, so when summing
+        # we keepdim=True for encoderoutputs so it gives us a tensor of shape [N,1]
+        # so when we add it to sum of embeddings which will be [embd_num], its broadcast to
+        # the final shape of [N,embd_num] which simply says, we have embd_num for each sample!
+
+        # -----------------------DEBUG---------------------
+        # its very probable our multiplication here overflows when we are in fp16
+        # and with it its going to affect distances and the restof teh code
+        # so lets check if this is the case! 
+        # update1: ok we were right, the matmul operation has nans, and it makes distances
+        # to also become nans!
+        # !!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!
+        # !!! NaN/Inf detected in calculated distances !!!
+        # now we need to make them all fp32!
+        # ok that didnt work and I still kept getting the same nans!
+        # I had to wrap this section in autocast and explictly disable
+        # it! and only then the issue for this section got resolved
+        # however I', still hetting nans for loss! so we need to check 
+        # the rest of the code!
+        # encoder_outputs_flatten = encoder_outputs_flatten.float()
+        # self.embeddings.weight = self.embeddings.weight.float()
+        # with torch.amp.autocast(device_type='cuda',enabled=False):
+        #     enc_norm = torch.sum(encoder_outputs_flatten**2, dim=1, keepdim=True)
+        #     em_norm = torch.sum(self.embeddings.weight**2, dim=1)
+        #     enc_mul_em = torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t())
+        #     distances = enc_norm + em_norm - 2 * enc_mul_em
+            
+            # if not torch.isfinite(enc_norm).all(): print("!!! NaN/Inf in distance enc_out norm !!!")
+            # if not torch.isfinite(em_norm).all(): print("!!! NaN/Inf in distance embed norm !!!")
+            # if not torch.isfinite(enc_mul_em).all(): print("!!! NaN/Inf in distance matmul(enc_output,embd_weight) !!!")
+            
+            # if not torch.isfinite(distances).all():
+            #     print("!!! NaN/Inf detected in calculated distances !!!")
+                # torch.save({'encoder_norm':enc_norm,
+                #             'embd_norm':em_norm,
+                #             'encoder_out_mul_embd_weight':enc_mul_em,
+                #             'distances': distances},
+                #            'debug_distances.pt')
+                # raise ValueError("NaN/Inf in distances")
+        # # -----------------------DEBUG---------------------
+
+        encoder_outputs_flatten = encoder_outputs_flatten.float()
+        self.embeddings.weight = self.embeddings.weight.float()
+        with torch.amp.autocast(device_type='cuda',enabled=False):
+            distances = (torch.sum(encoder_outputs_flatten**2, dim=1,keepdim=True) + 
+                        torch.sum(self.embeddings.weight**2, dim=1) -
+                        2*torch.matmul(encoder_outputs_flatten, self.embeddings.weight.t()))
+            # or we could use torch.cdist
+            # distances = torch.cdist(encoder_outputs_flatten, self.embeddings.weight, p=2) ** 2
+
+        # now that we have the distances, lets grab the min indexes 
+        min_indexes = torch.argmin(distances, dim=1).unsqueeze(1)
+        # create a onehot encoded tensor for encodings
+        encodings = torch.zeros(size=(min_indexes.shape[0], self.num_embd), device=encoder_outputs.device)
+        # set each encoding to 1 where the indexes specify
+        encodings.scatter_(dim=1, index=min_indexes,value=1)
+        # now to get the actual embeddings, we simply multiply our encodings tensor
+        # which is a one hot encoded vector by the embeddings. where-ever we have 1,
+        # we will get the respective embeddings and the rest will be 0s. 
+        # this is basically a selection based on indexes now our quantized tensor will
+        # have embeddings at the specified indexes, and 0s everywhere else.
+        # this is zₑ(x)
+        # (this is embedding vectors corresponding to the chosen indexes, 
+        # I guess I'd better to choose a better name for it)
+        quantized_z_ex = torch.matmul(encodings, self.embeddings.weight).view(encoder_outputs_shape)
+        
+        if not self.use_ema:
+            # now to calculate the loss which is equation 3, we need to calculate the last two terms
+            # as the paper says: 
+            # The decoder optimises the first loss term only, the encoder optimises 
+            # the first and the last loss terms, and the embeddings are optimised 
+            # by the middle loss term.
+            # we need quantized.detach() (stop_gradient operator in paper(written as sg[]))
+            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs)
+            # this is z\_qx the 3rd term in equation 3, we stop gradient on encoders_output this time
+            q_loss = F.mse_loss(quantized_z_ex, encoder_outputs.detach())
+            # and finally we use the beta scaler for the second term
+            # we later add the reconstruction loss(log) from decoder to this 
+            loss = q_loss + self.beta_weight*e_loss
+        
+        else:# use EMA to update the embedding vectors
+            if self.training:
+                # note that we are only using ema during training to stabilize and
+                # update the embeddings and we dont need it during inference.
+                # the whole point of of this process is to make training more stable,
+                # by directly influencing the embeddings weight instead of using 
+                # a second loss term (q_loss) like the normal form
+                # 
+                # update from future: 
+                # ema massively, and I mean massively speeds up convergence!
+                # in my experiments it was around 100x! what I would get nearly
+                # 100 epochs, I get in just a few epoch! this worked great!
+                # 
+                # update 2 from future: 
+                # my initial version didnt work in fp16 mode! so all the .float()s
+                # here are because im trying to force all ema related operations to
+                # be done exclusively in fp32(full precision) mode so we can use ema
+                # with fp16 as well!
+                encodings = encodings.float()
+                self.ema_cluster_size = self.ema_cluster_size * self.decay_rate\
+                                         + (1 - self.decay_rate) * torch.sum(encodings, 0)
+
+                # Laplace smoothing of the cluster size
+                # Laplace (or additive) smoothing simply means adding a
+                # small constant (i.e. epsilon) to each count so we dont face zero value! if 
+                # we dont do this, and an embedding (cluster) is never used (e.g. ema_cluster_size_i = 0
+                # we'll face division byzero in ema_w / ema_cluster_size)
+                # this means num_emb*epsilon, but as you see, we are doing more than that here!
+                # all this jazz is for normalizing the ema_cluster_size!
+                total_assignments = torch.sum(self.ema_cluster_size.data)
+                # we do this so that every cluster has a minimum nonzero value that 
+                # prevents division by zero issues when we update the embeddings.
+                # after we add the epsilon to all of the clusters we use total_assignments
+                # in the denominator to normalize it.at the end once again multiply the whole result
+                # by total_assignments again to scale it back to the original total.
+                # we do this so the laplace smoothing doesnt change the total number of assignments,
+                # which is important for maintaining the scale when updating the embeddings. 
+                # so the division by (total + num_embds*epsilon) and multiplication by total at the end
+                # redistributes the added epsilon across the clusters while keeping the sum the same.
+                #
+                # (to have a better picture imagine we have only two clusters (num_embd=2), and epsilon=1. 
+                # now suppose our total_assignments=10 and ema_cluster_size = [3,7] before adding epsilon,
+                # then adding epsilon gives [4,8], sum is 12. Denominator is 10 + 2*1=12. 
+                # So (4/12, 8/12) *10 = (4*10/12, 8*10/12) = (3.333, 6.666). So the total is 
+                # preserved as 10, but the epsilon is distributed proportionally. 
+                # this way, the relative sizes are adjusted but the total remains the same as before
+                # adding the epsilon. (remember we dont want to change the total count, we just
+                # want to prevent any cluster from being zero).)
+                # 
+                # long story short!:
+                # we first add epsilon to each cluster (num_embd clusters total addition K*epsilon)
+                # then normalize by (total + K*epsilon) to get proportions.
+                # then multiply by original total to maintain the same total assignments but with smoothed counts.
+                # all of this to prevent any cluster from having zero count, thus avoiding division
+                # by zero when computing the average (ema_w / ema_cluster_size).
+                #--------------------------------Debug-------------------------------
+                # epsilon is too tiny and when ema enabled will cause the explosion in values in embeddings
+                # so lets choose a larger one here so it doesnt go boom!
+                # self.epsilon = 1e-4
+                #--------------------------------DEBUG--------------------------------
+                self.ema_cluster_size = ((self.ema_cluster_size + self.epsilon)/(total_assignments + self.num_embd * self.epsilon) * total_assignments)
+                # dw is the sum of encoder outputs assigned to each embedding, which is used 
+                # to update the embeddings.(when we transpose encodings and multiply it by 
+                # encoder_outputs_flatten, we're essentially summing the encoder outputs that
+                # correspond to each embedding entry, this becomes the new value for our embeddings)
+                dw = torch.matmul(encodings.t(), encoder_outputs_flatten.float())
+                # -----------------------DEBUG---------------------
+                # heres another matmul operation that could go wrong lets check!
+                # update: ok seems dw is ok with both encodings and encoders_outputs_flatten
+                # bing in float(). no warning, but we are still getting nans for loss!
+                # 
+                # if not torch.isfinite(dw).all(): print("!!! NaN/Inf in dw !!!")
+                #
+                # this is forupdate6 (see down below)
+                # print(f"dw max abs: {dw.abs().max().item()}") 
+                # -----------------------DEBUG---------------------
+                
+                # update for the embeddings vectors. we use ema_w is to stabilize training 
+                # by gradually updating the embeddings based on the recent assignments.
+                # decay_rate determines how much of the old average is kept versus the new data(dw)
+                # so here, ema_w is being updated by decaying the previous value and adding a 
+                # portion of the new dw.
+                # 
+                # !edit:
+                # in other words, ema_w controls how much historical data is retained vs new contributions.
+                # This smooths the codebook updates over time, preventing sudden changes 
+                # thus stabilizing the training.
+                # (ema_w tracks the cumulative weighted sum of encoder outputs assigned to each
+                # codebook entry).
+                # self.ema_w = nn.Parameter(self.ema_w * self.decay_rate + (1 - self.decay_rate) * dw)
+                # or 
+                self.ema_w.data.mul_(self.decay_rate).add_(dw, alpha=(1 - self.decay_rate))
+                # -----------------------DEBUG---------------------
+                # another operation involving multiplication, 
+                # update: no warning, so this is not the issue, we are still getting nans!
+                # update2: see debug below, the way we are using nn.parameter seems 
+                # to have been causing the instablities in fp16 mode! most probably
+                # it has something to do with creating new instance of nn.Parameter
+                # and somehow its messing everything up!
+                # the weird thing is it works flawlessly with fp32! im not sure how 
+                # this could have caused an issue knowing we really dont involved
+                # optimizer here at all! 
+                # update: 
+                # ok im still clueless but believe it has something to do with autocast
+                # and it way it manages objects/operations, and we creating new instances
+                # each time instead of updating one object inplace each time causes the issue!
+                # update3: 
+                # we no longer get any nans, but the loss now keeps getting larger and
+                # larger instead of going the other way around! im tired now and have absolutely
+                # no idea what the hell is wrong!
+                # update 4:
+                # ok this is what we get for running the model for 14 epochs: 
+                # Epoch: 0/100 | Loss: 0.7172 | Val-Loss: 0.6983 | Recons-Error: 0.1788 | VQ-Loss: 0.5383 | Perplexity: 36.0258 | LR: 0.000200
+                # Best model with loss=0.6983 saved at epoch 0!
+                # Epoch: 1/100 | Loss: 0.7083 | Recons-Error: 0.1649 | VQ-Loss: 0.5434 | Perplexity: 37.8641 | LR: 0.000201
+                # Epoch: 1/100 | Loss: 0.7079 | Val-Loss: 0.7530 | Recons-Error: 0.1233 | VQ-Loss: 0.5846 | Perplexity: 37.7547 | LR: 0.000400
+                # Epoch: 2/100 | Loss: 0.7308 | Recons-Error: 0.0797 | VQ-Loss: 0.6512 | Perplexity: 36.2423 | LR: 0.000401
+                # Epoch: 2/100 | Loss: 0.8095 | Val-Loss: 0.9259 | Recons-Error: 0.0567 | VQ-Loss: 0.7528 | Perplexity: 35.7823 | LR: 0.000600
+                # Epoch: 3/100 | Loss: 0.9117 | Recons-Error: 0.0416 | VQ-Loss: 0.8700 | Perplexity: 35.4852 | LR: 0.000601
+                # Epoch: 3/100 | Loss: 1.0916 | Val-Loss: 1.3347 | Recons-Error: 0.0369 | VQ-Loss: 1.0547 | Perplexity: 38.6637 | LR: 0.000800
+                # Epoch: 4/100 | Loss: 1.3246 | Recons-Error: 0.0308 | VQ-Loss: 1.2938 | Perplexity: 40.4407 | LR: 0.000801
+                # /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:240: UserWarning: The epoch parameter in scheduler.step() was not necessary and is being deprecated where possible. Please use scheduler.step() to step the scheduler. During the deprecation, if epoch is different from None, the closed form is used instead of the new chainable form, where available. Please open an issue if you are unable to replicate your use case: https://github.com/pytorch/pytorch/issues/new/choose.
+                # warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
+                # Epoch: 4/100 | Loss: 1.5891 | Val-Loss: 1.9012 | Recons-Error: 0.0293 | VQ-Loss: 1.5598 | Perplexity: 40.0954 | LR: 0.001000
+                # Epoch: 5/100 | Loss: 1.8805 | Recons-Error: 0.0253 | VQ-Loss: 1.8552 | Perplexity: 39.0371 | LR: 0.001000
+                # Epoch: 5/100 | Loss: 2.2010 | Val-Loss: 2.5755 | Recons-Error: 0.0244 | VQ-Loss: 2.1766 | Perplexity: 38.4601 | LR: 0.001000
+                # Epoch: 6/100 | Loss: 2.5382 | Recons-Error: 0.0216 | VQ-Loss: 2.5166 | Perplexity: 37.1451 | LR: 0.001000
+                # 
+                # image reconstructions are either solid whites or solid blacks or cyan(light blue) 
+                # it starts black, then white, then a bit of cyan and then compleyely cyan 
+                # and then back to solid white at epch 14 where I ended the trainig
+                # looking athe losses for both training and validation shows they are
+                # both getting larger and larger each epoch, so we are 100% diverging badly!
+                # on the other hand, our reconstruction loss is decreasing (0.17 -> 0.12 -> 0.07 -> 0.04...)
+                # which is a good sign! however, the VQ-Loss is increasing (0.53 -> 0.54 -> 0.65 -> 0.87 -> 1.29...) fast!!,
+                # and looking at loss its clearly obvious that the vq-loss term is so large
+                # and growing so fast that it completely overwhelms the reconstruction signal
+                # in the final loss.
+                # the perplexity value seems ok, at least compared to our previous 
+                # experiments in fp32 (34~50 is a good range for perplexity),however im not sure
+                # how to feel about this or what to take from it!
+                # because this only means several codebook/embedding vectors are being selected 
+                # so it's not total codebook collapse (i.e. we are not using a single vector or only few vectors).
+                # but it doesnt mean its utilizing the codebook properly either!
+                # its massively under utilizing the codebook, so it could be codebook collapse or
+                # something close to it or may be not(because of what we saw in our previous experiments)! 
+                # it also doesn't tell us which codes are being used or if they represent diverse features
+                # forexample in our case, since we have 512 embedding vectors, a perpelxity of 34 
+                # means as if only 34 codes were being used uniformly, its high compared to 14 that
+                # we used to get in some previous examples, but its stilly a tiny fraction of 512 vectors!
+                # this is usually treated as a major form of codebook collapse or underutilization!
+                # but then again the can be prefectly fine because they represent diverse features! but I dont know forsure now!
+                # (our previous experiments were doing pretty well despite having similar
+                # perplexity or even much lower!) so for now I leave this aside and if I couldnt solve
+                # tihs the other way around, comeback and see what I can get out of it! 
+                # 
+                # concerning solid colors that we get it means the decoder is 
+                # receiving latent vectors (quantized_z_ex) that correspond to extreme or uniform
+                # values, or the decoder's own weights are exploding. 
+                # cyan usually points to issues where blue and green channels dominate. 
+                # and the fact that the colors change like hat, means the values are swinging wildly.
+                # so we only have vq-loss as our lead, looking at it 
+                # its:
+                # e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
+                # self.beta_weight *loss_e
+                # so my first try will be to lower the beta_weight and see if it fixes it
+                # update5: 
+                # ok before I change the beta, I went ahead and checked the e_loss first
+                # which involves quantzied vectors and encoders outputs, 
+                # for the absolute majority of iterations it was around 2.1x like 2.18x
+                # 2.19x, until the last iteration which it suddenly jumps to 49434444431360.0
+                # which is insane!(this makes all images solid blue by the way!)
+                # epoch 1: 
+                # e_loss.item()=2.201829671859741
+                # e_loss.item()=2.102466106414795
+                # e_loss.item()=2.15078067779541
+                # e_loss.item()=2.173875093460083
+                # e_loss.item()=2.2475433349609375
+                # e_loss.item()=2.3060145378112793
+                # e_loss.item()=2.2587552070617676
+                # e_loss.item()=2.184400796890259
+                # e_loss.item()=2.176929473876953
+                # e_loss.item()=49434444431360.0
+                # 
+                # this repeats in second epoch and we get:
+                # e_loss.item()=2.6162514686584473
+                # e_loss.item()=2.484062671661377
+                # e_loss.item()=2.54720401763916
+                # e_loss.item()=2.5991740226745605
+                # e_loss.item()=2.6544599533081055
+                # e_loss.item()=2.6641557216644287
+                # e_loss.item()=2.687133312225342
+                # e_loss.item()=2.6065897941589355
+                # e_loss.item()=2.6258320808410645
+                # e_loss.item()=inf
+                # and goes on like that!
+                # so its not the beta_weight! its the e_loss that goes nuts!
+                # all of this means we are facing another numerical instability in fp16
+                # we are either corrupting the embeddings (quantized_z_ex) or encoder_outputs
+                # during ema!
+                # either our ema update is accumulating errors or exploding values over the epoch,
+                # causing self.embeddings.weight (and thus the selected quantized_z_ex) to become 
+                # extremely large or inf by the end or its the gradients from the previous steps 
+                # (driven by the beta * e_loss term) that are destabilizing the encoder's weights,
+                # causing its output to explode by the end of the epoch.
+                # Given that e_loss is the distance between these two, either one exploding will
+                # cause e_loss to explode. The fact that it happens late in the epoch suggests 
+                # an accumulation or feedback loop issue is more likely than random data spikes.
+                # 
+                # update6: I printed the loss as well, but noticed they both have prefectly fine ranges
+                # and only at the very last iteration go haywire!
+                # epoch 0: 
+                # ...
+                # e_loss.item()=2.01871 | loss.item()=0.50468
+                # e_loss.item()=2.17197 | loss.item()=0.54299
+                # e_loss.item()=2.17167 | loss.item()=0.54292
+                # e_loss.item()=2.15292 | loss.item()=0.53823
+                # e_loss.item()=2.25649 | loss.item()=0.56412
+                # e_loss.item()=2.11446 | loss.item()=0.52861
+                # e_loss.item()=2.19241 | loss.item()=0.54810
+                # e_loss.item()=2.09980 | loss.item()=0.52495
+                # e_loss.item()=1340629346942976.00000 | loss.item()=335157336735744.00000
+                # epoch 1:
+                # ...
+                # e_loss.item()=2.65261 | loss.item()=0.66315
+                # e_loss.item()=2.74691 | loss.item()=0.68673
+                # e_loss.item()=2.70624 | loss.item()=0.67656
+                # e_loss.item()=2.67747 | loss.item()=0.66937
+                # e_loss.item()=2.85469 | loss.item()=0.71367
+                # e_loss.item()=2.72992 | loss.item()=0.68248
+                # e_loss.item()=inf | loss.item()=inf
+                # 
+                # so it everything seems stable until something else causes this instablity
+                # at the last iteration!! this might be because of trainig loop itself
+                # lets check training part again
+                # update 7:
+                # ok, I did a bit more printing and along with e_loss and loss tried
+                # print(f"dw max abs: {dw.abs().max().item()}") # dw calculated using .float() inputs
+                # print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
+                # print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
+                # it went on until I got a weird erro saying :
+                # UnboundLocalError: cannot access local variable 'dw' where it is not associated with a value
+                # that made me realize that I made a mistake dw only works in training_mode,
+                # so I removed it and moved it to its current location where its calculated, 
+                # then it dawned on me that, this means during traiing we dont haev any issues!
+                # cuz we didnt get any large number or inf! we just got and local variable error
+                # which meant the actual problem lies in validation code! so I went ahead and added
+                # a new print to training loop showiing start of validation!
+                # lo and behold, that was the case! this issue only happens after validation code is run. 
+                # the training log at the end looks like this:
+                # training stays at e_loss.item()=2.63252 | loss.item()=0.65813 at the 
+                # end of iteration yet validation becomes inf at the end (# e_loss.item()=inf | loss.item()=inf) 
+                # ....
+                # e_loss.item()=2.63151 | loss.item()=0.65788
+                # ema_w max abs: 6381.849609375
+                # Embeddings max abs: 11.438188552856445
+                # dw max abs: 9416.0
+                # e_loss.item()=2.63836 | loss.item()=0.65959
+                # ema_w max abs: 6412.19140625
+                # Embeddings max abs: 11.430124282836914
+                # dw max abs: 5340.0
+                # e_loss.item()=2.63252 | loss.item()=0.65813
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # ...............VALIDATION...............
+                # e_loss.item()=2.73628 | loss.item()=0.68407
+                # ....
+                # dw max abs: 8424.0
+                # e_loss.item()=2.63151 | loss.item()=0.65788
+                # ema_w max abs: 6381.849609375
+                # Embeddings max abs: 11.438188552856445
+                # dw max abs: 9416.0
+                # e_loss.item()=2.63836 | loss.item()=0.65959
+                # ema_w max abs: 6412.19140625
+                # Embeddings max abs: 11.430124282836914
+                # dw max abs: 5340.0
+                # e_loss.item()=2.63252 | loss.item()=0.65813
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # while the validation information its like this:
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=2.61591 | loss.item()=0.65398
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=2.70347 | loss.item()=0.67587
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                # e_loss.item()=inf | loss.item()=inf
+                # ema_w max abs: 6401.46923828125
+                # Embeddings max abs: 11.444381713867188
+                #
+                # so it means the validation code is messing something up
+                # but how? 
+                # update 8: 
+                # ok it seems, because we are calculating loss in validation mode
+                # as well, and in validation mode, since the embeddings are fixed,
+                # the explosion must be coming from encoder_outputs becoming inf 
+                # or extremely large during the validation forward pass for certain 
+                # batches! so we need to check if batchnorm stats are corrupted somehow
+                # but how? if huge gradients are involved they could corrupt it, but
+                # why not training? ok first I try to see if batchnorm stat is coruppted
+                # if not i need to find something else:
+                # update 9:
+                # batchnorm seems normal to me! at this point, I can only think of 
+                # one other thing and try gradient clipping, see if that does something
+                # not sure if its even logical, if that doesnt work, I'd probably go 
+                # full precision for validation at this point!
+                # 
+                # update 10: 
+                # after closely looking at bn statistics, it doesnt see fine everywhere!
+                # this is what I got for first epoch:
+                # # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.5718710422515869
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.08771437406539917
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.6632750630378723
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.8938791155815125
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.6106663942337036
+                # encoder.2.conv_block.1 - Running Var Max Abs: 0.4625694453716278
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 0.7466787099838257
+                # encoder.3.conv_block.1 - Running Var Max Abs: 0.4020826816558838
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 1.010559320449829
+                # encoder.4.conv_block.1 - Running Var Max Abs: 1.0877726078033447
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.58249831199646
+                # encoder.5.conv_block.1 - Running Var Max Abs: 0.5586868524551392
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 0.9389406442642212
+                # encoder.6.conv_block.1 - Running Var Max Abs: 1.5494104623794556
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 0.691523551940918
+                # encoder.7.conv_block.1 - Running Var Max Abs: 0.7997860312461853
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 1.3911665678024292
+                # encoder.8.conv_block.1 - Running Var Max Abs: 1.9451509714126587
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 0.00035661112633533776
+                # decoder.0.conv_block.1 - Running Var Max Abs: 6.221558805918903e-07
+                #
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 0.20308828353881836
+                # decoder.1.conv_block.1 - Running Var Max Abs: 0.00601273775100708
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.2749442756175995
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 0.13937747478485107
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.3565812408924103
+                # decoder.3.conv_block.1 - Running Var Max Abs: 0.22257192432880402
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 1.0208137035369873
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 0.6718440651893616
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.7394704222679138
+                # decoder.5.conv_block.1 - Running Var Max Abs: 0.45452943444252014
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.3748507797718048
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 0.30892425775527954
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.32845693826675415
+                # decoder.7.conv_block.1 - Running Var Max Abs: 0.266750693321228
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 1.0342155694961548
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 1.7763946056365967
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.3009571433067322
+                # decoder.9.conv_block.1 - Running Var Max Abs: 0.2649553120136261
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.5053802132606506
+                # decoder.10.conv_block.1 - Running Var Max Abs: 0.5508503317832947
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # now comparing it with fp16 without ema: 
+                # 
+                # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.70957184
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.12105470
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.54147869
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.88723356
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.87415302
+                # encoder.2.conv_block.1 - Running Var Max Abs: 2.39960027
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 1.02115321
+                # encoder.3.conv_block.1 - Running Var Max Abs: 3.02251101
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 2.23244810
+                # encoder.4.conv_block.1 - Running Var Max Abs: 12.35795498
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.86817431
+                # encoder.5.conv_block.1 - Running Var Max Abs: 6.47394800
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 2.63191867
+                # encoder.6.conv_block.1 - Running Var Max Abs: 24.31080246
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 2.09242058
+                # encoder.7.conv_block.1 - Running Var Max Abs: 34.30396652
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 5.11474609
+                # encoder.8.conv_block.1 - Running Var Max Abs: 119.33450317
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 0.24592298
+                # decoder.0.conv_block.1 - Running Var Max Abs: 0.00192129
+                # 
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 0.65776098
+                # decoder.1.conv_block.1 - Running Var Max Abs: 2.85738802
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.34116608
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 1.30416238
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.67023188
+                # decoder.3.conv_block.1 - Running Var Max Abs: 1.65899801
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 2.04253769
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 11.17685890
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.57578510
+                # decoder.5.conv_block.1 - Running Var Max Abs: 2.40160894
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.41974333
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 1.36730051
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.39025623
+                # decoder.7.conv_block.1 - Running Var Max Abs: 1.16634774
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 1.17512047
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 15.18108463
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.32922232
+                # decoder.9.conv_block.1 - Running Var Max Abs: 1.04681122
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.71955955
+                # decoder.10.conv_block.1 - Running Var Max Abs: 2.77790952
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # comparing it with the fp32 which is : 
+                # 
+                # --- Checking BatchNorm Stats ---
+                # encoder.0.conv_block.1 - Running Mean Max Abs: 0.62610096
+                # encoder.0.conv_block.1 - Running Var Max Abs: 0.09068304
+                # encoder.1.conv_block.1 - Running Mean Max Abs: 0.48086452
+                # encoder.1.conv_block.1 - Running Var Max Abs: 0.52218562
+                # encoder.2.conv_block.1 - Running Mean Max Abs: 0.51117438
+                # encoder.2.conv_block.1 - Running Var Max Abs: 0.79944575
+                # encoder.3.conv_block.1 - Running Mean Max Abs: 0.39278689
+                # encoder.3.conv_block.1 - Running Var Max Abs: 0.82266533
+                # encoder.4.conv_block.1 - Running Mean Max Abs: 0.90310228
+                # encoder.4.conv_block.1 - Running Var Max Abs: 3.74095893
+                # encoder.5.conv_block.1 - Running Mean Max Abs: 0.56521201
+                # encoder.5.conv_block.1 - Running Var Max Abs: 1.40113008
+                # encoder.6.conv_block.1 - Running Mean Max Abs: 1.37824154
+                # encoder.6.conv_block.1 - Running Var Max Abs: 5.67221069
+                # encoder.7.conv_block.1 - Running Mean Max Abs: 0.64184862
+                # encoder.7.conv_block.1 - Running Var Max Abs: 1.74469852
+                # encoder.8.conv_block.1 - Running Mean Max Abs: 1.02916014
+                # encoder.8.conv_block.1 - Running Var Max Abs: 2.51045156
+                # 
+                # decoder.0.conv_block.1 - Running Mean Max Abs: 1.52436340
+                # decoder.0.conv_block.1 - Running Var Max Abs: 0.68965399
+                # 
+                # decoder.1.conv_block.1 - Running Mean Max Abs: 1.68325686
+                # decoder.1.conv_block.1 - Running Var Max Abs: 2.49783731
+                # decoder.2.deconv_block.1 - Running Mean Max Abs: 0.63934857
+                # decoder.2.deconv_block.1 - Running Var Max Abs: 1.66693866
+                # decoder.3.conv_block.1 - Running Mean Max Abs: 0.42520446
+                # decoder.3.conv_block.1 - Running Var Max Abs: 0.50907129
+                # decoder.4.deconv_block.1 - Running Mean Max Abs: 1.12013841
+                # decoder.4.deconv_block.1 - Running Var Max Abs: 2.16791487
+                # decoder.5.conv_block.1 - Running Mean Max Abs: 0.30991670
+                # decoder.5.conv_block.1 - Running Var Max Abs: 0.97034746
+                # decoder.6.deconv_block.1 - Running Mean Max Abs: 0.21082824
+                # decoder.6.deconv_block.1 - Running Var Max Abs: 0.59495980
+                # decoder.7.conv_block.1 - Running Mean Max Abs: 0.28866979
+                # decoder.7.conv_block.1 - Running Var Max Abs: 0.66196996
+                # decoder.8.deconv_block.1 - Running Mean Max Abs: 0.84830022
+                # decoder.8.deconv_block.1 - Running Var Max Abs: 4.54579210
+                # decoder.9.conv_block.1 - Running Mean Max Abs: 0.25317752
+                # decoder.9.conv_block.1 - Running Var Max Abs: 0.80862129
+                # decoder.10.conv_block.1 - Running Mean Max Abs: 0.33949623
+                # decoder.10.conv_block.1 - Running Var Max Abs: 1.42396164
+                # --- BatchNorm Stats Check Done ---
+                # 
+                # the running variance for the batchnorm layer in the very first block
+                # of our decoder(decoder.0.conv_block.1) is extremely small (its 6.22-1e7 its 0.0000006!)
+                # its practically 0! looking at the fp16 version without ema its 0.00192129
+                # and full precision version, we can see 
+                # its way way smaller (0.0000006 vs 0.6! its a million times smaller!)
+                # this is probably whats giving us all this headache!
+                # see the formula for batchorm was 
+                # y = (x - running_mean) / sqrt(running_var + eps) * gamma + beta
+                # now our variance is tiny, sqart(tiny+eps) is a tiny tiny number,
+                # epsilon by default is 1e-5, gamma and beta are by default 1 and 0
+                # and are learned during trainig so lets ignore them for now, 
+                # if we go on with what we have here, we would have:
+                # running_var+eps = 6.22e-7 + 1e-5 = 0.000010622 or 1.0622e-5
+                # and sqrt(1.0622e-5) = 0.00325914099 or 0.003! 
+                # now we have (x-running_mean) that must be divided by 0.003 
+                # and since its a tiny number, it will amplify the input values massively
+                # when we add in fp16 to the mix and the fact that it has a very limited maximum 
+                # representable value (~65504) we can clearly see how it can cause those nans/infs 
+                # because of overflowing! 
+                # with this we can guess how the rest plays out, this inf value propagates
+                # through the rest of the decoder, it likely causes imgs_rec to also contain
+                # infs values from there, when e_loss is calculated later(even if its inputs are cast
+                # to fp32) if the encoder_outputs that produced the inf were themselves inf, 
+                # the e_loss will also become inf.
+                # similarly, the reconstruction loss using imgs_rec would also become inf, messing up
+                # the whole thing.
+                # as to why this didnt happen in training, I think its because during trainig
+                # batchnorm uses the mean and variance calculated from the current
+                # batch, not the running versions, so if we have large enough batch(which we do)
+                # its gives us decent statistics, so we dont face an issue, however in validation
+                # as we saw this is not the case, we are bound to running mean/variance
+                # which are affected/updated during traing. 
+                # 
+                # now why would running variance be tiny in fp16? 
+                # we saw that while fp16 has smaller variance compared to the fp32 version, its
+                # still way larger than the current value we get when ema is enabled!
+                # so its not just fp16, its the ema calculations thats somehow causing this!
+                # 
+                # if hypotheticall it was fp16s fault, that would mean that during training, 
+                # the variance of the activations being fed to that batchborm layer(calculated per batch),
+                # was consistently very very small over many iterations. 
+                # moreover, a tiny variance within a batch for the input to decoder.0 means 
+                # that across the different samples (and potentially spatial positions in latents)
+                # in that batch, the specific feature maps/activations arriving at that batchnorm
+                # layer are almost identical(i.e. they use the same indexes?).
+                # now our decoder recieves the output of Quantizer! that is quantized_z_ex!
+                # so our quantized_z_ex has low variance, again that means, two things, 
+                # its either a codebook collapse or near-collapse specific to the fp16 training 
+                # because it doesnt happen in fp32, and we know for a fact that fp16 itself works 
+                # just fine without ema, but when ema is enabled it is numerically unstable, 
+                # after all im writing these debug logs because of the damn thing!
+                # 
+                # so the issue could stem from the encoder being influenced by probably large/unstable
+                # gradients (especially from the vq-loss before clipping/tuning) and working with 
+                # fp16 precision, might be producing less diverse outputs (encoder_outputs) compared
+                # to its fp32 counterpart. these outputs might numerically cluster together more easily in fp16.
+                # 
+                # or it could be due to the distance calculation stage, that is, 
+                # during it, operating on these less precise fp16 encoder_outputs and fp16/fp32
+                # embeddings might become biased towards selecting only a very small number of
+                # the "closest" numerically "safest" codebook vectors for most inputs within 
+                # a batch. it's easier for minor numerical differences (significant in fp16, negligible 
+                # in fp32) to tip the balance towards the same few indices repeatedly.
+                #  in other words, due to lower precisions, more numbers will lose precision and
+                # may endup in the same range, practically becoming very close, so close that the
+                # distinction between is gone, where as in fp32, this wouldnt be an issue, as
+                # the numbers could be represented way more accurate and the distinction between them
+                # be pretty obvious)
+                #
+                # it would also be the ema update itself, that is, for example, if the dw term
+                # (sum of encoder_outputs assigned to an embedding) is calculated
+                # based on unstable/clustered fp16 encoder_outputs, the ema update might 
+                # inadvertently reinforce the dominance of only a few codebook vectors, 
+                # further reducing diversity.
+                # 
+                # recap:
+                # so basically if the quantizer consistently picks only 1, 2, or a tiny handful of distinct 
+                # codebook vectors for almost all the spatial positions in our discrete latent,
+                # and batch items feeding into decoder.0, the resulting quantized_z_ex 
+                # tensor entering that layer will indeed have extremely low variance within the 
+                # batch. The values across the batch dimension will be repetitions of just those 
+                # few selected vectors.
+                # tiny batch variance -> tiny running variance: 
+                # batchnorm calculates variance per batch during training. if the batch variance
+                # is consistently near-zero due to the collapsed codebook usage, the running 
+                # variance (which is an exponential moving average of these batch variances) 
+                # will also decay towards near-zero. hence all these issues.
+                #
+                # so to fix this i can think of doing these: 
+                # 1. use larger eps
+                # 2. completely ditch fp16 for eval mode
+                # 3. gradient clipping!
+                #
+                # update 11:
+                # tried ditiching fp16 for eval mode, and faced lots of nans in batchnorm
+                # which didnt occur when we were using fp16! it shows something is wrong!
+                # and small variance was simply masking that issue! 
+                # I added fp32 to eval with:
+                # scaler.unscale_(optimizer)
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Clip!
+                # I disabled both and set eps=1e-3 and still get nans in batchnorm!
+                # set eps = 1e-4 with fp32 and gradientclip commented out and still no luck
+                # set eps=1e-5 im still getting nans for batchnorm! its weird I disabled
+                # all these things and im still getting nans in bn where as i wasnt!
+                # im tired now! i'll deal with this tomorrow inshaalah.
+                # 
+                # updae 12: 
+                # this morning I remembered fp16 works just fine, its just the ema that doesnt
+                # work, so probably the previous update explanation isnt right (although i believe
+                # the points stand, though not here, not now! at least I think)
+                # I'll revisit it later
+                # update 13:
+                # ok I printed scaler factor and see if optimizer step is skipped during training
+                # or not. the fp16 mode without ema, the scaler factor starts at 8192, and gradually
+                # comes down to 2048 at the end of first epoch, at the second epoch it continues with
+                # 2048 and sometimes goes down to 1024, but then comes back to 2048, there are 
+                # optimizer skips as well. the training goes as smoothly, but it takes a few epochs
+                # (like around 4 epochs to get going and images start to pop up and from there it goes
+                # pretty fast and stable. (I tried a few more times, the scaler factor starts as high as
+                # 32k, going down to 16k, and even as low as 256, but it always does well without any issues)
+                # however, when we enaled ema, the scaler factor is starts at 8192 but immediately 
+                # goes down to 4096 and then 2048 and then 1024 then it continues to stay at 1024 
+                # all the way to epoch 2 where I ended the training.
+                # the optimizer step is skipped constantly, and loss is nan, and its aweful!
+                # this means we are facing a lot of nans/infs that causes the optimizer step
+                # to be skipped, but it keeps facing nans/infs and the scaler factor stays low, 
+                # and optimizer steps gets skipped more often than not!
+                # so the issue 100% lies in ema calculation, its messing up the embeddings weights
+                # corrupting them because of its low precision! 
+                # update 14:
+                # I tried gradient clipping, again and again to no avail! until I remembered our ema
+                # doesnt even participate in the computation graph, we dont even use gradients! so it
+                # wont work!
+                # I then uncommented all the previous sectons of debugging prints that we initially tested
+                # for nans out of pure desperation! including the min/max values for updated_embeddings
+                # and we hit gold! I noticed our updated_embeddings.max() initially was extremely high
+                # around 400k! compare it to the default value wich is in range of 0.001!
+                # when I looked at other values like dw,ema_w and ema_cluster_size!(see the log below)
+                # at first I was only looking at the max value, it was 69 so didnt think much of it
+                # until it dawned on me that I also need to take a close look at min value! because
+                # we devide ema_w / ema_cluster_size to get embedding values! and it means, 
+                # all the elements that get divided by 0.000001 will be massively amplified!
+                # ultimately causing an explosion!
+                # moreover, if we look at the min value closely, we see its exactly 1e-5! that is
+                # the same value of our self.epsilon! so basically whatever happened in calculating
+                # ema_cluster_size, it made it clamp to the epsilon value! and that epsilon value
+                # ultimately ends up amplifying the ema_w values, resulting in huge values in our embeddings
+                # and consequently nans! 
+                # so I could do two things, one to increase epsilon so we makde ema_cluster_size larger
+                # and then decrease the magnitude of embedding values and hopefully preventing nans!
+                # or clamping embedding values themselevs from exploding! 
+                # I chose the second one because if I change epsilon, it will play a more prominent role
+                # in ema_cluster_size calculation, skewing it, especially for fp32/fp16 without ema
+                # and it could cause suboptimal situations or other headaches! 
+                # so I went for the clamping and now need to chose a number, as I explained in the
+                # clamping section, I first printed the embeddings values for fp16 without ema to have
+                # arough idea of the proper values I can pick, but it was 0.001 and the nature of operations
+                # were also not the same, it would start small, and as we train more the magnitude would
+                # start to get larger, for example it was at 0.001 initially, but by the time we got to
+                # 4th epoch, it had risen to 0.8 and it would continue to grow accordingly in later epochs
+                # until it stablizes, but in our case, it involved different operations, so I ended up
+                # going with 10, alhamdolelahh it went prefectly, nans were no more, everytihng got stable
+                # and we got great outcome overall, had this nt worked, I would have switched to increasing
+                # epslion from 1e-5 to 1e-4 or 1e-3 and see how that would do. but thankfully that wasnt 
+                # necessary. 
+                #
+                # this is our log: 
+                # dw max abs: 15200.0
+                # ema_w: min=-4.061383,max=152.30571
+                # ema_cluster_size min=0.00001,max=69.66891
+                # updated_embeddings min=-393109.87500,max=372818.50000
+                # e_loss.item()=2.19839 | loss.item()=0.54960
+                # ema_w max abs: 152.3057098388672
+                # Embeddings max abs: 393109.875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 32768.0
+                # Epoch: 0/100 | Loss: 0.7379 | Recons-Error: 0.1883 | VQ-Loss: 0.5496 | Perplexity: 47.1236 | LR: 0.000001
+                # dw max abs: 17376.0
+                # ema_w: min=-8.488791,max=324.54266
+                # ema_cluster_size min=0.00002,max=124.23125
+                # updated_embeddings min=-195567.21875,max=185472.50000
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 324.54266357421875
+                # Embeddings max abs: 195567.21875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 16384.0
+                # dw max abs: 12712.0
+                # ema_w: min=-15.423903,max=448.41724
+                # ema_cluster_size min=0.00003,max=160.49811
+                # updated_embeddings min=-129721.89062,max=123025.96094
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 448.417236328125
+                # Embeddings max abs: 129721.890625
+                # /home/hossein/miniconda3/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:224: UserWarning: Detected call of lr_scheduler.step() before optimizer.step(). In PyTorch 1.1.0 and later, you should call them in the opposite order: optimizer.step() before lr_scheduler.step().  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+                # warnings.warn(
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 8192.0
+                # dw max abs: 10856.0
+                # ema_w: min=-21.434664,max=552.49310
+                # ema_cluster_size min=0.00004,max=190.65237
+                # updated_embeddings min=-96800.89062,max=91804.25781
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 552.4931030273438
+                # Embeddings max abs: 96800.890625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 4096.0
+                # dw max abs: 8776.0
+                # ema_w: min=-27.200317,max=634.72821
+                # ema_cluster_size min=0.00005,max=214.03519
+                # updated_embeddings min=-77049.61719,max=73072.49219
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 634.7282104492188
+                # Embeddings max abs: 77049.6171875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 2048.0
+                # dw max abs: 7608.0
+                # ema_w: min=-33.508312,max=704.46094
+                # ema_cluster_size min=0.00006,max=232.55423
+                # updated_embeddings min=-63883.21094,max=60585.71094
+                # e_loss.item()=nan | loss.item()=nan
+                # ema_w max abs: 704.4609375
+                # Embeddings max abs: 63883.2109375
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6596.0
+                # ema_w: min=-38.833229,max=763.37634
+                # ema_cluster_size min=0.00007,max=248.85812
+                # updated_embeddings min=-54479.57422,max=51667.46875
+                # e_loss.item()=1.03190 | loss.item()=0.25797
+                # ema_w max abs: 763.3763427734375
+                # Embeddings max abs: 54479.57421875
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 5984.0
+                # ema_w: min=-44.349895,max=815.58264
+                # ema_cluster_size min=0.00008,max=263.18903
+                # updated_embeddings min=-47427.68359,max=44979.58203
+                # e_loss.item()=0.99855 | loss.item()=0.24964
+                # ema_w max abs: 815.5826416015625
+                # Embeddings max abs: 47427.68359375
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6488.0
+                # ema_w: min=-49.316090,max=868.58679
+                # ema_cluster_size min=0.00009,max=278.24664
+                # updated_embeddings min=-41943.62500,max=39778.59375
+                # e_loss.item()=1.00264 | loss.item()=0.25066
+                # ema_w max abs: 868.5867919921875
+                # Embeddings max abs: 41943.625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 5756.0
+                # ema_w: min=-56.222931,max=917.46094
+                # ema_cluster_size min=0.00010,max=291.33371
+                # updated_embeddings min=-37557.03906,max=35618.43359
+                # e_loss.item()=0.98612 | loss.item()=0.24653
+                # ema_w max abs: 917.4609375
+                # Embeddings max abs: 37557.0390625
+                # !!!   Optimizer Step Skipped   !!!
+                # Scaler factor 1024.0
+                # dw max abs: 6804.0
+                # ema_w: min=-63.370701,max=961.32629
+                # ema_cluster_size min=0.00010,max=303.32993
+                # updated_embeddings min=-33968.62109,max=32215.23828
+                # e_loss.item()=0.97424 | loss.item()=0.24356
+                # 
+                # so to recap of this long debugging session, 
+                # we first need to monitor min/max/abs values  for all the tensors involved
+                # specifically pay attention to min values in divisions because it can lead to infs/nans
+                # in multiplications we pay attention to max values, cause they can overflow can
+                # result in infs/nans again especially when precision is reduced
+                # and if we see if any of these values are consistently growing 
+                # very large iteration over iteration or epoch over epoch this will
+                # pinpoint where the numerical explosion is happening.
+                # gradient clipping is also a good idea to stablize training when huge gradients are involved
+                # we do this so huge updates do not take place, and weights dont go nans/infs!
+                # though in our experiments here it did absoluly nothing, because we were applying
+                # changings outside of the computation graph! completely outside of optimiziation forward
+                # pass. ema calculations didnt require gradients! otherwise we would have seen the effect of it. 
+                # also printing scaler.get_scale() can give us better ideas whats going on and whether
+                # we have some serious instablity going on or not.
+                # 
+                # 
+                # if not torch.isfinite(self.ema_w).all(): print("!!! NaN/Inf after ema_w update !!!")
+                #
+                # -----------------------DEBUG---------------------
+                
+                # and finally to normalize the EMA of the embeddings vectors we divide ema_w by the cluster size 
+                # as we saw the ema_cluster_size tracks how many times each embedding has been assigned, 
+                # so dividing by this would average the summed encoder outputs (dw) by the number of 
+                # assignments, effectively updating the embeddings to be the average of the encoder outputs
+                # assigned to them. (note the unsqueeze(1) which we use to make the dimensions match for broadcasting)
+                # 
+                # sidenote: 
+                # by using EMA twice for both the cluster sizes and the embedding vectors(ema_w), 
+                # we make sure we (i.e. the model) avoid relying only on the current batchs assignments, 
+                # which might be noisy. this should lead to a more stable training(which it absolutely does!).
+                
+                # !edit: repeatative, excessive, already explained, remove:
+                #sidenote/summary:
+                # The ema_cluster_size was addressed earlier with Laplace smoothing to prevent division by zero.
+                # Now, combining that with ema_w, which is the EMA of the summed encoder outputs, and then 
+                # normalizing by the smoothed cluster sizes gives the updated embeddings. This way, even if 
+                # a cluster hasnt been assigned in the current batch, the EMA ensures it still gets updated
+                # based on historical data, smoothed by the epsilon.
+                # (encodings is a matrix of shape [batch*latent_dim, num_embeddings], where each row is a 
+                # one-hot vector indicating the chosen embedding.
+                # transposing it would make [num_embeddings, batch*latent_dim], and multiplying by 
+                # encoder_outputs_flatten (which is [batch*latent_dim, embedding_dim]) gives a [num_embeddings, embedding_dim]
+                # matrix dw. Each row in dw is the sum of encoder outputs assigned to that embedding.
+                # then ema_w is a [num_embeddings, embedding_dim] parameter thats updated with EMA. dividing by
+                # ema_cluster_size.unsqueeze(1) (which is [num_embeddings, 1]) gives the average encoder output 
+                # per embedding, scaled by their smoothed counts. this updates the codebook embeddings to be the 
+                # moving average of the encoder outputs assigned to them.
+                # so, the key idea is to use EMA to smoothly update the codebook entries based on their usage over time,
+                # which should help training stability. the division by ema_cluster_size ensures that each embedding vector
+                # is the average of all encoder outputs that were assigned to it, adjusted for the smoothing to avoid 
+                # division by zero and ensure all embeddings get updated even if rarely used.
+                # but why not just use the current batch's assignments directly? because EMA reduces variance in the updates,
+                # making training more stable. especially with discrete assignments, which can be noisy, using an EMA 
+                # helps the codebook converge more smoothly.
+                # 
+                # Why would we want to take these steps like this and not use per-batch assignments?
+                # because directly using per-batch assignments would cause noisy updates. ema smooths these updates
+                # over time and it is absolutely critical for avoiding codebook collapse (i.e. where most embeddings go unused)!
+                # for example, if a codebook entry is rarely used, its ema_cluster_size remains small, but ema ensures it 
+                # still receives gradual updates from dw.
+                # why do we do normalization by cluster size?
+                # because doing so (dividing by ema_cluster_size) converts the summed encoder outputs (ema_w) into an
+                # average of the encoder outputs assigned to each codebook entry. without this, embeddings would grow
+                # disproportionately large based on how frequently they're used.(recall going fp16 issues?)
+                # whats the smoothing(laplase) used/good for here?
+                # the laplace smoothing of ema_cluster_size we saw earlier ensures no division by zero, even for unused 
+                # codebook entries. also smoothing ensures rarely used embeddings still receive small updates (via epsilon)
+                # which preventis them from becoming dead units.
+                #
+                # recap:
+                # EMA (smoothing) stabilizes codebook updates by prioritizing historical consistency over noisy per-batch assignments.
+                # normalization ensures embeddings represent the average of assigned encoder outputs not their sum.
+                # laplace smoothing of ema_cluster_size ensures numerical stability and gradual updates for all codebook entries, 
+                # even the rarely used ones.
+                
+                # from future: 
+                # see debug below, this works for fp32, but not fp16!
+                # self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+                # or we could also do: 
+                # ---------------------debug-------------------------
+                # this is causing explosin in embeddings weight causing nans!
+                # because when ema_cluster_size is tiny it makes ema_w huge!
+                # see update 14!
+                # ---------------------DEBUG--------------------------------
+                updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+                # heres the kicker, instead of a new nn.Parameter each time, we update 
+                # the existing embedding weight tensor's data inplace!
+                # self.embeddings.weight.data.copy_(updated_embeddings)
+                # 
+                # -----------------------DEBUG---------------------
+                # heres another operation that may make things go haywire!
+                # this might result in underflow, if ema_w is large but divided by
+                # ema_size which might be huge, result in a tiny number! too tiny
+                # for fp16! (sidenote, fp16 can properly handle only 3 decimals or
+                # if numbers are smaller than that we have issues!
+                # ok I got no warnings here and the values seem normal
+                # after one epoch:
+                # ema_w: min=-530.088806,max=3973.94092
+                # ema_cluster_size min=0.00098,max=1811.74976
+                # updated_embeddings min=-82.19506,max=94.43382
+                # ema_w: min=-528.237122,max=3964.63916
+                # ema_cluster_size min=0.00098,max=1805.99194
+                # updated_embeddings min=-81.35664,max=93.47057
+                # 
+                # ok we dont get any nans now! so this shouldnt be it!
+                # Update: ok when i commented out these and instead used our
+                # initial one liner:
+                # self.embeddings.weight = nn.Parameter(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+                # we started to get nans, again, I tried 3 times and noticed this 
+                # is the culprit here! so im reverting that change,
+                # 
+                # 
+                #
+                # reminder to myself: 
+                # fp16 has 3.3 decimal, fp32 has 7 and fp64 has 16 decimal places
+                # so even if our number shows more decimals, anything after 3rd decimal
+                # is not accurate and cant be trusted for fp16.
+                # also the number of decimals is calculated roughly by:
+                # number of significant bits*log10(2) which is 11*0.30103=3.31 for fp16
+                # also another reminder: 
+                # floating-point numbers don't store a fixed number of decimal places 
+                # like decimal dtypes. they store a binary representation 
+                # (sign, exponent, significand/mantissa) that approximates a real number.
+                # The precision is defined by the number of bits in the significand
+                # For fp16 (as defined by IEEE 754): total bits: 16
+                # Significand bits: 10 explicit bits + 1 implicit 
+                # leading bit = 11 bits of precision)
+                #
+                # updated_embeddings = self.ema_w / self.ema_cluster_size.unsqueeze(1)
+                
+                # print(f'ema_w: min={self.ema_w.min().item():5f},'
+                #       f'max={self.ema_w.max().item():.5f}')
+                
+                # print(f'ema_cluster_size min={self.ema_cluster_size.min().item():.5f},'
+                #       f'max={self.ema_cluster_size.max().item():.5f}')
+                
+                # print(f'updated_embeddings min={updated_embeddings.min().item():.5f},'
+                #       f'max={updated_embeddings.max().item():.5f}')
+                
+                # if not torch.isfinite(updated_embeddings).all():
+                #     print(f"!!! NaN/Inf in updated_embeddings BEFORE assignment !!!"
+                #           f"ema_w finite: {torch.isfinite(self.ema_w).all()},"
+                #           f"cluster_size min: {self.ema_cluster_size.min().item()}")
+                #---------------------------Debug2-------------------------
+                # our embedding weights explode quickly, lets try clipping it
+                # and see if it fixes the exploding values. see update 14
+                # we first select a value, like 10 here (we got 400k! as our
+                # initial embeddings.max() but we dont set it to 400k, instead
+                # choose a value like 1,5 or 10! and then sit and watch for a few
+                # epochs how large the embeddings max gets, if it keeps maxingout
+                # at our clipvalue, we'd want to increase the clip value so we
+                # dont hinder the training unless it gives us nans again(not likely though here))
+                # if it didnt maxout at clipvalue, and we dont get nans we are good!
+                # 
+                clip_value = 10.0
+                updated_embeddings.clamp_(min=-clip_value, max=clip_value)
+                # now update the embeddings!
+                self.embeddings.weight.data.copy_(updated_embeddings)
+                
+                # if not torch.isfinite(self.embeddings.weight).all(): 
+                #     print("!!! NaN/Inf AFTER embeddings.weight update !!!")
+                # # -----------------------DEBUG---------------------
+            
+            
+            e_loss = F.mse_loss(quantized_z_ex.detach(), encoder_outputs.float())
+            # print(f'{e_loss.item()=}')
+            loss = self.beta_weight * e_loss
+            # #----------------------------DEBUG------------------------
+            # # see update 6 and 7 up
+            # print(f'{e_loss.item()=:.5f} | {loss.item()=:.5f}')
+            # print(f"ema_w max abs: {self.ema_w.abs().max().item()}")
+            # print(f"Embeddings max abs: {self.embeddings.weight.abs().max().item()}")
+            # #----------------------------DEBUG------------------------
+        
+        # #----------------------------DEBUG------------------------
+        # # see update 14
+        # print(f'self.embeddings.weight min={self.embeddings.weight.data.min().item():.5f},'
+        #       f'max={self.embeddings.weight.data.max().item():.5f}')
+        # #----------------------------DEBUG------------------------
+            
+        # this is the Straight-Through Estimation (STE) part, which allows the gradients to 
+        # flow through our discrete operation(i.e. choosing the nearest embedding vector(argmin)
+        # which is non-differentiable.
+        # basically using the detach trick here it prevents the gradients from flowing through 
+        # (quantized_z_ex - encoder_outputs) so, during backpropagation, in the forward pass we
+        # use the quantized_z_ex, the model sees the actual quantized values and the in 
+        # backward pass, its as if the encoder_outputs were used, which allows the gradients
+        # to propagate through the encoder.
+        quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach()
+        # lets also calculate the average selection probablity. 
+        # this tells us know how often an embedding vector is selected. 
+        # its important because it can tell us whether some vectors are rarely selected
+        # or not, if so then it might indicate embedding space/codebook collapse!
+        # its a common issue where only a few embeddings are used constantly and 
+        # therefore it results in wasted model capacity.
+        avg_probs = encodings.mean(dim=0)
+        # now using the average selection probablity, we can calculate the preplexity
+        # of the embedding space utilization.
+        # the prepelxity measures how evenly the embedding vectors are being used.
+        # The formula is based on Shannon entropy H = − ∑pᵢ * logpᵢ 
+        # taking exp(H) gives us the perplexity, which ranges from 1 if only one embedding vector
+        # is used, meaning no diversity, to num_embds if all embedding vectors/codebook vectors
+        # are used equally.
+        # basically a higher perplexity means better embedding space/codebook utilization
+        # a low perplexity tells us that the model is underutilizing the embedding space, 
+        # which may lead to worse performance.
+        #
+        # sidenote:
+        # using a exponential moving average should prevent low prepexlity!
+        # !edit add moving average!
+        # 
+        # sidenote-deeper explanation:
+        # !edit
+        # Perplexity is in fact a measure of uncertainty or diversity in a probability distribution.
+        # It is commonly used in language modeling, information theory, and in Vector Quantization 
+        # (VQ) to measure how well an embedding space (or a codebook as many call it) is being utilized.
+        # and as we said before it comes from Shannon entropy, which measures the amount of uncertainty
+        # in a probability distribution.
+        # The formula for entropy is:
+        #  H(p) = - Σp_i * log(p_i)
+        # where p_i represents the probability of selecting the i-th element from a distribution
+        # The perplexity is simply the exponentiation of entropy:
+        #  PPL = exp(H(p)) = e^(- Σ p_i * log(p_i))
+        # This measures how uncertain or diverse a probability distribution is. In VQ-VAE,
+        # it helps evaluate how well embedding space is being utilized.
+        # 
+        # Ok this didnt explain much at all, perplexity in fact measures the effective number
+        # of codebook/embedding vectors used, weighted by their usage probability(p_i). 
+        # It essentially tells us how spread out the usage distribution is, 
+        # a higher number means usage is spread more evenly across more codes
+        # for example, if we have 512 embedding vectors(num_embds=512), and we get
+        # a perpelxity=40, it means, the usage distribution is as spread out as if 
+        # only 40 codes were being used uniformly. 
+        # this can also help us understand if we are facing a codebook collapse (that is
+        # we are only using one codebook/embedding vector or only few out of the whole codebook
+        # for example, the value 40 also means only a fraction of our codebook is being used, 
+        # but whether its a total collapse or not, isnt readily clear to us, because it could be 
+        # using 40 diverse features that works prefectly fine for us, or it may not be the case!
+        # and the codes being used may very well all represent very similar variations of a 
+        # limited set of features (e.g. different background textures, slight color shifts), and
+        # actual crucial featuresbe for object details are missing or lacking greatly! 
+        # so the trick is, to look how reconstruction looks, if the model cant can't reconstruct 
+        # those details well even if the perplexity number isn't rock bottom it means we have a codebook collapse
+        # but if the reconstructions are pretty good with much needed details and diversity then, 
+        # we are good! even if its 40 out of 512 codebook verctors!
+        # 
+        # sidenote:  
+        # in many implementations you may see people refering to embeddings(the whole embedding vectors/ditionary of embedding vectors!)
+        # as codebooks! 
+        # so embedding vectors and codebook vectors are the same thing! if you read the paper
+        # you'll see the authors always used embedding space/embedding vectors and the likes to
+        # address embedding vectors! but many people started calling it codebook because it kindaof
+        # looks like it (a ditionary of embedding vectors! thus a codebook!), 
+        # anyway I like the embeddings better so I keep using that
+        # but at the same time I add the codebook as well so you get familiar with t hat term as well
+        # its usually specific to vq-vae implementations.
+        #
+        #
+        prepelexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs+ 1e-10)))
+        # !todo fix this, this is not accurate! encodings are not simple indexes!
+        # note from me from future: min_indexes come in handy later on! 
+        # and come in handy in debugging later on! (im writting this during debugging!!)
+        # note 2: initially I used encodings, which is the onehot encoded version of it
+        # the outcome didnt make sense, so after a few tries, im writing this here and making
+        # the corrections. we can still get the min_indexes from encodings using 
+        # torch.argmax(encodings, dim=1) for example, but its an extra operation and using
+        # min_indexes directly is the right choice here (why would I be using encodings
+        # when im actually needing min_indexes? I have no use for the one-hot-encoded 
+        # version of integer indexes! so I remove it and use min_indexes instead
+        # since min_indexes shape is (N,) and N being H*W*batch, we need to reshape it 
+        # back to (batch_size, H, W) so we can easily use it down the line!
+        # print(f'{encoder_outputs_shape=}')
+        # print(f'{min_indexes.shape=}')
+        # sidenote: 
+        # the terms 'latent vectors' or 'quantized latents' seem to be used 
+        # to refer to the actual vectors from the embeddings/codebook (in our case quantized_z_ex),
+        # and 'latent codes' usually refers specifically to the map of discrete integer indexes 
+        # (in our case min_indexes reshaped properly(batch,H,W))
+        # so I call the min_indexes that are reshaped to (b,h,w) as latents and call 
+        # min_indexes as indexes otherwise, I guess this conveys the usage pretty well
+        # sidenote 2: 
+        # as to why they are called the way they do, these remarks are usually stated as reasons
+        # behind the naming convention:
+        # First min_indexes are actually the final output of the encoding and quantization process, 
+        # and represent the original input image in a compressed, discrete form so it makes sense 
+        # to call it latent codes!
+        # second, min_indexes is really a sequence of indexes(obviously!), that contains the essential,
+        # quantized information in compressed form, extracted by the encoder.(its called a map of integer indexes 
+        # when its reshaped to its proper form of (b,h,w)), so once again it seems logical to call it latents!
+        # third, later on when we plan on generating new images we use models like PixelCNN or Transformers 
+        # that are autoregressive (we use them to learn priors from the data instead of using a fixed predetermined ones),
+        # we use them to train specifically to model the probability distribution of these integer indexes.
+        # (p(z), where z is the map of indexes). They learn to predict the next index based on the previous ones.
+        # so again, as you can see, these indexes really act like latents for them(these models/in this context!)
+        # and finally these indexes act as keys to look up the actual embedding vectors 
+        # (quantized_z_ex in our case) from the embeddings/codebook, which are then used by the decoder.
+        # while the decoder uses the embedding vectors, the indexes fully determine which vectors are used,
+        # hence the name latent codes!
+        # sidenote3:
+        # a bit more searching and I found out, my initial though was correct! that is
+        # technically speaking, when we talk about latent space, it usually refers to 
+        # the continuous vector space produced by the encoder (in our case encoders outputs before quantization)
+        # so, the encoders outputs are the actual latent variables/latent representations.
+        # However! in practice, many started refering to the integer indexes (which are a 
+        # discrete representation derived from that continuous latent space) the latents!.
+        # other well-known names that are used are discrete_latents and quantized_latents which 
+        # are more accurate imho! so I'll be using the discrete_latents instead from now on!
+        # (as to why people do that(aside from my previous points which still are valid imho),
+        # I guess since, given the context, its known knowledge, everyone just shortens the 
+        # explanation and directly calls them that way!(after all they are the discrete form of
+        # the continuous counterpart! (also it makes sense in the vqvae context itself, without
+        # taking prior model interactions into account!))
+        discrete_latents = min_indexes.view(*encoder_outputs_shape[:3])
+        return loss, quantized_z_ex.permute(dims=(0,3,1,2)).contiguous(), prepelexity , discrete_latents
+
+# lets now add the main model 
+class VQVAE(nn.Module):
+    def __init__(self, input_channels, embd_num, embd_size, beta, use_ema):
+        super().__init__()
+    
+        self.input_channels = input_channels
+        self.embd_num = embd_num
+        self.embd_size = embd_size
+        self.beta = beta
+        self.use_ema = use_ema
+        # indeces_shape which is fed to decoder (encoder output)
+        self.enc_output_shape = []
+        # well use the same encoder/decoder from previous architectures
+        self.encoder = nn.Sequential(conv(self.input_channels,32),#28x28
+                                     conv(32,64,stride=2),#14x14
+                                     conv(64,96,stride=2),#7x7
+                                     conv(96,96, kernel_size=3),
+                                     conv(96,128,stride=1),#3x3 #for 7x7, stride=1, otherwise set=2
+                                     conv(128,128, kernel_size=3),
+                                     conv(128,256,stride=1),#2x2 # for 4x4: 1
+                                     conv(256,256, kernel_size=3),
+                                     conv(256, self.embd_size, stride=1,padding=1,batch_norm=True),#1x1 #for 4x4:1 # for 2x2:1 #for 1x1:2
+                                    # Print(),
+                                    )
+        # self.drp = nn.Dropout(0.1)
+        # we use the followng formula to determine the output size here
+        # ((h-1)*stride)+(kernel_size-2)*padding
+        # (h=1,k=4,s=2,p=1)
+        # !if encoder output ix 7x7 -simply increasing dims to see if we get clearer images,
+        # !this is not ideal, we are just doing it for testing purposes, we get better result
+        # with sharper images, but the architecture is clearly weak. also larger fmaps may
+        # not result in good codebooks as we leardned in vae, (we need to test this with decoder(prior model)
+        # and see if this is the case here as well. (yeah I can confirm the larger fmaps defnitely
+        # result in cleared images,)
+        # next buff up the architecture)
+        # 07-1*2+2-2*1=12
+        # 12-1*1+4-2*1=13
+        # 13-1*2+4-2*1=26
+        # 26-1*1+4-2*1=27
+        # 27-1*1+4-2*1=28
+        # since we no longer dealing with flattened input, we simply use a conv layer!
+        self.decoder = nn.Sequential(conv(self.embd_size,256, kernel_size=3),
+                                    conv(256,256, kernel_size=3),
+                                    #  Print(),
+                                    deconv(256,128,kernel_size=2,stride=2,batch_norm=True),#for 4x4: 2,2  #for 1x1:4,2  #for 7x7:2,2
+                                    conv(128,128, kernel_size=3),
+                                    #  Print(),
+                                    deconv(128,96,kernel_size=4,stride=1,batch_norm=True), #for 4x4: 4,1  #for 1x1:4,2  #for 7x7:4,1
+                                    conv(96,96, kernel_size=3),
+                                    #  Print(),
+                                    deconv(96,64,kernel_size=4,stride=2,batch_norm=True),  #for 4x4: 4,2  #for 1x1:4,2  #for 7x7:4,2
+                                    conv(64,64, kernel_size=3),
+                                    #  Print(),
+                                    deconv(64,32,kernel_size=4,stride=1,batch_norm=True),  #for 4x4: 2,1  #for 1x1:2,2  #for 7x7:4,1
+                                    conv(32,32, kernel_size=3),
+                                    conv(32,32, kernel_size=3),
+                                    #  Print(),
+                                    deconv(32,self.input_channels, kernel_size=4,stride=1,batch_norm=False,act=nn.Sigmoid()),#28 #for 4x4:6,2 # for 1x1:4 #for 7x7: 4,1
+                                    # Print(),
+                                    )
+        
+        self.quantizer = Quantizer(self.embd_num, self.embd_size,beta_weight=self.beta, use_ema=self.use_ema)
+
+    def forward(self, inputs):
+        outputs = self.encoder(inputs)
+        # print(f'{outputs.shape=}')
+        # we can use this later on with our prior model 
+        # which we use for generating new imaegs, it comes handy
+        # when we change input image size, and it changes, we simply
+        # use this instead of remembering the encoder outputshape!
+        if not self.enc_output_shape:
+            self.enc_output_shape = outputs.shape[2:]
+        
+        loss, quantized_vectors, prepelexity,_ = self.quantizer(outputs)
+        # print(f'{quantized.shape=}')
+        recons = self.decoder(quantized_vectors)
+        return loss, recons, prepelexity
+
+model_test = VQVAE(input_channels=3, embd_num=100, embd_size=64, beta=0.2, use_ema=True)
+x = torch.randn(size=(10,3,32,32)) # our model works with 28x28 and 32x32 just fine!
+vq_loss,rec,perp = model_test(x)
+print(f'{vq_loss.item()=:.4f} {rec.shape=}, {perp=} {model_test.enc_output_shape=}')
+
+#%%
+#TODO reformat this, make it better!
+def select_dataset(dataset_name='mnist', batch_size=128, size=28, limited_samples=False, train_samplesize=1000, test_samplesize=100):
+    
+    dataset_name = dataset_name.lower()
+    
+    if dataset_name == 'mnist':
+        dataset_train = datasets.MNIST('./data/MNIST', train=True, download=True, transform=tf.ToTensor())
+        dataset_test = datasets.MNIST('./data/MNIST', train=False, download=True, transform=tf.ToTensor())
+    
+    elif dataset_name in ['cifar','cifar10']:
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.CIFAR10('./data/CIFAR10', train=True, download=True,transform=tr_train)
+        dataset_test = datasets.CIFAR10('./data/CIFAR10', train=False, download=True,transform=tr_test)
+    
+    elif dataset_name == 'tinyimagenet':
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.ImageFolder('./data/tiny-imagenet-200/train/', transform=tr_train)
+        dataset_test = datasets.ImageFolder('./data/tiny-imagenet-200/val/', transform=tr_test)
+        
+    elif dataset_name == 'celeba':
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.ToTensor(),
+        ])
+        
+        dataset_train = datasets.CelebA('./data/', 'train', download=True, transform=tr_train)
+        dataset_test = datasets.CelebA('./data/', 'valid', download=True, transform=tr_test)
+    
+    elif dataset_name=='anime':
+        dataset_train = datasets.ImageFolder('./data/anime_characters/raw_dirs/')
+        train_size = int(0.8 * len(dataset_train))
+        test_size = len(dataset_train) - train_size
+        # split the dataset
+        dataset_train, dataset_test = torch.utils.data.random_split(dataset_train, [train_size, test_size])
+        
+        tr_train = tf.Compose([
+            tf.Resize(size),
+            tf.RandomHorizontalFlip(),
+            # since we have some png images, convert all to rgb
+            tf.Lambda(lambda img: img.convert("RGB")),
+            tf.ToTensor(),
+        ])
+        tr_test = tf.Compose([
+            tf.Resize(size),
+            tf.Lambda(lambda img: img.convert("RGB")),
+            tf.ToTensor(),
+        ])
+        # subsets have dataset property, so we access it to assign transformations!
+        # we could also do sth like this 
+        # class TransformedDataset(torch.utils.Dataset):
+        #     def __init__(self, subset, transform):
+        #         self.subset = subset
+        #         self.transform = transform
+        #     def __getitem__(self, index):
+        #         x, y = self.subset[index]
+        #         if self.transform:
+        #             x = self.transform(x)
+        #         return x, y
+        #     def __len__(self):
+        #         return len(self.subset)
+        # dataset_train = TransformedDataset(dataset_train, tr_train)
+        # dataset_train = TransformedDataset(dataset_test, tr_test)
+        # but I find this easier and shorter!
+        dataset_train.dataset.transform = tr_train
+        dataset_test.dataset.transform = tr_test
+    else:
+        raise Exception(f'the input dataset {dataset_name} is not supported! choose between (mnist or cifar10)')
+    
+    if limited_samples:
+        # temporary test to see how many samples may be insuffiecient to train 
+        # a vqvae properly from scratch, we use Subset() to specify and grab the
+        # number of suitable samples we want for our test
+        # 
+        # note, incase the specificed samplesize exceeds the whole dataset, use dataset max size
+        # otherwise select the samplesize normally!
+        dataset_train = torch.utils.data.Subset(dataset_train, list(range(min(train_samplesize, len(dataset_train)))))
+        dataset_test = torch.utils.data.Subset(dataset_test, list(range(min(test_samplesize, len(dataset_test)))))
+    
+    dataloader_train = torch.utils.data.DataLoader(dataset_train,batch_size=batch_size,shuffle=True)
+    dataloader_test = torch.utils.data.DataLoader(dataset_test,batch_size=batch_size,shuffle=False)
+
+    return dataset_train, dataset_test, dataloader_train, dataloader_test
+
+#train
+# todo: add mixed-precision trainig so we can train larger models/inputsizes
+def train_vqvae(model:VQVAE, dataset_name, lr, epochs,batch_size, interval, device, img_size, use_fp16=False, checkpoint_dir_path='./weights', recons_dir_path=None, limited_samples=False, train_samplesize=60_000, test_samplesize=10_000):
+    # note our timestamp needs to be sortable so if later on we need
+    # to sort our files for whatever reason the order of files isnt 
+    # messed up. (this form is sortable, and filename friendly so allis good now!)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # checkpoint_dir_path = './' if not checkpoint_dir_path else checkpoint_dir_path
+    checkpoint_dir_path = checkpoint_dir_path or './'
+    checkpoint_fname = f'vqvae_{dataset_name.upper()}_{"x".join(map(str, img_size))}_{timestamp}.ckpt'
+
+    # grab the checkpoint filename and use it for the directory name
+    # so everything is neat and tidy at one place under one name!
+    ext = os.path.splitext(checkpoint_fname)[-1]
+    model_dir_name = checkpoint_fname.replace(ext, "")
+    
+    checkpoint_dir_path = os.path.join(checkpoint_dir_path, model_dir_name)
+    
+    # with exist_ok=True, we dont need to check if the dir
+    # already exists or not, if it doesnt it creates one, if
+    # if does, it leaves it be!
+    os.makedirs(checkpoint_dir_path, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir_path, checkpoint_fname)
+    
+    if recons_dir_path:
+        recons_dir_path = os.path.join(recons_dir_path, model_dir_name)
+        os.makedirs(recons_dir_path, exist_ok=True)
+    
+    dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset_name, 
+                                                                                    batch_size=batch_size,
+                                                                                    size=img_size,
+                                                                                    limited_samples=limited_samples,
+                                                                                    train_samplesize=train_samplesize,
+                                                                                    test_samplesize=test_samplesize)
+    
+    optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
+    
+    # improved learning rate scheduler
+    warmup_epochs = 5
+    total_steps = len(dataloader_train) * epochs
+    warmup_steps = len(dataloader_train) * warmup_epochs
+    
+    # added this later to see how much improvement we can get out of our curent model!
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
+    
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    
+    
+    if warmup_steps > 0:
+        # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
+        scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
+                                                             start_factor=1e-8,
+                                                             end_factor=1.0,
+                                                             total_iters=warmup_steps) 
+        # decay to 1% of peak LR
+        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                                      T_max=total_steps - warmup_steps,
+                                                                      eta_min=lr * 0.01)
+        # combine schedulers
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
+        print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
+    else:
+        # Only Cosine Annealing if no warmup
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
+        print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
+
+
+    # without this loss will decrease a lot but the result isnt as good as when
+    # we normalize the loss, and take the whole dataset into account!
+    # check how much normalization affects us?
+    # min_v = dataloader_train.dataset.data.min()
+    # max_v = dataloader_train.dataset.data.max()
+    # print(f'{min_v=}')
+    # print(f'{max_v=}')
+    
+    # if isinstance(dataloader_train.dataset.data, np.ndarray):
+    #     data_variance_train,data_variance_val = [np.var(loader.dataset.data/max_v) for loader in [dataloader_train,dataloader_test]] 
+    # else:
+    #     data_variance_train,data_variance_val = [torch.var(loader.dataset.data/max_v).item() for loader in [dataloader_train,dataloader_test]]
+    # test of normalization efficacy!
+    data_variance_train = data_variance_val =1
+    
+    # pixel_values = []
+    # pixel_values = [img.numpy() for img,_ in dataset_train]
+    # pixel_values = np.concatenate([img.flatten() for img in pixel_values])
+    # data_variance = np.var(pixel_values)  
+
+    print(f'Experiment Date:     {timestamp}')
+    print(f'Mixed Precision:     {"\033[32mEnabled\033[0m" if use_fp16 else "\033[91mDisabled\033[0m"}')
+    print(f'Checkpoint:          {checkpoint_fname}')
+    print(f'Checkpoint Dir:      {checkpoint_dir_path}')
+    print(f'Reconstructions:     {recons_dir_path}')
+    print(f'Dataset:             {dataset_name.upper()}')
+    print(f'Limited Samples:     {"\033[91m" + str(limited_samples) + "\033[0m" if limited_samples else limited_samples}')# make it red so it stands out!
+    print(f'Train size:          {len(dataloader_train.dataset):,}')
+    print(f'Test size:           {len(dataloader_test.dataset):,}')
+    print(f'Epochs:              {epochs}')
+    print(f'BatchSize:           {batch_size}')
+    print(f'embeddings_num:      {model.embd_num}')
+    print(f'embedding_size:      {model.embd_size}')
+    print(f'use_ema:             {"\033[32mEnabled\033[0m" if model.use_ema else "\033[91mDisabled\033[0m"}')
+    print(f'beta/commmitment:    {model.beta}')
+    print(f'optimizer:           {optimizer}')
+    print(f'scheduler:           {scheduler.state_dict()}')
+    print(f'interval:            {interval}')
+    print(f'data variance[train]:{data_variance_train:.4f}')
+    print(f'data variance[val]:  {data_variance_val:.4f}')
+    
+    total_reconstruction_errors = []
+    total_vqlosses = []
+    total_perplexities = []
+    total_losses=[]
+    total_val_losses=[]
+    best_loss = float("inf")
+    
+    model.to(device)
+    
+    scaler = torch.amp.grad_scaler.GradScaler()
+    
+    for epoch in range(epochs):
+        model.train()
+        reconstruction_errors = []
+        vqlosses = []
+        perplexities = []
+        losses=[]
+        val_losses=[]
+        for i, (imgs, _) in enumerate(dataloader_train):
+            imgs = imgs.to(device)
+ 
+            with torch.amp.autocast(device_type='cuda', enabled=use_fp16):
+                vq_loss, imgs_rec, perplexity = model(imgs)
+            
+            #! normalzie the loss
+            # lets calculate the loss outside of autocast and specifically 
+            # convert them into fp32 for maximum precision. 
+            reconstruction_error = F.mse_loss(imgs_rec.float(), imgs.float()) / data_variance_train
+            # reconstruction_error = F.binary_cross_entropy(imgs_rec, imgs) / data_variance_train
+            loss = reconstruction_error + vq_loss
+            
+            losses.append(loss.item())
+            
+            optimizer.zero_grad()
+            # scale the loss before doing backward, 
+            # note this is required regardless of whether we calculated
+            # the loss inside autocast or not. the autocast() manages gradients
+            # and makes sure they dont undeflow when in fp16 mode (because
+            # gradients computed during the backward pass can become very small
+            # and get flushed to zero before the optimizer uses them, so autocast 
+            # is to takecare of that. however we still need to scale our loss, so
+            # the gradients for the parts of the model that were calculated in fp16 mode
+            # take the proper scale and dont stay small! so this part is a must when 
+            # we want to do backward! so before doing the backwardpass, we make the
+            # gradients larger, (scale it accordingly) then run backward pass calculation
+            # this way our tiny gradients dont get clamped to zero, and get larger 
+            # so the backward pass does it jon properly!)
+            scaler.scale(loss).backward()
+            # when we are done with the backward pass, we can safely unscale the gradients
+            # and revert them back to their original magnitude, and then take an optimizer step
+            # if we dont do this, our weight updates will be massive and it will mess up trainig
+            # the thing is, the crucial part in fp16 trainig is the backward pass, when its
+            # taken care of, we go on as normal! and can use the original gradient magnitudes
+            # note that this unscaling is done automatically in scaler.step(optimizer) by the way)
+            # there is a beautiful analogy for this dont know who came up with it though,anyway
+            # it goes like this, imagine we want to weigh an extremely light feather on a 
+            # scale that isnt precise enough for such weights (feather in milli grams e.g.(lets imagine its 10 miligram each),
+            # while our scale is gram precise! (so to the scale its near zero and it isn't very sensitive near zero values at all)
+            # scaling up here is analegous to us taking 100 identical feathers together 
+            # (scaling) and weighting the bundle! the bundle is much heavier now , 
+            # infact heavy enough for our scale to register the weight accurately
+            # the backward pass in our case is analegous to the scale measuring the weight of 
+            # the bundle (calculating the scaled-up gradients without losing them to zero)
+            # scaling down part is, now that we are done weighing, we take the measured weight 
+            # of the bundle and divide it by 100 (unscaling in scaler.step).
+            # the optimizer step part is, now we have the accurate weight of a single feather
+            # (the true gradient magnitude), which we can use for our calculations (weight updates)
+            #-----------------DEBUG---------------------
+            # clip to solve fp16-ema issue? since we want to clipgradient
+            # so we unscale first - see update 14
+            # scaler.unscale_(optimizer)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) 
+            #-----------------DEBUG---------------------
+            out = scaler.step(optimizer)
+            # update the scale value for the next round
+            scaler.update()            
+            
+            # ----------------DEBUG----------------------
+            # if instability happens in fp16, gradscaler may drop optimization steps
+            # for and batches of updates get ignored! if it happens a lot it means
+            # we have serious issues,
+            # what should we look for here:
+            # the scale factor by default is 1 for fp32, but its different for fp16. 
+            # the actual value depends on the model and calculations involved. 
+            # the scaler factor increases when gradients are consistently finite after unscaling.
+            # so if it decreases sharply, it means inf or nan gradients are detected (overflow)
+            #
+            # if not out:
+            #     print(f'!!!   Optimizer Step Skipped({i})  !!!')
+            # print(f'batch:{i}) Scaler factor {scaler.get_scale()}')
+            #----------------DEBUG----------------------
+             
+            scheduler.step()
+              
+            reconstruction_errors.append(reconstruction_error.item())
+            vqlosses.append(vq_loss.item())
+            perplexities.append(perplexity.item())
+
+            if i%interval == 0:
+                print(f'Epoch: {epoch}/{epochs}'
+                      f' | Loss: {np.mean(losses):.4f}'
+                      f' | Recons-Error: {np.mean(reconstruction_errors):.4f}'
+                      f' | VQ-Loss: {np.mean(vqlosses):.4f}'
+                      f' | Perplexity: {np.mean(perplexities):.4f}'
+                      f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
+    
+        # scheduler.step()
+       
+        with torch.no_grad():
+            model.eval()
+            model.to(device)
+            # we may also convert the wieghts which are by default in fp32 to fp16
+            # this will make the model weihts be in fp16, would take less space
+            # but needs to be loaded with autocast (inputs and operations need to
+            # match the lower precision so all goes well!)
+            # however, by default we dont do this, we store the full precision model
+            # and then if we want, during inference, use fp16 and it will be cast to afp16
+            # the good thing is the model weights is retained in full precision, and
+            # gives us flexibility and ability to train(in a stable and accurate manner) again
+            # in mixed-precision later on (note in training not every module's calculation
+            # is done in fp16, some need to be done in fp32, and thus having full precision 
+            # is the way to go) also highest accuracy(in some cases,(well see some examples 
+            # in llms chapter)) so I leave this for now well see more when we cover later chapters like llms.
+            # model.half()
+            # from future: added this so I can see if this is causing issues with
+            # fp16 and ema bug!
+            print(f'...............VALIDATION...............')
+            #------------------------debug-------------------
+            # make model full precision and disable autocast in eval mode!
+            # see update 10 in Quantizer! for context -
+            # ok enabling this and making it fp32, resulted in nans in batchnorm
+            # and both losses, see update 10/11 in Quantizer
+            # model.float()
+            #------------------------debug-------------------
+            for imgs, _ in dataloader_test:
+                imgs = imgs.to(device)
+                with torch.amp.autocast(device_type='cuda', enabled=use_fp16):
+                    vq_loss, imgs_rec, perplexity = model(imgs)
+                # again we can do this inside autocast conext manager, it usually
+                # takes care of the loss magnitude just fine for famous loss functions
+                # but I thought its a good idea to leave this note for future especially
+                # for the cases where custom loss functions may be used and one needs to
+                # take this into consideration!
+                val_reconstruction_error = F.mse_loss(imgs_rec.float(), imgs.float()) / data_variance_val
+                # val_reconstruction_error = F.binary_cross_entropy(imgs_rec.float(), imgs.float()) / data_variance_val
+                val_loss = val_reconstruction_error + vq_loss
+                val_losses.append(val_loss.item())
+
+        #------------------------------------DEBUG--------------------------------
+        # see update 8 in Quantizer model - finding why fp16 and ema fails
+        # print("--- Checking BatchNorm Stats ---")
+        # for name, module in model.named_modules():
+        #     if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+        #         if module.running_mean is not None:
+        #             if not torch.isfinite(module.running_mean).all():
+        #                 print(f"!!! NaN/Inf in running_mean for {name} !!!")
+        #             if not torch.isfinite(module.running_var).all():
+        #                 print(f"!!! NaN/Inf in running_var for {name} !!!")
+        #             # check for near-zero variance which can cause division issues
+        #             if (module.running_var < 1e-7).any():
+        #                 print(f"!!! WARNING: Very small running_var detected for {name} !!! Min value: {module.running_var.min().item()}")
+
+        #         print(f"{name} - Running Mean Max Abs: {module.running_mean.abs().max().item():.8f}")
+        #         print(f"{name} - Running Var Max Abs: {module.running_var.abs().max().item():.8f}") # Variance shouldn't explode usually
+        # print("--- BatchNorm Stats Check Done ---")
+               
+        #------------------------------------DEBUG--------------------------------
+        
+        # display reconstruction performance!
+        fname=None
+        if recons_dir_path:
+            fname = f'{recons_dir_path}/recons_{epoch}.jpg'
+
+        view_reconstructions(model, dataloader_test, fname=fname)
+        
+        # keep track of the stat for each epoch as well
+        mean_loss = np.mean(losses)
+        mean_val_loss = np.mean(val_losses)
+        mean_reconstruction_errors = np.mean(reconstruction_errors)
+        mean_vqloss = np.mean(vqlosses)
+        mean_perplexity = np.mean(perplexities)
+        
+        total_losses.append(mean_loss)
+        total_val_losses.append(mean_val_loss)
+        total_reconstruction_errors.append(mean_reconstruction_errors)
+        total_vqlosses.append(mean_vqloss)
+        total_perplexities.append(mean_perplexity)
+
+        print(f'Epoch: {epoch}/{epochs}'
+              f' | Loss: {mean_loss:.4f}'
+              f' | Val-Loss: {mean_val_loss:.4f}'
+              f' | Recons-Error: {mean_reconstruction_errors:.4f}'
+              f' | VQ-Loss: {mean_vqloss:.4f}'#mean_loss-mean_reconstruction_errors
+              f' | Perplexity: {mean_perplexity:.4f}'
+              f' | LR: {scheduler.get_last_lr()[-1]:.6f}')
+
+        #! use a validation instead?
+        if mean_val_loss < best_loss:
+            best_loss = mean_val_loss
+            # TODO: remove checkpoint related info such as optimizer/scheduler state_dicts
+            # and save only the model weights, rename to .pt so it takes less space!
+            torch.save({'dataset':dataset_name,
+                        'batchsize':batch_size,
+                        'epoch': epoch,
+                        'state_dict': model.state_dict(),
+                        # 'optimizer': optimizer.state_dict(),
+                        # 'scheduler':scheduler.state_dict(),
+                        'val_loss': best_loss,
+                        'train_loss': mean_loss,
+                        'perplexity':mean_perplexity,
+                        'enc_output_shape':model.enc_output_shape,
+                        'img_size':img_size,
+                        'limited_samples':limited_samples,
+                        'train_samplesize':len(dataloader_train.dataset),
+                        'test_samplesize':len(dataloader_test.dataset),
+                        'use_fp16':use_fp16,
+                        'model_config':{
+                          'beta':model.beta,
+                          'use_ema':model.use_ema,
+                          'embd_num':model.embd_num,
+                          'embd_size':model.embd_size,
+                          'input_channels':model.input_channels,
+                          },
+                       }, checkpoint_path.replace('.ckpt','_best.pt'))
+            print(f'Best model with loss={best_loss:.4f} saved at epoch {epoch}!')
+        
+        # save the last model
+        torch.save({'dataset':dataset_name,
+                    'batchsize':batch_size,
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler':scheduler.state_dict(),
+                    'val_loss': best_loss,
+                    'train_loss': mean_loss,
+                    'perplexity':mean_perplexity,
+                    'enc_output_shape':model.enc_output_shape,
+                    'img_size':img_size,
+                    'limited_samples':limited_samples,
+                    'train_samplesize':len(dataloader_train.dataset),
+                    'test_samplesize':len(dataloader_test.dataset),
+                    'use_fp16':use_fp16,
+                    'model_config':{
+                      'beta':model.beta,
+                      'use_ema':model.use_ema,
+                      'embd_num':model.embd_num,
+                      'embd_size':model.embd_size,
+                      'input_channels':model.input_channels,
+                      },
+                  }, checkpoint_path)
+    
+    # create gifs from recons
+    create_gifs(recons_dir_path)
+    
+    # display model performance
+    for label, logs in zip(["Train Loss", "Val Loss", "Train Recon Error", "Train Perplexity"],
+                            [total_losses, total_val_losses, total_reconstruction_errors, total_perplexities]):
+        # quick and simple plot using pandas dataframe!
+        df = pd.DataFrame(logs)
+        # grab the axis so we can use it to 
+        # annotate it a bit so its not too raw!
+        ax = df.plot()
+        ax.set_xlabel("Epochs")  # Label x-axis
+        ax.set_ylabel("Value")  # Label y-axis
+        ax.set_title(label)  # Set title
+        # save the plot to disk
+        plt.savefig(checkpoint_path.replace('.ckpt',f'_{label}.jpg'))
+        plt.show()
+        
+    # return dataloaders that were used to train the model for later stages that may need it
+    return dataloader_train, dataloader_test
+
+@torch.no_grad()
+def view_reconstructions(model:VQVAE, dataloader, fname=None):
+    model.eval()
+    (imgs, labels) = next(iter(dataloader))
+    imgs = imgs.to(device)
+    vq_encoder_output = model.encoder(imgs)
+    _, quantized_vectors, _, _ = model.quantizer(vq_encoder_output)
+    reconstructions = model.decoder(quantized_vectors)
+    # for celeba only
+    if labels[0].ndimension()>0:
+       labels = ['N/A' for _ in range(imgs.size(0))]
+    # view_images(imgs, labels, normalized=False,fname_to_save_as=None)
+    # extract epoch from fname and use it to mark each image
+    epoch = os.path.splitext(fname)[0].split('_')[-1]
+    view_images(reconstructions, labels, normalized=False,fname_to_save_as=fname,title=f'Epoch {int(epoch)}')
+
+# lets also make a gif_creator!
+import re
+# to create gifs, we need our images to be ordered!
+# we cant use sorted(), because it cant sort properly 
+# when we have numbers, it will go from 3 to 30!
+# and 4 to 40, etc because it compares character by character!
+# so we need to write a custom filter based on numbers!
+def numerical_sort_key(filename, _re=re.compile(r'(\d+)')):
+    # first we check if the fname has number in it extract it
+    # if it doesnt come with a number, we take the text itself
+    # and sorted() compares it alphabatically with others 
+    return [int(text) if text.isdigit() else text.lower()
+            for text in _re.split(filename)]
+
+# needed for our gif display
+from PIL import Image
+import IPython.display as ipd
+
+def is_notebook():
+    try:
+        shell = get_ipython().__class__.__name__
+         # check if we are executing from jupyter notebook or an ipython terminal
+        return shell in ['ZMQInteractiveShell', 'Shell'] 
+    except NameError:
+        return False  # Probably standard Python interpreter
+
+# create gifs
+def create_gifs_large(dir_path, frame_interval=90, loop=0):
+    imgs = [Image.open(os.path.join(dir_path,fname)) 
+            for fname in sorted(os.listdir(dir_path),key=numerical_sort_key) if fname.endswith('.jpg')]
+    
+    dirname = os.path.basename(os.path.normpath(dir_path))
+    gif_path = os.path.join(dir_path, f'{dirname}.gif')
+    
+    imgs[0].save(gif_path, format='GIF', append_images=imgs[1:], 
+               save_all=True, duration=frame_interval, loop=loop)
+    
+    # display the gif inside jupyernotebook
+    if is_notebook():
+        ipd.display(ipd.Image(filename=gif_path))
+    else:
+        print(f'gif created successfully!')
+        plt.show()
+
+import matplotlib.animation as animation
+# matplotlib animation module does a better job, it takes less space 
+# because we can use different figsize,even with figsize(12,16) it
+# takes nearly half of what previous function takes up! but on the other hand
+# our previous implementation is simpler and more straightforward! (I might keep both!)
+# ok I guess I'll use this one instead of my previous implemetation-
+# fps=600, and interval=90 results seem to have roughly the same speed 
+# (because 1/600 = 0.0016 second(or 1.6 milliseconds) for each frame when using fps,
+# likewise to get 600 fps with interval we need 1/1.6 = 600 fps !
+# however, in my experience interval=90 feels like fps=600! so we might want to go for that!
+#!todo choose one over the other!
+# )
+def create_gifs(dir_path, frame_interval=90, repeat_delay=1000, loop=True, fps=600, figsize=(6,8)):
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    imgs = [Image.open(os.path.join(dir_path,fname)) 
+            for fname in sorted(os.listdir(dir_path),key=numerical_sort_key) if fname.endswith(('.jpg', 'jpeg','.png'))]
+    dirname = os.path.basename(os.path.normpath(dir_path))
+    gif_path = os.path.join(dir_path, f'{dirname}.gif')
+    def animate(i):
+        ax.clear()
+        ax.axis('off')
+        ax.imshow(imgs[i])
+    
+    fig.tight_layout()
+    anim = animation.FuncAnimation(fig, animate, frames=len(imgs),
+                                   interval=frame_interval, 
+                                   repeat=loop, 
+                                   repeat_delay=repeat_delay)
+    if fps and frame_interval:
+        print(f'Warning, frame_interval wont be used for gif creation!'
+              f'\neither use FPS or frame_interval for gif creation (set one to None!)'
+              '\nframe_interval is used for delay inside jupyternotebook'
+              '\nwhile FPS is used for gif creation. Only if FPS=None,frame_interval is used'
+              '\notherwise, FPS superceeds frame_interval in gif creation')
+        # print(f'Note: FPS is used for gif creation while ')
+    
+    # save the git using pillow backedn
+    anim.save(gif_path, writer="pillow",fps=fps)
+    # display the gif inside jupyernotebook
+    if is_notebook():
+        ipd.display(ipd.Image(filename=gif_path))
+    else:
+        print(f'gif created successfully!')
+        # plt.show()
+
+# dataset = 'anime'
+dataset = 'cifar10'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                                                batch_size=batch_size,
+                                                                                size=(64,64))
+(imgs, labels) = next(iter(dataloader_test))
+view_images(imgs,labels, rows=13,cols=10, title=f'{dataset}',figsize=(10,13))
+#%%
+# we first start with mnist to see if our implementation is ok 
+# (sidenote: I actually faced quite a lot of issues and switching to mnist helped a lot. 
+# I was initially using cifar10 directly. after mnist, I used celeba, because its 
+# simpler than cifar10 and one can more easily identify patterns, and whether
+# you are dealing with blobs! or meaningful patterns. because celeba is basically aligned and cropped
+# images of faces, its way easier to spot issues than tiny cifar10 where different classes can be
+# very hard to see, and cant decide which part of thenetwork is faulty! (more on this later))
+
+# danime doesnt work! it gives me blurry blacknwhite recons!!?
+# ok found the reason! our anime dataset is just too small to work! try cifar10 or other datasets with
+# limited_samples=True and see the resulut (basically aroudn 1000 samples wont
+# work if we train a model from scratch!) asign of small/inadequate training set
+# is that the images will be discolored, almost black and white, becoming monocolors
+# lots of yellow, brownish colors, and needless to say images are very blury
+# test with limited samples and you'll see what I mean!
+dataset = 'cifar10' #anime # celeba #cifar10
+img_size=(64,64)# larger image sizes, result in more detailed generations!
+# whether to use limited samples (for testing purposes)
+# to see how the model performs with different number of samples!
+# based on my prelimenary tests, a training size of 10K seems to be bare minimum
+# to give us some what borderline reconstructions, 5K would be insufficient and 
+# colors wont form, we would get discolored, monocolor, black/yellow/brownish colors,
+# with 7000 images, we get some more colors, images are a bit more visible/ but still
+# theres a lot of monocolors, yellow, brown, blue, gray colors, not vivid colors at all
+# images are not formed properly, but for some classes, we can see the objects sillohet!
+# (we get Epoch: 99/100 | Loss: 0.1285 | Val-Loss: 0.1179 | Recons-Error: 0.0079 | VQ-Loss: 0.1207 | Perplexity: 3.4678 | LR: 0.000010)
+# starting with 8000, we see normal colors being back, and images start to look normal!
+# (by normal I mean compared to previous cases, not all are still well formed! but its much
+# better than before, but it still lacking by a large extend!)
+# we get Epoch: 99/100 | Loss: 0.0355 | Val-Loss: 0.0322 | Recons-Error: 0.0040 | VQ-Loss: 0.0315 | Perplexity: 10.4210 | LR: 0.000010
+# note that im not saying 10k is enough to get something nice, not at all, what im saying
+# 10k seems to be the limit that doesnt give us crappy images that cant even be bothered with!
+# the colors seem accurate, objects are formed properly for the most part, details are kinda there
+# but do not much, cuz images are very blurry still and look smudged! the image size definitely matters here,
+# im working with 64x64 here! (aside from the nature of the images, obviously complex images will be tougher
+# and simpler images/concepts should require much less effort to get this right! in fact mnist seems to 
+# be ok with 1000 samples! cifar10 on the other hand is much more complex and is composed of natural images 
+# so it obviously requires way more training data!) with 10k cifar10 this is what I get:
+# Epoch: 99/100 | Loss: 0.0182 | Val-Loss: 0.0176 | Recons-Error: 0.0026 | VQ-Loss: 0.0156 | Perplexity: 13.1167 | LR: 0.000010
+limited_samples=False
+training_samplesize=8000
+test_samplesize=100
+
+input_channels = 1 if dataset=='mnist' else 3
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+batch_size=128
+epochs = 100#100
+interval = 1000
+# when learning rate is too large, we usually see artifacts in early stages
+# of training (which tells us lr might be high!)
+lr=0.001 #0.001
+# milestones=[120]
+embd_num=512
+embd_size=256#128
+# commitment loss beta/weight
+# lower values result in worse loss and recons error! (I tried 0.2)
+beta=0.25 #0.25
+# use ema for quantzier embeddings update
+# this makes the convergence rate way faster, by several folds!
+# like we immediately get color images at the first epoch!!
+# without it, we need at least 40~50 epochs to get to a similar loss
+# at epoch 5 we are already seeing near prefect reconstructions with loss
+# as low as 0.0067! (way lower than what we get after 100 epochs normally!)
+# sidenote: EMA might make prior model somewhat messedup/ but I need more tests
+# to prove that, not sure if its only related to ema! but be careful with it! 
+# see my notes at the prior model weights section
+use_ema=True
+# use mixed-precision for faster training and smaller vram usage
+# note when we enable fp16, the convergence speed is lower, e.g.
+# for cifar10, it takes 5 epochs until we go from solid grays to
+# first signs of objects in reconstructions, whereas for full fp32
+# it takes only 1 epoch! see explanations ahead
+# however at the end, it seems to catch up and gives us the same
+# loss and perplexity (sometimes better even)
+# its faster in training (52 mins vs 100 mins)
+use_fp16=True
+
+model = VQVAE(input_channels=input_channels, embd_num=embd_num, embd_size=embd_size, beta=beta, use_ema=use_ema)
+model.to(device)
+# optimizer = optim.AdamW(model.parameters(), lr=lr, amsgrad=False)
+# scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones)
+
+dataloader_train,dataloader_test = train_vqvae(model,
+                                               dataset,
+                                               lr,
+                                               epochs, 
+                                               batch_size,
+                                               interval,
+                                               device,
+                                               img_size,
+                                               use_fp16=use_fp16,
+                                               checkpoint_dir_path='./weights/vqvae/emb256/',
+                                               recons_dir_path=f'./results/vqvae/',
+                                               limited_samples=limited_samples,
+                                               train_samplesize=training_samplesize,
+                                               test_samplesize=test_samplesize)
+
+#%%
+# load the model
+# TODO: remove the old models cuz they take up space!
+# ckpt_name = './weights/vqvae/old/vqvae_MNIST_12_45_15 - 2025_03_16.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_20_40_21 - 2025_03_17.ckpt' # this was trained with wrong variance normalization!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_22_34_52 - 2025_03_17.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_10_13_46 - 2025_03_18.ckpt'# with beefed up resblock!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_10_53_09 - 2025_03_18.ckpt'# with beefed up deconv-overfiitng-colors not accurate-very dimmed and undersaturated!(eg.g red is brown!!)
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_11_28_22 - 2025_03_18.ckpt'#AdamW
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_11_22_30 - 2025_03_19.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR_11_11_22 - 2025_03_23.ckpt' # no variance normalization
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR_11_42_17 - 2025_03_23.ckpt'
+# ckpt_name = './weights/vqvae/old/vqvae_CELEBA_17_32_39 - 2025_03_24.ckpt'#celeb32
+# ckpt_name = './weights/vqvae/old/vqvae_CELEBA_12_45_12 - 2025_03_25.ckpt'#celeb64, very good result!
+# ckpt_name = './weights/vqvae/old/vqvae_CIFAR10_20_17_56 - 2025_03_25.ckpt'# cifar64x64 (codesize =16x16) works great!
+# codesize=8x8 - to see if codesize effects the latent variables
+# because previously when we trained with 32x32, the simple generation would create
+# somewhat meanigful outputs, like for celeba, the faces could be easily identified
+# though they were caricaturish!, while the normal prior based generation sucked (because
+# of our bug!) but when we used 64x64, the normal generation got decent but simple 
+# generation seemed just like pure noise! here im trying to see if the codebook size
+# has something to do with this, that is, by itself, codebook of 8x8 is trained/developed
+# much better than 16x16 codebook, consequently resulting in maningful generation
+# (non autoregressive), whereas for the 16x16 one, the codebook was low quality and
+# we needed a prior model to make it work! if this is the case, it proves our initial 
+# point we observed in vae before, that is, larger encoder output results in better
+# reconstructions, but may not be as developed (this is related to our architecture 
+# of course, as we dont have more layers working on certain featuremap sizes. 
+# probably if we use better architecture, use more layers for each featuremap size,
+# we wont see this issue for larger fmaps. but lets see how this goes!)
+# ok it seems our estimate is correct. 32x32 gives somewhat identifiable non-autoregressive 
+# generations, not complete noise! trying with 64x64 to see how it goes again
+# I cant replicate this anymore! I dont know why I cant get meanigful generations out of
+# simple_generation function! ok I guess I might have found why simple_generation
+# did that and not anymore, if we use a different vqvae mode than the one we trained
+# our prior with, we might see those cartoonish images we saw once. I trained
+# afp32 vqvae forceleba, trained it for 70 epochs, with a loss=0.023, but used
+# a prior that was trained on the fp16/ema enabled vqvae that achieved 0.0022!
+# (a 10x smaller loss) and noticed while id get solid greens for normal generation
+# Id get caricature like generations in simple_generation()!
+
+# no model_config/extra information
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_20_31_27 - 2025_03_26.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_23_21_12 - 2025_03_26.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_22_00_58 - 2025_04_01.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_08_21_28 - 2025_04_03.ckpt'
+# 
+# has model_config but not enc_output_shape
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_64x64_10_52_50 - 2025_04_03_best.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CIFAR10_32x32_10_14_55 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CELEBA_64x64_12_25_31 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_CELEBA_32x32_13_51_11 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_MNIST_64x64_15_58_57 - 2025_04_03.ckpt'
+# ckpt_name = './weights/vqvae/vqvae_MNIST_32x32_15_20_19 - 2025_04_03.ckpt'
+
+# with model_config and extra information -samplesize are not accurate when limitedsamples=False
+# with embds=256 (sidenote: used for training gatedpixelcnn)
+ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt' #emb=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_e49.ckpt' #emb=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_MNIST_64x64_08_35_02 - 2025_04_13_best.pt' #emb=256
+
+# performs very very good ! increased embdsz actually results in way smaller loss
+# abd BPD! I noticed the perplexity is much much lower though! but the generation
+# nonetheless is much much better!
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt' #with embd=256
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04_best.ckpt' #with embd=256
+
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04.ckpt' # with embd=256,64x64
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20_10_23 - 2025_04_04_best.pt'
+
+# limited cifar10 - 8000 samples
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07.ckpt'
+
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_01_22 - 2025_04_06.ckpt'#3epochs-nolimit
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_11_51_05 - 2025_04_06.ckpt'#e99-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_12_58_51 - 2025_04_06.ckpt'#e14-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_02_15 - 2025_04_06.ckpt'#99e-nolimit-embd256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_12 - 2025_04_06.ckpt'#e1-nolimit256
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_18_38 - 2025_04_06.ckpt'#41e
+# ckpt_name = './weights/vqvae/vqvae_ANIME_64x64_13_24_57 - 2025_04_06.ckpt'#27e
+
+# using fp16
+# experimenting with fp16 and see if our implementation is ok and we get expected result
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_135206/vqvae_CIFAR10_64x64_20250414_135206.ckpt'
+# fp16 with ema enabled - completely fails with default configs
+# results in nans in loss, and completely white reconstructions 
+# everywhere! canceled after 8 epochs - 
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_182650/vqvae_CIFAR10_64x64_20250414_182650.ckpt'
+# 
+# fixed fp16 and fp16 with ema:
+# fp16(no ema) 
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_132947/vqvae_CIFAR10_64x64_20250416_132947.ckpt'
+#
+# fp16 with ema
+# right off the bat the perplexity is 3x better (15vs45) and loss is 10x better!
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250416_142841/vqvae_CIFAR10_64x64_20250416_142841.ckpt'
+
+# todo compare embedding/codebook utilization (histogram) for fp16/fp32 and fp16/fp32 ema versions
+# todo and see which one does a better job of utilizing codebooks
+
+# using fp32 version 
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_151515/vqvae_CIFAR10_64x64_20250414_151515.ckpt'
+# 
+# fp32 with ema enabled - trains smoothly with default configs ----***(used for pixelcnn2)
+# convergence is way faster with ema, and I mean by a lot! ~100x faster!!
+# the perplexity is also very high around 33 (while without ema it was around 14/15!)
+ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_e11.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250414_183623/vqvae_CIFAR10_64x64_20250414_183623_best.pt'
+
+# tiny imagenet:
+# fp16-ema Epoch: 99/100 | Loss: 0.0116 | Recons-Error: 0.0083 | VQ-Loss: 0.0033 | Perplexity: 50.7330 | LR: 0.000010
+# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_TINYIMAGENET_64x64_20250423_082527/vqvae_TINYIMAGENET_64x64_20250423_082527_best.pt'
+
+# CELEBA - Fp32/EMA 
+# Epoch: 99/100 | Loss: 0.0029 | Val-Loss: 0.0029 | Recons-Error: 0.0017 | VQ-Loss: 0.0012 | Perplexity: 35.4168 | LR: 0.000010
+# I guess ema messes the weights in a way that when training prior, it creates ugly generations
+# and it takes much linger to reach something presentable! I need to check this again!
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220.ckpt'
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_080220/vqvae_CELEBA_64x64_20250424_080220_best.pt'
+
+# CELEBA - FP32/NO-EMA
+# Epoch: 77/100 | Loss: 0.0234 | Recons-Error: 0.0032 | VQ-Loss: 0.0201 | Perplexity: 6.8012 | LR: 0.000138
+# ckpt_name = './weights/vqvae/emb256/vqvae_CELEBA_64x64_20250424_192142/vqvae_CELEBA_64x64_20250424_192142.ckpt'
+
+
+#CIFAR10 - July 20 2025 test EMA/FP16 enabled
+ckpt_name='./weights/vqvae/emb256/vqvae_CIFAR10_64x64_20250720_165652/vqvae_CIFAR10_64x64_20250720_165652.ckpt'
+
+# train prior with this new vqvae(ema enabled) and see how much it affects the end result 
+# I guess with this improvement, our simple_generator should work somehow aswell
+# im not sure but i might have seen the improvement back then because of ema maybe?
+# need to test this out!
+
+checkpoint = torch.load(ckpt_name, weights_only=False)
+model_config = checkpoint['model_config']
+dataset = checkpoint['dataset']
+limited_samples = checkpoint.pop('limited_samples', False)
+train_samplesize = checkpoint.pop('train_samplesize', None)
+test_samplesize = checkpoint.pop('test_samplesize', None)
+use_fp16 = checkpoint.pop('use_fp16', False)
+img_size = checkpoint.pop('img_size',None)
+if not img_size:
+    img_size = tuple(int(n) for n in ckpt_name.split('_')[2].split('x'))
+
+# enc_output_shape = model_config.pop('enc_output_shape',None)
+enc_output_shape = checkpoint['enc_output_shape']
+perplexity = checkpoint.pop('perplexity',None)
+
+device = 'cuda'
+model = VQVAE(**model_config)
+model.to(device)
+
+model.load_state_dict(checkpoint['state_dict'])
+model.enc_output_shape = enc_output_shape
+
+print(f'dataset    : {checkpoint['dataset'].upper()}')
+print(f'use_fp16   : {use_fp16}')
+print(f'Epoch      : {checkpoint['epoch']}')
+print(f'img_size   : {img_size}')
+print(f'Limited samples    : {limited_samples}')
+print(f'Train samplesize   : {train_samplesize}')
+print(f'Test samplesize    : {test_samplesize}')
+print(f'Encoder output size: {tuple(model.enc_output_shape)}')
+
+for k,v in checkpoint['model_config'].items():
+    print(f'{k:<10} : {v}')
+
+print(f'\ntrain_loss : {checkpoint['train_loss']:.6f}')
+print(f'val_loss   : {checkpoint['val_loss']:.6f}')
+print(f'perplexity : {perplexity:.6f}' if perplexity else 'perplexity : N/A')
+
+# dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=checkpoint['dataset'],
+#                                                                  batch_size=checkpoint['batchsize'])
+
+#%%
+# create gifs and show images
+# dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+# dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+# dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
+# create_gifs_large(dirpath, frame_interval=90,)
+# #%%
+# dirpath='./results/vqvae_CIFAR10_64x64_13_31_17 - 2025_04_06/'
+# dirpath = './results/vqvae_MNIST_64x64_17_23_16 - 2025_04_07'
+# dirpath = './results/vqvae_CIFAR10_64x64_20_15_42 - 2025_04_07'
+# create_gifs(dirpath,
+#             frame_interval=None,
+#             # repeat_delay=300,
+#             fps=500,
+#             figsize=(6,8)
+#             )
+
+#%%
+# taken from Aäron van den Oord implementation (link given before)
+# use umap for latent space visualization, umap is better than tsne
+#! explain a bit more
+from umap.umap_ import UMAP # pip install umap-learn
+@torch.no_grad()
+def view_results(model,train_dataloader, val_dataloader):
+    model.eval()
+    for name, dataloader in zip(['training data','validation data'],[train_dataloader, val_dataloader]):
+        print(f'Using {name}:')
+        (imgs, labels) = next(iter(dataloader))
+        imgs = imgs.to(device)
+        vq_encoder_output = model.encoder(imgs)
+        # grab quantized vectors (i.e. quantized embeddings)
+        _, quantize_vectors, _,_ = model.quantizer(vq_encoder_output)
+        reconstructions = model.decoder(quantize_vectors)
+        # print(f'{reconstructions.shape=}')
+        # print(f'{labels.shape=} {labels.ndimension()=}')
+        # for celeba only
+        if labels[0].ndimension()>0:
+            labels = torch.ones((imgs.size(0),1))
+        view_images(reconstructions, labels, normalized=False)
+        view_images(imgs, labels)
+
+    proj = UMAP(n_neighbors=3,
+                min_dist=0.1,
+                metric='cosine').fit_transform(model.quantizer.embeddings.weight.data.cpu())
+    plt.scatter(proj[:,0], proj[:,1], alpha=0.3)
+
+_, _, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset,
+                                                             batch_size=batch_size,
+                                                             size=img_size,
+                                                             limited_samples=limited_samples,
+                                                             train_samplesize=train_samplesize,
+                                                             test_samplesize=test_samplesize)
+view_results(model, dataloader_train, dataloader_test)
+# now alhamdolelah finally we got pretty great reconstructions with 64x64
+# image dimensions. the actual reason behind this is the larger encoder output shape
+# that is in the encoder, if we use much larger featuremaps, the decoder can
+# much more easily reconstruct the image with much more details. initially
+# used 7x7 fmaps, and it gave us blurry images, no matter what we did, we couldnt
+# improve it, but when we simply increased the image size to 64x64, we got wayyy 
+# better result. this is in line with our previous observations in vanila vae, where
+# the larger fmaps would result in way better reconstructions (the issue there though was
+# that larger fmaps wouldnt allow the network to learn good features and generation
+# was very bad (we faced posterior collapse. but partly that was due to our simplistic 
+# architecture, I wonder if we see improvements by simply using this architecture here!
+# all in all, we know for a fact that larger fmaps in encoder is key to get sharp images!))
+#%%
+# now to be able to generate images, as we stated before, we need a prior model
+# todo: explain 
+#! Todo, add a separate method in vqvae to make this easier and not repeat
+#! each time we may want to access latents (i.e. min_indexes)
+# from future!:
+# after a second thought, our function works pretty much with any iterable
+# not just dataloaders, so I'll guess I add a bit of type info so later on
+# I can reuse this 
+from typing import Iterable, Tuple
+def get_discrete_latent_codes(model:VQVAE, data:Iterable[Tuple[torch.Tensor, torch.Tensor]]):
+    model.eval()
+    all_latents = []
+    # labels are for when we want to train our prior models conditionally (on labels!)
+    all_labels = []
+    with torch.no_grad():
+        for data, labels in data:
+            data = data.to(device)
+            encoder_output = model.encoder(data)
+            # reshape the encoder output from bchw to bhwc (c is embedding_size)
+            encoder_output = encoder_output.permute(0,2,3,1).contiguous()
+            encoder_flatten = encoder_output.view(-1, model.embd_size)
+            distances = torch.cdist(encoder_flatten, model.quantizer.embeddings.weight)
+            indexes = torch.argmin(distances, dim=1) # shape is (N,1)
+            
+            # reshape to (batch_size, H, W)
+            latents = indexes.view(*encoder_output.shape[:3])
+            all_latents.append(latents.cpu())
+            # for use in conditional generation
+            all_labels.append(labels)
+
+    all_latents =  torch.cat(all_latents, dim=0)  # shape is (batch, H, W)
+    all_labels = torch.cat(all_labels, dim=0)
+    return all_latents,all_labels
+
+# prior model i.e. pixelcnn (we can use a transformer based model as well, 
+# (we could also use gan for this!))
+#
+# heres our pixelcnn model (works very bad, see the next model!)
+class PixelCNN_old(nn.Module):
+    def __init__(self, num_embds, embedding_size=128):
+        super().__init__()
+        self.num_embds = num_embds
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        
+        # Embedding layer: converts indices to dense vectors
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        # Masked convolutions now operate on embeddings
+        # the 3 layer version performs worse, when increased the layers
+        # it got better, so prior network design is also very critical
+        # on getting a good generation.
+        self.layers = nn.Sequential(
+            MaskedConv2d('A', embedding_size, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            # nn.Dropout(0.01),
+            MaskedConv2d('B', 256, 384, kernel_size=3, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU(),
+            # nn.Dropout(0.02),
+            MaskedConv2d('B', 384, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            # nn.Dropout(0.02),
+            nn.Conv2d(512, self.num_embds, kernel_size=1)  # Output logits over codebook indices
+        )
+
+    def forward(self, x):
+        # x: (batch_size, H, W) containing integer indices
+        x = self.embedding(x)  # (batch_size, H, W, embedding_size)
+        x = x.permute(0, 3, 1, 2)  # (batch_size, embedding_size, H, W)
+        logits = self.layers(x)  # (batch_size, num_embds, H, W)
+        return logits
+
+class MaskedConv2d(nn.Conv2d):
+    def __init__(self, mask_type, in_channels, out_channels, kernel_size=3, padding=1, dilation=1):
+        super().__init__(in_channels, out_channels, kernel_size, padding=padding, dilation=dilation)
+        
+        self.register_buffer('mask', torch.ones_like(self.weight))
+        
+        _, _, h, w = self.weight.size()
+        center_h, center_w = h // 2, w // 2
+        # ok, to create an autoregressive model, we need to consume data from
+        # one side to the other, from left to right forexample, like reading/writing
+        # text in english. since text are sequences its easy to implement this.
+        # however here we are dealing with images, which are 2D! how can we go about 
+        # it now? if we reshape our image into a vector, we can practically
+        # treat it as a sequence and read from left to right! however this is not
+        # efficient nor is it effective! 
+        # for one, unlike texts, pixel values are usually highly corrolated with the neighboring
+        # pixels around them, not just the ones on the left or right sides of them!
+        # so it would benifit us if we could account for this.
+        # we can use convolution operation and enforce an autoregressive behavior with it
+        # people usually use a raster scan move, which in simple terms means, 
+        # go from left to right of the image, one row at a time, and then go to 
+        # second row. like how they process images in rendering! 
+        # to do this effectively, we can alter a convolutional kernel to do this
+        # for us automatically.
+        # we need to create two masks, A, and B like the paper.
+        # the idea is, we are trying to create an autoregressive cnn layer
+        # where a pixel can not see its current value or future one, only the 
+        # previous values, and the current and future values are predicted using
+        # previous values (hence the name autoregressive)
+        # to do this on an image, we actually implement masks on the kernels themselevs
+        # so when we apply them, this logic is applied on all pixels in an image.
+        # back to our implementation, so for our first mask, we need to make sure 
+        # a pixel does not see itself so we zero out the current pixel and all the 
+        # future pixels (to the right and below).
+        # we must use this mask on the first layer only. for subseuqent layers we
+        # must use the second mask, the B mask.
+        # For the secodn mask, we need to allow access to the current pixel but 
+        # block future pixels. the difference from mask A is that the center pixel is allowed here.
+        # lets visualize it ,suppose this is our mask initially
+        # 1 1 1
+        # 1 1 1
+        # 1 1 1 
+        # now to make it work as Mask A, we must change it so current pixel
+        # and future pixels are disabled. in other words, they cant be used
+        # to calculate the value of current pixels (when we apply it on an image)
+        # so the center of our mask needs to be set to 0, so we would have
+        # mask is 3x3, so 3//2=1, 3//2=1 so row 1 and col1 and all future pixels in last
+        # row(i.e 2) are set to 0
+        # 1 1 1 
+        # 1 0 0 
+        # 0 0 0
+        # this leaves us with previous pixels only.
+        # now for MasK B, we want to have previous pixels plus the current pixel
+        # but still future pixels must be disabled. 
+        # if this is our initial mask state for Mask B: 
+        # 1 1 1
+        # 1 1 1
+        # 1 1 1 
+        # we want sth like this:
+        # 1 1 1
+        # 1 1 0
+        # 0 0 0
+        # which basically means we want to do just like Mask A, except that now
+        # we want to have current pixel as well. 
+        # so we disable all following rows so they dont affect current pixel
+        
+        # make sure the mask is all 1s, so we can selectively disable parts of it
+        self.mask.fill_(1)
+        #sidenote: note that our mask is 4D and not just 2D, as we need to apply this
+        # on a conv ouput which has input and output dims.
+        
+        if mask_type == 'A':
+            # zero out the current pixel (at position (center_h, center_w)) and all pixels
+            # to its right in the same row.
+            # basically prevent future pixels in the same row from influencing the current pixel
+            # (i.e. when predicting a pixel, the network cannot see the current pixel 
+            # or any pixel that comes after it)
+            self.mask[:, :, center_h, center_w:] = 0
+            # prevent pixels below from influencing the current pixel (zero out rows>=2 )
+            self.mask[:, :, center_h+1:, :] = 0
+        elif mask_type == 'B':
+            # zero out only the pixels to the right of the current pixel in the same row,
+            # keeping the current pixel itself active.(i.e. prevent future pixels in the 
+            # same row from influencing the current pixel)
+            self.mask[:, :, center_h, center_w+1:] = 0
+            # prevent pixels below from influencing the current pixel
+            self.mask[:, :, center_h+1:, :] = 0
+
+    def forward(self, x):
+        # apply the mask to weights during forward pass
+        return self._conv_forward(x, self.weight * self.mask, self.bias)
+        # this was wrong and caused in total failure of the model, i would get
+        # sold colors, like red, blue, whenever i wanted to decode and generate
+        # an image! because it changes the weights value! we dont change the kernels
+        # weights, we just mask them from influencing the process at different stages!
+        # if we change their value, we basically mess eveything up making the kernel 
+        # practically useless! (therefore the implementation given in uvadlc url (given below) is wrong!())
+        # self.weight.data *= self.mask  # Apply mask
+        # return super().forward(x)
+#sidenote: 
+# a very good introduction on pixelcnn and maskedconvolutions:
+# https://github.com/pilipolio/learn-pytorch/blob/master/201708_ToyPixelCNN.ipynb
+# https://www.codeproject.com/Articles/5061271/PixelCNN-in-Autoregressive-Models
+# https://jrbtaylor.github.io/conditional-pixelcnn/
+# https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial12/Autoregressive_Image_Modeling.html
+# !edit,  it needs more work, its not complete yet!
+# see visualize_maskedcnn.py to see this in action
+
+# temp-test improved architecture: 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_rate=0, mask_type='B',dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(MaskedConv2d(mask_type, in_channels, out_channels, kernel_size=3, padding=1),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(),
+                                  # nn.Dropout2d(dropout_rate),
+                                  # pad=2,dialation=2 should give us a larger receptive field (5x5)
+                                  # lets see if it helps! cuz theoretically a larger receptive field
+                                  # should help the model capture long-range dependencies across the
+                                  # image plane/spatial domain. the default is dialation=1.
+                                  # (my initial tests didnt show any changes, need more experiments!)
+                                  # !explain more why thats the case
+                                   MaskedConv2d(mask_type,
+                                                out_channels,
+                                                out_channels, 
+                                                kernel_size=3,
+                                                #!(since we only want pad=2 dilation=2,
+                                                #! I set padding to dilation because we only do dilation=2!in our tests)
+                                                padding=dilation, 
+                                                dilation=dilation),
+                                   
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(),
+                                   nn.Dropout2d(dropout_rate))
+        
+        #! lets test with no conv,bn on residuals. 
+        self.skip = nn.Sequential()
+        if in_channels != out_channels:
+            self.skip = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1),
+                                      # interestingly having bn lowers the loss pretty well!
+                                      # who would have thought!!!!
+                                      nn.BatchNorm2d(out_channels)
+                                      )
+        #todo: this is not used remove it and remove it from weights state_dicts that
+        # were previoiusly trained! so during loading checkpoints we dont face any issues
+        self.bn = nn.BatchNorm2d(out_channels)
+    
+    def forward(self, x):
+        residual = x
+        # remove the bn from residual
+        # add the residual and block and then add a bn and a relu at the end!
+        output = self.block(x) + self.skip(residual)
+        #! OK the result s worse now, i dont know its beause of this change
+        # or because I change optimizer from Adamw to adam! 
+        # next test with the line below uncommented and if it fails
+        # then revert back to adamw! (check why adamw works better in that case)-adamw is better
+        output = F.relu(output)# using this, perforamnce is a bit better! not much though!
+        return output 
+
+class PixelCNN(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        # initialize it from input so its set dynamically!
+        #!i guess i'll be using the vqvae model instead of this
+        # because for generation we will be using vqvae model anyway
+        # moreover, for this to have meaningful values, our prior must
+        # do at least one forward pass, which again for generation
+        # we simply dont do, because we need H,W before that! so I guess
+        # I remove this alrogether?!
+        self.input_shape = []
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.dropout_rate = dropout_rate
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        # the first layer/block must be type A, the rest are B
+        # basically mask A blocks the current pixel and all future pixels, 
+        # while mask B allows the current pixel but blocks future ones.
+        self.initial_conv = nn.Sequential(MaskedConv2d('A', self.conv_input_size, 128, kernel_size=7, padding=3),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(),
+                                         #nn.Dropout2d(dropout_rate)
+                                          )
+        
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([ResidualBlock(128, 128, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(128, 128, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(128, 256, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(256, 256, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(256, 512, dropout_rate=0.00, dilation=1),
+                                         ResidualBlock(512, 512, dropout_rate=0.00, dilation=1),
+                                        ])
+        
+        # skip connections from all layers (feature pyramids)
+        focount = 32
+        self.skip_convs = nn.ModuleList([nn.Conv2d(128, focount, kernel_size=1),
+                                         nn.Conv2d(128, focount, kernel_size=1),
+                                         nn.Conv2d(256, focount, kernel_size=1),
+                                         nn.Conv2d(256, focount, kernel_size=1),
+                                         nn.Conv2d(512, focount, kernel_size=1),
+                                         nn.Conv2d(512, focount, kernel_size=1)
+                                        ])
+        
+        # last layers after concatenating skip connections
+        self.final_layers = nn.Sequential(nn.Conv2d(focount*len(self.skip_convs), 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            # print(f'{labels.shape=}')
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        output = self.initial_conv(input_indices)
+        skips = []
+        for res_block, skip_conv in zip(self.res_blocks, self.skip_convs):
+            output = res_block(output)
+            skips.append(skip_conv(output))
+        
+        # combine skip connections into (batch, 192, 7, 7)
+        combined = torch.cat(skips, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
+
+############################
+
+# Gated activation as used in the original PixelCNN++
+class GatedActivation(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, x):
+        # split the channels in half
+        a, b = torch.chunk(x, 2, dim=1)
+        # apply gated activation: tanh(a) ⊙ sigmoid(b)
+        return torch.tanh(a) * torch.sigmoid(b)
+
+# improved residual block with gated activation
+class GatedResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+        super().__init__()
+        
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        # Double the output channels for gated activation
+        gated_channels = out_channels * 2
+        
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, gated_channels, kernel_size=1),
+            nn.BatchNorm2d(gated_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate)
+        )
+        
+        self.conv2 = nn.Sequential(
+            MaskedConv2d('B', gated_channels, gated_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(gated_channels),
+            GatedActivation(),
+            nn.Dropout2d(dropout_rate)
+        )
+        
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(gated_channels // 2, out_channels, kernel_size=1),
+            nn.BatchNorm2d(out_channels)
+        )
+        
+        # Skip connection
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+        
+        self.activation = nn.ReLU()
+    
+    def forward(self, x):
+        residual = x
+        
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        
+        return self.activation(x + self.skip(residual))
+
+class Print(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self, outputs):
+        print(f'{outputs.shape=}')
+        return outputs
+
+class GatedConv2d(nn.Module):
+    """Gated Masked Convolution Layer"""
+    def __init__(self, mask_type, in_channels, out_channels, kernel_size, padding, dilation=1):
+        super().__init__()
+        self.conv_f = MaskedConv2d(mask_type, in_channels, out_channels, kernel_size, padding, dilation=dilation)
+        self.conv_g = MaskedConv2d(mask_type, in_channels, out_channels, kernel_size, padding, dilation=dilation)
+
+    def forward(self, x):
+        f = torch.tanh(self.conv_f(x))
+        g = torch.sigmoid(self.conv_g(x))
+        return f * g
+
+
+# this block ignores the autoregressive nature and causes the model to cheat
+# I kept getting extremely low validation loss with this, but generation was
+# awful, extremely bad! basically garbage! then I swapped it with simple conv2d
+# which I again got the same behavior cuz my dumbass forgot conv2d also breaks
+# the autoregressive nature of the process, and causes the network to be baleto
+# see the whole pixels! then I swapped it with normal resblock with maskedconv2d
+# and it basically performed just like the old architecture, I then changed the 
+# attention layer (see the next one ahead) to make it causal (basically the normal
+# attention used in transformers) and this time it behaved like our resblock with maskedconv2d
+# overall the changes in this architecture didnt do anything! so I guess the issue lies
+# somewhere else, possibly in the vqvae base model itself, maybe I need to add the
+# improvements in t he second paper to get good results or buff up the architetcure
+# even more!
+# update from future: see the next comments, I explain what was wrong!
+# class AttentionBlock(nn.Module):
+#     def __init__(self, channels):
+#         super().__init__()
+#         self.query = nn.Conv2d(channels, channels // 8, 1)
+#         self.key = nn.Conv2d(channels, channels // 8, 1)
+#         self.value = nn.Conv2d(channels, channels, 1)
+#         self.gamma = nn.Parameter(torch.zeros(1))
+
+#     def forward(self, x):
+#         batch_size, C, H, W = x.size()
+#         query = self.query(x).view(batch_size, -1, H * W).permute(0, 2, 1)
+#         key = self.key(x).view(batch_size, -1, H * W)
+#         value = self.value(x).view(batch_size, -1, H * W)
+#         attn = torch.bmm(query, key)
+#         attn = F.softmax(attn, dim=-1)
+#         attn_out = torch.bmm(value, attn.permute(0, 2, 1))
+#         attn_out = attn_out.view(batch_size, C, H, W)
+#         return self.gamma * attn_out + x
+# class MaskedAttentionBlock(nn.Module):
+#     def __init__(self, channels, H, W):
+#         super().__init__()
+#         self.channels = channels
+#         self.H = H
+#         self.W = W
+#         # use channels // 8 or some other factor
+#         self.head_dim = max(1, channels // 8)
+#         self.query = nn.Conv2d(channels, self.head_dim, 1)
+#         self.key = nn.Conv2d(channels, self.head_dim, 1)
+#         self.value = nn.Conv2d(channels, channels, 1) 
+#         self.gamma = nn.Parameter(torch.zeros(1))
+
+#         # causal mask
+#         mask = torch.tril(torch.ones(H * W, H * W))
+#         # register as buffer
+#         self.register_buffer('causal_mask_base', mask)
+
+
+#     def forward(self, x):
+#         batch_size, C, H, W = x.size()
+#         assert H == self.H and W == self.W, \
+#             f"Input spatial dims ({H},{W}) don't match block's expected dims ({self.H},{self.W})"
+
+#         HW = H * W
+#         query = self.query(x).view(batch_size, self.head_dim, HW).permute(0, 2, 1)
+#         key = self.key(x).view(batch_size, self.head_dim, HW)
+#         value = self.value(x).view(batch_size, C, HW).permute(0, 2, 1) 
+#         attn = torch.bmm(query, key)
+#         attn = attn / (self.head_dim ** 0.5) 
+#         current_mask = self.causal_mask_base[:HW, :HW] 
+#         mask_condition = (current_mask == 0)
+#         masked_attn = attn.masked_fill(mask_condition, float('-inf'))
+#         attn_softmax = F.softmax(masked_attn, dim=-1)
+#         # ensure dtypes match for bmm by casting value to attn_softmax's dtype
+#         # this is for when we use autocast! explain!
+#         value_casted = value.to(attn_softmax.dtype)
+#         # print("attn_softmax shape:", attn_softmax.shape, "dtype:", attn_softmax.dtype)
+#         # print("value_casted shape:", value_casted.shape, "dtype:", value_casted.dtype)
+#         attn_out = torch.bmm(attn_softmax, value_casted) 
+#         attn_out = attn_out.permute(0, 2, 1).view(batch_size, C, H, W)
+#         return self.gamma * attn_out + x
+
+# this is the test block that got suddenly used for later models!
+class ResidualBlock0(nn.Module):
+    """Gated Residual Block with Conditional BatchNorm"""
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1, dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            MaskedConv2d('B', in_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
+            MaskedConv2d('B', out_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x):
+        return F.relu(self.block(x) + self.skip(x))
+
+
+#########################
+def train_prior(prior:PixelCNN, 
+                vqvae_model:VQVAE, # vqvae is only used for generation during training to see how well we are doing!
+                dataloader_train,
+                dataloader_val,
+                dataset_name:str, 
+                num_classes=None,
+                epochs=50,
+                batchsize=32,
+                lr=1e-3,
+                weight_decay=1e-5,
+                use_fp16=False,
+                selected_label=9,
+                sample_size=64,
+                temperature=1,
+                rows=9,
+                cols=8,
+                checkpoint_dir_path='./weights',
+                recons_dir_path=None,
+                device='cuda',
+                generation_device='cuda',
+                figsize=(12,16),
+                seed=66):
+   
+    
+    prior.to(device)
+    # device = next(prior.parameters()).device
+    
+    # note our timestamp needs to be sortable so if later on we need
+    # to sort our files for whatever reason the order of files isnt 
+    # messed up. (this form is sortable, and filename friendly so allis good now!)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+    # checkpoint_dir_path = './' if not checkpoint_dir_path else checkpoint_dir_path
+    checkpoint_dir_path = checkpoint_dir_path or './'
+    is_conditional = "Conditional_" if prior.make_conditional else ""
+    checkpoint_fname = f'vqvae_prior_{dataset_name.upper()}_embd{prior.embedding_size}_{is_conditional}{timestamp}.ckpt'
+    
+    # grab the checkpoint filename and use it for the directory name
+    # so everything is neat and tidy at one place under one name!
+    ext = os.path.splitext(checkpoint_fname)[-1]
+    model_dir_name = checkpoint_fname.replace(ext, "")
+    
+    checkpoint_dir_path = os.path.join(checkpoint_dir_path, model_dir_name)
+    
+    # with exist_ok=True, we dont need to check if the dir
+    # already exists or not, if it doesnt it creates one, if
+    # if does, it leaves it be!
+    os.makedirs(checkpoint_dir_path, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir_path, checkpoint_fname)
+    
+    if recons_dir_path:
+        recons_dir_path = os.path.join(recons_dir_path, model_dir_name)
+        os.makedirs(recons_dir_path, exist_ok=True)
+        
+    optimizer = torch.optim.Adam(prior.parameters(), lr=lr)    
+    
+    # after training vqvae, we need to grab the training set's encodings
+    # and use these encodings to train our prior model
+    latent_codes_train, latent_labels_train = get_discrete_latent_codes(vqvae_model, dataloader_train)
+    latent_codes_val, latent_labels_val = get_discrete_latent_codes(vqvae_model, dataloader_val)
+
+    # combine latent codes and labels for conditional training
+    dataset_train = torch.utils.data.TensorDataset(latent_codes_train, latent_labels_train)
+    dataset_val = torch.utils.data.TensorDataset(latent_codes_val, latent_labels_val)
+
+    # dataloader_train = torch.utils.data.DataLoader(latent_codes, batch_size=batchsize, shuffle=True)
+    # we can also split our latents into train/val and better keep track of our training
+    # but I noticed for our simple case, its really not needed
+    
+    # val_split = 0.1 
+    # dataset_size = len(dataset_train)
+    # val_size = int(val_split * dataset_size)
+    # train_size = dataset_size - val_size
+    # dataset_train, dataset_val = torch.utils.data.random_split(dataset,[train_size, val_size])
+    
+    dataloader_train = torch.utils.data.DataLoader(
+        dataset_train, 
+        batch_size=batchsize, 
+        shuffle=True, 
+        pin_memory=True, 
+        num_workers=8, 
+        drop_last=True)
+    
+    dataloader_val = torch.utils.data.DataLoader(
+        dataset_val, 
+        batch_size=batchsize, 
+        shuffle=False,
+        pin_memory=True,
+        num_workers=8,
+        drop_last=True)
+    
+    #AdamW works much better than Adam! by a long shot! with adam we got loss=4.0, while
+    # with AdamW with the same architecture we got down to 2 for mnist!
+    optimizer = torch.optim.AdamW(prior.parameters(),
+                                  lr=lr, weight_decay=weight_decay,)
+    
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+    #                                                        factor=0.5, patience=3,
+    #                                                        min_lr=1e-6)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=epochs)
+    
+    # new learning rate scheduler
+    warmup_epochs = 5
+    total_steps = len(dataloader_train) * epochs
+    warmup_steps = len(dataloader_train) * warmup_epochs
+    
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps)))
+    
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    
+    
+    # if warmup_steps > 0:
+    #     # use 1e-8 as a very small start_factor to avoid potential issues with exactly 0
+    #     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(optimizer,
+    #                                                          start_factor=1e-8,
+    #                                                          end_factor=1.0,
+    #                                                          total_iters=warmup_steps) 
+    #     # decay to 1% of peak LR
+    #     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+    #                                                                   T_max=total_steps - warmup_steps,
+    #                                                                   eta_min=lr * 0.01)
+    #     # combine schedulers
+    #     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_cosine], milestones=[warmup_steps])
+    #     print(f"Using Linear Warmup ({warmup_steps} steps) + Cosine Annealing ({total_steps - warmup_steps} steps) scheduler.")
+    # else:
+    #     # Only Cosine Annealing if no warmup
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=lr * 0.01)
+    #     print(f"Using Cosine Annealing ({total_steps} steps) scheduler (no warmup).")
+    
+    losses_epoch=[]
+    losses_val_epoch=[]
+    BPD_epoch=[]
+    BPD_epoch_val=[]
+    best_val_loss = float('inf')
+    
+    prior_param_cnt = sum(p.numel() for p in prior.parameters())    
+    vqvae_param_cnt = sum(p.numel() for p in vqvae_model.parameters())    
+
+    print(f'Experiment Date:     {timestamp}')
+    print(f'Dataset:             {dataset_name.upper()}')
+    print(f'Prior Param Count:   {prior_param_cnt:,}')
+    print(f'VQVAE Param Count:   {vqvae_param_cnt:,}')
+    print(f'Mixed Precision:     {"\033[32mEnabled\033[0m" if use_fp16 else "\033[91mDisabled\033[0m"}')
+    print(f'Checkpoint:          {checkpoint_fname}')
+    print(f'Checkpoint Dir:      {checkpoint_dir_path}')
+    print(f'Reconstructions:     {recons_dir_path}')
+    print(f'Train size:          {len(dataloader_train.dataset):,}')
+    print(f'Test size:           {len(dataloader_val.dataset):,}')
+    print(f'Epochs:              {epochs}')
+    print(f'BatchSize:           {batch_size}')
+    print(f'Embedding Size:      {prior.embedding_size}')
+    print(f'VQVAE embd_num:      {vqvae_model.embd_num}')
+    print(f'VQVAE embd_size:     {vqvae_model.embd_size}')
+    print(f'VQVAE commmitment:   {vqvae_model.beta}')
+    print(f'optimizer:           {optimizer}')
+    print(f'scheduler:           {scheduler.state_dict()}')
+
+    # setup scaler for fp16 trainig
+    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=use_fp16)
+    
+    for epoch in range(epochs):
+        losses=[]
+        bpds_training = []
+        prior.train()
+        for latents, labels in dataloader_train:
+            latents = latents.to(device)
+            
+            if num_classes:
+                if dataset_name.lower() =='celeba':
+                    # use labels as is, except we make sure we filter all -1s as 0s!
+                    labels = (labels == 1).float().to(device)
+                else:
+                    # otherwise convert to one_hot encoded
+                    labels = F.one_hot(labels,num_classes=num_classes).to(device)
+            else:
+                labels = None
+            
+            with torch.amp.autocast(device_type=device, enabled=use_fp16):
+                logits = prior(latents, labels)
+            
+            # sidenote:
+            # outside of autocast, loss always becomes nans, even with smaller lr(1e-4, 1e-5)
+            # even with much lower weight decay (1e-5/1e-7 from 1e-2)
+            # to get this to work, we either leave in inside autocast, or if we insist on having 
+            # it outside of autocast contextmanager, we need to make sure its in full precision,
+            # so logits.float() is needed, and that should do it.
+            # wrapping it explictly in autocast(enabled=False) is better but its not needed in 
+            # our case, as the loss seems to be working well so far
+            loss = F.cross_entropy(logits.float(), latents.long())
+            
+            #! calculate bits per dimension
+            #! edit and sumarize
+            # we use bits per dimension(BPD) metric to evaluate autoregressive generative models such as pixelcnn,
+            # transformers,etc, that work with high dimensional data like images in out case.
+            # The original Pixelcnn achieves a BPD of 2.29 for cifar10 and everyone who trains 
+            # or works in this subfield/subject uses this metric.
+            # (note we have other metrics that we use for other types of models (e.g. GANs which 
+            # are non-likelihood-based) we'll cover these in future chapters)
+            # we use this metric because it makes comparing different models across different image
+            # sizes (or datasets) easier. 
+            # it essentially measurs how well the model compresses the data, which put in simple words
+            # means, it shows how well our model correctly assigns higher likelihood (lower NLL) to 
+            # the true data, which in turn shows how good its predictions (or how well its compression
+            # capabilities) are.
+            #
+            # (second version might be better and more on point):
+            # 
+            # BPD is derived from the negative log-likelihood (NLL) of the data under the model
+            # which is typically calculated using the natural logarithm(base e), resulting in
+            # units of "nats".
+            # BPD simply put, measures how well a model predicts the data distribution!
+            # it essentially measures the average number of bits required to encode each dimension
+            # (e.g. each pixel value) of the data.
+            # 
+            # when a model achieves a lower BPD, it means that model is better at predicting the data
+            # distribution, since it requires fewer bits per dimension (or per pixel in our case) to 
+            # encode the image.the formula for that is : bpd = nats_per_dim * np.log2(np.e)
+            # 
+            # note that since log base e (natural log) is used in the NLL calculation, if we divide 
+            # by log(2) it converts it to bits (since log2(x) = ln(x)/ln(2)).
+            # so the actual formula for BPD then is(for a single image) : 
+            # BPD = (NLL) / (number of pixels * log(2))
+            # 
+            #
+            # sidenote:(to be more accurate the formula for single image would be:
+            # BPD = (average NLL per image) / (number of pixels per image) / log(2)
+            # and for batch:
+            # BPD = (NLL_total / (num_images * num_pixels)) / log(2))
+            # 
+            # our model outputs probabilities for each pixel and each pixel is modeled as 
+            # a discrete distribution (i.e. like 256 possible values for each color channel
+            # element in an 8-bit image). 
+            # the loss is the negative log-likelihood of the true pixel values given the model's predicted
+            # distribution. so we sum the NLL over all pixels in the image, then average over the batch. 
+            # This gives us the average NLL per image.
+            # we then divide this average NLL by the number of pixels per image (i.e. 32*32*3=3072) 
+            # to get NLL per dimension (per pixel) and finally convert from nats to bits by dividing by log(2). 
+            #
+            # However since we used crossentropy here and not NLL directly, and by default crossentropy
+            # uses reduction='mean', it's already averaged over the batch and the elements. 
+            # so if the loss is computed as the average NLL per pixel, then we just need to 
+            # convert that average to bits by dividing by log(2) and dont need to divide it 
+            # by n_dims here!
+            #  
+            # so to recap again, when we simply use F.cross_entropy(), by default it uses reduction='mean'
+            # which means first the NLL loss is calculated for each individual pixel/spatial position (h, w)
+            # within each image/latent n in the batch.
+            # then reduction='mean' part, computes the average of all these individual NLL values across 
+            # the entire batch (N) and all spatial dimensions (H, W), and all thats left to do to get
+            # BPD is to simply divide the loss by log(2)! (or multiply by log2(e))
+            # 
+            # dividing the NLL (calculated using natural log(ln)) by log(2) (which is ln(2)) converts 
+            # the units from nats to bits. hence the formula log2(x) = ln(x)/ln(2)! 
+            # 
+            # so  
+            # BPD = average NLL per dimension (in nats) / ln(2)
+            # or
+            # BPD = average NLL per dimension (in nats) * log2(e)
+            # (ln(2) is the natural logarithm of 2 (approx 0.693) and log2(e) is the 
+            # base-2 logarithm of e (approx 1.443)) 
+            # The division by ln(2) or multiplication by log2(e) converts the units from nats to bits.
+            # 
+            # important note:
+            # the reduction type for F.crossentropy by default is reduction='mean', therefor 
+            # F.cross_entropy averages these NLL values (in nats) over all elements across
+            # the entire "batch"!
+            # Therefore, the output loss = F.cross_entropy(logits, latents.long()) directly 
+            # gives us the average nll per dimension (in nats).
+            # since loss.item() already represents the average NLL per dimension in nats:
+            # # loss = F.cross_entropy(logits, latents.long()) # reduction='mean'
+            # nats_per_dim = loss.item()
+            # we convert nats per dimension to bits per dimension using np.log(2) which is ln(2):
+            # bpd = nats_per_dim / np.log(2)
+            # or using np.log2(np.e):
+            # bpd = nats_per_dim * np.log2(np.e)
+            # we do not need to divide by the number of dimensions (n_dims or np.prod(latents.shape[1:]))
+            # again, because the cross-entropy loss with mean reduction has already performed that averaging.
+                
+            # n_dims = np.prod(latents.shape)
+            bpd = loss.item() * np.log2(np.e) #/ n_dims
+            
+            optimizer.zero_grad()
+            # before doing backward, first rescale gradients
+            scaler.scale(loss).backward()
+            # clip gradients to prevent exploding gradients
+            # before gradient clipping we must unsacle gradients
+            # in optimizer parameters
+            # scaler.unscale_(optimizer)
+            # torch.nn.utils.clip_grad_norm_(prior.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            
+            # when using lambdalr/cosinelr
+            scheduler.step()
+            
+            losses.append(loss.item())
+            bpds_training.append(bpd)
+
+        with torch.no_grad():
+            print('validation...')
+            prior.eval()
+            losses_val=[]
+            bpds_val=[]
+            for latents, labels in dataloader_val:
+                latents = latents.to(device)
+                
+                if num_classes:
+                    if dataset_name.lower() =='celeba':
+                        # use labels as is, except we make sure we filter all -1s as 0s!
+                        labels = (labels == 1).float().to(device)
+                    else:
+                        # otherwise convert to one_hot encoded
+                        labels = F.one_hot(labels,num_classes=num_classes).to(device)
+                else:
+                    labels = None
+                
+                with torch.amp.autocast(device_type=device, enabled=use_fp16):    
+                    logits = prior(latents, labels)
+                    
+                loss = F.cross_entropy(logits.float(), latents.long())
+                bpd = loss.item() * np.log2(np.e)
+                    
+                # store them for plots
+                losses_val.append(loss.item())
+                bpds_val.append(bpd)
+
+        avg_loss = np.mean(losses)
+        avg_bpd = np.mean(bpds_training)
+        avg_val_loss = np.mean(losses_val)
+        avg_val_bpd = np.mean(bpds_val)
+
+        losses_epoch.append(avg_loss)
+        losses_val_epoch.append(avg_val_loss)
+        BPD_epoch.append(avg_bpd)
+        BPD_epoch_val.append(avg_val_bpd)
+
+        # scheduler.step(avg_val_loss)
+
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save({
+                'epoch': epoch,
+                'dataset':dataset_name,
+                'state_dict': prior.state_dict(),
+                # 'optimizer': optimizer.state_dict(),
+                # 'scheduler':scheduler.state_dict(),
+                'loss': avg_loss,
+                'val_loss': best_val_loss,
+                'bpd': avg_bpd,
+                'bpd_val':avg_val_bpd,
+                'use_fp16':use_fp16,
+                'model_config': {
+                    'num_embds': prior.num_embds,
+                    'embedding_size': prior.embedding_size,
+                    'num_class': prior.num_class,
+                    'make_conditional': prior.make_conditional,
+                    'dropout_rate': prior.dropout_rate,
+                }
+            }, checkpoint_path.replace('.ckpt','_best.pt'))
+            
+            print(f'best model saved with val-loss: {best_val_loss:.6f}')
+        
+        # save the last epoch 
+        torch.save({
+            'epoch': epoch,
+            'dataset':dataset_name,
+            'state_dict': prior.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler':scheduler.state_dict(),
+            'loss': avg_loss,
+            'val_loss': avg_val_loss,
+            'bpd': avg_bpd,
+            'bpd_val':avg_val_bpd,
+            'use_fp16':use_fp16,
+            'model_config': {
+                'num_embds': prior.num_embds,
+                'embedding_size': prior.embedding_size,
+                'num_class': prior.num_class,
+                'make_conditional': prior.make_conditional,
+                'dropout_rate': prior.dropout_rate,
+                }
+            }, checkpoint_path)
+        
+        print(f'Epoch: {epoch}/{epochs}  | Loss: {avg_loss:.6f} | Val-Loss: {avg_val_loss:.6f} | BPD: {np.mean(bpds_training):.6f} |  BPD_VAL: {np.mean(bpds_val):.6f} | LR:{scheduler.get_last_lr()[-1]:.6f}')
+        
+        # display reconstruction performance!
+        fname=None
+        if recons_dir_path:
+            fname = f'{recons_dir_path}/generated_{epoch}.jpg'
+        
+        display_generated_samples(vqvae_model=vqvae_model,
+                                  prior_model=prior,
+                                  dataset=dataset_name,
+                                  num_classes=num_classes,
+                                  selected_label=selected_label,
+                                  batch_size=sample_size,
+                                  temperature=temperature,
+                                  device=generation_device,
+                                  rows=rows,
+                                  cols=cols,
+                                  figsize=figsize,
+                                  seed=seed,
+                                  fname=fname)
+    
+    # create gifs out of all generated samples
+    create_gifs(dir_path=recons_dir_path)
+    
+    plt.figure(figsize=(15, 5))
+    plt.subplot(1, 3, 1)
+    plt.plot(losses_epoch, label='Training Loss')
+    plt.plot(losses_val_epoch, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
+    
+    # Plot bits per dimension
+    plt.subplot(1, 3, 2)
+    plt.plot(BPD_epoch)
+    plt.xlabel('Epoch')
+    plt.ylabel('Bits per Dimension')
+    plt.title('Model Efficiency[BPD](Lower is Better)')
+    
+    plt.subplot(1, 3, 3)
+    plt.plot(BPD_epoch_val)
+    plt.xlabel('Epoch')
+    plt.ylabel('Bits per Dimension')
+    plt.title('Model Efficiency[BPD-Val](Lower is Better)')
+    
+    plt.tight_layout()
+    plt.legend()
+
+    # save training log as well
+    # note plt.show() displays the plot and then clears it! so
+    # we add savefig before calling plt.show()!
+    plt.savefig(checkpoint_path.replace('.ckpt','_log.jpg'))
+    
+    plt.show()
+   
+    print('training prior model complete!')
+    # pd.DataFrame(losses_epoch).plot()
+    # plt.plot()
+    return prior, checkpoint_path
+
+
+# I wrote a much better explanation of what happens in the debugging section down below
+# todo: replace this with the newer version
+@torch.no_grad()
+def generate(vqvae_model:VQVAE, prior:PixelCNN, labels:torch.Tensor, num_classes, batch_size=1, temperature=1.0, device="cuda", seed=66):
+    vqvae_model.eval()
+    prior.eval()
+    # it must match our latent space shape from our vqvae model
+    # print(f'{vqvae_model.enc_output_shape=}')
+    H, W = vqvae_model.enc_output_shape
+    # print(f'{H=},{W=}')
+    assert labels.size(0) == batch_size, 'classes count must batch batches!'
+    
+    # todo use seed so we get the same images each time! for comparison purposes!
+    generator = torch.Generator(device).manual_seed(seed) if seed else None
+    
+    # we start with zeros because the PixelCNN generates autoregressively. 
+    # it predicts the code for position (i, j) based on the
+    # already generated codes in positions (h, w) where h < i or (h == i and w < j). 
+    # so we need a blank canvas to fill sequentially and starting with zeros is the 
+    # standard way to provide this initial empty state.
+    # initially when I first implemented my prior model, it wasnt good, it couldnt learn
+    # anything because it was too simplistic, because of that, when I first wrote the early
+    # version of this function, using zeros would only give me solid colors like red! blue!
+    # after some diggings, found a suggestion that told me to use randints, and it actually 
+    # worked! in the sense that I didnt get any solid colors anymore, insteda I got something
+    # that actually looked like an object, though badly deformed and pretty low quality in general,
+    # but I was happy Im notgetting solid colors, it was after a very long debugging and headaches
+    # that I found, the prior wasnt simply up to the task, my vqvae wasnt good either, and toped
+    # itw ith my buggy generation function that didnt follow the autoregressive nature, made
+    # all of this worse! only after that I found about the issue that starting with random 
+    # codes (torch.randint) breaks the autoregressive process completely and the model wont 
+    # have the correct sequential context it was trained on, it expects to see the results of
+    # its own previous predictions when predicting the next step, not random noise.
+    codes = torch.zeros((batch_size, H, W), dtype=torch.long, device=device)
+    # codes = torch.randint(0, vqvae_model.embd_num, size=(batch_size, H, W), dtype=torch.long, device=device, generator=generator)
+    labels = F.one_hot(labels,num_classes=num_classes).to(device)
+    # print(f'{labels.shape=}')
+        
+    for i in range(H):
+        for j in range(W):
+            # predict logits for the current latent position
+            # higher temps means more diversity in output!
+            # (i.e. it controls randomness in our output, 
+            # lower temp=less randomness in ouput)
+            logits = prior(codes,labels)[:, :, i, j] / temperature
+            # convert to probability distribution
+            probs = F.softmax(logits, dim=-1)
+            # greedy search/sampling doesnt work at all!! I only get solid colors!
+            # pixels_values,_ = probs.max(dim=-1, keepdim=True)
+            # print(f'{pixels_values.shape=}')
+            # sampling based on probs work way better!
+            pixels_values = torch.multinomial(probs, num_samples=1, generator=generator).squeeze(-1)
+            # update the latent code map
+            codes[:, i, j] = pixels_values  
+
+    # print(f'{codes.shape=}')
+    # convert latent codes to embeddings and reshape for decoding
+    # we dont even need to flatten codes! because Embedding layer can handle
+    # any tensors with any shape containing indexes so reshaping twice like this unnecessary!
+    # quantized_embeddings = vqvae_model.quantizer.embeddings(codes.flatten()).view(batch_size, H, W, -1)
+    quantized_embeddings = vqvae_model.quantizer.embeddings(codes)
+    # print(f'{quantized_embeddings.shape=}')
+    # reshape back to the shape decoder expects, i.e. (b,c,h,w)
+    quantized_embeddings = quantized_embeddings.permute(0, 3, 1, 2).contiguous()
+    # print(f'{quantized_embeddings.shape=}')
+    # decode the quantized representations into images
+    generated = vqvae_model.decoder(quantized_embeddings)
+    # print(f'{generated.shape=}')
+    return generated
+
+def get_class_names(dataset, num_classes) -> list[str]:
+    if 'cifar' in dataset:
+        class_names = ['airplane','car','bird','cat','deer','dog','frog','horse','ship','truck']
+
+    elif dataset =='mnist':
+        class_names = ['zero','one','two', 'three', 'four','five', 'six', 'seven', 'eigth','nine']
+    
+    elif dataset == 'tinyimagenet':
+        imagenet_classes_url = 'https://gist.githubusercontent.com/Coderx7/165133f7b390c2b672b3a599b89e64a4/raw/785ca406ad88fb2e36434454e453580958840e8e/tinyimagenet_labels.txt'
+        imagenet_classes_path = './data/tiny-imagenet-200/tinyimagenet_labels.txt'
+        
+        if not os.path.exists(imagenet_classes_path):
+            response = requests.get(imagenet_classes_url)
+            # if download failed raise exception
+            response.raise_for_status()
+            with open(imagenet_classes_path, 'w', encoding='utf-8') as file:
+                file.write(response.text)
+
+        with open(imagenet_classes_path, "r", encoding='utf-8') as f:
+            class_names = [s.strip() for s in f.readlines()]
+        # print(f'{class_names=}')
+    else:#celeba
+        class_names = ['N/A' for _ in range(num_classes)]
+        
+    return class_names
+
+# print(get_class_names('tinyimagenet', 200))
+
+def display_generated_samples(vqvae_model:VQVAE, 
+                              prior_model:PixelCNN, 
+                              dataset, 
+                              num_classes=10, 
+                              selected_label=9,
+                              batch_size=64, 
+                              temperature=1,
+                              device='cuda', 
+                              rows=8, cols=8, 
+                              figsize=(12,16),
+                              seed=66, 
+                              fname=None,
+                              title=''):
+
+    class_names = get_class_names(dataset, num_classes)
+
+    # msg = class_names[selected_label] if selected_label else "All Classes!"
+    # print(f'Generating images of {msg}')
+    
+    # todo: create proper label for celeba!
+    if isinstance(selected_label, int):
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+        
+    elif isinstance(selected_label, list) and all(isinstance(item, int) for item in selected_label):
+        # list of ints! basically a list of labels!
+        labels = torch.tensor(selected_label, dtype=torch.long)
+        label_texts = [class_names[labels[i].item()] for i in range(labels.size(0))]
+        
+    elif not selected_label:
+        sample_count = batch_size//num_classes
+        if sample_count<1:
+            raise Exception(f'sample count of {sample_count} is not valid, choose a larger batchsize(>{batch_size} or select fewer labels!)')
+        labels = torch.arange(num_classes).long().repeat_interleave(sample_count)
+        # label_texts = [class_names[i]
+        #                for i in range(num_classes) # outer loop for each class
+        #                for _ in range(sample_count)] # inner loop for num_samples for each class
+        label_texts = [class_names[labels[i].item()] for i in range(labels.size(0))]
+
+    else:
+        raise Exception(f'selected label {selected_label} not supported!')
+    
+    # number of samples and labels must match, if after our shenanigans on labels
+    # the new label size doesnt match the batchsize we obviously will fail, so we
+    # set the new batchsize(sample count) to labels size!
+    batch_size_new = batch_size if labels.size(0)==batch_size else labels.size(0)
+    print(f'WARNING Batch_size is changed to {batch_size_new} from initial ({batch_size}) so labels can match samples!')
+
+    # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+    # I would get weird generations! when I icnreased the image size form 32 to 64 and
+    # retired, the reconstructions got much better, but generation seemed cropped! looked
+    # closer and noticed my bug and fixed it and now images are way better. they are very good
+    # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+    generated_image = generate(vqvae_model=vqvae_model,
+                               prior=prior_model,
+                               labels=labels,
+                               num_classes=num_classes,
+                               batch_size=batch_size_new,
+                               # when using conditional, using smaller values 
+                               # for temperature, give us weireder images/really 
+                               # simplestic images! like with way less details!
+                               # update: it seems using smaller values for temp
+                               # makes the overall probs more uniform, making all
+                               # smaller neurons fire as likely as any larger ones
+                               # probablity wise! and those small probablity neurons
+                               # tend to work on lower abstractions? (imagine a photoshop layer
+                               # where the final image is made of several layers, adding details
+                               # retouches, etc to the image, at least this is the feeling 
+                               # I get from these images. 
+                               # todo work on explanation!)
+                               temperature=temperature,
+                               device=device,
+                               seed=seed)
+
+    # extract epoch from fname and use it to mark each image
+    if fname:
+        epoch = os.path.splitext(fname)[0].split('_')[-1]
+        title = f'{title} Epoch {int(epoch)}'
+
+    view_images(generated_image, label_texts, rows=rows, cols=cols, figsize=figsize, fname_to_save_as=fname, title=title) 
+
+
+#!edit add more explanation
+# another way to generate images, instead of using prior model
+# we directly sample from code frequency, it shows if our model
+# has good features or not (whether the problem lies in prior model/its training
+# or vqvae features itself. the images may not look good! more explanation ahead)
+def generate_simple(model:VQVAE, latent_codes, batch_size=1):
+    # compute code frequencies from training data
+    # instead of autoregressively get predictions 
+    # for each position using prior! 
+    counts = torch.bincount(latent_codes.flatten())
+    probs = counts / counts.sum()
+    # sample indexes from the frequency distribution
+    H, W = latent_codes.shape[1:]
+    latent_map = torch.multinomial(probs, batch_size * H * W, replacement=True)
+    latent_map = latent_map.view(batch_size, H, W).to(device)
+    # print(f'{latent_map.shape=}')
+    # decode the latent_map
+    quantized_embedding_map = model.quantizer.embeddings(latent_map)  # (batch_size, H, W, embd_size)
+    # print(f'{quantized_embedding_map.shape=}')
+    quantized_embedding_map = quantized_embedding_map.permute(0, 3, 1, 2)  # (batch_size, embd_size, H, W)
+    # print(f'{quantized_embedding_map.shape=}')
+    generated_image = model.decoder(quantized_embedding_map)
+    # print(f'{generated_image.shape=}')
+    return generated_image
+
+
+# this is an improved version, I explained this in details later in debugging section
+# so I comment this so we dont get ahead of ourselves
+# on a second though, I think having it for now is better until i run my experiments
+torch.no_grad()
+def generate2(vqvae_model: VQVAE, prior: PixelCNN, batch_size=64, temperature=1.0,
+              class_label=None, num_classes=10, top_k=0, top_p=0.9, device='cuda'):
+
+    prior.eval()
+    vqvae_model.eval()
+    prior.to(device)
+    vqvae_model.to(device)
+
+    H, W = vqvae_model.enc_output_shape
+
+    # create empty latent map
+    codes = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+
+    if prior.make_conditional:
+        if class_label is None:
+            # labels = torch.randint(0, num_classes, (batch_size,), device=device)
+            labels = torch.arange(num_classes,dtype=torch.long).repeat_interleave(batch_size//num_classes)
+            # number of samples and labels must match 
+            batch_size_new = batch_size if labels.size(0)==batch_size else labels.size(0)
+            print(f'WARNING Batch_size is changed to {batch_size_new} from initial ({batch_size}) so labels can match samples!')
+            # create empty latent map with new size
+            codes = torch.zeros(size=(batch_size_new, H, W), dtype=torch.long, device=device)
+
+        elif isinstance(class_label, int):
+            labels = torch.full((batch_size,), class_label, dtype=torch.long, device=device)
+        
+        else:
+            raise Exception(f"Unknown type: {type(class_label)=}")
+
+        # print(f'{labels.shape=} {labels=}')
+        labels = F.one_hot(labels, num_classes=num_classes).float()
+        # print(f'{labels.shape=}')
+        labels = labels.to(device)
+
+    for h in range(H):
+        for w in range(W):
+            logits = prior(codes, labels) 
+            logits = logits[:, :, h, w] 
+            
+            # from future me!:
+            # see my extensive explanation later in debugging section about these
+            # techniques for now we are just using them(I learned about them later
+            # on and I added this again later!)
+            if temperature>0:
+                logits = logits / temperature
+            
+            if top_k>0:
+                top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+                mask = torch.full_like(logits, -float('inf'))
+                mask.scatter_(-1, top_k_indices, top_k_logits)
+                logits = mask
+
+            if 0<top_p<1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0 
+                indices_to_remove = sorted_indices_to_remove.scatter(-1, 
+                                                                     sorted_indices,
+                                                                     sorted_indices_to_remove)
+                logits = logits.masked_fill(indices_to_remove, -float('inf'))
+
+            probs = F.softmax(logits, dim=-1)
+            pixel_samples = torch.multinomial(probs, num_samples=1) 
+            pixel_samples = pixel_samples.squeeze(-1) 
+            codes[:, h, w] = pixel_samples
+
+    quantized_embeddings = vqvae_model.quantizer.embeddings(codes)
+    quantized_embeddings = quantized_embeddings.permute(0, 3, 1, 2).contiguous()
+    reconstructions = vqvae_model.decoder(quantized_embeddings)
+    return reconstructions, codes
+
+#%%
+#todo move get_latent_codes inside training because they are tightly coupled!
+# # After training vqvae, we need to grab the trainingset's encodings
+# # and use these encodings to train our prior model
+# latent_codes,latent_labels = get_discrete_latent_codes(model, dataloader_train)
+
+# train our PixelCNN prior
+# embdsize=256 results in a very decent generation 
+# compared to 128 even with 32x32 imgsize
+# 
+# for celeba use the nonconditional version because it comes with 40 attributes for
+# each individual image. we can choose to incorporate them or at least condition our
+# models on one of these attributes, but for now we just ignore them and choose the
+# unconditional version
+# ok the unconditional generation works great, but when we start using the labels on celeba, 
+# it will make the trainig harder, and images start worse than the unconditional version
+# most probably because of the way we are incorporating the labels in our archiecture
+# since its a multilabel case, a much better fusion strategy is needed. there are many 
+# ways we can go about it, from fusing at multiple levels in our architecture so the
+# labels semantic are transfered properly throughout the features in the model, to simply
+# using several layers on embeddings to get better representation/or using summing/etc the
+# list goes on!
+#TODO: check why the generation seems random here despite having used seed!
+conditional = True
+use_fp16 = False
+
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
+else:#mnist,cifar10
+    num_classes = 10
+
+#TODO improve prior training function like vqvae trainig!
+#! test fp16 training and see if gradient clipping made it ok or moving loss 
+# - no gradient clipping isnt necessary it seems!
+#! under autocast, if so why?!
+# - outside of autocast, loss always nans, with smaller lr(1e-4,1e-5) its still inf
+# - even with low lr(1e-5) and wd down to 1e-5/1e-7 (from 1e-2) its still inf!
+# - only when we explictly wrap loss in autocast(enabled=False) and set logits.float()
+#   we get rid of infs!
+# todo next, create more diverse generation for celeba and also for classes 
+#! like for each class, n samples ge generated, so we can asses all classes at each epoch
+#! check generate-without reshaping is ok? 
+prior = PixelCNN(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
+
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=batch_size,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=selected_label,
+                              temperature=1,#1
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/',
+                              recons_dir_path='./results/prior/',
+                              )
+
+#sidenote: 
+# starting with small lr leads to crazy overfitting! especially with 32x32 imgsize!
+# sidenote: starting with smaller lr=(1e-3) overfitted badly, but the generation was
+# waaaaay better. I increased embdsize for prior though, need to check 
+# it with higher lr and see if it gets better if it doesnt oevrfit badly!
+# note: when I changed the model from 32x32 to 64x64 in my second test, I didnt
+# rerun the get_latent_codes, I guess this is the reason why I kept getting weird
+# output all these times!
+# check if this is the case using a second round of tests!
+#%%
+# vqvae_18_28_36_2025_03_25.ckpt shows very strange generations for celeba64x64!!!
+# ok it was for wrong encoding size ( I used 7x7 when I had increased img size to 64x64 
+# instead of 32x32 and it would mess up the generation! see git log info)
+# when I fixed it it became ok. eventhough loss is around 4.xx the generation is miles
+# better than than before!(when we used 32x32 versions!)
+
+#!todo remove from here
+# these blocks use our initial version of pixel cnn, and I also didnt save any hyperparameters
+# for them, so they're just weights I dont plan on getting to work! early versions didnt
+# work properly until I improved the architecture (the architecture is roughly the same
+# though I uses residual connections, it should be in previous commits, so if needs be
+# can use that, but I dont plan on doing it! lets remove them altogether!)
+# ckptname='./weights/old/vqvae_18_28_36_2025_03_25.ckpt'
+# cifar10 unconditional
+# ckptname = './weights/old/vqvae_23_13_38_2025_03_25.ckpt'
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02.ckpt'#64x64 #embd256
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_20_22_25_2025_04_02_best.ckpt'#64x64 #embd256
+# I noticed, running more epochs at the expense of lower BPD or worse val loss, results in
+# better generation usually! so try both checkpoints (the last one and the best one) and 
+# compare the results
+#todo down to here!
+
+# 
+# note
+# starting from here, we have used the second ResBlock defnition, I need to retrain!!
+# 
+# 
+# 
+# with extra info (model_config, train loss, etc)
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03.ckpt'#32
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_16_41_50_2025_04_03_best.ckpt'#32
+# Ok it seems, the val loss/val bpd doesnt mean the best result! especially if we
+# get that in early epochs. the smalles training loss/bpd has a much better result
+# than the our best val/bpd values! makes me wonder if having a validation set even
+# matters!
+# ckptname = './weights/prior/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_MNIST_embd256_Conditional_18_20_55_2025_04_03_best.ckpt'
+
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_19_41_59_2025_04_03_best.ckpt'#64
+# not good. I lowered the dropout ratio and it I believe it make it worse than before!
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04.ckpt'#۳۲
+# ckptname = './weights/prior/vqvae_prior_CIFAR10_embd256_Conditional_09_36_43_2025_04_04_best.ckpt'#۳۲
+# for celeba because the dataset is much larger, we have far b etter generations!
+# obviously having a better vqvae and prior models with better training can yield
+# much better result. but for us this siffuces and shows given more data, with the
+# same architecture, we can achieve pretty good results.
+# ckptname = './weights/prior/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04.ckpt'#64
+# ckptname = './weights/prior/vqvae_prior_CELEBA_embd256_10_40_59_2025_04_04_best.ckpt'#64
+
+#embd256 
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_e5.ckpt'#emb256/256 x64 early epoch
+# ckptname = './weights/prior/emb256/vqvae_prior_MNIST_embd256_Conditional_09_04_33_2025_04_13_best.pt'#emb256/256 x64
+
+# train cifar10 x64x64 with embd=256 for vqvae and see if that changes anythinG!
+# clean and git push to privae repo first
+
+# ok increasing the embedding for vqvae model resultted in way better generations!
+# both loss and BPD dropped from 5 to 1!! and the gap between training and val became
+# way less steep! so we learned the vqvae is crucial to getting great reconstructions
+# and simple reconstruction results in vqvae doesnt mean theres an issue in prior models
+# secotion if our loss doesnt decrease! it may very well be vqvae needs to be tuned (buffed)
+# more! in our case it was to simply use larger embedding dim (256)!
+# I need to train others with the new embd_size for vqvae to see how they perform :)
+# test these 3 models to see how they fair against each other
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_e46.ckpt'#emb256/256 x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_02_21_2025_04_04_best.ckpt'#emb256/256 x64
+#
+# like before with the increased embd, the generation is near prefect!(unconditional)
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_e55.ckpt' # ebmbd256/256 64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_10_32_36_2025_04_05_best.pt' # ebmbd256/256 64x64
+# 
+# conditional
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05.ckpt'#embd256/256/64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_15_23_55_2025_04_05_best.pt'#embd256/256/64x64
+
+#fp16/ema vqvae
+# cifa10-embd256-64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16/vqvae_prior_CIFAR10_embd256_Conditional_16_07_24_2025_04_16_best.pt'
+
+
+#fp32/ema vqvae
+#cifa10-embd256-64x64
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508/vqvae_prior_CIFAR10_embd256_Conditional_20250417_174508.ckpt'
+
+################# using old resblock #################
+#fp32/ema vqvae
+#cifa10-embd256-64x64 - Loss: 1.6297 | BPD: 2.3511 after 120 epochs
+# I noticed the convergence rate is way slower compared to non-ema training. 
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610/vqvae_prior_CIFAR10_embd256_Conditional_20250421_165610_best.pt'
+
+#cifa10-embd256-64x64 - no fp16 in either vqvae or prior (vqvae ckpt used='vqvae_CIFAR10_64x64_14_24_34 - 2025_04_04.ckpt')
+# the convergence is fast, lower initial loss=3.4, 
+# we achieve 1.6 at 31 epochs! - Epoch: 119/120  | Loss: 1.174580 | Val-Loss: 4.225377 | BPD: 1.694561 |  BPD_VAL: 6.095931 | LR:0.000000
+# to me it seems the result is way better than when I used fp16, I had my doubt so 
+# thats why im retraining them again to make sure (also since I messed up with the 
+# resblock mistake!
+# sidenote: these weights seem to have been corrupted, I get messedup generations (completely
+# bluish images, might be messedup bn statistics?! check)
+ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_e75.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123/vqvae_prior_CIFAR10_embd256_Conditional_20250422_064123_best.pt'
+
+#cifa10-embd256-64x64 - now with fp16 in prior
+# it seems the prior being run in fp16 doesnt change thing draastically!
+# as we get nearly identical loss! messedup generation
+# Epoch: 119/120  | Loss: 1.172177 | Val-Loss: 4.195325 | BPD: 1.691094 |  BPD_VAL: 6.052574 | LR:0.000000
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e34.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_e49.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748/vqvae_prior_CIFAR10_embd256_Conditional_20250422_094748_best.pt'
+#
+# now lets try with a different vqvae weight, such as the one with fp32 ema!
+# to see if ema doing us dirty or it might be ema with fp16!
+#
+# FP32 PRIOR with FP32 VQVAE with EMA 
+# # (vqvae ckpt used: 'vqvae_CIFAR10_64x64_20250414_183623.ckpt')
+# it seems ok! but loss is much larger compared to before using EMA!
+# Epoch: 119/120  | Loss: 1.632218 | Val-Loss: 4.519560 | BPD: 2.354793 |  BPD_VAL: 6.520347 | LR:0.000000
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525/vqvae_prior_CIFAR10_embd256_Conditional_20250422_115525_best.pt'
+
+# using FP32 Prior and FP16 VQVAE and EMA VQVAE
+# vqvae ckpt=vqvae_CIFAR10_64x64_20250416_142841.ckpt
+# right off the bat, initial loss is the highest among tests (4.075181!)
+# we get higher loss compared to before: 
+# Epoch: 119/120  | Loss: 1.844035 | Val-Loss: 4.602805 | BPD: 2.660381 |  BPD_VAL: 6.640444 | LR:0.000000
+# the generation seems more messedup somehow! while ema does amazing for reconstruction
+# it seems in prior trainig its not as effective as not using ema for some reason! I still
+# need more experiments to say my final verdict!
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237_e28.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237/vqvae_prior_CIFAR10_embd256_Conditional_20250422_151237_best.pt'
+
+# testing with test/temp resblock with fp32 prior and f16/ema vqvae
+# (the previous test with temp resblock), the loss is higher
+# and convergence rate is much worse than before! but at the end it manages to reach roughly the same loss
+# Epoch: 119/120  | Loss: 1.845117 | Val-Loss: 4.642205 | BPD: 2.661940 |  BPD_VAL: 6.697286 | LR:0.000000
+# the generation seems roughly the same at least at a quick glance, 
+# need to compare this one with previous one better!
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226/vqvae_prior_CIFAR10_embd256_Conditional_20250422_184226_best.pt'
+
+# tinyimagenet fp32 prior / f16/ema vqvae (vqvae used: vqvae_TINYIMAGENET_64x64_20250423_082527.ckpt)
+# the loss decreased very slowly and I got bored and ended at 87, it seems due to large
+# number of classes and little data, it cant perform properly with our simplestic choices
+# of hyper parameters, since vqvae by itself isnt that powerful (we still need a few tricks
+# and other techniques to enhance the generation quality) it doesnt make sense to spend a lot f time
+# because the return is not much! we go vqvae2 and you'll see how much imporvement we
+# get and later on, when it comes to newer architectures in future chapters we'll see much
+# better models and outcomes.
+# Epoch: 87/120  | Loss: 2.561929 | Val-Loss: 3.332404 | BPD: 3.696083 |  BPD_VAL: 4.807643 | LR:0.000278
+# a quick test with unconditional version didnt show any signifcant change from the
+# conditional version we trained just now, so the labels dont play much role in the actual
+# qualkity of generation, rather they contribute to generating the right image, which in our case here
+# is irelavent as we couldnt have managed to genarate well formed images so far!
+# ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059.ckpt'
+#ckptname = './weights/prior/emb256/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059/vqvae_prior_TINYIMAGENET_embd256_Conditional_20250423_151059_best.pt'
+
+
+#celeba Fp32 /vqvae FP32/EMA (vqvae_CELEBA_64x64_20250424_080220.ckpt)
+# Epoch: 87/120  | Loss: 2.258522 | Val-Loss: 2.627086 | BPD: 3.258359 |  BPD_VAL: 3.790084 | LR:0.000278
+# I have a feeling using ema, it messes up our generation quality!
+# at 20/30 epchs I remeber having a much better formed samples!
+# our debugging section shows somewhat fine results, but I need to check ema once again!
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857.ckpt'
+# ckptname = './weights/prior/emb256/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857/vqvae_prior_CELEBA_embd256_Conditional_20250424_135857_best.pt'
+
+#CIFAR10 July 20 2025 test
+ckptname='./weights/prior/emb256/vqvae_prior_CIFAR10_embd256_Conditional_20250720_175547/vqvae_prior_CIFAR10_embd256_Conditional_20250720_175547.ckpt'
+
+
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
+
+prior = PixelCNN(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+#%%
+# Generate new image
+if 'cifar' in dataset:
+    num_classes=10
+elif dataset =='mnist':
+    num_classes=10
+elif dataset == 'tinyimagenet':
+    num_classes=200
+elif dataset == 'celeba':
+    num_classes=40
+else:
+    raise Exception(f"invalid dataset({dataset})!")
+
+seed=12
+batch_size = 80
+#num_classes=40
+selected_label = None
+# print(f'Generating images of {class_names[selected_label]}')
+# labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+# # due to a bug in my code (I hardcoded the encoder outputs shape/indexces shape)
+# # I would get weird generations! when I icnreased the image size form 32 to 64 and
+# # retired, the reconstructions got much better, but generation seemed cropped! looked
+# # closer and noticed my bug and fixed it and now images are way better. they are very good
+# # a bit deformed which is relaetd to overfitting , but overall it seems alright!
+# generated_image = generate(model,
+#                            prior,
+#                            labels=labels,
+#                            num_classes=num_classes,
+#                            batch_size=batch_size,
+#                            # when using conditional, using smaller values 
+#                            # for temperature, give us weireder images/really 
+#                            # simplestic images! like with way less details!
+#                            temperature=1,
+#                            seed=seed)
+# view_images(generated_image,labels,rows=9,cols=8,figsize=(12,16))
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=num_classes,
+                          selected_label=selected_label,
+                          batch_size=batch_size,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=None)
+
+#%%
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=64)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+selected_label = None
+generated_image, latents = generate2(vqvae_model=model,
+                                    prior=prior,
+                                    batch_size=80,
+                                    temperature=1,
+                                    num_classes=num_classes,
+                                    class_label=selected_label,
+                                    top_p=0.95,
+                                    device='cuda')
+
+# print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
+if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+else:
+    sample_count = batch_size//num_classes
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
+    
+view_images(generated_image,label_texts,rows=10,cols=8,title='')
+#%%
+# debugging section. I wrote this part when I faced a lot of issues early on
+# I couldnt get the model to generate anything! all I could get was noise or 
+# just pure solid colors! (in fact, I only got solid colors at first regardless
+# of what I did, then I searched and was told to check the prior model, it could
+# be faulty, to do that the first thing i did was to create generate_simple() to
+# see if I get the same behavior, if so then its latents themselves, so my vqvae 
+# had to have issues, if not it was the prior! from there I went on and found the
+# following tips, they helped but not by much when I had more nuanced issues in both
+# vqvae and prior. they both worked, kindof, and it took me a lot of time to know what
+# was wrong!
+# after I sorted out my isuese, i learned these new debugging tips that come handy!
+# so here it is:
+#
+# we can visualize latents to see if they display random patterns or some actual patterns!
+# we can use real images, conver them to latents and try to generate an image using them
+# and compare them to prior_latents which we get from prior model,
+# this will tell us a lot about what is wrong. like we can check if they are statistically similar or not, 
+# or whether they show similar spatial structures or patterns? 
+# if latents from our prior model (latent_map_prior) look drastically different 
+# (e.g., all zeros, random noise, weird repeating blocks)
+# while real latents (latents_real) look structured, our PixelCNN prior is likely the problem and 
+# it hasn't learned the correct distribution of latent codes.
+@torch.no_grad()
+def get_discrete_latents(vqvae:VQVAE, image_tensor:torch.Tensor, device='cuda'):
+    vqvae.eval()
+    vqvae.to(device)
+    image_tensor = image_tensor.to(device)
+    # I guess its a good idea to add an encode/quantize method to vavae to
+    # make this easier!
+    # todo add enocde/quantize method to vqvae, and a separate decode() as well
+    # add batch
+    if image_tensor.ndim<4:
+        image_tensor.unsqueeze_(0)
+    encodings = vqvae.encoder(image_tensor)
+    # now convert to quantized indexes which are our latents!
+    loss, quantized_vectors, perplexity, latents = vqvae.quantizer(encodings)
+    return latents
+
+imgs, labels = next(iter(dataloader_test))
+discrete_latents_real = get_discrete_latents(model,imgs[0],device='cuda')
+print(f'{discrete_latents_real.shape=}')
+
+# now lets grab prior_latents, for that we just do what we do when generating a new image
+# I initially tried feeding that to the prior model, but it turned out it was wrong
+# because the purpose of our prior model is not to transform existing latent
+# codes rather its job is to simply generate completely new latent codes from scratch, 
+# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
+# examples during training(that is basically our training set converted into latent codes)
+# so we start off with an empty latents and fill it up 
+# now lets grab prior_latents, for that we just do what we do when generating a new image
+# I initially tried feeding that to the prior model, but it turned out it was wrong
+# because the purpose of our prior model is not to transform existing latent
+# codes rather its job is to simply generate completely new latent codes from scratch, 
+# auto-regressively, trying to mimic the distribution it learned from seeing many latents_real
+# examples during training(that is basically our training set converted into latent codes)
+# so we start off with an empty latents and fill it up 
+@torch.no_grad()
+def get_discrete_latents_prior(vqvae:VQVAE,
+                               prior:PixelCNN,
+                               batch_size=64,
+                               num_classes=10,
+                               selected_class=9, 
+                               advanced_sampling=False,
+                               temperature=1,
+                               top_k=0,
+                               top_p=0,
+                               device='cuda',
+                               seed=66):
+    
+    # lets first take care of the models before we forget
+    # about them and face all sorts of weird issues!
+    prior.eval()
+    vqvae.eval()
+    prior.to(device)
+    vqvae.to(device)
+    #!todo check validity
+    generator = torch.Generator(device).manual_seed(seed) if seed else None
+    
+    H,W = vqvae.enc_output_shape
+    # print(f'{H=}, {W=}')
+    # our latent_map_prior is simply a HxW matrix of integer indexes. so to create one we simply
+    # generate an empty placeholder for it and fill it up gradually (i.e. autoregressively using prior)
+    # each latent will become a whole image ultimately, when we feed it to our decoder.
+    # we can think of it as a compressed, structured blueprint for the image. 
+    # our prior model (i.e. PixelCNN) learns the 'language' or 'grammar' of these blueprints,
+    # and our decoder(vqvae decoder) learns how to 'build' an image from a given blueprint. whcih 
+    # when given to our decoder, will give us an image based on the said blue-prnts
+    # 
+    # todo call this latent_map_prior
+    # to me it looks much better, I find map way better becasuse its like feature-map,
+    # it implies a 2d shape and loos more intuitive to me (than latent_codes
+    # which is fine but doesnt convey its 2d shape, we only know it becasue of context!)
+    latent_map_prior = torch.zeros(size=(batch_size, H, W), dtype=torch.long, device=device)
+    # print(f'*{selected_class=}')
+    # since we support conditional generation we need to one_hot our labels
+    # todo:
+    # instead of creating a whole batch for a single label/class, create 
+    # samples for each class to see how the generation works
+    # print(f'{selected_class=}')
+    if prior.make_conditional:
+        if isinstance(selected_class,int):
+            labels = torch.ones(size=(batch_size,),device=device,dtype=torch.long)*selected_class
+            # we could also do 
+            # labels = torch.full(size=(batch_size,),fill_value=selected_class,device=device)
+        
+        elif not selected_class:
+            # lets make a grid of classes, nxm where each row belongs to a class
+            # labels = torch.stack([torch.full(size=(batch_size//num_classes),fill_value=i,device=device,dtype=torch.long) for i in range(num_classes)]).flatten()
+            # or use repeat_interleave to repeat each class m times
+            # create class indexes (0,1,2,...)
+            class_indexes = torch.arange(num_classes, device=device, dtype=torch.long)
+            # repeat each class index n times consecutively
+            labels = class_indexes.repeat_interleave(batch_size//num_classes)
+            # print(f'{labels=}')
+            # print(f'{labels.shape=}')
+            assert labels.size(0) == batch_size, f'label size({labels.size(0)}({num_classes}*{batch_size//num_classes})) must match batchisze({batch_size})!!'
+            
+        elif isinstance(selected_class, list) and len(selected_class) == batch_size:
+            labels = torch.tensor(selected_class, device=device, dtype=torch.long)
+            # print(f'+{labels.shape=}')
+        
+        else:
+            raise ValueError(f'selected class is neither an int or list of int of size batchsize{batch_size}')
+        
+        #! dont onehot celeba
+        # only one-hot encode, selected_class if its int, or if its a list, it must only be int
+        if not selected_class or isinstance(selected_class, int) or (isinstance(selected_class, list) and all(isinstance(item, int) for item in selected_class)):
+            labels = F.one_hot(labels, num_classes=num_classes).float()
+            # print(f'{labels.shape=}')
+            # print(f'{labels=}')
+        # print(f'{labels.shape=}')
+    else:
+        labels = None
+    # print(f'{labels=}')
+    #now we autoregressively fill up our empty latents pixels with proper values predicted by prior
+    # for that we loop using H,W
+    for h in range(H):
+        for w in range(W):
+            # logits shape is (batchsize, embdsz, h, w)
+            # print(f'{latent_map_prior.shape=} {labels.shape=}')
+            logits = prior(latent_map_prior, labels)
+            # since we are dealing with pixels/codes and doing this in a loop
+            # pixel by pixel(or latent code by latent code which is more accurate to say but nevertheless),
+            # we only grab the logits for current h,w position 
+            # we do this for all samples, this will give us
+            # (batch,embdsz)
+            logits = logits[:,:,h,w]
+            
+            # advanced sampling
+            # initially I went with normal greedy search/sampling but it failed! I could only
+            # get solid colors like pink!, then I went with basic sampling and it got much better but 
+            # the generation left a lot to be desired, then I added this section to see how
+            # it does (tldr, topk sampling does infact improve our results!
+            # but top_p not really, it actually made it worse! but im keeping it
+            # maybe im doing something wrong here!? ok found out and explained it ahead!)
+            # 
+            # update:
+            # as to why having anything other than greedy sampling or simple sampling is waranted
+            # or advantagous here, it comes down to our models imprefect training! 
+            # and what we are actually doing!
+            # that is, our prior model, at each round gives us a list of possible values and
+            # how likely it thinks each one is(i.e. logits/probabalities), now since
+            # we are trying to predict the next latentcode, for our image, we
+            # are left with 2 options. 
+            # the first option is to be greedy and always pick the value the model thinks
+            # is the most likely, this is our first try, and as we already saw doesnt 
+            # work properly! why? because our model is not prefect and what it thinks is 
+            # most likely may not be actually the case. moreover, even if our model was perefect, 
+            # greedy sampling wasnt a good choice either, because it leads to the same outputs
+            # all the time! making our generations very repetitive and unnatural.
+            # images just like language have variation so keep choosing the most likely value
+            # all the time would usually result in unnatural generation.
+            # so this is why sampling acn be rough!
+            # our second option would be to make it more random, so maybe can we solve the previous
+            # issue that the most likely value might not actually be the right one(because it would
+            # be a uniform random selection, and we know all the codes are not as likely as other codes!).
+            # so we simply pick a random value weighted by its probablity(using torch.multinomial() e.g.), 
+            # this way values are chosen randomly, but the chance of each value/code being chosen is 
+            # still proportional to its assigned probability.
+            # values with higher probabilities are more likely to be chosen but its not guaranteed
+            # and lower probability values will also have some chance. so we see we have actually devised 
+            # a good solution which should work! and as we saw, our simple weighted sampling strategy
+            # actually gave us way better results compared to greedy search/sampling!
+            # however as we saw it also leaves a lot to be desired and doesnt always work well either,
+            # it may very well be the worst strategy as well, if the model assigned tiny probablities
+            # to many codes, and if we pick one randomly, the chances are we are picking a code that 
+            # doesnt make sense at all and hence makes a terrible image!(sidenote: can we attribute this to The Long Tail Problem? i've heard this for long tail distributions where it refers to imbalanced data where there are few high confidence classes, with a tail of (many) low confidence classes?! see https://www.youtube.com/playlist?list=PLoROMvodv4rNjRoawgt72BBNwL2V7doGI)
+            # so our solution seems ok overall but the issue lies in tiny probablities! so if we could
+            # solve that part, and strike a balance here that would be great.
+            # we would have some randomness to make things interesting, and at the same time we 
+            # avoid the nonsensical, extremely low probability cases. 
+            # this is where advanced smpling strategies such as temperature scaling, TopK and Top_P (nucleous smapling) come in!
+            # I have explained them below
+            
+            if advanced_sampling:
+                # temperature scaling makes the model more or less confident/random before sampling.
+                # low temperatures make the probability distribution sharper (more peaky),
+                # intuitively it means, when we divide our logits by a small number, the logits
+                # values are less affected, they stay the same(mostly), larger values stay larger,
+                # and the models output will be more deterministic, because it focuses on the
+                # most likely values like normal. This means less randomness/diversity in the 
+                # final generation!(which is the default behavior)
+                # on the other hand, if we use higher values, it makes the probability distribution
+                # flatter(less spiky) and therefore the probabilities more uniform(i.e. the ranges are roughly the same). 
+                # again that is, when logits is divided by a larger value, their magnitudes decrease,
+                # the larger that value, the more values(logits) become smaller, making them closer to eachother
+                # therefore, after some threshold, we'll see basically all values(logits) are roughly in the 
+                # same range, making them essentially as likely to happen! when this happens, and
+                # we go for sampling, any values can be selected(regardless of their initial raw value
+                # whether they were higher and now become lower, or they were lower, and because others 
+                # got decreased, they are now in the same range, and thus as likely to happen!)
+                # and this will lead to more randomness/diversity in the generation process!
+                # and as to why messing with logits like this makes sense, I believe its directly
+                # related to the fact that our models are not prefect, and therefore, its pretty likely
+                # that the right values, get a somewhat lower probablity than the should, and by default
+                # they dont get a chance to be used, so models incompetence hurts us, but when we
+                # do such tricks! we are actually enabling those codes/values to get involved
+                # and play a role and suddenly we see our generation perofrmance gets better!
+                if temperature != 1:
+                    logits = logits/temperature
+
+                # top-k sampling # paper : https://arxiv.org/abs/1805.06087 
+                if top_k > 0:
+                    # first we grab the top values and their indexes, the idea is we
+                    # are trying to get rid of the less lileky candidates and only 
+                    # work with a pool of highly likely or more likely candidates!
+                    top_k_logits, top_k_indexes = torch.topk(logits, top_k, dim=-1)
+                    # we then create a mask and set all logits that are not in top-k to -inf
+                    mask = torch.ones_like(logits) * -float('inf')
+                    # we could also do
+                    # mask = torch.full_like(logits, -float('Inf'))
+                    # and fill the rest of the mask with the actual top values
+                    mask.scatter_(dim=-1, index=top_k_indexes, src=top_k_logits)
+                    # now our mask is essentially the top logits with all the rest set to -inf
+                    # so when we later use softmax, -inf becomes nans and doesnt contribute!
+                    # this has the desired outcome that now, when we sample,the pool ofvalues
+                    # is already made of highly likely/relvant choices, hopefully resulting 
+                    # in higher quality selection and thus generation(because we already took
+                    # out low probablity/irrelavent/noisy choices, at least this is the idea! 
+                    # if our model somehow isnt trained properly and produces garbage obviously
+                    # it wont work, it works great if the model confidently predicts acucractly
+                    # most of the time!)
+                    # on a sidenote, this is one of the reasons why a larger spatial size for
+                    # encoders outputs and hence our min_indexes, and then discrete_latents 
+                    # affect the performance this much! the larger the more information is 
+                    # encoded and retained which can be used to more accurately recove image
+                    # details!(again think about it, with larger dims, we have more values, 
+                    # each value(discrete latent value) corresponds to a smaller patch of 
+                    # the image and therefore, more details of the iamge is captured!)
+                    # (so in a nutshell larger size = more codes = finer/smaller patches = more information = more details!)
+                    logits = mask
+
+                # heres another form of sampling known as top-p sampling!
+                # I really didnt have much luck with it, topk, has worked way better
+                # but for the sake of the experiment i add it here! it wasntt worth it so far!
+                # especially when used with topk it can get cumbersome, because topk
+                # can narrow the pool size(especially if we use a small number), and
+                # top_p makes it even narrower which may be why it doesnt work out properly!
+                # or maybe im missing something here!
+                # update1:
+                # found my issue, it was caused by topk=1, where it would only pick the highest
+                # probablities for each sample, and therefore when it came to top_p, and tried 
+                # converting logits to probablities, all entries that were set to -inf in topk section
+                # now became 0, so when we cumsumed the probablities, the whole entries now had 1!
+                # basically all indexes became 1 (because highest entry was 1, and it was added to 0s, 
+                # it would still be 1, and it went on untill all inexes were set to 1.
+                # all hell broke loose, when we did :
+                # sorted_indexes_to_remove = cumulative_probs > top_p
+                # now sorted_indexes_to_remove is all True! cuz every is set as 1!
+                # you can now imagine how it went down! sorting doesnt matter anymore,
+                # indexes_to_remove contains basically every single indexes! and when fed
+                # to scatter to grab the indexes to remove, since theres 1 everywhere, it
+                # selects all indexes to be removed, and the nail on the cofine set all the
+                # logits to -inf, which after taking softmax, turns into 0!
+                # logits = logits.masked_fill(indexes_to_remove, -float('inf')) 
+                # 
+                # making the model useless, initially I thought this shouldnt pose an issue 
+                # cuz even if I used topk=1, it would turn into a greedy search, cuz 1 value/candidate
+                # had the highest value, but I never imagined this case! thank God I found it!
+                #
+                # update2:
+                # ok I did some more research and found out top_p is basically a dynamic 
+                # alternative to top-k!
+                # TODO remve excessive or merge with top-p
+                # update: - is it excessive?
+                # add this to top_p section instead?
+                # 
+                # the idea of just looking at the top k (say, top 10) most likely values
+                # and ignoring everything else completely doesnt always work!
+                # on one hand, doing a weighted sampling from those top values do reduce 
+                # the chance of picking nonsensical/lowprobablity ones, but then again 
+                # it can go especially wrong if the model is either super confident or very uncertain!
+                # either way there are situations that can make our strategy go from less effective to
+                # completely ineffective!
+                # for example, our model rightfully thinks one code is the right one (e.g with 95% probability)
+                # but using topk we are forced to consider k options, even though 9 of them are much less likely.
+                # or another example where our model is very uncertain and our top k=20 values all 
+                # have similar low probabilities but we choose k=10, here we may leave out 10 
+                # perfectly reasonable options just because they didnt make it in the list. 
+                # so specifying the k becomes another point of concern!(one value k may not work
+                # for another image/concept!)
+                #                 
+
+                # this is where top_p comes in. top_p is basically a dynamic alternative to top-k!
+                # that is, in top_p sampling, instead of choosing a fixed number of 
+                # the most likely values/candidates, a set of values is selected so that 
+                # its combined probabilities add up to at least a confidence threshold 
+                # that we specify (e.g. p).
+                # simply put, the whole idea is to capture enough probablities that make us
+                # feel confident the next most likely/right/good candidate is among them. 
+                #
+                # todo remove it or make it cleaer?(probablity mass)
+                # (technically speaking, its capturing enough probablity mass!).
+                # 
+                # in order to make this work, the set needs to be as small as possible, 
+                # otherwise, we will be adding increasingly unlikely candidates that may not 
+                # only not contribute positively, rather add noise or weird/out of palce things! 
+                # defeating the whole point of the strategy! we want just enough candidates from
+                # the useful portion of the probablity distribution that make our result improve!
+                # 
+                # !rephrase - more cohesion with previous section/paragraph
+                # the dynamic nature here is that depending on the model's confidence, on a case
+                # by case case! the number of probablities needed to reach the threshold changes
+                # we can think of this threshold(p) as a probability budget, e.g. 0.9 means
+                # we want values that cover 90% of the probability for example,
+                # if p=0.9, we look at the most likely value and grab its probablity (e.g.0.6),
+                # we havent reached 0.9 so we look at the second most likely candidate, its 0.25 e.g. 
+                # we add them together 0.6+0.25=0.85, we are still <.9, so we keep doing this 
+                # until we reach our confidence threshold, for example our third most likely candidate
+                # had 0.1, we add them together 0.85+0.1=0.95! now our sum is greater than our 
+                # confidence threshold, so we stop.
+                # now what this basically means is our model now believes theres a 95% chance 
+                # that the actual best candidate is one of these three, we are essentially 
+                # ignoring all the other values whose combined probability is only 5% (100% - 95%)
+                # we are betting that the good stuff lies within that top 95% probability mass.
+                
+                # this set is also refered to as a nucleus in some texts,
+                # because it represents the core, central part of the probability distribution
+                # where most of the likelihood is concentrated. (think of it like the nucleus of
+                # an atom the dense center.) it was first introduced in a 2019 paper 
+                # The Curious Case of Neural Text Degeneration by Holtzman et al.
+                # https://arxiv.org/abs/1904.09751, the paper is amazing and I highly recommend it
+
+                #
+                # the basic idea is as follows, we sort our logits from the highest to lowest values
+                # (representing most likely to least likely values), then we start adding the 
+                # probabilities from the top and go down one by one, until we reach a point where
+                # our cumulative sum of probabilities is greater than our confidence threshold. 
+                # we are doing this to find that smallest set that captures our p probability budget
+                # It means we are identifying the boundary. Everything "above" this boundary 
+                # (more probable) is kept. Everything "below" this boundary (less probable 
+                # and not needed to reach the p budget) is discarded.
+                # we are doing this so we can discard all other lower probabalities, leaving us
+                # with bunch of the most likely values/candidates that collectively give us the confidence
+                # they have the right picks in set.
+                # 
+                # so to recap with an example:
+                # suppose our model is pretty confident and we have high probablity predictions:
+                # like p(value1)=0.95, p(value2)=0.02,etc, if p=0.9,the cumsum will be 
+                # [0.95, 0.97, ...] since 0.95 >= 0.9 we stop immediately and only value1
+                # is kept. our dynamic pool size is 1 and top-p behaves like greedy search.
+                # now suppose the other way around, now our model is very uncertain and we
+                # have many small probablities, like for example p(value1)=0.2, p(value2)=0.15,
+                # p(value3)=0.15, p(value4)=0.1, p(value5)=0.1, p(value6)=0.1, p(value7)=0.1,etc 
+                # cumsum will be [0.2, 0.35, 0.50, 0.60, 0.70, 0.80, 0.90, ...], if our 
+                # p=0.9 we need to go all the way to code value7 to reach the 0.9 threshold
+                # so we now have {value1, value2, value3, value4, value5, value6, value7}
+                # The dynamic pool size therefor is now 7. 
+                # 
+                # so as we can see, top-p lets the model decide how many options to consider
+                # based on its own confidence. it keeps adding options starting from the most 
+                # likely, just until it feels it has covered p percent of the likely outcomes,
+                # then stops and samples from that dynamically sized nucleus/set 
+                # this gives a better outcome compared to a fixed top-k.
+                
+                # so as we see, top_p solves the topk issues!
+                # if the model is very confident the set may only contain that one token.
+                # if the model is very uncertain (lots of small probablities),
+                # the set will include more values until the cumulative probability
+                # reaches top_p, allowing for more diversity when needed.
+                # 
+                # it solves the problem of potentially cutting off reasonable options when
+                # using a fixed k in topk sampling, when the distribution is flat, or 
+                # keeping too many bad options when the distribution is sharp. 
+                # However, it relies heavily on the probabilities being well-calibrated by the model.
+                
+                if 0 < top_p < 1.0: # The Curious Case of Neural Text Degeneration by Holtzman et al. : https://arxiv.org/abs/1904.09751
+                    
+                    assert top_k!=1,('cant use top_p with top_k=1, when using top_p,'
+                                     'you must use a high top_k, otherwise top_p wont work!')
+                    # sort the logits to easily find the most likely options.
+                    sorted_logits, sorted_indexes = torch.sort(logits, descending=True, dim=-1)
+                    # print(f'{sorted_logits=}')
+                    # calculate the cumulative sum of probabilities.
+                    # The i-th element here represents the total probability mass covered
+                    # by the top i most likely options.
+                    # e.g., [0.5, 0.7, 0.85, 0.92, ...] means P(top1)=0.5, P(top1=0.5)+P(top2=0.2)=0.7,
+                    # etc.
+                    cumulative_probs = torch.cumsum(sorted_logits.softmax(dim=-1), dim=-1)
+                    # print(f'{cumulative_probs=}')
+                    # we want to discard tokens after the cumulative probability exceeds
+                    # our confidence top_p. we find all indices where cumulative_probs > top_p
+                    sorted_indexes_to_remove = cumulative_probs > top_p
+                    # print(f'{sorted_indexes_to_remove=}')
+                    # shift the indexes to the right to keep also the first value above the 
+                    # threshold
+                    # crucial shift! We want to keep the first token that pushes the sum
+                    # over the threshold p. the line above marks this token for removal too.
+                    # so, we shift the removal mask one position to the right. The first token
+                    # (most probable) is now definitely kept, the second token is marked for
+                    # removal only if the *first* token's probability alone was > top_p, and so on.
+                    sorted_indexes_to_remove[..., 1:] = sorted_indexes_to_remove[..., :-1].clone()
+                    # never remove the most probable value
+                    # Step 6: Ensure the most probable token (index 0) is *never* removed,
+                    # even if its probability alone exceeds top_p. This guarantees we always
+                    # have at least one option.
+                    sorted_indexes_to_remove[..., 0] = 0 
+
+                    # create a mask, setting logits to be removed to -inf
+                    # scatter sorted_indexes_to_remove back to original positions
+                    # scatter the removal mask back to the original token order.
+                    # We need to know which *original* tokens (before sorting) should be removed.
+                    indexes_to_remove = sorted_indexes_to_remove.scatter(dim=-1, 
+                                                                         index=sorted_indexes,# use the mapping from sorted back to original
+                                                                         src=sorted_indexes_to_remove)
+                    # print(f'{indexes_to_remove=}')
+                    # apply the mask. Set the logits of tokens marked for removal to -inf.
+                    # When softmax is applied later, these will have zero probability and won't be sampled.
+                    logits = logits.masked_fill(indexes_to_remove, -float('inf'))
+                    # print(f'{logits=}')
+
+            
+            # now we convert it to probablities so we can sample from it
+            probs = F.softmax(logits, dim=-1)
+            # greedy search/sampling doesnt work at all!! I only get solid colors!
+            # pixels_values,_ = probs.max(dim=-1, keepdim=True)
+            # print(f'{pixels_values.shape=}')
+            # lets sample from it based on the probablity of each entry
+            # since we are filling pixel values, one value is enough
+            # note that replacement=False has no effect here because num_samples=1
+            # that is we can't sample the same element twice if we are only picking one!
+            # just wanted to make that clear!
+            # todo: pixelvalies is not accurate, choose a better name like latent_values?!
+            # but when I use a simple sampling strategy it starts working! and waaay better!
+            pixels_values = torch.multinomial(probs,num_samples=1,replacement=False,generator=generator)#,generator=generator
+            # print(f'{pixels_values.shape=}')#(64,1) so we need to squeeze it!
+            # and get (64,) so when we assign it below all is good and we dont get expand error!
+            # now lets fill in the empty places in latent_map_prior
+            latent_map_prior[:,h,w] = pixels_values.squeeze(1)
+            
+    return latent_map_prior
+
+# now lets grab our latents_prior
+latents_prior = get_discrete_latents_prior(model, prior, batch_size=1, num_classes=num_classes, selected_class=9)
+print(f'{latents_prior.shape=}')
+# now lets visualize them both and compare them against each other: 
+
+
+#%%
+from mpl_toolkits.axes_grid1 import make_axes_locatable # For better colorbar placement
+
+def visualize_discrete_latent_maps(latent_map_real: torch.Tensor, latent_map_prior: torch.Tensor, num_embeddings, cmap='viridis', figsize=(6,8)):
+    
+    latents = [latent_map_real, latent_map_prior]
+    titles = ['Real Latent Maps (from Encoder)',
+              'Prior Latent Maps (from Prior)']
+    
+    fig,axes = plt.subplots(1,2,sharex=True, sharey=True, figsize=figsize)
+    im = None
+    for i,(latent_map,title) in enumerate(zip(latents,titles)):
+        # remove batch dim
+        if latent_map.ndim == 2:
+            latent_map.unsqueeze_(0)
+
+        # print(f'{latent_map.shape=}')
+        latent_map_np = latent_map[0].detach().cpu().numpy()
+        # print(f'{latent_map_np.shape=}')
+        ax = axes[i]
+        im = ax.imshow(latent_map_np, cmap=cmap,vmin=0, vmax=num_embeddings-1)
+        ax.set_title(title)
+        ax.axis('off')
+
+        # neatly place colorbar next to plots
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(im, cax=cax)
+    # fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.45)
+    plt.tight_layout()
+    plt.show()
+
+visualize_discrete_latent_maps(discrete_latents_real, latents_prior, model.quantizer.num_embd)
+
+def show_image_tensor(ax, img_tensor, title=""):
+    img = img_tensor.detach().cpu().permute(1, 2, 0).numpy()
+    img = np.clip(img, 0, 1)
+    ax.imshow(img)
+    ax.set_title(title)
+    ax.axis('off')
+
+@torch.no_grad()
+def decode_discrete_latents(vqvae:VQVAE, discrete_latents:torch.Tensor, device='cuda'):
+    vqvae.eval()
+    vqvae.to(device)
+    discrete_latents = discrete_latents.to(device)
+    # discrete_latents are indexes to actual embedding vectors
+    # so to we need to grab the embedding vectors for eachone 
+    # since we are just after the embedding vectors, we dont 
+    # need to keep its shape! we flatten the indexes and get
+    # a list of embeding vectors, this means we will have a
+    # tensor of shape (batch*H*W, embedding_size)
+    # todo either use this or simply dont flatten/reshape! it doesnt make sense
+    # the normal way is fine!
+    # sidenote:
+    # we dont have to flattent anything here, we can just
+    # feed discrete_latents as is, and get the quantized_vector
+    # then we only need to permute at the end, cuz the shapes would
+    # be fine, no need to extra reshape!
+    # quantized_vectors = vqvae.quantizer.embeddings(discrete_latents.view(-1))
+    # we could also use F.embedding() and use the embeddings weight
+    # to grab the vectors but since we have access to embeddings 
+    # module in quantizer, we simply use that!
+    # quantized_vectors = F.embedding(discrete_latents.view(-1), vqvae.quantizer.embeddings.weight)
+    # we would be using this if we want a bit more performance as 
+    # the functional form might be a btter choice, 
+    # Get the embedding vectors corresponding to the generated indices
+    
+    # now to actually decode it, we need to reshape it into what 
+    # our decoder expects, which is the encoders output shape! which
+    # was (batchsize, embedding_size, H, W) but if you recall, we reshaped
+    # it to (batchsize, H,W,embedding_size) early on in quantizer to get
+    # the discrete version of it! so we now have to reshape into bhwc
+    # and then into the correct bchw!
+    # batch_size, H, W = discrete_latents.shape
+    # quantized_vectors = quantized_vectors.view(batch_size, H, W, -1)
+    # actually we dont need to do all that! embeddins accept all tensor shapes!
+    quantized_embeddings_map = vqvae.quantizer.embeddings(discrete_latents)
+    # now move the embedding channel from last dim to second dim (dim=1), 
+    # and it has to be continuous! so they use the same contiguous memory chunk!
+    quantized_embeddings_map = quantized_embeddings_map.permute(0, 3, 1, 2).contiguous()
+    # we can now decode the quantized embeddings!
+    reconstructed_imgs = vqvae.decoder(quantized_embeddings_map)
+    return reconstructed_imgs
+
+def compare_real_vs_prior(vqvae: VQVAE,
+                          prior: PixelCNN,
+                          dataset_name,
+                          imgs,
+                          labels, 
+                          batch_size, 
+                          num_classes,
+                          class_names,
+                          advanced_sampling=False,
+                          temperature=1,
+                          top_k=1,
+                          top_p=1,
+                          device='cuda',
+                          figsize=(6,8),
+                          save_figure=True,
+                          save_dir='./',
+                          seed=66):
+    prior.eval()
+    vqvae.eval()
+    prior.to(device)
+    vqvae.to(device)
+    
+    num_samples = min(batch_size, imgs.size(0))
+    imgs = imgs[:num_samples].to(device)
+    labels = labels[:num_samples].to(device)
+
+    latents_real = get_discrete_latents(vqvae, imgs, device=device)
+    img_recon = decode_discrete_latents(vqvae, latents_real, device=device)
+    
+    # use the label from the real image, so we can compare them
+    selected_class = labels[:num_samples].tolist()
+    # print(f'{selected_class=}')
+    latents_prior = get_discrete_latents_prior(vqvae=vqvae,
+                                               prior=prior, 
+                                               batch_size=batch_size,
+                                               num_classes=num_classes, 
+                                               selected_class=selected_class,
+                                               advanced_sampling=advanced_sampling,
+                                               temperature=temperature,
+                                               top_k=top_k,
+                                               top_p=top_p,
+                                               device=device,
+                                               seed=seed)
+    img_prior_recon = decode_discrete_latents(vqvae, latents_prior, device=device)
+    
+    num_embeddings = model.quantizer.num_embd
+    # need 5 columns for original img, real_latent, real_recon, prior_latent, prior_recon
+    cols = 5 
+    rows = num_samples
+    fig, axes = plt.subplots(rows, cols, figsize=figsize)
+
+    if rows == 1:
+        axes = axes.reshape(1,-1)
+    
+    for i in range(num_samples):
+        label = labels[i]
+        label = class_names[label.item()] if label.ndim ==0 else 'N/A'
+        show_image_tensor(axes[i, 0], imgs[i], f"Img {i} ({label})")
+            # display the latent map
+            # display the recon_img
+        j = 1
+        for latents, recons, title1,title2 in zip([latents_real, latents_prior],
+                                                  [img_recon, img_prior_recon],
+                                                  ["Real Latent","Prior Latent"],
+                                                  ["Real Recon","Prior Recon"]
+                                                ):
+            # print(f'{latents.shape=}')
+            axes[i,j].imshow(latents[i].cpu().numpy(), cmap='viridis', vmin=0, vmax=num_embeddings - 1)
+            axes[i,j].set_title(f"{title1}")
+            axes[i,j].axis('off')
+            show_image_tensor(axes[i, j+1], recons[i], f"{title2}({label})")
+            j+=2
+    
+    cfg_used = f'{temperature=:.2f} | {top_k=} | {top_p=:.2f}'
+    fig.suptitle(f"Real vs. Prior Generation Comparison\nDataset: {dataset_name.upper()}\n{cfg_used}", fontsize=14)
+    plt.tight_layout()
+    
+    # save the fig for further analysis
+    if save_figure and save_dir:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        img_name = f'{dataset_name.upper()}_{cfg_used}_{timestamp}.jpg'
+        img_path = os.path.join(save_dir, img_name)
+        plt.savefig(img_path)
+    plt.show()
+    
+
+imgs, labels = next(iter(dataloader_test))
+print(f'@{labels.shape=}')
+# class_names = {0:'airplanes', 1:'cars', 2:'birds', 3:'cats', 4:'deer',
+#                5:'dogs', 6:'frogs', 7:'horses', 8:'ships',9:'trucks'}
+
+# torch.set_printoptions(profile='full')
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
+                      batch_size=4,
+                      num_classes=num_classes,
+                      class_names=get_class_names(dataset,num_classes),
+                      advanced_sampling=False,
+                      temperature=1,
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
+                      #for testing top_p either leave top_k=0, or make sure its a 
+                      # larger number so the pool is not so small top_p cant do much!
+                      # this actually was my bug that prevented me from usingtop_p
+                      top_p=0,
+                      device=device,
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging',
+                      seed=None)
+
+#TODO use more advanced generation technique and see if it really affects the outcome
+#TODO currently looking at the prior generations, we can see they are from the same 
+#TODO class, but are not well formed!
+# ok topk filtering actally improved the result, which makes sense, 
+# but other types of filtering such as topp filtering didnt do much!
+# so I'll be keeping topk for sure!
+def visualize_latent_distribution(latent_maps_list,
+                                  labels_list,
+                                  num_embeddings,
+                                  title="Discrerte Latent Code Distribution",
+                                  figsize=(12, 6),#figsize(w,h)!
+                                  num_indexes_per_bins=1):
+
+    plt.figure(figsize=figsize)
+    # since the number of indexes may be small, the histogram maynot look well
+    # so for the case where there are ctually a few indexes, we can try to 
+    # allocate more indexes per each bin, and this way by decreasing the 
+    # number of bins involved, make each column thicker and more noticeable
+    # sidenote: we could have also math.ceil
+    # but I didnt want to use math module just for this function, 
+    # otherwise doing math.ceil is clearer nonetheless
+    
+    # number_of_bins = math.ceil(num_embeddings/num_indexes_per_bins)
+    number_of_bins = (num_embeddings + num_indexes_per_bins-1) // num_indexes_per_bins
+    hist_min_range = -0.5
+    hist_max_range =  num_embeddings - 0.5
+    if num_indexes_per_bins > 1:
+         # create equally spaced steps from the start to the end of the range
+         # so it matches our number of bins automatically
+         bin_edges = np.linspace(hist_min_range, hist_max_range, number_of_bins + 1)
+         # the last edge must be exactly the end of the range
+         bin_edges[-1] = hist_max_range
+         new_bins = bin_edges
+    else:
+         new_bins = number_of_bins
+    
+    # new_bins = num_embeddings
+    for i, latent_maps in enumerate(latent_maps_list):
+        codes = latent_maps.view(-1).detach().cpu().numpy()
+        plt.hist(codes,
+                 bins=new_bins,
+                 range=(-0.5, num_embeddings - 0.5),
+                 density=True, 
+                 alpha=0.6, 
+                 label=labels_list[i])
+
+    plt.xlabel("Latent Code Index(Embedding Vector Index)")
+    plt.ylabel("Probability Density")
+    plt.title(title)
+    plt.legend()
+    plt.grid(axis='y', alpha=0.5)
+    plt.show()
+
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,
+                             figsize=(12,8),
+                             num_indexes_per_bins=1)
+
+# note: add more, about mnist, cifar as well, at the end of debuggin explantion below?
+# celeba example, shows us when enough trainig samples and longer training
+# our prior is able to perform better, we cant see this in cifar10,
+# because despite it being like mnits, its much more complex, and prior recons
+# are hit and miss, mnist is too easy, but celeba shows clearly how much
+# trainig size matters, using original labels, we can see model performs well
+# unlike our initial try in generation which used random labels that wasnt well
+# structured!(torch.ones(batchsize,)*9 for example, instead of a geniun label)
+# also playing with topk, temperature,and topp shows us their impact on final result
+# and how they can improve visuals, (and also steer away from the condition we specified)!
+# 
+
+# now how do we interpret these?
+# Assessing the VQ-VAE (Columns 1, 2, 3):
+# the first column is our ground truth, our original image
+# the second and third columns are original image's discrete latents
+# and reconstructed image. the 4th and fifth columns belong to
+# prior, and are priors generated discrete latened(prior_latents)
+# and reconstruction of the prior_latents. 
+#
+# checking the real image with its reconstruction and its latent (column1 to 3) tells us
+# how well our vqvae is doing and how accurately latents are derived from that image
+# and how well the decoder does its job. it tests the quality of our vqvae model in general,
+# to see how well each separate part works the quantizer, the encoder and the decoder, all separately
+# in a decent vqvae model, we expect the reconstruction to be as close to the real image as possible
+# the reconstructed image might be slightly blurrier or lack fine details , but its ok 
+# as the discretization process can cause this(the smaller the encoder output, the coarser the image becomes
+# because less information gets to be encoded, larger spatial dims means more discrete codes and
+# more discrete codes means more patches in the image can havbe their own code/index, thus preserving
+# more details!), however, shapes must be well formed (for the majority of cases, no missing limbs, parts, or looking smudged!), 
+# colors should be vibrant and accurate, basically other than a bit of blurriness and minor lack of details
+# all other things need to be pretty close to the real image.
+# if this is the case, then our model (i.e. all 3 core segments of encoder, codebook, decoder
+# is well-trained and capable of representing and reconstructing images from our dataset.
+# The codebook is expressive enough.
+# 
+# but if the reconstruction is very blurry, has major artifacts, incorrect colors/shapes,
+# or looks completely different from the original image, it means our vqvae is lacking, 
+# it could be it simple needs more training, needs a better training regime (lr, scheduler,weightdecay,dropout,etc)
+# or maybe the architecture itself (including encoder/decoder) is too weak and needs improvement
+# using residual blocks, batchnorm, helps a lot. also using a large enough of embedding size 
+# is crucial to getting a good generation (not necessarily reconstruction, cuz with smaller
+# embedding size, we may get a good reconstruction, but the generation would suffer cuz, the 
+# prior cant get enough information out of encodings later in the process)
+# we might even face codebook collapse which means only a few codes are being used effectively
+# which should show in our second column, (also check the rest of debugging section)
+# small(inadequate) codebook size(num_embeddings) is another thing that can cause issues!
+# if the latents have some structure in them, its good, otherwise if they look random
+# theres a problem, there should be a varitey of codes, if its only a few high codes and the rest
+# are near zero when we plot the histogram, it means the encoding/quantiziation has some issues!
+#
+# the prior model analysis: (columns 2 and 4):
+# when comparing the latent codes/latent maps/ we check if the prior latents
+# resembles the real latent map, it shows us whether the prior model has learned
+# the correct structure/pattern and distribution of the latent codes 
+# it doesnt need to look identical, because the prior is generating something new
+# so it wont look identical, however, it should look statistically
+# similar to the real latent map, all latent codes need to look similar in thsi fashion
+# for that matter!(note that when I say the pattern/structure needs to be identical, 
+# it may not always be easily visible or identifiable, especially in more complex datasets like cifar10.
+# but for simpler datasets such as mnist we can easily spot the patterns)
+# similar levels of structure, complexity and a similar range/distribution of [codebook] indices 
+# are a few examples to name that we can take into account. 
+# if our prior model is conditional then code maps for the same class 
+# should share some similarities.
+# if these are met, then it means our prior model has successfully learned the
+# underlying distribution the vqvae latent space. so it should be able to generate good outputs
+# if the prior codemaps look like random noise while the real ones looks structured, then
+# you know the prior hasnt learned anything!
+# if the prior latent map is too simplistic or repetitive (e.g. the whole map looks like
+# a solid color, or two colors, or there are large blocks 
+# of the same index (color) compared to the real one, then its a sign of troubled prior!(try vewing with a random weight or early checkpoint you'll see what i mean)
+# if the prior latent map has a completely different histogram then it means the prior 
+# has failed at learning the actual underlying distribution! and now uses a completely
+# different set or distribution of indices than the real latents.
+# the problem with our prior could stem from different issues, it could be it lacks
+# a proper training regime, either insufficient epochs, lack of data(talked about it in
+# training section), bad hyperparameter tuning/choices or the likes. 
+# or it could be the architecture itself is not well designed or is large enough
+# to learn the data. note that we need to make sure the vqvae is doing fine
+# so we start with a simple example(dataset) and make sure the implementation is ok
+# then use a more complex dataset such as cifar10, and try different hyperparamters
+# and architectural changes to see what improves our result. without this we might get
+# stuck like me,(where my vqvae needed larger embeddingsize, so my prior model could
+# actually learn properly (the vqvae's shorcoming, manifisted itself as a training data issue
+# cuz we convert the whole dataset to latentcode and train our prior on these latentcodes, so
+# if the vqvae cant produce quality latentcodes, the prior cant properly learn the underlying
+# distrubtion and well be scratching our heads why the damn thing wont work!))
+# second curcial thing to note is that, the problem may not lie in the architetcures 
+# or training regimes anymore, rather in the generation part!(the sampling part)
+# I faced this issue as well, and only after I exausted all other possibilities several
+# times, out of desperation turned to generation and tried some more advanced techniques
+# and to my amazement, they actually worked!(explained the issues before!)
+
+# the whole system (column 5 vs others):
+# to see if the whole model(vqva and prior) are working great, we look at the prior reconstruction
+# note that as we mentioned previously, our prior's job is to create new latent maps 
+# not a reconstruction of a specific one, so the images that comes out usin prior-latents
+# must look realistic, as close to the original image (basically dataset samples)
+# so that when we look at it, we see like another valid digit/face/scene/whatever! of 
+# the correct class if conditioned.
+# 
+# if both real recon and prior recon is good, and if conditioned, shows the correct class
+# (generates the correct class image!) then all is fine, both vqvae and prior are healthy!
+# 
+# if our real recon is good, but prior recon is bad (like, it looks nonsensical, 
+# blurry, artifact-ridden, wrong class features, it means our prior model is the problem.
+# how are we so sure its the prior ? because the vqvae ecoder did a good job in reconstrutcing
+# from the priors (look at col 3), here, but the prior model is generating bad/invalid latent maps
+# that when fed into the decoder turns into bad outputs.
+# at this stage, comparing the real latent codes with the prior ones, should show us this is the case
+# and we should probably see the issues we talked about (like randomness, repetition, wrong index distribution, etc)
+# we need to start working on the training/improving the Prior.
+#
+# if both recons are bad, it means the vavae is the problem, specifically the decoder 
+# is not doing well and cant reconstruct properly even from perfect latents(i.e. real latents)
+# let alone reconstructing from the probably noisy(imprefect) prior latents!
+# note at this stage, the prior model may be bad aswell, but the fact that the real latents
+# dont yield a decent reconstructions means the decoder is not working and needs to be fixed. 
+# this shouldnt be an issue, especially if during vqvae training we display reconstrcution quality
+# this hsould give us all we need to know if vavae has issues or not at that stage!
+# 
+# if the prior recon looks like a random/wrong class even though we conditioned on
+# the same label as original image it means, theres an issue with the our prior's
+# conditional generation.
+# to know which part is lacking, we first compare prior latent maps generated for
+# different class labels and see if they look different/unique/distinct, 
+# this tells us whether our prior model is learning the conditional aspect or not!
+# if not, then we need to check the architecture,  its conditioning mechanism
+# and loss function and or data balance!
+# if the latent maps do look different based on the condition, but the decoded/reconstructed
+# images still look mixed-up, its probably the decoder's fault, and its happening
+# because it cant properly separate features based on minor differences in the prior's
+# latent maps!
+# However, most of the time, its usually the prior that has issues and fails to generate 
+# class-distinctive enough latent patterns!
+# 
+# in short
+# compare col 3 and col 1 if both are bad vqvae is bad, fix vqvae.
+# compare col 4 and col 2, if col 4 looks structurally different 
+# or uses wrong indices, fix prior.
+# to see if the models are doing good or bad look at col 5
+# if col 3 is good but col 5 is bad vqvae is good and prior is bad, fix prior.
+# if col 3 is bad, vqvae is bad fix vqvae first.
+# if col 5 is looks like wrong class, prior's conditioning is probably flawed.
+# if col 5 is looks good both models are working well together!
+
+#%% old dbeugging stuff
+#! use a discrete latent code not latentcodes from training!
+# check to see if our codebook has collapsed
+# if only a few codes are used here (e.g. 1-2 codes dominate), 
+# our VQ-VAE codebook has collapsed despite the perplexity of 180
+# (which may be misleading if embd_num is large).
+counts = torch.bincount(latents_prior.flatten())
+print("Top 10 codes:", torch.topk(counts, 10).indices)
+print("Code usage ratio:", len(counts.nonzero()) / model.embd_num)
+
+#%%
+# to see if our decoder is faulty, we can bypass the prior and
+# manually set embeddings/codes to test the decoder.
+# if this outputs a solid color(like our initial tests which we got red and then blue),
+# it means our decoder is broken (though since our reconstructions was good this is unlikely).
+# if it outputs diverse patterns, the prior is faulty.
+#
+# create random codes (replace 0 with other indices to test, using all zeros we get blue pattens)
+# test_codes = torch.zeros((1, 32, 32), dtype=torch.long, device=device)
+# using random codes, we get different patterns which shows our initial assumption
+# that decoder is ok but prior has the issue is right!
+test_codes = torch.randint(0, model.embd_num, (3, 64, 64), device=device)
+
+quantized = model.quantizer.embeddings(test_codes)
+quantized = quantized.permute(0, 3, 1, 2).contiguous()
+generated_image = model.decoder(quantized)
+view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
+#%%
+# the most frequent code maps to a vector that decodes to blue.
+# the solution is to inspect the dominant codes embedding:
+# if this is blue, the decoder associates this code with blue. 
+# we need to retrain the VQ-VAE with a larger codebook (embd_num=512)
+# or lower the commitment cost (beta=0.25) or do Codebook reset strategy https://arxiv.org/abs/1711.00937.
+dominant_code = torch.argmax(counts).item()
+print("Dominant code embedding:", model.quantizer.embeddings.weight[dominant_code])
+# lets force decode this code:
+test_codes = torch.full((3, 64, 64), dominant_code, device=device)
+quantized = model.quantizer.embeddings(test_codes)
+generated_image = model.decoder(quantized.permute(0, 3, 1, 2))
+view_images(generated_image,torch.ones(generated_image.size(0),1),rows=1,cols=1)
+#%%
+# the generate_simple() works but PixelCNN fails
+# issue is PixelCNN isnt learning the code distribution.
+# to solve this, we need to simplify the prior i.e. use a smaller PixelCNN or train longer.
+# add dropout to prevent overfitting and or check input normalization.
+# In PixelCNN.forward, ensure embeddings are normalized
+# x = self.embedding(x)
+# x = F.layer_norm(x, [self.emb_dim])  # Add this line
+# update: ok this was so not the case! this is what I was refering to back there,  
+# that vqvae and prior would work but not well! the issue I was having here
+# was i kept getting weird garbage output! twice! the first one was simply because
+# the dumb me used the wrong latents, that is, I would train my vqvae on 64x64, but
+# then I would use a much smaller portion of the actual latents (the latents were 16x16
+# and I would get 8x8 due to a bug that was caused by harcoded values for H and W
+# weird enough I wouldnt get an error, but the output was absolute garbage!
+# and the prior would still overfit severely! so I would think its the prior
+# and change it up and down to no avail!
+# the next time I faced this kind of weird issue was, I couldnt get any proper generation
+# the BPD wouldnt go down beyond 5,6 which was huge for cifar (expect 3/2 at elast for something
+# representable!) and it wouldnt just train properly! turned out my vqvae was weak! i had to use
+# a larger embdessing size! and voila that solved the issue, the modle still overfits but
+# the loss and PBD drops significantly!down to 1.3/1.2 which was pretty good!
+# this took me a good portion of a month to figure out, partly because the code wasnt organized
+# and this caused many bugs! it got messy quickly when I faced issues one after another, it wasnt
+# that bad initially!)
+#%%
+#side notes for debugging: 
+# make sure the final layer uses nn.Sigmoid() for [0, 1] images
+# verify quantized_z_ex includes gradients (quantized_z_ex = encoder_outputs + (quantized_z_ex - encoder_outputs).detach())
+##
+# notes: 
+# the paper used a very large spatial dim for latents, 21x21, while we used 16x16
+# we already know larger fmapsize(latent size) means better quality. 
+# also the paper used heirarchial vqvae, to get even more comparessed representations
+# at different levels.they first train a vqvae, then train a second vqvae on the output
+# of the first qvae, an this second one creates only 3 latent codes! (only 3 numbers!)
+# each of these three codes is an index chosen from a codebook containing K=512 possible
+# embedding vectors. they use three separate codebooks/embedding layers, one for each 
+# of the three latent variables and they represent a very high-level, "global" summary
+# of the input 21x21 grid.
+# the idea behind creating separate embedding layers for each latent variable  is that
+# this approach might make them learn different things, because if one embedding layer is
+# shared, then e1,e2,e3 whould contribute to the same embedding layer, 
+# however, when separated, each only contfibute to their respective embedding layer, increasing
+# the chances of learning different representations/encoding different ideas/concepts
+# that wouldnt be possible or as efficient if used a shared embedding layer/codebook
+# the issue I have with this idea is that, there is nothing explicit here to enforce these three separate 
+# codebooks to learn different things! and they may very well learn the same thing.
+# update: 
+# it seems if we have separate parameters for each latent code, as we said before,
+# their gradients are isolated (only gradients from the first latent position update
+# respective emebdding layer, etc) so it is possible for them to diverge and learn 
+# different things. a single shared embedding layer structurally can not do this 
+# index k always means the same thing.(each embedding layer has different initial values
+# and during backprop, gets optimized differently, potentially directing it toward learning
+# smeting different from the other two!) moreover pixelcnn may use them differently!
+# so this is why they used 3 different codebooks to enforce entaglement of some sort!
+# but then again theres no gaurantee it works all the time, but having said all this,
+# theres a possibility for that, and I guess authors knew what they were talking about and 
+# probably already tested the shared embedding layer before! but I havent tried it yet (note that when
+# I say shared embeddings, we could use 1 512 embedding layer or use 3*512 so we match
+# the representational capacity of the model in both cases. its a good idea to do an experiment
+# on it todo: test this! ok, having distinct embedding layers makes a difference,
+# each can learn different things, in fact in newer architecture this property is used
+# in llms as well (like moe in llms (having seaprate ffns instead of one largeone)))
+
+# which uses pixelcnn as decoder which accepts both of these vqvaes
+# as input and produces the final image. we didnt do that, I initially wanted to implement 
+# and train this, but I have already spent a lot of time on vqvae/pixelcnn and this
+# doesnt seem worth the time as we already coevered basically everything. we now know
+# having a heirachy lke this imrpoves the result, further.
+# moreover
+# side quest!:
+# see https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial12/Autoregressive_Image_Modeling.html
+# explain and implemet that version of pixel cnn!!
+# now before I end this chapter, I'd like to talk about pixelcnn++ which came to solve
+# the first versions issue. 
+# previously we would mask the top row and the right side for mask a and then do this
+# again with the exception of allowing middle pixel as well for mask b, however as it
+# turned out, this strategy doesnt properly work and in fact introduces blind spots in
+# the upper right side of the pixel recieptive field when we sequentially apply these
+# masked convolutions! 
+# image: ./pixelCNN_blindspot.png
+# as its stated in the paper(https://arxiv.org/pdf/1606.05328): 
+# ... In Figure 1 (top right), we show the progressive growth of the effective receptive field
+# of a 3×3 masked filter over the input image. Note that a significant portion of the input 
+# image is ignored by the masked convolutional architecture. 
+# This ‘blind spot’ can cover as much as a quarter of the potential receptive field 
+# (e.g., when using 3x3 filters), meaning that none of the content to the right of the 
+# current pixel would be taken into account.
+# In this work, we remove the blind spot by combining two convolutional network stacks: 
+# one that conditions on the current row so far (horizontal stack) and one that conditions
+# on all rows above (vertical stack). The arrangement is illustrated in Figure 1 
+# (bottom right). The vertical stack, which does not have any masking, allows the receptive
+# field to grow in a rectangular fashion without any blind spot, and we combine the outputs
+# of the two stacks after each layer. Every layer in the horizontal stack takes as input 
+# the output of the previous layer as well as that of the vertical stack. If we had
+# connected the output of the horizontal stack into the vertical stack, it would be able to
+# use information about pixels that are below or to the right of the current pixel which
+# # would break the conditional distribution.
+# Figure 2 shows a single layer block of a Gated PixelCNN. We combine Wf and Wg in a single
+# (masked) convolution to increase parallelization. As proposed in [30] we also use a residual
+# connection [11] in the horizontal stack. We have experimented with adding a residual connection
+# in the vertical stack, but omitted it from the final model as it did not improve the results
+# in our initial experiments. Note that the (n×1) and (n×n) masked convolutions in Figure 2
+# can also be implemented by (⌈n/2⌉ × 1) and (⌈n/2⌉ × n) convolutions followed by a shift
+# in pixels by padding and cropping.
+# so to cut a long story short, we now use a horizontal and vertical stack of pixels. 
+# 
+# 
+class vertical_masked_conv(nn.Conv2d):
+    def __init__(self, in_channels=1, out_channels=3, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels, 
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        self.mask = torch.ones_like(self.weight)
+        print(f'{self.mask.shape=}') #shape: (3, 1, 3, 3)
+        # k=3//2
+        # 1 1 1
+        # 1 1 1
+        # 0 0 0
+        self.mask[:,:,H//2+1:,:] = 0
+        
+        # for first conv, mask the center row as well
+        # k=3//2
+        # 1 1 1
+        # 0 0 0
+        # 0 0 0
+        if first_conv:
+            self.mask[:,:,H//2,:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class horizontal_masked_conv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels,
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        self.mask = torch.ones_like(self.weight)
+        # print(f'{self.mask.shape=}')
+        # always mask rows below the center
+        # h=3//2
+        # 1 1 1 
+        # 1 1 1
+        # 0 0 0
+        self.mask[:, :, H//2+1:, :] = 0
+        # now if its the first conv, mask 
+        # the center row as well but allow 
+        # the column 0 only
+        # w=3//2
+        # 1 1 1 
+        # 1 0 0
+        # 0 0 0 
+        if first_conv:
+            self.mask[:, :, H//2, W//2:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+def show_receptive_field(img:torch.Tensor, out:torch.Tensor, msg='',figsize=(6,4)):
+    # grab the center pixel of the image
+    b,c,h,w = out.shape
+    # print(f'img.shape:{tuple(img.shape)}\nout.shape:{tuple(out.shape)}')
+    # lets calculate a simple loss on our output tensor, we use l1 loss for
+    # simplicity which is basically summing all the elements
+    # we then do a backward pass, up to the input image
+    # so we can see the effect of gradients overlayed on the image itself
+    # we then treat the gradients as a separet image and display it
+    # this is the gist of this function
+    # enabe gradients for images (whch is false by default because we dont want to 
+    # update our inputs! however for our case, we want to see if we have blind spots!
+    # so we need to calculate gradients for each pixel to see whether they participate
+    # in the process or not!)
+    img.requires_grad_(True)
+    out = out[0, : , h//2, w//2].clone().sum()
+    # retain graph so after backward the gradients for input image is not discarded
+    out.backward(retain_graph=True)
+    # grab the absolute values for displaying purposes
+    img_grad = img.grad.abs()
+    # we dont need the gradients anymore so lets zero them out
+    img.grad.zero_()
+    
+    # convert and normalize the image gradients so we can easily display it in matplotlib 
+    img_grad_np = img_grad.cpu().squeeze(0).permute(1,2,0).numpy()
+    img_grad_np /= img_grad_np.max()
+    img_grad_np = img_grad_np.clip(0,1)
+    # print(f'{img_grad_np.shape=}')
+    
+    eps = 1e-6
+    # not needed remove it!
+    show_center = (abs(img_grad_np[h//2,w//2])<=eps)
+    # print(f'{img_grad_np[h//2,w//2]=}')
+    # print(f'{show_center=}')
+    # if show_center.any():
+    # create an rgba image and make the center pixel red
+    # this allows us to have a beautiful display of the gradients
+    # throughout the image(actually it shows the reach of gradients
+    # basically where on image we have gradients and where we dont have any
+    # which implies that region does not have any interaction with our kernels
+    # or the flow of information doesnt happen there! basically its a blind spot
+    # for our model!)
+    h,w,c = img_grad_np.shape
+    # we use rgba because the transperancy channel allows us to 
+    # have a separate channel for color that goes over the actual 
+    # gradient image 
+    center_pixel = np.zeros(shape=(h,w,4))
+    # set rgba channels (set red and alpha channels)
+    center_pixel[h//2, w//2] = np.array([1.0, 0.0, 0.0, 1.0])
+    
+    fig = plt.figure(figsize=figsize)
+    axes = fig.subplots(1,2)
+    fig.suptitle(msg)
+    
+    for ax,im,title in zip(axes, [img_grad_np, img_grad_np>0], ["Weighted receptive field",
+                                                                "Binary receptive field"]):
+        ax.imshow(im)
+        ax.set_title(title)
+        ax.axis('off')
+
+    # overlay the center_pixel so we can see the red center!
+    for ax in axes:
+        ax.imshow(center_pixel)
+    plt.tight_layout()
+    plt.show()
+
+img_zeros = torch.zeros(size=(1,1,11,11))
+
+show_receptive_field(img_zeros, img_zeros,msg='img_zero',figsize=(6,4))
+#%%
+# now lets see how applying these layers affect our input,
+# note that we use both horizontal andvectical layers together
+# and use their outputs to get the final result.
+# since these are the first layers, we set first_conv=True 
+# for both of them
+hc = horizontal_masked_conv(1,1,3,first_conv=True)
+# we set the weights and biases to all 1s and zeros respectively
+# so we get a beautiful display of gradients, we are basically
+# reseting their values at the default so each operation only
+# shows the full magnitude of gradients (disable them and you'll see
+# the gradients wont be as solid everywhere)
+hc.weight.data.fill_(1)
+hc.bias.data.fill_(0)
+hc_output = hc(img_zeros)
+show_receptive_field(img_zeros, hc_output,'horizontal masked conv output')
+vc = vertical_masked_conv(1,1,3,first_conv=True)
+vc.weight.data.fill_(1)
+vc.bias.data.fill_(0)
+vc_output = vc(img_zeros)
+show_receptive_field(img_zeros, vc_output,'vertical masked conv output')
+
+#%%
+# now lets imagine we apply them on a few layers,
+# for simplicity's sake, we reuse these layers a few times
+# instead of creating new ones!
+# note we need to set the first_conv to false otherwise
+# we only get the right half of the image (if all layers 
+# are set to first_conv=True)
+hc = horizontal_masked_conv(1, 1, 3, first_conv=False)
+hc.weight.data.fill_(1)
+hc.bias.data.fill_(0)
+vc = vertical_masked_conv(1, 1, 3, first_conv=False)
+vc.weight.data.fill_(1)
+vc.bias.data.fill_(0)
+
+for i in range(4):
+    # note vertical and horizontal convs together count as one layer!
+    # beacuse we need to merge their outputs together!
+    vc_output = vc(vc_output)
+    hc_output = hc(hc_output) + vc_output
+    show_receptive_field(img_zeros, hc_output,msg=f"Layer {i+2}")
+
+#%%
+# now lets compare it with our masked convolution and see if it really is as the paper
+# says! 
+mca = MaskedConv2d('A',1,1,3)
+mca.weight.data.fill_(1)
+mca.bias.data.fill_(0)
+mca_output = mca(img_zeros)
+show_receptive_field(img_zeros, mca_output,'Masked conv A output')
+mcb = MaskedConv2d('B',1,1,3)
+mcb.weight.data.fill_(1)
+mcb.bias.data.fill_(0)
+mcb_output = mca(img_zeros)
+show_receptive_field(img_zeros, mcb_output,'Masked conv B output')
+#%%
+for i in range(4):
+    # note vertical and horizontal convs together count as one layer!
+    # beacuse we need to merge their outputs together!
+    mcb_output = mcb(mcb_output)
+    # hc_output = hc(hc_output) + vc_output
+    show_receptive_field(img_zeros, mcb_output, msg=f"Layer {i+2}")
+
+# and yup! we have blind spot on the right side! so using the new method we should
+# be able to improve our results!
+# TODO: explain better: 
+# note that what we see here is a theoratical receptive field
+# not effective receptive field, as it becomes much smaller in a real network.
+# however it shows a curcial defect of our previous approach and helps us utilize more
+# information properly!
+#%% now that we are here, lets give it a spin and see how it performs if we use pixelcnn++!
+class VerticalMaskedConv(nn.Conv2d):
+    def __init__(self, in_channels=1, out_channels=3, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels, 
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        # since we dont want our mask to be updated 
+        # we register it as buffer like before
+        self.register_buffer("mask", torch.ones_like(self.weight))
+        # print(f'{self.mask.shape=}') #shape: (3, 1, 3, 3)
+        # k=3//2
+        # 1 1 1
+        # 1 1 1
+        # 0 0 0
+        self.mask[:,:,H//2+1:,:] = 0
+        # for first conv, mask the center row as well
+        # k=3//2
+        # 1 1 1
+        # 0 0 0
+        # 0 0 0
+        if first_conv:
+            self.mask[:,:,H//2,:] = 0
+
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class HorizontalMaskedConv(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, first_conv=False):
+        super().__init__(in_channels=in_channels,
+                         out_channels=out_channels,
+                         kernel_size=kernel_size,
+                         stride=stride,
+                         padding=padding)
+        
+        _,_, H, W = self.weight.shape
+        self.register_buffer("mask", torch.ones_like(self.weight))
+        # print(f'{self.mask.shape=}')
+        # always mask rows below the center
+        # h=3//2
+        # 1 1 1 
+        # 1 1 1
+        # 0 0 0
+        self.mask[:, :, H//2+1:, :] = 0
+        # now if its the first conv, mask 
+        # the center row as well but allow 
+        # the column 0 only
+        # w=3//2
+        # 1 1 1 
+        # 1 0 0
+        # 0 0 0 
+        if first_conv:
+            self.mask[:, :, H//2, W//2:] = 0
+        
+    def forward(self, input):
+        return self._conv_forward(input, self.weight*self.mask, bias=self.bias)
+
+class ResidualBlockVH(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, dropout_rate=0.0):
+        super().__init__()
+        padding = kernel_size // 2
+        
+        # in original pixelcnn, vertical and horizontal convs recieve the same input
+        # and then later on merged their outputs together! so we do the same here!
+        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True),
+                                   nn.BatchNorm2d(out_channels),
+                                   nn.ReLU(True))
+
+        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True),
+                                    nn.BatchNorm2d(out_channels),
+                                    nn.ReLU(True),)
+
+        # a linear transformation before merging vout with hout so 
+        # we get a bit of more flexibility
+        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+
+        # 1x1 convolution for the main path after combining V and H
+        self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
+                                      nn.BatchNorm2d(out_channels),
+                                      nn.ReLU(),
+                                      nn.Dropout2d(dropout_rate),)
+
+        # skipcon to add information between blocks, in order to prevent
+        # a huge number of channels, lets make them all to prduce 64 channels only
+        self.skip_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
+                                       nn.BatchNorm2d(64),)
+        
+        # to account for varying input-output channels, we apply a linear transformation
+        # on x_h so we can easily add the context to x_h from previous block
+        # see the code below and you'll see why
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+
+    def forward(self, x_v, x_h):
+        # we always first use vertical convolution 
+        # and then horizontal convolution!
+        # x_v and x_h come from first vertical and 
+        # horziontal conv layers, and then we process 
+        # them further in our resblocks
+        # print(f'{x_v.shape=} {x_h.shape=}')
+        
+        v_out = self.vconv(x_v)
+        h_out = self.hconv(x_h)
+        # to add more flexibility (like gatedpixelcnn) 
+        # we apply a linear projection to vertical output
+        # before adding it to horizontal conv output!
+        # this acts as some kind of adaptor so to speak
+        # that is, it gives different channels in v_out
+        # a weight so in theory, when we add vout and hout
+        # channels in vout can have varying participation level with hout!
+        # so we are basically introducing some learnable 
+        # parameters to specificallt control the channel-wise
+        # mixing and weighting between the two
+        # (metaforically speaking, its like somone reads a news
+        # for tomorrows forcast, and based on the importance of 
+        # the events scheduled for tommorw, assigns specific hours
+        # to specific events, so everything goes smoothly (imagine
+        # we'll be having rain later that day, so outdoor activities
+        # indoor activities can be sorted out efficiently after that!)
+        # in practice however this maynot always hold, but since itw as
+        # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
+        # v_proj = self.v_projection(v_out)
+        # combine the two streams so we dont have any blind spots!
+        vh_out = v_out + h_out
+        # skip connection between resblocks, this is what we ultimately
+        # feed to final convs and get our final logits as it contains the
+        # essence of our input.
+        # basically we calculate vh_hout for each block at different levels
+        # and then sum them all, or concatthem all and feed the result
+        # to final conv block to get logits
+        # update: using the final hout_residual gave us the best performance
+        # as it more closely resembels our processed context in a block so far!
+        # skip = self.skip_conv(vh_out)
+        
+        # and finally to have a residual connection
+        # in our block instead of simply adding hout
+        # with x_h we simply add vh_out to x_h
+        # this acts as a context, and since 
+        # our horziontal conv must always have info 
+        # about vertical conv, this fullfills our goal
+        # the nonlinearity to here is to get a higher 
+        # representation and get the most out of it!
+        # we are going to use this as the next x_h for
+        # the next block in line! this will ultimately 
+        # be fed to our next skip we saw before, so our skip
+        # will contain a wealth of information at each stage!
+        vh_out_processed = self.out_conv(vh_out)
+        # print(f'-----START-------\n'
+        #       f'x_v:             {tuple(x_v.shape)}\n'
+        #       f'x_h:             {tuple(x_h.shape)}\n'
+        #       f'vh_out:          {tuple(vh_out.shape)}\n'
+        #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
+        #     )
+        h_out_residual = vh_out_processed + self.channel_adapter(x_h)
+        # use processed hout that contains the context information 
+        # to create our featurepyramid, this greatly improves our 
+        # result and is more aligned with our original pixelcnn so 
+        # the comparison between them should now be ok(we couldnt get
+        # even close to our original pixelcnn performance until I
+        # changed skipcon to use houtresidual which is our final output
+        # containig all contexual information processed so far!)
+        # this change alone greatly improves our result, enhances/speeds 
+        # up our convergence speed and quality of generations!
+        skip = self.skip_conv(h_out_residual)
+        # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
+        return v_out, h_out_residual, skip
+
+class PixelCNN2(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        self.input_shape = []
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.dropout_rate = dropout_rate
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        # the first layer/block must be type A, the rest are B
+        # basically mask A blocks the current pixel and all future pixels, 
+        # while mask B allows the current pixel but blocks future ones.
+        self.initial_vconv = nn.Sequential(VerticalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(True),
+                                          #nn.Dropout2d(dropout_rate)
+                                          )
+        self.initial_hconv = nn.Sequential(HorizontalMaskedConv(self.conv_input_size, 128, kernel_size=7, padding=3, first_conv=True),
+                                          nn.BatchNorm2d(128),
+                                          nn.ReLU(True),
+                                          #nn.Dropout2d(dropout_rate)
+                                          )
+        
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([ResidualBlockVH(128, 128, dropout_rate=0),
+                                         ResidualBlockVH(128, 128, dropout_rate=0),
+                                         ResidualBlockVH(128, 256, dropout_rate=0),
+                                         ResidualBlockVH(256, 256, dropout_rate=0),
+                                         ResidualBlockVH(256, 512, dropout_rate=0),
+                                         ResidualBlockVH(512, 512, dropout_rate=0),
+                                        ])
+        
+        # last layers after concatenating skip connections
+        # grab the outchannels dynamically from the skipcon
+        # itself so we dont hardcode anything here!
+        skip_chs = self.res_blocks[0].skip_conv[0].out_channels
+        self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            # print(f'{labels.shape=}')
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        voutput = self.initial_vconv(input_indices)
+        houtput = self.initial_hconv(input_indices)
+        
+        # skip_connections_sum = []
+        skipcons = []
+        for res_block in self.res_blocks:
+            # print(f'{voutput.shape=} {houtput.shape=}')
+            voutput, houtput, skipcon = res_block(voutput, houtput)
+            # append them so we can later on concat them (usually gives best reuslt!)
+            skipcons.append(skipcon)
+        
+        # combine skip connections
+        combined = torch.cat(skipcons, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
+
+#%%
+pc2 = PixelCNN2(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
+indexes = torch.randint(0,16,size=(2,32,32))
+out = pc2(indexes)
+print(f'{out.shape=}')
+# show_receptive_field(indexes, out)
+
+#%%
+conditional = True
+use_fp16 = False
+
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
+else:#mnist,cifar10
+    num_classes = 10
+
+
+prior = PixelCNN2(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
+
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=batch_size,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=selected_label,
+                              temperature=1,#1
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2',
+                              recons_dir_path='./results/pixelcnn2/',
+                              )
+
+#%%
+# now lets test it 
+# Fp32 prior using fp32/ema vqvae (vqvae_CIFAR10_64x64_20250414_183623.ckpt)
+# ckptname = './weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250428_180146/'
+# 
+# FP32 prior using FP32/ema vqvae - improved skipcon 
+# after the skipcon update we much lower loss:
+# get Epoch: 119/120  | Loss: 2.056710 | Val-Loss: 3.174122 | BPD: 2.967206 |  BPD_VAL: 4.579289 | LR:0.000000
+# however the overal loss and BPD is larger than our maskedconv version. this could be
+# attributed to larger architecture and it needing more training/finetuning.
+# unlike previous version, we really didnt spend anytime on hyperparameters, etc just swapped
+# the maskedconv layer with the verticalhorizontal version and whatever changes was necessary
+# to get it to work in our original pixelcnn. 
+# I'm happy with the result and I just wanted to verify the outcome, 
+# it seems its much better especially when we using top_p, 
+# it seems the autoregressive nature has really improved and images at least to me look much
+# better formed, although they are still blury which may probably improve
+# our result if we spend more time tuning hyperparameters. this is evident in our generations below
+# 
+ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951.ckpt'
+# ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951/vqvae_prior_CIFAR10_embd256_Conditional_20250429_103951_best.pt'
+
+# CIFAR10 July 20 2025 test Pixelcnn2 prior
+ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437.ckpt'
+# ckptname ='./weights/prior/emb256/pixelcnn2/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437/vqvae_prior_CIFAR10_embd256_Conditional_20250720_201437_best.pt'
+
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
+
+prior = PixelCNN2(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+
+
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=10,
+                          selected_label=None,
+                          batch_size=80,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=None)
+
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=80)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+batch_size=80
+selected_label = None
+generated_image, latents = generate2(vqvae_model=model,
+                                    prior=prior,
+                                    batch_size=80,
+                                    temperature=1,
+                                    num_classes=num_classes,
+                                    class_label=None,
+                                    top_p=0.95,
+                                    device='cuda')
+
+# print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
+if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+else:
+    sample_count = batch_size//num_classes
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
+
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
+
+#%%
+imgs, labels = next(iter(dataloader_train))
+print(f'{labels.shape=}') 
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
+                      batch_size=4,
+                      num_classes=num_classes,
+                      class_names=get_class_names(dataset,num_classes),
+                      # using topp is the way to go gives the best results
+                      # first disable advanced sampling and see the default
+                      # genertaion performance then enable adavanced_sampling
+                      # and see the difference
+                      advanced_sampling=True,
+                      temperature=1,
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
+                      #for testing top_p either leave top_k=0, or make sure its a 
+                      # larger number so the pool is not so small top_p cant do much!
+                      # this actually was my bug that prevented me from usingtop_p
+                      top_p=1,
+                      device=device,
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging/pixelcnn2',
+                      seed=None)
+
+
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,
+                             figsize=(12,8),
+                             num_indexes_per_bins=1)
+
+# overall this change resulted in way improved generation due to autoregressive improvement
+# we made using our masked conv. it was a very good addition!
+#%%#
+# https://cvnote.ddlee.cc/2019/08/09/conditional-image-generation-with-pixelcnn-decoders
+# https://neuroverse0.wordpress.com/2020/08/11/pixelrnn-gated-pixelcnn-and-pixelcnn/
+# ref a quick and good intro: https://mrtunguyen.github.io/blog/generative/autoregressive/deeplearning/2020/05/20/Autoregressive-Generative-Models.html
+# important note, nearly all refs Ive seen including this one has gotten gatedpixelcnn 
+# wrong in away! or at least they dont care or know whats going on with their training!
+# the generation is aweful in mnist and if they train it on cifar10 as is, it will be horrendous
+# unless they do what we did!(ignore hstream) and then face garbage output!
+# 
+# I guess I'll ditch gatedmaskedconv for now! I dont see any benifit in it!
+# the outcome is notr eally anybetter than what I ahve already gotten and its a lot of
+# work to get the same output quality basically!
+
+# while we are implementing this, it might be a good idea to also implement the gated version
+# as we have alaready implemented everything. gatedmasked convolution block is simply
+# our vertical and horizontal layers with a bit of processing involved, notably
+# using tanh and sigmoid activations on their outputs respectively
+# basically we split the vout/hout output in half, process one half with tanh and the 
+# other with sigmoid, and then add the two to get the final vout/hout
+# 
+class GatedMaskedConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dropout_rate=0, first_conv=False):
+        super().__init__()
+        self.dropout_rate = dropout_rate
+        # since we antto split the channels, we make the outchannles twice the normalsize
+        # so after splitting everything sorts out
+        # note the formula for gated convolution is tanh(conv) * sigmoid(conv) 
+        # the conv being w⊙x (w being weight ⊙ convolution operation and x being input
+        # basically the convolution operation on input!)
+        # the sigmoid acts as a gate (by making the second part 0 or 1) the idea is like
+        # lstm gates. so long story short, we dont use relu/bn after our vertical/horizontal
+        # convs. different configurations exists, 1 stream, 2 streams. 
+        # initially I used the two streams, (but it fails, the right side of the image
+        # doesnt get any information when we go as usuall(i.e. add vout and hout)
+        # the loss decreases in an instant, but the generation is absolute nonsense!
+        # but when I only us vout we actually get something that makes a bit sense but
+        # its garbage as well because its extremely slow! ) see mnist example it demonstrates
+        # the issue properly
+        # so for this time im going for a single stream and see how it goes!
+        self.vconv = nn.Sequential(VerticalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding, first_conv=first_conv),
+                                  )
+
+        self.hconv = nn.Sequential(HorizontalMaskedConv(in_channels, out_channels*2, kernel_size=kernel_size, stride=stride, padding=padding,first_conv=first_conv),
+                                  )
+        
+        self.v_projection = nn.Conv2d(out_channels, out_channels*2, kernel_size=1)
+        self.h_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+
+        
+    def forward(self, x_v, x_h):
+        # block diagram https://i.imgur.com/DTseuKt.png
+        vout = self.vconv(x_v)
+        #split the vout into two sets of channels
+        v1, v2 = torch.chunk(vout, chunks=2, dim=1)
+        # apply tanh,sigmoid to each and multiply them
+        v_mult = v1.tanh() * v2.sigmoid()
+        # 2p the hstream
+        hout = self.hconv(x_h)
+        # now add it to 1x1projection from vout
+        v_to_h_project = self.v_projection(v_mult)
+        v_to_h = v_to_h_project + hout
+        # now split v_to_h
+        v_h1, v_h2 = torch.chunk(v_to_h, chunks=2, dim=1)
+        h_mult = v_h1.tanh() * v_h2.sigmoid()
+        # project h_mult to 1x1 and add to residual
+        hout_residual = self.h_projection(h_mult) + self.channel_adapter(x_h)
+        return v_mult, hout_residual
+
+class GatedResidualBlockVH(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, dropout_rate=0.0):
+        super().__init__()
+        padding = kernel_size // 2
+        
+        # in original pixelcnn, vertical and horizontal convs recieve the same input
+        # and then later on merged their outputs together! so we do the same here!
+        self.initial_conv = GatedMaskedConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding, first_conv=True)
+
+        # a linear transformation before merging vout with hout so 
+        # we get a bit of more flexibility
+        self.v_projection = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        self.bn_vp = nn.BatchNorm2d(out_channels)
+        self.bn_h = nn.BatchNorm2d(out_channels)
+        
+        # 1x1 convolution for the main path after combining V and H
+        self.out_conv = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1),
+                                      nn.BatchNorm2d(out_channels),
+                                      nn.ReLU(True),
+                                      nn.Dropout2d(dropout_rate),)
+
+        # pyramid features to add information between blocks, in order to prevent
+        # a huge number of channels, lets make them all to prduce 64 channels only
+        self.pyramid_conv = nn.Sequential(nn.Conv2d(out_channels, 64, kernel_size=1),
+                                       nn.BatchNorm2d(64),
+                                       # usually we dont add a relu! its a skipcon afterall
+                                       # but lets see if it helps!
+                                       #nn.ReLU(True)
+                                       )
+        
+        # to account for varying input-output channels, we apply a linear transformation
+        # on x_h so we can easily add the context to x_h from previous block
+        # see the code below and you'll see why
+        if in_channels!=out_channels:
+            self.channel_adapter = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.channel_adapter = nn.Identity()
+
+    def forward(self, x_v, x_h):
+        
+        vout, hout = self.initial_conv(x_v,x_h)
+        v_proj = self.v_projection(vout)
+        # problematic, remerging the vout/hout
+        # will ruine the signals! because we just did that!
+        # update: seems adding a relu/bn slightly im[proves the results]
+        vh_out = F.relu(self.bn_vp(v_proj)) #+ hout
+        # vh_out = v_proj #+ hout
+        # some processing for the final output
+        vh_out_processed = self.out_conv(vh_out)
+        # a residual connection for x_v, cuz doing x_h will ruin the signal aswell
+        # as we will amplify its signal too much!
+        h_out_residual = vh_out_processed + self.channel_adapter(x_v)
+        # feature_pyramid capturing the final processed output of this block
+        processed_output = self.pyramid_conv(h_out_residual)
+        return vout, hout, processed_output
+        # # we always first use vertical convolution 
+        # # and then horizontal convolution!
+        # # x_v and x_h come from first vertical and 
+        # # horziontal conv layers, and then we process 
+        # # them further in our resblocks
+        # # print(f'{x_v.shape=} {x_h.shape=}')
+        
+        # v_out, h_out = self.initial_conv(x_v,x_h)
+        # # to add more flexibility (like gatedpixelcnn) 
+        # # we apply a linear projection to vertical output
+        # # before adding it to horizontal conv output!
+        # # this acts as some kind of adaptor so to speak
+        # # that is, it gives different channels in v_out
+        # # a weight so in theory, when we add vout and hout
+        # # channels in vout can have varying participation level with hout!
+        # # so we are basically introducing some learnable 
+        # # parameters to specificallt control the channel-wise
+        # # mixing and weighting between the two
+        # # (metaforically speaking, its like somone reads a news
+        # # for tomorrows forcast, and based on the importance of 
+        # # the events scheduled for tommorw, assigns specific hours
+        # # to specific events, so everything goes smoothly (imagine
+        # # we'll be having rain later that day, so outdoor activities
+        # # indoor activities can be sorted out efficiently after that!)
+        # # in practice however this maynot always hold, but since itw as
+        # # introduced in gatedpixelcnn, I,m going with it (might experiment with its effectiveness later though!))
+        # v_proj = self.v_projection(v_out)
+        # # combine the two streams so we dont have any blind spots!
+        # vh_out = v_proj #+ h_out
+        # # skip connection between resblocks, this is what we ultimately
+        # # feed to final convs and get our final logits as it contains the
+        # # essence of our input.
+        # # basically we calculate vh_hout for each block at different levels
+        # # and then sum them all, or concatthem all and feed the result
+        # # to final conv block to get logits
+        # # 
+        # # update: using the final hout_residual gave us the best performance
+        # # as it more closely resembels our processed context in a block so far!
+        # # this is crucial here, unlike our previous model, if we use h_out_residual
+        # # instead of vh_out, we only get solid blues for output in generation 
+        # # I noticed its the addition to h_out thats causing the solid blues!
+        # # if we just use v_project for vh_out theres no issues (note that in
+        # # maskedgatedconv v and h stream are already merged!) even using hout
+        # # makes it crash! using vh_out like this leaves a lot to be desired! a lot!
+        # # the qualiy is not good at all! 
+        # # skip = self.skip_conv(vh_out)
+        
+        # # and finally to have a residual connection
+        # # in our block instead of simply adding hout
+        # # with x_h we simply add vh_out to x_h
+        # # this acts as a context, and since 
+        # # our horziontal conv must always have info 
+        # # about vertical conv, this fullfills our goal
+        # # the nonlinearity to here is to get a higher 
+        # # representation and get the most out of it!
+        # # we are going to use this as the next x_h for
+        # # the next block in line! this will ultimately 
+        # # be fed to our next skip we saw before, so our skip
+        # # will contain a wealth of information at each stage!
+        # vh_out_processed = self.out_conv(vh_out)
+        # # print(f'-----START-------\n'
+        # #       f'x_v:             {tuple(x_v.shape)}\n'
+        # #       f'x_h:             {tuple(x_h.shape)}\n'
+        # #       f'vh_out:          {tuple(vh_out.shape)}\n'
+        # #       f'vh_out_processed:{tuple(vh_out_processed.shape)}'
+        # #     )
+        # h_out_residual = vh_out_processed #+ self.channel_adapter(x_h)
+        # # use processed hout that contains the context information 
+        # # to create our featurepyramid, this greatly improves our 
+        # # result and is more aligned with our original pixelcnn so 
+        # # the comparison between them should now be ok(we couldnt get
+        # # even close to our original pixelcnn performance until I
+        # # changed skipcon to use houtresidual which is our final output
+        # # containig all contexual information processed so far!)
+        # # this change alone greatly improves our result, enhances/speeds 
+        # # up our convergence speed and quality of generations!
+        # # note! for gatedmaskedconv this causes solid blues in generation!
+        # skip = self.skip_conv(h_out_residual)
+        # # print(f'h_out_residual:  {tuple(h_out_residual.shape)}')
+        # return v_out, h_out_residual, skip
+
+
+# I decrease the number of channels for a few layers here so it roughly has the same
+# parameter count as the previous ones so they are comparable
+class PixelCNN2Gated(nn.Module):
+    def __init__(self, num_embds, embedding_size=128, num_class=10, make_conditional=True, dropout_rate=0.1):
+        super().__init__()
+        self.num_embds = num_embds
+        self.input_shape = []
+        # self.H, self.W = input_shape
+        self.embedding_size = embedding_size
+        # number of classes, used to condition generation on the class
+        self.num_class = num_class
+        # make model conditional 
+        self.make_conditional = make_conditional
+        
+        self.dropout_rate = dropout_rate
+        
+        self.fc_label_embedding = nn.Linear(num_class, embedding_size)
+        
+        self.embedding = nn.Embedding(num_embds, embedding_size)
+        
+        self.conv_input_size = self.embedding_size*2 if make_conditional else self.embedding_size
+        
+        self.initial_vconv = GatedMaskedConv(self.conv_input_size, 96, kernel_size=7, padding=3, first_conv=True)
+       
+        # we can use larger dilation for increased receptive field and improved performance
+        # but so far no luck! we'll sticking to the dilation=1 (default)
+        self.res_blocks = nn.ModuleList([GatedResidualBlockVH(96, 96, dropout_rate=0),
+                                         GatedResidualBlockVH(96, 96, dropout_rate=0),
+                                         GatedResidualBlockVH(96, 128, dropout_rate=0),
+                                         GatedResidualBlockVH(128, 128, dropout_rate=0),
+                                         GatedResidualBlockVH(128, 256, dropout_rate=0),
+                                         GatedResidualBlockVH(256, 256, dropout_rate=0),
+                                        ])
+        
+        # last layers after concatenating skip connections
+        # grab the outchannels dynamically from the skipcon
+        # itself so we dont hardcode anything here!
+        skip_chs = self.res_blocks[0].pyramid_conv[0].out_channels
+        self.final_layers = nn.Sequential(nn.Conv2d(len(self.res_blocks)*skip_chs, 512, kernel_size=1),
+                                          nn.BatchNorm2d(512),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(512, 256, kernel_size=1),
+                                          nn.BatchNorm2d(256),
+                                          nn.ReLU(),
+                                          nn.Dropout2d(dropout_rate),
+                                          nn.Conv2d(256, num_embds, kernel_size=1)
+                                          )
+
+    def forward(self, input_indices, labels=None):
+        # input shape: (batch, h, w)
+        if not self.input_shape:
+            self.input_shape = input_indices.shape[1:]
+        
+        input_indices = self.embedding(input_indices) # (batch, h,w,embd)
+        # (batch, embd, h, w)
+        input_indices = input_indices.permute(0, 3, 1, 2)
+
+        if self.make_conditional and labels is not None:
+            # since we want to concat input and labels together, 
+            # they must match in shape, we need to reshape our labels
+            # accordingly. all we need to do is to add 2 new dimensions
+            # to labels, and then repeat those two!
+            # label to match input which is (batchsize, h,w)
+            # butsince label is onehot encoded, we need to make it 4d
+            # and also add a channel dim to x so they match!
+            # print(f'{labels.shape=}')
+            labels = self.fc_label_embedding(labels.float())# (batch,embd)
+            # print(f'{labels.shape=}')
+            labels = labels.view(labels.shape[0], labels.shape[1], 1, 1)
+            labels = labels.expand(-1, -1, input_indices.shape[2], input_indices.shape[3])
+            # print(f'{labels.shape=}')
+            input_indices = torch.cat([input_indices,labels],dim=1)
+        
+        voutput,houtput = self.initial_vconv(input_indices, input_indices)
+        
+        # skip_connections_sum = []
+        skipcons = []
+        for res_block in self.res_blocks:
+            # print(f'{voutput.shape=} {houtput.shape=}')
+            voutput, houtput, skipcon = res_block(voutput, houtput)
+            # append them so we can later on concat them (usually gives best reuslt!)
+            skipcons.append(skipcon)
+        
+        # combine skip connections
+        combined = torch.cat(skipcons, dim=1)
+        # print(f'{combined.shape=}')
+        
+        # we need logits so we can turn into probablities
+        # for sampling in generation process
+        logits = self.final_layers(combined)
+        return logits
+    
+pc2 = PixelCNN2Gated(num_embds=32,embedding_size=128, num_class=10, make_conditional=False)
+indexes = torch.randint(0,16,size=(2,32,32))
+out = pc2(indexes)
+param_cnt = sum(p.numel() for p in pc2.parameters() if p.requires_grad)
+print(f'pc2gated output: {tuple(out.shape)} paramcount: {param_cnt:,}')
+# show_receptive_field(indexes, out)
+#%%
+conditional = True
+use_fp16 = True
+
+batch_size = 64
+sample_size = 80    # for generation
+selected_label=None # create samples for each class
+rows=10
+cols=8
+if dataset == 'celeba':
+    num_classes = 40
+elif dataset == 'tinyimagenet':
+    num_classes=200
+    # sample_size = num_classes * 1
+    # or we can specify portion of classes for generation
+    selected_label = [i for i in range(sample_size)]
+    # rows = 20
+    # cols = 10
+else:#mnist,cifar10
+    num_classes = 10
+
+# update skipcon to have houtputresidual instead of vhout!
+
+prior = PixelCNN2Gated(num_embds=model.embd_num, embedding_size=256,
+                 num_class=num_classes,
+                 make_conditional=conditional,
+                 dropout_rate=0.1,).to(device)
+
+prior, ckptname = train_prior(prior=prior,
+                              vqvae_model=model,
+                              dataloader_train=dataloader_train,
+                              dataloader_val=dataloader_test,
+                              dataset_name=dataset,# for logging purposes only!
+                              num_classes=num_classes, 
+                              epochs=120,
+                              batchsize=batch_size,
+                              lr=0.001,#0.001
+                              weight_decay=1e-2,#1e-2
+                              use_fp16=use_fp16,
+                              selected_label=selected_label,
+                              temperature=1,#1
+                              sample_size=sample_size,# for generation
+                              rows=rows,
+                              cols=cols,
+                              device='cuda',
+                              generation_device='cuda',
+                              figsize=(12,16),
+                              seed=66,
+                              checkpoint_dir_path='./weights/prior/emb256/pixelcnn2gated',
+                              recons_dir_path='./results/pixelcnn2gated/',
+                              )
+
+# initially I had a lot of issues ofr training so in order to figure out what was wrong
+# I trained MNIST, and in doing so foundout the signals were messed up and basically 
+# the absolute majority of the the images didnt get a proper signal (see visualization of failed trainings
+# when we added vout and hout together!) after I excluded the hout in the blocks, it started
+# training properly. its still not good compared to previous versions, but at least it works now
+# 
+
+#%%
+# MNIST FP32/Prior- FP32 VQVAE (vqvae_MNIST_64x64_08_35_02 - 2025_04_13.ckpt)
+# Epoch: 119/120  | Loss: 0.660181 | Val-Loss: 1.320644 | BPD: 0.952440 |  BPD_VAL: 1.905287 | LR:0.000000
+# the generation looks ok, the debugging section also shows proper reconstructions and latents close to
+# original sample.
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_135854/vqvae_prior_MNIST_embd256_Conditional_20250504_135854.ckpt'
+
+
+# MNIST -the exact same config as before except I removed relu/bn on vout+proj)
+# to test this, makesure to disable relu/bn for vproj otherwise you cant load this properly
+# the loss is worse, so having the relu/bn on vproj helps positively! the generation is also worse than previous experiment
+# Epoch: 119/120  | Loss: 0.685328 | Val-Loss: 1.228615 | BPD: 0.988719 |  BPD_VAL: 1.772517 | LR:0.000000
+# ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_MNIST_embd256_Conditional_20250504_151925/vqvae_prior_MNIST_embd256_Conditional_20250504_151925.ckpt'
+
+
+# the cifar10 doesnt look good, it doesnt give us anything meaningful, images are deformed
+# to the point some classes dont even look anything but blobs of colors! this doesnt look
+# good at all suitable for cifar10. I like the previous methods better unless we start
+# debugging it and see whats going haywire! which I dont like we spent too much time on this
+# already and its not our focus!
+# at epoch 80 we can see some classes have faint objects, like ships, dogs, trucks!
+# our loss keeps decreasing, but its very slow! cinoared to previous architectures
+# so given more epochs we should getbetter result
+# Epoch: 119/120  | Loss: 2.700160 | Val-Loss: 3.029902 | BPD: 3.895507 |  BPD_VAL: 4.371224 | LR:0.000000
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557/vqvae_prior_CIFAR10_embd256_Conditional_20250504_205557.ckpt'
+
+# July 23 2025 test 100 epochs, due to frequent power outages I cant train more
+# I'm just checking the code and see if everything works. 
+ckptname = './weights/prior/emb256/pixelcnn2gated/vqvae_prior_CIFAR10_embd256_Conditional_20250723_081042/vqvae_prior_CIFAR10_embd256_Conditional_20250723_081042.ckpt'
+
+print(f'{dataset=}')
+print(f'{device=}\n')
+ckpt = torch.load(ckptname, weights_only=False)
+model_config = ckpt["model_config"]
+dropout_rate = model_config.pop('dropout_rate', 0.1)
+# I didnt store extra information for some earlier experiments
+# so this is to account for them
+loss = ckpt.pop('loss',float('inf'))
+bpd = ckpt.pop('bpd',float('inf'))
+dataset = ckpt.pop('dataset', dataset)
+
+prior = PixelCNN2Gated(**model_config,dropout_rate=dropout_rate).to(device)
+prior.load_state_dict(ckpt["state_dict"])
+prior.eval()
+
+print(f'{prior.__class__.__name__} loaded!')
+for k,v in list(model_config.items())+[("dropout_rate", dropout_rate)]:
+    print(f'{k:<16} : {v}')
+
+print(f'Epoch       : {ckpt["epoch"]}')
+print(f'Dataset     : {dataset.upper()}')
+print(f'train_Loss  : {loss:.4f} | BPD: {bpd:.4f}')
+print(f'val_Loss    : {ckpt['val_loss']:.4f} | BPD: {ckpt['bpd_val']:.4f}')
+
+
+display_generated_samples(vqvae_model=model,
+                          prior_model=prior,
+                          dataset=dataset,
+                          num_classes=10,
+                          selected_label=None,
+                          batch_size=80,
+                          temperature=1,
+                          rows=10,
+                          cols=8,
+                          figsize=(12,16),
+                          seed=None)
+
+latent_codes, latent_labels = get_discrete_latent_codes(model, dataloader_train)
+generated_image1 = generate_simple(model, latent_codes,batch_size=80)
+# print(f'{generated_image1.shape=}')
+view_images(generated_image1,torch.ones(generated_image1.size(0),1),rows=8,cols=8,title='generate_simple')
+
+#%%
+batch_size=80
+selected_label = None
+generated_image, latents = generate2(vqvae_model=model,
+                                    prior=prior,
+                                    batch_size=80,
+                                    temperature=1,
+                                    num_classes=num_classes,
+                                    class_label=None,
+                                    top_p=0.95,
+                                    device='cuda')
+
+# print(f'{generated_image.shape=}')
+class_names = get_class_names(dataset,num_classes)
+if selected_label:
+        labels = torch.ones(size=(batch_size,),dtype=torch.long)*selected_label
+        label_texts = [class_names[selected_label] for _ in range(batch_size)]
+else:
+    sample_count = batch_size//num_classes
+    labels = torch.arange(num_classes).long().repeat_interleave(sample_count).tolist()
+    label_texts = [class_names[labels[i]] for i in range(len(labels))]
+
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+view_images(generated_image,label_texts,rows=10,cols=8,title='pixelcnn2',fname_to_save_as=f'./results/pixelcnn2/pixelcnn2_topp95_{timestamp}.jpg')
+
+#%%
+imgs, labels = next(iter(dataloader_train))
+print(f'{labels.shape=}') 
+compare_real_vs_prior(vqvae=model,
+                      prior=prior,
+                      dataset_name=dataset,
+                      imgs=imgs, 
+                      labels=labels,
+                      batch_size=4,
+                      num_classes=num_classes,
+                      class_names=get_class_names(dataset,num_classes),
+                      # using topp is the way to go gives the best results
+                      # first disable advanced sampling and see the default
+                      # genertaion performance then enable adavanced_sampling
+                      # and see the difference
+                      advanced_sampling=True,
+                      temperature=1,
+                      top_k=0,#3 seems to be a good spot for my currentcifar10 model
+                      #for testing top_p either leave top_k=0, or make sure its a 
+                      # larger number so the pool is not so small top_p cant do much!
+                      # this actually was my bug that prevented me from usingtop_p
+                      top_p=1,
+                      device=device,
+                      figsize=(12,16),
+                      save_figure=True,
+                      save_dir='./results/debugging/pixelcnn2',
+                      seed=None)
+
+
+visualize_latent_distribution([discrete_latents_real, latents_prior],
+                             ["Real (Encoder)", "Prior (Generated)"],
+                             model.embd_num,
+                             figsize=(12,8),
+                             num_indexes_per_bins=1)
+
+# link to results and weights
+# I tried to upload all of the weights and visualizations 
+# during my experiments, check them out from these links:
+# https://mega.nz/folder/kQMigB7C#i_q5kOglxytRFQJsH18lww
+# link2 https://mega.nz/folder/KgIgjS7S#UK18oRjXJrNx2SMEXw1WUg
+#%%
 # # Contractive Autoencoder
 # main paper : http://www.icml-2011.org/papers/455_icmlpaper.pdf
 # ref1: https://wiseodd.github.io/techblog/2016/12/05/contractive-autoencoder/
 # ref2: https://www.youtube.com/watch?v=BW7P1fvnAWk
-# So we have seen many different flavors of a Autoencoders. However, there is one more autoencoding method on top of them, dubbed 
+# 
+# So we have seen several different flavors of a autoencoders so far(the classic ones of course there are many newer variants!). 
+# However, there is one more autoencoding method on top of them, known as 
 # Contractive Autoencoder (Rifai et al., 2011).
 # The contractive autoencoder is categorized as a regularizier autoencoder. in other words
-# This autoencoder specifically prevents an overcomplete autoencoder from learning identity
+# This autoencoder specifically prevents an overcomplete autoencoder from learning the identity function
 # which basically means, it prevents it from copying/memorizing the input as apposed to learning
 # benificial features to reconstruct the input that matters for us. 
 # using the regularization term that we will get to shortly, this can also be used on undercomlete
 # encoders as well. 
-# It will achieve this , by adding a new term to the weight matrix. which is as follows: 
+# It will achieve this, by adding a new term to the weight matrix. which is as follows: 
 #                  2 
 # Ω(Ø) =  ‖ Jx(h) ‖p 
 # lets expand this and see what this term actually is. 
@@ -1922,13 +12748,14 @@ plot_latentspace(num_rows)
 # ‖  ‖p  is called a norm. a Frobenius Norm. Frobenius Norm is like L2 norm (Eculidean norm)
 # and is used on matrix and is calculated as the square root of the sum of the absolute squares of its elements
 # which means, we simply sum all the elements in a mxn matrix and then take the square root of it.
-# Now what is it applied on? it is applied on Jx(h). what is Jx(h) you may ask? Its the Jacobian
-# Matrix. what is a Jacobian matrix. it simply a matrix of partial derivatives of all elements 
-# with respect to all inputs. if you closely you can see that we have Jx(h), J, x and h . 
+# Now what is it applied on? it is applied on Jx(h). 
+# what is Jx(h) you may ask? Its the Jacobian Matrix. what is a Jacobian matrix?
+# it simply a matrix of partial derivatives of all elements with respect to all inputs.
+# if you look closely you can see that we have Jx(h), J, x and h.
 # x is our input, h is our parameters. Jx(h) means, a matrix of partial derivitives of all parameters
-# with respect to x. How does it look like ? this is roughly how it looks like : 
+# with respect to x. How does it look like ? this is roughly how it looks like: 
 # suppose, input has n dimensions and our hidden layer has h dimensions. 
-# our resulting jabobian matrix will have n+k dimensions 
+# our resulting jabobian matrix will have n+k dimensions
 #         | dh1/dx1, dh1/dx2, dh1/dx3, ..., dh1/dxn|
 # Jx(h) = | dh2/dx1, dh2/dx2, dh2/dx3, ..., dh2/dxn|
 #         | dh3/dx1, dh3/dx2, dh3/dx3, ..., dh3/dxn|
@@ -1940,15 +12767,16 @@ plot_latentspace(num_rows)
 # derivative for all neurons in our hidden layer with respect to the second input and so on.
 # So basically when we are taking the derivative of a vector with respect to another vector
 # we get a matrix that you see above.  we can say each row belongs to one neuron and each col
-# represents an the respective neurons gradient with respect to all inputs.
+# represents all neurons gradient with respect to a single input.
 # So, what does all of this mean? what does each entry in the Jacobian matrix mean for us? 
-# what can we infer from lets say element (i,l) of this matrix? 
-# Thie (i,l)th element simply tells us, howmuch the h(l) changes with a change in x(i) 
+# what can we infer from lets say element (i,l) of this matrix(i being inputs index as in 
+# x_i and l being neurons index, being n_l)? 
+# The (i,l)th element simply tells us, howmuch the h(l) changes with a change in x(i) 
 # basically each entry in the jacobian matrix captures the variation in the output of
-# the lth neuron with a small variation in the jth input. 
+# the lth neuron with a small variation in the ith input.
 # OK, now what does the Frobenious norm capture here? 
-# what do we get by adding all the lements absolute values and squaring them? 
-# This basically shows, howmuch each of these lements vary with respect to the input 
+# what do we get by adding all the elments absolute values and squaring them? 
+# This basically shows, howmuch each of these elements vary with respect to the input 
 # and we are taking the square of that (to make it more prounounced)
 # So this whole term is added to the loss function and the loss gets minimized. 
 # This means, we want our Frobenious norm to get minimized as well, which means we want
@@ -1959,9 +12787,9 @@ plot_latentspace(num_rows)
 # Lets get a better intuition on how this works : 
 # imagine, for example, dh1/dx1 goes actually to zero(dh1/dx1=0). what would that mean? 
 # It means, h1 is not sensitive to variations in x1!  
-#  but what does the original concept mandates here? what did we want to capture? 
+#  but what does the original concept mandate here? what did we want to capture? 
 # we wanted the neurons to capture these important characteristics (variations in input)
-# so if x1 changes, we want h1 to change as well .
+# so if x1 changes, we want h1 to change as well.
 # So we wanted to capture the important characteristics in the input by each neuron, but 
 # now, we have added a contradictory condition that we dont want to capture these kinds of 
 # variations! So what is happening here? 
@@ -1974,32 +12802,55 @@ plot_latentspace(num_rows)
 # h_i is not sensitive to variations in input. while clearly we said we want to capture such
 # variations (using the L(Ø) part in our loss)! 
 # Thats the catch here, we have two contradictory terms in our loss, one tries to capture 
-# the important features, while the other one tries just the opposite. 
+# the all features, while the other one tries just the opposite. 
 # L(Ø) says, capture the variations in the data while
 # Ω(Ø) says, do not capture the variations in teh data!
 # Whats the tradoff here? capture only the important variations in the data and 
 # do not capture the ones that are not important.
 # look at the following plot for example :
-#                  Y
-#             . %8.                                   
-#     .  . .    S@ .  .  . .  .  . .  .  . .  .  . .  
-#    .     . .  8X .       .       .       .       .
-#      .      . @%   . .     . .     . .     . .    
-#  .     .  . . 8t .     .       . .     .       .  
-#    .  .     . 8% .  .   . .  .   .:. U1  . .  .   .
-#   .     . .   8t .    .       ..8%.t .         .  
-#     .       . 8%  .      . . .%@888.    . . .    
-#    U2. .  .   8t .  .  .   .88 ;t.     .        . 
-# .X@:.       . 8%  .   .  ..8S:..  .  .     .  .   
-#  :X8X    .    @% .     .:SX...          .       . 
-#    . 8  . .  .8t .  . . ;8;.   .  . .     . .     
-#   .  %8@;.  . @%  . . %%8;.           .       .  .
-#     . ..X8@. .@% . .8SS%:.   .  .  .    .   .   . 
-#         . ;@8%8t :S@%:.        .     .    .   .   
-#  .  .       .X @  8S.     . .    .     .          
-#      . . . . .@888: . . .    . .  . . .  . . . . .
-#   . X@@X@@@X@X888@@@X@@@X@@@@@@X@@@@@@X@@@@@@X@.;;
-#              .:.                                X;
+
+        #                             Y
+        #                                *                                                                                                
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                                 
+        #                                *                                                                                               
+        #                                *                                              *@@@                                              
+        #                                *                                             *@ @  U1                                          
+        #                                *                                           *@@@                                               
+        #                                *                                          *@                                                     
+        #                                *                                        *@                                                       
+        #                                *                                     @*@@                                                        
+        #                                *                                     * @@                                                         
+        #                                *                                   * @@                                                           
+        #                                *                                 *@@                                                              
+        #                                *                               *@@@                                                               
+        #                                *                            @* @                                                                  
+        #       U2                       *                           * @ @@                                                                  
+        #     *                          *                          *@ @                                                                     
+        #       *                        *                        *@ @ @                                                                     
+        #          *                     *                       * @@                                                                        
+        #            *                   *                     *@@                                                                           
+        #              *                 *                  @*@@@                                                                           
+        #                *               *                 *@                                                                               
+        #                  *             *               *@@ @                                                                              
+        #                    *           *            @ *@                                                                                  
+        #                      *         *          @ *@@                                                                                   
+        #                        *       *         @*@@                                                                                     
+        #                          *     *       @*@                                                                                        
+        #                            *   *     @*@                                                                                         
+        #                              * *  @ *@                                                                                            
+        #                                * *                                                                                                 
+        #                                *                                                                                                 
+        #    ******************************************************************************************************** 
+        #                                                                                                             X    
+# shape: "./contractive_autoencoder_u1_u2_axis_plot.png"
 # 
 # So This is how it goes, we have 2 dimensions u1 and u2 , of which u1 is more important
 # as the data variation along the u1 dimension is something that we should care about
@@ -2012,7 +12863,8 @@ plot_latentspace(num_rows)
 # dimension which is U2 . 
 # So by doing so we balance the two conditions. one condition tries to capture all the
 # important variations and says do this, but do it only for dimensions that only their features
-# (variations) are important . the other condition says, dont capture information , it says
+# (variations) are important. 
+# the other condition says, dont capture information, it says
 # do this, but only for the dimensions that are not important.
 # This is like PCA  (unbder certain conditions, vanilla autoencoder is equivalent to PCA)
 # the passage from "Representation Learning: A Review and New Perspectives" by Bengio,
@@ -2065,7 +12917,6 @@ plot_latentspace(num_rows)
 # -=- Olivier
 
 # Autoencoders with tied weights have some important advantages :
-
 #     It's easier to learn.
 #     In linear case it's equvialent to PCA - this may lead to more geometrically adequate coding.
 #     Tied weights are sort of regularisation.
@@ -2082,7 +12933,7 @@ plot_latentspace(num_rows)
 #  are explaining the most of the variance in data (exatly like PCAs do). This is why such 
 # representation might be pretty useful in further phase of learning.
 
-# https://medium.com/@SeoJaeDuk/arhcieved-post-personal-notes-about-contractive-auto-encoders-part-1-ef83bce72932
+# https://agustinus.kristia.de/blog/contractive-autoencoder/
 
 
 
@@ -2226,6 +13077,11 @@ def loss_function2(W, x, recons_x, h, lam=1e-4):
     return mse + contractive_loss.mul_(lam)
 
 # torch.autograd.set_detect_anomaly(True)
+dataset = 'mnist'
+batch_size = 128
+dataset_train, dataset_test, dataloader_train, dataloader_test = select_dataset(dataset_name=dataset, batch_size=batch_size)
+
+
 epochs = 50 
 interval = 2000
 embedding_size = 5
@@ -2241,17 +13097,28 @@ for e in range(epochs):
     for i, (imgs, labels) in enumerate(dataloader_train):
         imgs = imgs.to(device)
         labels = labels.to(device)
-        # note imgs is not a leaf node, so the gardients wouldnot be ratained
-        # in order to ratain gradients for non leaf nodes, use retain_graph
-        # .grad field is only populated for leaf Tensors. If you want it for other Tensors, 
-        # you can use the imgs.retain_grad() function to get the .grad field populated 
-        # for non-leaf Tensors. but I found it esaier to just enable/diable the grads
-        # inside the training loop and thus outside of lossfunction. 
-        # also imgs.retain_grad() shuold be called before doing forward() as it will
-        # instruct the autograd to store grads into nonleaf nodes. 
-        imgs.retain_grad()
+        #
+        # note that imgs is a leaf tensor but with requires_grad=False, 
+        # (its a leaf node/tensor because its loaded from the dataloader
+        # and not the result of any operation)
+        # since we want to compute gradients with respect to imgs, we need to 
+        # enable its gradients (do imgs.requires_grad_(True))
+        # if we want the .grad field to be populated for non-leaf tensors
+        # (that is the intermediate results in the computation graph), we 
+        # must call .retain_grad() on those tensors before the forward pass.
+        # for example!
+        # that is something like this:
+        # out = model(imgs)
+        # out.retain_grad()
+        # loss = loss_function(outputs, labels)
+        # loss.backward()
+        # print(out.grad)
+        # we dont need to do that here, since simply enabling grads for imgs should
+        # be enough and the rest of the tensors involved already have proper
+        # gradients and we dont need to do soething like imgs.retain_grad()!
+        # its grads(.grad) will be populated after loss.backward().
         imgs.requires_grad_(True)
-        
+
         outputs_e, outputs = model(imgs)
         loss = loss_function(outputs_e, outputs, imgs, lam,device)
         # loss = loss_function2(W, imgs, outputs, outputs_e, lam)
@@ -2428,7 +13295,8 @@ plt.imshow(img)
 # first on Microsoft Research.
 
 #%%
-# Adversarial Autoencoder https://blog.paperspace.com/adversarial-autoencoders-with-pytorch/
-
+# Adversarial Autoencoder
+# good to read: https://blog.paperspace.com/adversarial-autoencoders-with-pytorch/
+#
 
 #%% [markdown]
