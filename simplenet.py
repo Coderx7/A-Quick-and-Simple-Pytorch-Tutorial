@@ -16,6 +16,7 @@ Official Pythorch impl at https://github.com/Coderx7/SimpleNet_Pytorch
 Seyyed Hossein Hasanpour
 """
 import os
+import tempfile
 import math
 import torch
 import torch.nn as nn
@@ -349,10 +350,11 @@ def _gen_simplenet(
             raise Exception(f"Unknown model variant ('{model_variant}') specified!")
         url = cfg["url"]
         checkpoint_filename = url.split("/")[-1]
-        checkpoint_path = f"tmp/{checkpoint_filename}"
-        print(f"saving in checkpoint_path:{checkpoint_path}")
+        checkpoint_dir = os.path.join(torch.hub.get_dir(), 'checkpoints')
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
         if not os.path.exists(checkpoint_path):
-            os.makedirs("tmp", exist_ok=True)
+            print(f"Saving checkpoint to: {checkpoint_path}")
+            os.makedirs(checkpoint_dir, exist_ok=True)
             download_url_to_file(url, checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location="cpu",)
         model.load_state_dict(checkpoint)
@@ -580,4 +582,4 @@ if __name__ == "__main__":
     # out.mean().backward()
     print(model)
     print(f"output: {out.size()}")
-
+    print(f'{torch.hub.get_dir()=}')
