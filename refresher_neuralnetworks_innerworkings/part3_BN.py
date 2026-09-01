@@ -10,26 +10,30 @@
 #%%
 import sys, os
 from typing import Any
+import pandas
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 %matplotlib inline
 
 names = open('./data/names.txt').read().splitlines()
+print(f'names: {len(names):,}')
+print(f'{names[:10]=}')
 # lets extract the alphabet and create atoi and itoa mappings
 atoi={'.':0}
 atoi.update({ch:i for i,ch in enumerate(sorted(set(''.join(names))),start=1)})
 
 itoa = {v:k for k,v in atoi.items()}
 # lets test 
-print(f'{atoi=}')
-print(f'{itoa=}')
+print(f'atoi Length: {len(atoi)}, {atoi=}')
+print(f'itoa Length: {len(itoa)}, {itoa=}')
 # now we need to create dataset of inputs with 3 characters as input
 # and the next one be the label
 context = ''
 X=[]
 Y=[]
 block_size=3
+# try the first 5 names first
 for name in names[:5]:
     context = [0]*block_size
     for ch in name+'.':
@@ -46,10 +50,10 @@ g = torch.Generator().manual_seed(255)
 X=torch.tensor(X)
 Y=torch.tensor(Y)
 
-print(f'{X.shape}')
-print(f'{Y.shape}')
-
-C=torch.randn(size=(X.shape[0],2), generator=g)
+print(f'{X.shape=}')
+print(f'{Y.shape=}')
+vocab_size = len(atoi)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(100)
 W2= torch.randn(size=(100, 27),generator=g)
@@ -67,7 +71,7 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # lets create batches of data and run this as several minibatches
     # instead of one huge batch of all the datasets 
     # in order to gett he whole samples, we randomly create sample indexes
-    idxs = torch.randint(0,X.shape[0],size=(batch_size,))
+    idxs = torch.randint(0,X.shape[0],size=(batch_size,),generator=g)
     
     # get the whole datasets embeddings in one go! and dont forget to reshape!
     embds = C[X[idxs]].reshape(batch_size,-1)
@@ -109,16 +113,16 @@ print(f'probs[0]: {probs[0]}')
 
 # now if we run this as you can see the loss is pretty high! 15.7703 to be exact in our case
 # however, we know that by deafult, all classes are as likely and all probablities must be the same
-# thus have a value of 1/27 or 0.0370! but we dont see this why? this happens because our network is wrongly very confident about and assigns
-# large probablities to some or all of the classes, thus resulting a larger loss
-# if we set all the weights to 0, we would get this behavior, but theres a problem
-# first lets see this first hand 
+# thus have a value of 1/27 or 0.0370! but we dont see this why? this happens because our network 
+# is wrongly very confident about and assigns large probablities to some or all of the classes, 
+# thus resulting a larger loss if we set all the weights to 0, we would get this behavior, 
+# but theres a problem first lets see this first hand 
 #%%
 # lets set the weight to 0 and see the result: 
 # as we can see the probablities for all classes is now the same 1/27=0.370, and the loss
 # is 3.2958, much smaller than what we used to get initially. but as we said theres an issue
 #
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(100)
 W2= torch.randn(size=(100, 27),generator=g) * 0
@@ -135,7 +139,7 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # lets create batches of data and run this as several minibatches
     # instead of one huge batch of all the datasets 
     # in order to gett he whole samples, we randomly create sample indexes
-    idxs = torch.randint(0,X.shape[0],size=(batch_size,))
+    idxs = torch.randint(0,X.shape[0],size=(batch_size,),generator=g)
     
     # get the whole datasets embeddings in one go! and dont forget to reshape!
     embds = C[X[idxs]].reshape(batch_size,-1)
@@ -172,7 +176,7 @@ print(f'probs[0]: {probs[0]}')
 #         0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370,
 #         0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370, 0.0370],
 #        grad_fn=<SelectBackward0>)
-# the issue is that need to break symetry so nearons are forced to learn different things
+# the issue is that need to break symetry so neurons are forced to learn different things
 # when the initial values for all neurons is the same, the do the same thing with the same input
 # so to speedup the learning process we'd like to have a bit of entropy and break symetry 
 # thats why we dont use 0s for all the weights. setting weights to zero has other issues
@@ -187,7 +191,7 @@ print(f'probs[0]: {probs[0]}')
 # now lets make w2 and b2 have a much smaller values, one way is to simply initialize them
 # with smaller numbers, a simple way would be to multiply them by a small constant
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(100)
 W2= torch.randn(size=(100, 27),generator=g) * 0.01
@@ -204,7 +208,7 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # lets create batches of data and run this as several minibatches
     # instead of one huge batch of all the datasets 
     # in order to gett he whole samples, we randomly create sample indexes
-    idxs = torch.randint(0,X.shape[0],size=(batch_size,))
+    idxs = torch.randint(0,X.shape[0],size=(batch_size,),generator=g)
     
     # get the whole datasets embeddings in one go! and dont forget to reshape!
     embds = C[X[idxs]].reshape(batch_size,-1)
@@ -257,10 +261,11 @@ print(f'probs[0]: {probs[0]}')
 # this semantic was not enforced and network was overly confident that some classes were 
 # more likely to happen than others (or less likely to happen than others, thus skewing
 # the results for the worse)). after this change it can now do its job better and faster!
-# if we plot the losses (making it bigger with log10 to see it better), we see that its 
-# like a hokey stick initially but after this change, the whole loss values seem to be
+# later we see that if we plot the losses (making it bigger with log10 to see it better),
+# its like a hokey stick at first but after this change, the whole loss values seem to be
 # in the same range almost, as apposed to the past where initially loss values were much
 # higher than the the ones at the end. 
+
 #%%
 # Now the issues with initialization is not yet over. infact if we look at the 
 # previous layer which incorporates a tanh() nonlinearity, we notice some intresting
@@ -268,7 +273,7 @@ print(f'probs[0]: {probs[0]}')
 # the changes, I divided the tanh() layer operations into 3 separate one. 
 # now before we go on, lets plot the network and learn sth new 
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(100)
 W2= torch.randn(size=(100, 27),generator=g) *0.01
@@ -340,12 +345,15 @@ print(f'tanh outputs[0]: {h_output[0]}')
 # plotting these values as a histogram and visualizing it makes it more intuitive and 
 # apparent whats going on and why
 plt.hist(h_output.view(-1).tolist(),bins=50)
+plt.title('visualizing tanh output values')
+plt.show()
 # side note this is the same as doing plt.hist(outputs.view(-1).detach().numpy(),bins=50)
 # lets also plot the preactivations before the tanh is applied on them 
 figure, axs = plt.subplots(2)
-figure.suptitle('visualizing values after and before tanh')
-axs[0].hist(h_output.view(-1).tolist(), bins=50)
-axs[1].hist(preact.view(-1).tolist(), bins=50)
+figure.suptitle('visualizing values before and after tanh')
+axs[0].hist(preact.view(-1).tolist(), bins=50)
+axs[1].hist(h_output.view(-1).tolist(), bins=50)
+plt.show()
 # as you can see, the outputs_preactivation base is very spread! it ranges from -7.5 - 10!
 # which is too spread apart! as we saw previously, we want our values to be closer to 0
 # this would allow the activation functions such as tanh(), not work much and dont create
@@ -359,7 +367,13 @@ axs[1].hist(preact.view(-1).tolist(), bins=50)
 # to further elaborate this, lets see how many neurons in that layer actually fire at the extremes
 # for every single input in our batch!
 plt.figure(figsize=(10,5))
+# we have a batch of size (32,100) so we can treat it as a grayscale image
+# thats values are in -1/1 range, we can then filter its values, and 
+# show a mask where what precentage of values are in a specific range 
+# (near 1/-1 e.g to see how saturated neurons are)
 plt.imshow(h_output.abs()>0.95, cmap='gray', interpolation='nearest')
+plt.title('active neurons(white) at extreme ends (displaying abs(values)>0.95)')
+plt.show()
 # the white dots/blocks signify that the neurons at these places are very active and their output
 # are at the extreme ends 1/-1, the balck ones are either in between, note that black here
 # doesnt mean the neurons are dead, a dead neuron produces 0 regardless of input, so if e.g.
@@ -370,6 +384,8 @@ plt.imshow(h_output.abs()>0.95, cmap='gray', interpolation='nearest')
 # other than this will be treated as black!
 plt.figure(figsize=(10,6))# im changing the figsize slightly so it doesnt overwrite the previous plot!
 plt.imshow(h_output.abs()>0.99, cmap='gray', interpolation='nearest')
+plt.title('active neurons(white) at extreme ends (displaying abs(values)>0.99)')
+plt.show()
 # if we were to catch dead neurons a better way would be to look for 0 specifically!
 # any way, so when it comes to squashing functions such as tanh, relu, sigmoid, etc
 # we need to take extra precautions 
@@ -378,7 +394,7 @@ plt.imshow(h_output.abs()>0.99, cmap='gray', interpolation='nearest')
 # their values , how do we do that? during initialization we can enfoce this as well!
 #%% lets apply this enforcement here on w1 and b1 as well and see the result
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g) *0.01
 b1 = torch.ones(100) *0.01
 W2= torch.randn(size=(100, 27),generator=g) * 0.01
@@ -396,7 +412,7 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # lets create batches of data and run this as several minibatches
     # instead of one huge batch of all the datasets 
     # in order to gett he whole samples, we randomly create sample indexes
-    idxs = torch.randint(0,X.shape[0],size=(batch_size,))
+    idxs = torch.randint(0,X.shape[0],size=(batch_size,),generator=g)
     
     # get the whole datasets embeddings in one go! and dont forget to reshape!
     embds = C[X[idxs]].reshape(batch_size,-1)
@@ -441,6 +457,8 @@ plt.figure(figsize=(10,5))
 # good now we see no values at the extreme ends which is what we want, the image is black 
 # signifying no values in outputs is larger than 0.95 or almost 1 
 plt.imshow(h_output.abs()>0.95,cmap='gray', interpolation='nearest')
+plt.title('active neurons(white) at extreme ends (displaying abs(values)>0.95)')
+plt.show()
 #%% so now that we changed the weights, we should get a better loss 
 # but also note that this is not necessarily needed for this simple example, as the 
 # network may ultimately reach to the good ending as its very simple problem
@@ -459,13 +477,11 @@ print(f'{w.mean()=:.4f}, std: {w.std():.4f}') # w.mean()=0.0064, std: 1.0079
 print(f'{y.mean()=:.4f}, std: {y.std():.4f}') # y.mean()=0.1327, std: 10.0168
 # which basically shows the x, w having mean of 0 and std of 1, but y isnt following!
 # lets plot them and see this in practice!
-plt.subplot(311)
-plt.hist(x.view(-1), bins=50,density=True);
-plt.subplot(312)
-plt.hist(w.view(-1), bins=50,density=True);
-plt.subplot(313)
-plt.hist(y.view(-1), bins=50,density=True);
-
+plt.figure(figsize=(10,5))
+plt.subplot(311), plt.hist(x.view(-1), bins=50,density=True); plt.legend('x')
+plt.subplot(312), plt.hist(w.view(-1), bins=50,density=True); plt.legend('w')
+plt.subplot(313), plt.hist(y.view(-1), bins=50,density=True); plt.legend('y')
+plt.show()
 # as you can see, the y is simply much more spread than x or w! and if we take a larger w
 # it becomes evern broader at the base (std increases!)
 x = torch.randn(size=(1000,100))
@@ -482,18 +498,18 @@ print(f'{y.mean()=:.4f}, std: {y.std():.4f}') # y.mean()=0.2204, std: 40.1171
 print(f'{w2.mean()=:.4f}, std: {w2.std():.4f}') # w2.mean()=-0.0000, std: 0.1921
 print(f'{y2.mean()=:.4f}, std: {y2.std():.4f}') # y2.mean()=-0.0101, std: 1.9155
 
-plt.subplot(311)
-plt.hist(x.view(-1), bins=100,density=True,color='gray');
-plt.subplot(312)
-plt.hist(w.view(-1), bins=100,density=True,color='gray');
-plt.subplot(313)
-plt.hist(y.view(-1), bins=100,density=True,color='gray');
+plt.figure(figsize=(8,7))
+plt.subplot(311),plt.hist(x.view(-1), bins=100,density=True,color='gray')
+plt.legend('x')
 
-plt.subplot(312)
-plt.hist(w2.view(-1), bins=100,density=True, color='orange');
-plt.subplot(313)
-plt.hist(y2.view(-1), bins=100,density=True, color='orange');
+plt.subplot(312),plt.hist(w.view(-1), bins=100,density=True,color='gray')
+plt.subplot(312),plt.hist(w2.view(-1), bins=100,density=True, color='orange')
+plt.legend(['w','w2'])
 
+plt.subplot(313),plt.hist(y.view(-1), bins=100,density=True,color='gray')
+plt.subplot(313),plt.hist(y2.view(-1), bins=100,density=True, color='orange'),
+plt.legend(['y','y2'])
+plt.show()
 
 # the x stays the same, but both w and y's std has increased 4 times! 
 # so as we increase the value, the values at y basically get more and more extreme values!
@@ -504,8 +520,8 @@ plt.hist(y2.view(-1), bins=100,density=True, color='orange');
 # so how do we choose a good value? 
 # it turns out that in order to remain guassian or better said, to keep our activations throughout 
 # the network (that can consist of many layers and activation functions) from expanding 
-# to infinity or getting collapsed(i.e. shrink all the way to zero), and keep them wellbehaved we need to divide our weight matrix by
-# (i.e. they have reasonable values throughout the network) 
+# to infinity or getting collapsed(i.e. shrink all the way to zero), and keep them wellbehaved 
+# (i.e. they have reasonable values throughout the network) we need to divide our weight matrix by 
 # the fan_in squared (fan_in is the number of inputs to that weight matrix)
 x = torch.randn(size=(1000,10))
 w = torch.randn(size=(10,200)) /10**1/2
@@ -517,6 +533,7 @@ fig, axs = plt.subplots(2)
 fig.suptitle('mean and std after normalizing based on fan_in')
 axs[0].hist(w.view(-1), bins=50); 
 axs[1].hist(y.view(-1), bins=50); 
+plt.show()
 # now here, we just did whats known for linear layer, but when there are activation functions
 # involved, this changes a bit, like for relu, its (2/fan_in)**0.5 , 2 beucase relu ignores
 # half of the input (its max(0,x)). and is known as gain. different activation functions require 
@@ -539,9 +556,11 @@ axs[1].hist(y.view(-1), bins=50);
 # unit standard deviation) thats why we use gain!
 # so we want to set our standard deviation (std) to be gain/(fan_in**0.5), which intuitivley
 # means to do sth like this : 
-print(f"std: {torch.randn(10000).std()=:.4f}")
+print('Default values:')
+print(f" std: {torch.randn(10000).std() = :.4f}")
 # now look what happens when we multiply this by a factor like 0.2
-print(f"std: {(torch.randn(10000) * 0.2).std()=:.4f}")
+print('Shrinking std by scaling the values:')
+print(f" std {(torch.randn(10000) * 0.2).std() = :.4f}")
 # this scaled down the gaussian and shrunk the std, it became the exact factor we use to 
 # multiply our vector with!
 # so when we were multiplying 0.01 or 0.2 with our weight matrixes before, we were in fact
@@ -553,7 +572,7 @@ print(f"std: {(torch.randn(10000) * 0.2).std()=:.4f}")
 # note during tests I foundout that the fan_in of 6 for tanh doesnt just work properly!
 # as you can see, it just creates a std of ~0.7 which is still not enough for solving the issue
 # visualizing the histogram of output shows this clearly that the values are at the extreme ends
-# signifying the need for smaller std to avoid saturation . 
+# signifying the need for smaller std to avoid saturation. 
 # also its very important that we may very well have a guassian distribution for our w
 # but during the course of training the weights shift to a nother distribution, 
 # we can test this here as well and set a break at the first iteration and see the distibutions
@@ -561,7 +580,10 @@ print(f"std: {(torch.randn(10000) * 0.2).std()=:.4f}")
 # distribution diverged from the initial guassian, this is why we present sth called BN later on
 # read on !
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
+# as we said, the 5/3 gain doesnt seem to work better than 0.01,
+# for now, we can use 5/3, or go with 0.01. the behavior we see here changes
+# drastically when there are more layers involved,we see why this is the case later on
 W1 = torch.randn(size=(6, 100),generator=g) * 0.01#((5/3)/6**0.5) # gain for tanh is 5/3
 b1 = torch.ones(100) *0.01
 W2= torch.randn(size=(100, 27),generator=g) * 0.01
@@ -594,10 +616,10 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # now lets calculate the loss which is negative loglikelihood
     loss = F.cross_entropy(logits, Y[idxs])
     # which is equiavalent to do 
-    loss2 = -probs[torch.arange(batch_size), Y[idxs]].log().mean()
+    # loss2 = -probs[torch.arange(batch_size), Y[idxs]].log().mean()
     # print the loss once in a while!
-    if i %10000:
-        print(f'{loss.item()=:.4f}, {loss2.item()=:.4f}')
+    if (i%10000==0):
+        print(f'Iter: {i:<6,} Loss: {loss.item():.4f}')
     
     # lets make loss bigger for better visualization!
     losses.append(loss.item())
@@ -618,7 +640,7 @@ fig.suptitle('weights and activation distributions')
 axs[0].hist(preact.view(-1).tolist(), bins=50,density=True); # ; is used for suppressing the output
 axs[1].hist(h_output.view(-1).tolist(), bins=50,density=True);
 axs[2].hist(logits.view(-1).tolist(), bins=50,density=True);
-
+plt.show()
 #%%
 # knowing these are good for intuition, but nowadays, initializing deep networkds dont reauire
 # this maticulous approach of finetuning everything, by using normalization layers, such as 
@@ -670,7 +692,7 @@ result = bn_gain_alpha*preact_hat + bias
 # so now lets put this into our network!
 #%%
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g) * 0.01#((5/3)/6**0.5) # gain for tanh is 5/3
 b1 = torch.ones(100) *0.01
 W2= torch.randn(size=(100, 27),generator=g) * 0.01
@@ -717,10 +739,10 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # now lets calculate the loss which is negative loglikelihood
     loss = F.cross_entropy(logits, Y[idxs])
     # which is equiavalent to do 
-    loss2 = -probs[torch.arange(batch_size), Y[idxs]].log().mean()
+    # loss2 = -probs[torch.arange(batch_size), Y[idxs]].log().mean()
     # print the loss once in a while!
-    if i %10000:
-        print(f'{loss.item()=:.4f}, {loss2.item()=:.4f}')
+    if (i %10000==0):
+        print(f'Iter: {i:<6,} Loss: {loss.item():.4f}')
     
     # lets make loss bigger for better visualization!
     losses.append(loss.item())
@@ -741,6 +763,7 @@ fig.suptitle('weights and activation distributions after BN')
 axs[0].hist(preact.view(-1).tolist(), bins=50,density=True); # ; is used for suppressing the output
 axs[1].hist(h_output.view(-1).tolist(), bins=50,density=True);
 axs[2].hist(logits.view(-1).tolist(), bins=50,density=True);
+plt.show()
 #%%
 # if we dont get improved results, it means the network is not powerful enough, we might see
 # the improvement if we make it bigger (Next make it bigger and assess the changes)
@@ -781,14 +804,14 @@ with torch.no_grad():
 running_mean = torch.zeros(size=(1,100))
 running_std = torch.ones(size=(1,100))
 # running mean would be get the current value plus a bit of the currnet mean for current batch
-running_mean = 0.999*running_mean + (1-0.999)*mean 
+running_mean = 0.999*running_mean + (1-0.999)*mu 
 # likewise, for running std, pay attention to the current std, and plus a bit to the current batch
 running_std = 0.999*running_std + (1-0.999)*std
 # thats it, now lets incorporate this into our training : 
 #%%
 
 g=torch.manual_seed(255)
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g) * 0.01#((5/3)/6**0.5) # gain for tanh is 5/3
 b1 = torch.ones(100) *0.01
 W2= torch.randn(size=(100, 27),generator=g) * 0.01
@@ -851,8 +874,8 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
     # which is equiavalent to do 
     loss2 = -probs[torch.arange(batch_size), Y[idxs]].log().mean()
     # print the loss once in a while!
-    if i %10000:
-        print(f'{loss.item()=:.4f}, {loss2.item()=:.4f}')
+    if (i %10000==0):
+        print(f'Iter: {i:<6,} Loss: {loss.item():.4f}')
     
     # lets make loss bigger for better visualization!
     losses.append(loss.item())
@@ -1102,7 +1125,7 @@ layers:list[Embedding|Linear|Flatten] = [
           # there are 3 numbers in each sample, so the output of our embedding layer
           # would be (...,3,2) so we need to flatten the last dimension so it can be
           # used by and fed to the next linear layer 
-          Flatten(True),
+          Flatten(debug=False),
           Linear(embedding_size * block_size, 100), Tanh(), 
           Linear(100, 100), Tanh(), 
           Linear(100, 100), Tanh(),
@@ -1114,6 +1137,8 @@ parameters:torch.tensor = [p for l in layers for p in l.parameters()]
 n_parameters = sum(p.nelement() for p in parameters)
 print(f'{n_parameters=:,}')
 
+# train only for 1000 iterations. see below
+debug = False
 # remember this is not part of optimization so it must to take part in computational graph!
 with torch.no_grad():
     # now we should be able to initialize all the layers however we want!
@@ -1140,7 +1165,7 @@ with torch.no_grad():
             # so we see that the use of the right gain (i.e. 5/3) kept the std of all the layers
             # roughly the same and prevented them from collapsing. 
             # Also note that, if we were to only use the linear layers, the gain of 1 would be ok!
-            # however, its only after the use of tanh() nonlinearity that we need  to apply the new 
+            # however, its only after the use of tanh() nonlinearity that we need to apply the new 
             # gain. why? becasue tanh() is a squashing function, and and basically what they do
             # is that they take a distribution and squashe it, therefore arises the need for
             # componsating this squashing force by a gain of 5/3, so it counters that force
@@ -1181,7 +1206,10 @@ with torch.no_grad():
             # the std collapses, and range of values become very limited, close to zero, dimnishing
             # their signal stregnth)
             # 
-            # 
+            # ok, added a debug variable for this.
+            # enable debug=True and then experiment with these values,
+            # when done, set it to False and continue with the rest of tutorial.
+            #
             # layer.weight *= 0.5 
             # layer.weight *= 1
             # layer.weight *= 3
@@ -1226,7 +1254,7 @@ for i in range (max_iter):
     for p in parameters:
         p.data += -lr*p.grad
     
-    if i%10_000:        
+    if (i%10_000==0):        
         print(f'{loss=:.4f}') 
     
     if i%10_000==0:
@@ -1239,10 +1267,11 @@ for i in range (max_iter):
         update_ratio = [(lr*p.grad.std()/p.data.std()).log10().item() for p in parameters]
         update_ratios.append(update_ratio)
         
-    if i>=1000:
+    if debug and i>=1000:
+        print(f'DEBUG MODE: <<Training Stoped after {i} iterations>>')
         break
 
-print(f'iter: {i} loss:{loss.item():.4f}') # iter: 1000 loss:2.2748
+print(f'iter: {i} loss:{loss.item():.4f}\n') # iter: 1000 loss:2.2748
 
 legends=[]
 plt.figure(figsize=(20,4))
@@ -1287,7 +1316,7 @@ for i, layer in enumerate(layers[:-1]):
         # plot the points! note that plt doesnt know about torch tensors, so we give them numpy()
         # (.detach(), creates a numpy() copy of our tensor whcih matplotlib can use)
         plt.plot(hx.detach()[:-1], hy.detach(),)
-        legends.append(layer_name)
+        legends.append(f'layer{i}({layer_name})')
 plt.legend(legends)
 plt.title('gradient distribution')
 #%%
@@ -1320,7 +1349,7 @@ for i,p in enumerate(parameters):
         legends.append(f'{i} {shape}')
 plt.legend(legends)
 plt.title('parameters statistics')
-
+plt.show()
 #%% 
 # now lets plot the update ratios !
 # first create new figure with different size! 
@@ -1370,7 +1399,7 @@ for i,p in enumerate(parameters):
 # the ratios should be ~1e-3; indicate on plot
 plt.plot([0, len(update_ratios)],[-3,-3], 'k') 
 plt.legend(legends)
-
+plt.show()
 #%%
 #
 # now we saw that if we have an mlp (stack of linear layers), how we can calibrate it
@@ -1383,7 +1412,7 @@ layers:list[Embedding|Linear|Flatten] = [
           # there are 3 numbers in each sample, so the output of our embedding layer
           # would be (...,3,2) so we need to flatten the last dimension so it can be
           # used by and fed to the next linear layer 
-          Flatten(True),
+          Flatten(),
           Linear(embedding_size * block_size, 100), BatchNorm1d(100), Tanh(), 
           Linear(100, 100),                         BatchNorm1d(100), Tanh(), 
           Linear(100, 100),                         BatchNorm1d(100), Tanh(),
@@ -1427,6 +1456,10 @@ max_iter = 200_000
 batch_size = 32 
 losses=[]
 update_ratios=[]
+
+# DEBUG: run only 1000 steps , set to false for full training
+debug = True
+
 for i in range (max_iter):
     # grab a list of idx for our batch 
     idxs = torch.randint(0, X_tensor_tr.shape[0], size=(batch_size,))
@@ -1453,17 +1486,15 @@ for i in range (max_iter):
     for p in parameters:
         p.data += -lr*p.grad
     
-    if i%10_000:        
+    if i%10_000==0:        
         print(f'{loss=:.4f}') 
-    
-    if i%10_000==0:
         losses.append(loss.log10().item())
     
     with torch.no_grad():
         update_ratio = [(lr*p.grad.std()/p.data.std()).log10().item() for p in parameters]
         update_ratios.append(update_ratio)
         
-    if i>=1000:
+    if debug and i>=1000:
         break
 
 print(f'iter: {i} loss:{loss.item():.4f}') 
@@ -1490,9 +1521,13 @@ for i,layer in enumerate(layers[:-1]):
         
 plt.legend(legends)
 plt.title('activation distribution')
+plt.show()
 #%%
 # we can do the same exact thing with the gradients instead of activations 
-plt.figure(figsize=(20,5)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
+# the slight change in figuresize is to force matplotlib to
+# not overwrite existing one and create one anew each time
+# when we dont use plt.show() explicitly at the end!
+plt.figure(figsize=(20,5)) 
 legends= []
 for i, layer in enumerate(layers[:-1]):
     if isinstance(layer, Tanh):
@@ -1510,10 +1545,11 @@ for i, layer in enumerate(layers[:-1]):
         legends.append(layer_name)
 plt.legend(legends)
 plt.title('gradient distribution')
+plt.show()
 #%%
 # now let us also visualize the parameters 
 legends = []
-plt.figure(figsize=(20,4)) # the slight change in figuresize is to force matplotlib to not overwrite existing one and create one anew each time
+plt.figure(figsize=(20,5))
 for i,p in enumerate(parameters):
     grad = p.grad
     shape = tuple(p.shape) # we could also write p.data.numpy().shape to get the pure shape but this is easier and less typing!
@@ -1524,7 +1560,7 @@ for i,p in enumerate(parameters):
         legends.append(f'{i} {shape}')
 plt.legend(legends)
 plt.title('parameters statistics')
-
+plt.show()
 #%% 
 # now lets plot the update ratios !
 # when we used batchnorm as the last layer, note that we kind of messed up things, 
@@ -1565,3 +1601,4 @@ for i,p in enumerate(parameters):
 # the ratios should be ~1e-3; indicate on plot
 plt.plot([0, len(update_ratios)],[-3,-3], 'k') 
 plt.legend(legends)
+# %%

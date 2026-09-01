@@ -1,39 +1,50 @@
 #%%
 # in the name of God the most compassionate the most merciful
-# in this section we will reveisit our previously built nn with bn
-# but this time with a trick to make it better. we try to implement
-# wavenet, an old but very intresting model by google for nlp. 
-# for us there are some tricks that can be very useful. 
-# among those tricks and tips, the batching tricks are of high importance
-# learning about them allows us to get new ideas and how to implement
+# in this section we will reveisit our previously nn with bn
+# but this time with a trick that makes it much better. 
+# we are going to try and implement wavenet, which is an old
+# but very intresting model by google for nlp. 
+# in that paper there are couple of tricks that can be very useful for us.
+# among those tricks and tips, the batching tricks are specifically important
+# and learning about them allows us to get new ideas on how to implement
 # more efficiently what we have in mind. 
-# so first lets implement the model in layers, etc and go on!
-# we explain every step of the way in the comments again to both 
-# help clarify and recall the information for good!
+# so first lets implement the model in a more modular way, i.e. with layers, etc
+# since we covered the finer details about how they work in previous parts.
+# we explain every step of the way in the comments again to help clarify 
+# any ambigues detail and/or recall previous information and hopefully make
+# them stick for a very long time.
 # 
-# Problem: 
-# we are going to create a model that creates new names based on an existing
-# dataset of names. we can make this model as simple as a bigram model where
-# it only produces the next character given a character, but it wont perform
-# well. we can make a neural network, and model this bigram model, the power
-# would be the same as bigram, but it gives us more flexibility in improving
-# it further by adding more capacity. so we can increase the context size by
-# taking more characters, instead of only 1. we then add batch normalization
-# to improve the performance. we now want to add heirarchy of information to
-# our model. so lets build the model 
+# what was our problem again?
+# we were trying to create a model that creates new names based on an existing
+# dataset of names. we saw that we could build this model as simple as a bigram
+# model where it only produces the next character given a character, (though it 
+# wouldnt perform well) or we could also make a neural network, and model this
+# bigram model, the power would be the same as bigram by default, but it gives
+# us more flexibility in improving it further by adding more capacity. 
+# e.g. we could increase the context size by taking more characters, instead of only 1.
+# we then added batch normalization to improve the performance. 
+# we now want to add heirarchy of information to our model as the next step. 
+# so lets build the model.
 # 
 # first import the modules we are going to use 
 import random 
+# bunch of typing hints so our intellisense works properly
 from typing import Any
 from collections.abc import Iterable
 
 import numpy as np
+import matplotlib.pyplot as plt
+
 import torch 
 import torch.nn.functional as F 
 
 
+
 # lets set seeds for determinstic output,
 torch.manual_seed(255)
+# the better way is to use a dedicated generator like previous parts
+# but this should suffice for now.
+# g = torch.Generator().manual_seed(255)
 # np.random.seed(255)
 random.seed(255)
 
@@ -105,6 +116,7 @@ test_x, test_y = create_dataset(names[validation_count:], context_size)
 # lets make sure the sizes match
 assert len(X) == sum(map(len,[train_x, val_x, test_x])), 'sizes must match'
 print(f'samples: {sum(map(len,[train_x, val_x, test_x])):,}')
+
 # now lets implement the layers, we want
 # we need an embedding layer, 
 # we need a linear layer 
@@ -129,9 +141,9 @@ print(f'samples: {sum(map(len,[train_x, val_x, test_x])):,}')
 # together and run the calculation in parallel on all of them. like if we have an array like
 # a = [1,2,3,4,5,6,7,8,9,10], we would like to create groups like the following: 
 # (1,2), (3,4), (5,6), (7,8), (9,10).
-# now our operations (whatever they happen to be) can be executed directly on all of them
+# our operations (whatever they happen to be) can be executed directly on all of them
 # in parallel.as you can see, the next layers would deal with the result from these groups
-# now the result of (g1,g2) (that is (1,2) is g1 and (3,4) result is g2), (g2,g3), (g3,g4),
+# the result of (g1,g2) (that is (1,2) is g1 and (3,4) result is g2), (g2,g3), (g3,g4),
 # (g4,g5) will be available for the latter layer and so on, as you can see the receptive field
 # for deeper layer becomes larger and they can see more in the input. now that we have this
 # basic undrestanding, lets see how we can split our input into groups like this.
@@ -150,8 +162,8 @@ print(f'{a.shape=}\n{b.shape=}\n{c.shape=}')
 e = torch.concat([b,c],dim=2) # 4,4,20
 # but theres a much easier way to do this and that is simply reshapeing! 
 # which would result in the same outcome  
-print((a.view(4,4,20) == e).all())
-# we said we flattened the embedding dimension to ultimatley being used in operations
+print('two tensors are equal = ', (a.view(4,4,20) == e).all())
+# we said we flattened the embedding dimension to ultimatley be used in operations
 # what exactly do we mean by that?
 # we know we want our embeddings to be optimized! and we wanted groups of characters
 # so the operations could happen in parallel, so for multiplication, only the last dimension matters
@@ -176,7 +188,7 @@ print(f'{d.shape=}')
 print(f'{d=}')
 # now as you can see, all the previous dimensions act like a batch dimension and get repeated
 # so our linear layer can carry on its job on multi-dimension tensor as well, as long as the
-# last dimension and the first dimension of the tensors involved are compatibel, the operation
+# last dimension and the first dimension of the tensors involved are compatible, the operation
 # goes through and we get the result.
 # now we dont need to change anything for the linear layer, but for batchnorm we need to account
 # for this, as the 3 dim tensors mean/var need to happen for the first two dimensions both batch
@@ -358,7 +370,7 @@ class Tanh(Module):
 # ok now lets create our model
 vocab_size = 27 
 embedding_size = 10
-hidden_size = 68 # set this 68 so it has the same number of parameters as previous network
+hidden_size = 68 # set this to 68 so it has the same number of parameters as the previous network
 # and we want to see if our change actually improves the loss or not
 
 # model = Sequential([Embedding(vocab_size, embedding_size, generator=g),
@@ -373,7 +385,8 @@ hidden_size = 68 # set this 68 so it has the same number of parameters as previo
 model = Sequential([Embedding(vocab_size, embedding_size),
                    # now that we use the group of two, we must update the next layer as well
                    FlattenConsecutive(2), Linear(embedding_size*2, hidden_size,bias=False), BatchNorm1d(hidden_size), Tanh(),
-                   # now lets create more layers like this, at each level we are basically dividing 
+                   # now lets create more layers like this, 
+                   # at each level we are basically dividing 
                    # the embedding sequences in half
                    FlattenConsecutive(2), Linear(hidden_size*2, hidden_size,bias=False), BatchNorm1d(hidden_size), Tanh(),
                    FlattenConsecutive(2), Linear(hidden_size*2, hidden_size,bias=False), BatchNorm1d(hidden_size), Tanh(),
@@ -436,7 +449,7 @@ for i in range(max_iter):
         # print(f'{i}, {param.grad}')
         param.data += -lr*param.grad
 
-import matplotlib.pyplot as plt
+
 # lets plot the loss
 # since we have 200_000 iteration, we can average each 1000 iterations as one epoch
 # ultimately resulting in 200 values which demonstrates

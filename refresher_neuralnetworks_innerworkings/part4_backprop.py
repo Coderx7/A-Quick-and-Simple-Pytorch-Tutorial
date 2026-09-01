@@ -1,19 +1,22 @@
 # in the name of God the most compassionate the most merciful 
 # in this section we will try to code the backward pass for our 
-# initial makemore example, basically we will implement the backwardpass
+# initial part3 example, basically we will implement the backwardpass
 # for a 3 layer nn (4 layer including an embedding layer)
 # this is to get familiar with the tensor operations in a backward pass
 # and get an intuitive idea of how stuff works under the hood
 # things such as broadcasting, mean, max, etc will be worked out inshaallah.
 #%% 
+import random
 import itertools
 import torch
+
 # we start off by reading the data and implementing our simple nn with emebdings
 names = open('./data/names.txt').read().splitlines()
 # we need to grab all the unique characters in the dataset
 # and sort them for ease of use
 character_list = sorted(set(''.join(names)))
 print(f'{character_list=}')
+
 # now we need to create integer representations of the characters becasue neural networks
 # understand numbers only!
 # but before that, for ease of use, lets put special character denoting the start/end of
@@ -21,13 +24,17 @@ print(f'{character_list=}')
 # we reserve the first code (0) for our symbol which is '.' 
 character_list = ['.']+character_list
 atoi={ch:i for i,ch in enumerate(character_list)}
+
 # now lets create the itoa for getting back the characters from numerical codes
 itoa = {v:k for k,v in atoi.items()}
 # print(atoi,'\n',itoa)
+
 # now lets create our dataset 
-# we are going to create a model which accepts the first 3 characters, and returns the 4th
-# here we are creating context, given a context of 3 characters, provide us with the next
-# the starting point would be an empty string, dentoting equal likelihood for any given name
+# we are going to create a model which accepts the first 3 characters, 
+# and returns the 4th. Here we are creating context, given a context of 3 characters, 
+# provide us with the next. The starting point would be an empty string, dentoting
+# equal likelihood for any given name.
+# 
 # context_size = 3 
 # # list for holding our dataset samples
 # X = []
@@ -44,12 +51,14 @@ itoa = {v:k for k,v in atoi.items()}
 #         Y.append(idx)
 #         # update sample with the new character, move one character forward
 #         sample = sample[1:] + [idx]
+# 
 ## now lets check X and Y
 # print(X[:5], ''.join([itoa[c] for p in X[:5] for c in p]))
 # print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
-# now lets convert this into a function for easier use in case we decided to have 
-# different splits like training, val, test
-def build_dataset(names:list[str], context_size:int) :
+
+# now lets convert this into a function for easier use
+# in case we decide to have different splits like training, val, test
+def build_dataset(names:list[str], context_size:int):
     # list for holding our dataset samples
     X:list[int] = []
     # a list for the labels which contains the next characters for each sample in X
@@ -69,23 +78,26 @@ def build_dataset(names:list[str], context_size:int) :
 
 context_size = 3
 X,Y = build_dataset(names, context_size)
+
 # now lets check X and Y
 print(X[:5], ''.join([itoa[c] for p in X[:5] for c in p]))
 print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
-# now lets create tensors our of our lists 
-# but before that lets create some splits! 
+
+# now lets create tensors out of our lists 
+# but before that lets create some splits first!
 # 80% for training and 10% for val and test resspectively
 len_dataset = len(names)
 num1 = int(0.8*len_dataset)
 num2 = int(0.9*len_dataset)
-# shuffle our lists we use random.shuffle to shuffle our X 
-import random
+
+# to shuffle our lists we use random.shuffle to shuffle our X 
 random.seed(255)
 random.shuffle(names)
 names_tr = names[:num1]
 names_val = names[num1:num2]
 names_test = names[num2:]
-# or we could do 
+
+# or we could have also done 
 # tr_cnt = int(0.8*len_dataset)
 # val_cnt = len_dataset - tr_cnt//2
 # names_tr = names[:tr_cnt]
@@ -94,27 +106,28 @@ names_test = names[num2:]
 # assert sum(map(len,[names_tr,names_val,names_test])) == len(names) , 'must match'
 #
 # now lets create our dataset using names_tr
-#
 X_tr, Y_tr = build_dataset(names_tr, context_size)
+
 # now lets check X and Y
 print(X[:5], ''.join([itoa[c] for p in X[:5] for c in p]))
 print(Y[:5], ''.join([itoa[c] for c in Y[:5]]))
+
 # now lets convert them to tensor
 X_tr = torch.tensor(X_tr)
 Y_tr = torch.tensor(Y_tr)
+
 # now that we have our dataset and labels ready lets create our network
 # we start with an embedding layer which is nothing but a lookup table 
 # for our characters, so for each character we get an embedding
-import torch
+
 # before we go on, lets set a manual seed for deterministic outcome
-#! noticed the value used here does implact the approx and exact to be false or not
-# for example test with 256 and you'll see some of the final calculations all fail!
 # torch.manual_seed(255)
 g = torch.Generator().manual_seed(255)
 vocab_size = len(character_list)
 embedding_size = 10
 
 EMB = torch.randn(size = (vocab_size, embedding_size), generator=g)
+
 # next we should have a linear layer after our embedding layer, to work on the embeddings
 # since our input is 3 numbers, and each number has an embedding vector of size 10, our
 # linear layer needs an in_features =30
@@ -146,30 +159,39 @@ losses=[]
 for i in range (iter_max):
     # lets create a random batch of the input
     batch_idxs = torch.randint(0, len(X_tr), size=(batch_size,), generator=g)# shape: [32]
+    
     # print(X_tr.shape) # X_tr.shape: (182535,3)
+    
     # get the mini-batch
     x_batch = X_tr[batch_idxs]
+    
     # get the embeddings
     embds = EMB[x_batch]
+    
     # reshaping here, is actually concatenating the tensors, so for easier calculations
     # for manual gradient calculation, lets make this a separate operation
     embdscat = embds.view(embds.shape[0],-1)
+    
     # now lets apply the first layer 
     out_preact = embdscat @ W1 + b1
+    
     # now lets apply the batchnorm
     # to do this we need to calculate mean, var and output_hat 
     # and then use gamma and beta
-    # calculate the mean/var for all samples individually i.e. along 0th dimension
+    # calculate the mean/var across all samples, along 0th dimension
     mean = out_preact.mean(dim=0, keepdim=True)
-    # 
-    # since backpropagating from .var is hard becasue its multipart, 
+     
+    # since backpropagating from .var() is hard becasue its multipart, 
     # lets divide it into smaller chuncks that we can easily derive
-    #var = out_preact.var(dim=0, keepdim=True)
+    # 
+    # var = out_preact.var(dim=0, keepdim=True)
     # var is basically 
     # bn_diff = out_preact - mean
-    # bn_diff2 = diff**2 
+    # bn_diff2 = bn_diff**2 
+    # 
     # note from future: 
-    # note thathere, we are dividing by 1/n-1 rather than 1/n which is in the paper
+    # first see the code below and then come read these notes
+    # note that here, we are dividing by 1/n-1 rather than 1/n which is in the paper
     # this is called an unbaised variance, infact in the BN paper, they do the biased variance
     # during training (which uses 1/n) but during inference they use the unbiased version
     # (that is the 1/(n-1) like what we have here) this is called the bessels correction
@@ -177,14 +199,18 @@ for i in range (iter_max):
     # without this, for example db1 at the very end, would not be approximately the same
     # as what pytorch produces, but after I made this change, it just became True!
     # (update, it seems, while this helps, the b1 being approx True or not, is related to seed!
-    # change the seed and find out! need to figureout why this is happening and whether this is torchs bug!)
+    # change the seed and find out! need to figureout why this is happening and whether this
+    # is torch's bug!)
+    # 
     # var = 1/(n-1)*sum(bndiff_sqaured)
     # (so it gives us better estimate on variance! always use this!)
+    # 
     # side note: 
     # if we look at torch.var, we see that it also has an unbiased argument
     # which after this seems to be True by default! (torch.var(input: Tensor, dim: _size | _int | None, unbiased: _bool = True, keepdim: _bool = False, *, out: Tensor | None = None) )
+    # 
     # side note2:
-    # Pytorchs implementation of batchnormalization, does biased variance for rtraining and
+    # Pytorchs implementation of batchnormalization, does biased variance for training and
     # uses unbiased version for test time (just like the paper), and based on karpathys view
     # this is a bug. he himself always uses the unbiased version all the time. 
     # also pytorch documentation at the time of writting this, doesnt show a way to
@@ -194,51 +220,67 @@ for i in range (iter_max):
     bn_diff = out_preact - mean 
     bn_diff2 = bn_diff**2 
     bn_diff2sum = bn_diff2.sum(dim=0, keepdim=True)
+    # unbaised variance
     var = 1/(out_preact.shape[0]-1) * bn_diff2sum
     
     # normalize the input /add eps to prevent division by zero
     # x_hat = (out_preact-mean)/(var+eps)**0.5
-    # but lets divide it into more parts so calculating the gradients later on is easier
+    # but lets divide it into more parts so calculating 
+    # the gradients later on is easier
     out_normalized = out_preact - mean 
     var_sq = (var+eps)**0.5
+    
     # from future: 
-    # for some reason the division in pytorch causes our result not to be the exact same one pytorch produces
-    # they are approximately the same (the actual difference is extremely small), but nonethe less its there
-    # so we change the division into power and multiplication. I leave the backward calculation for
-    # division intact (just comment it)
+    # for some reason the division in pytorch causes our result not to
+    # be the exact same one pytorch produces! 
+    # they are approximately the same (the actual difference is extremely small),
+    # but nonethe less its there so we change the division into power and multiplication.
+    # I leave the backward calculation for division intact (just comment it)
     # x_hat = out_normalized/var_sq
     var_sq_inv = var_sq**-1 
     x_hat = out_normalized * var_sq_inv
+    
     # finally apply the gamma_gain and bias on the x_hat
     out_bn = bn_gamma_gain * x_hat + bn_beta_bias
+    
     # apply tanh
     out_tanh = torch.tanh(out_bn)
+    
     # now lets apply the second layer
     logits = out_tanh @ W2 + b2
-    # lets implement the crossentropy loss
+    
+    # lets implement the crossentropy loss now
     # which is the negative log likelihood 
-    # which is we must treat our output as logcounts
+    # which means we must treat our output as logcounts
     # so we do exp() to make them non negative
     # and then normalize them by their total which would be softmax
     # but to make it numerically stable, we subtract them from their max
     # that would be our probabablities, and then we would look at the
     # predictions for for the right classes and take their log and mean
-    # becasue we need the negative of log of (likelihood/probablity) 
+    # becasue we need the negative of log of (likelihood/probablity).
+    # 
     # since we have several samples, we either need to sum or average
-    # since average is more customary because it results in a smaller loss
-    # we use that 
-    # note that our logits shape is (32,27), 32 being the batch size, and 27 being the
-    # vocab size, or in other words, our number of classes. so when we want to calculate 
-    # max, we need to have a max for each sample, (note that we are going to treat
-    # each column as a class probablity, so their total needs to sum to 1, therefore
-    # we dont care about other rows, when we are normalizing or doing anything, its
-    # sample wise and involves all classes for that row/sample), we have 32 input examples, 
-    # and therefor for each example, we see, whats the maximum value among classes,
-    # for that input. note that the keepdim=True is needed becasue it makes it a 
-    # row vector (32,1), which when broadcasted, would allow us to subtract the values
+    # since average is more customary (because it results in a smaller loss)
+    # we use that.
+    # 
+    # note that our logits shape is (32,27), 32 being the batch size, 
+    # and 27 being the vocab size, or in other words, our number of classes. 
+    # so when we want to calculate max, we need to have a max for each sample,
+    # 
+    # (note that we are going to treat each column as a class probablity, 
+    # so their total needs to sum to 1, therefore we dont care about other rows.
+    # when we are normalizing or doing anything, its sample wise and involves 
+    # all classes for that row/sample), 
+    #
+    # we have 32 input examples, and therefor for each example, we see whats 
+    # the maximum value among classes for that specific input. 
+    # 
+    # note that the keepdim=True is needed becasue it makes it a row vector (32,1),
+    # which when broadcasted, would allow us to subtract the values
     # in each column from the maximum for that specific row!
+    # 
     # also note that torch.max, or tensor.max, returns a tuple of indexes and values
-    # but since we want the values only, we used values (also without using .values 
+    # but since we want the values only, we used .values (also without using .values 
     # property, we had to set the require_grads on logits_max explicityly otherwise
     # it wouldnt get the gradients)
     logits_max = logits.max(dim=1, keepdim=True).values
@@ -248,26 +290,28 @@ for i in range (iter_max):
     logcounts = logitsnorm.exp()
     # normalize and get a probablity distribution
     # sum along the columns, so each value is normalized properly 
-    # remember that we have 27 column, each representing 1 class, 
+    # remember that we have 27 columns, each representing 1 class, 
     # so their total count must sum to 1, so we sum along the columns
     # to get the total and then each column divided by that total gives us
     # propabalities
     # probs = logcounts/logcounts.sum(dim=1, keepdim=True)
     # for easier calculation of gradients, lets split the operations into separate ones
     logcountsum = logcounts.sum(dim=1, keepdim=True)
+    
     # note from future: 
-    # initially this was the only section, but as I later down explained during
+    # initially this was the only section, but as I later, down below, explained during
     # backpropagation section, I faced an issue, where the exact bit when we use division
     # doesnt happen, basically our result has an eps difference with pytorchs output
     # and it seems as more operations are encountered, this epsilon gets larger and larger
     # until for some later backprop results down the road, it just becomes very large
     # so much so that even the results are no longer approximately the same so 
-    # i had to convert the division into power and multiplication
-    # so i comment this line here now and instead write its replacements 
+    # I had to convert the division into power and multiplication
+    # so I comment this line here now and instead write its replacements 
     # probs = logcounts /logcountsum
     # instead of division, lets convert that into multiplication!
     logcountsum_inv = logcountsum**-1
     probs = logcounts * logcountsum_inv
+    
     # calculate the final negative log of likelihoods
     # side note, note that we use arange, and not 'range', torch.range is deprecated
     # becasue its behavior is different from python's range, that is it returns [start,end]
@@ -289,7 +333,7 @@ for i in range (iter_max):
     
     # before we do a backwardpass, lets freeze the gradients for our test 
     # we retain the gradients for intermediate operations result as well 
-    # to check our manual gradients
+    # to check our manual gradients against them.
     # disable for full training of course!
     for param in itertools.chain(parameters,[logprobs, probs, logcounts,logcountsum,
                                              logcountsum_inv,logitsnorm,
@@ -316,20 +360,24 @@ print(f'loss: ',sum(losses)/len(losses))
 #%%
 print(torch.__version__)
 # lets create a function for comparing our gradients with pytorchs
-def compare(label, our_grads, ptensor):
+def compare(label, our_grad, pytorch_tensor, atol=1e-8):
     """compares our manually calculated gradients 
     against the pytorchs automatically calculated 
     gradients.
 
     Args:
         str (_type_): a string to describe the tensors being compared
-        our_grads (_type_): our manually calculated gradients
-        ptensor (_type_): pytorch tensors for which we have calculated the gradient
+        our_grad (_type_): our manually calculated gradients
+        pytorch_tensor (_type_): pytorch tensors for which we have calculated the gradient
+        atol (_type_): absolute difference between two tensors that we accept as being equal.
     """
-    pgrad = ptensor.grad
-    exactly_same = torch.all(our_grads == pgrad).item()
-    approximately_same = torch.allclose(our_grads, ptensor.grad)
-    difference = (our_grads - pgrad).abs().max().item()
+    pytorch_grad = pytorch_tensor.grad
+    # check whther they are exactly equal
+    exactly_same = torch.all(our_grad == pytorch_grad).item()
+    # check whether they are approximately equal
+    approximately_same = torch.allclose(our_grad, pytorch_grad, atol=atol)
+    # lets also calcualte their difference
+    difference = (our_grad - pytorch_grad).abs().max().item()
     print(f'{label:17}| exact: {str(exactly_same):5} | approx: {str(approximately_same):5} | diff: {difference}')
 
 # now the first operation that we have is probs
@@ -338,20 +386,26 @@ def compare(label, our_grads, ptensor):
 # dlogprobs = ???
 # so what should we write here? how to go about getting the grads for a mean() operation?
 # one good tip to tackle these is to comeup with a much simpler example and see how
-# we can get the deravitaive for that. to this end, suppose we have sth like this:
+# we can get the deravitaive for that. 
+# to this end, suppose we have sth like this:
 # we know that mean is simply a sum of several numbers divided by their count, like this:
 # y = -(a + b + c )/3
+# 
 # now if we were to calculate dd/da what would that be?
-# we can simplify the previous line like this: 
+# to answer that we can simplify the previous line like this: 
 # y= -1/3a + -1/3b + -1/3c 
-# right? we just expanded it. now what would be the dd/da? 
+# right? its the same previous expression, we just expanded it. 
+# now once again what would be the dd/da? 
 # dy/da = -1/3
 # what about dd/db?
 # dy/db = -1/3
+# 
 # and so on. so here we had 3 numbers, so it was -1/3, if we had more, we would write more
 # so its basically -1/n, n being the number of all numbers involved. 
+#
 # so whats the n here? the shape of logpros is (32,27) 32 sample, and 27 classes
 # and we know that we must calculate the gradient for every elements in our tensor
+# 
 # so what should do now? lets expand on the line that creates logprobs
 # its loss=-logprobs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]].mean()
 # what are we doing exactly? 
@@ -360,10 +414,13 @@ def compare(label, our_grads, ptensor):
 # of logprobs, and the second part simply picks the correct column/class, together they
 # give us the true class for each sample. 
 # if we print Y_tr[batch_idxs] we will see sth like this: 
+# 
 # tensor([ 8, 14,  0, 12, 17,  9,  0, 25,  5,  0,  5,  0, 25,  1,  3,  2,  0, 11,
 #         14,  0,  1, 26,  2,  9,  8,  9,  1, 14,  5,  9, 14,  1])
-# each of these are index to the correct class, what this is saying is, 
+# 
+# each of these are index to the correct class, what this is saying, is, 
 # the correct class for sample 1 is 8, the correct class for sample 2 is 14, and so on
+# 
 # so we have 32 numbers, 32 is our n so the gradients for these locations in probs 
 # is simply -1/n or -1/32 in our case. 
 # now what about the rest of the logprobs elements? simple, since they didnt participate 
@@ -375,6 +432,7 @@ dlogprobs = torch.zeros_like(logprobs)
 dlogprobs[range(0,len(batch_idxs)), Y_tr[batch_idxs]] = -1/len(batch_idxs)
 # now lets see if our calculation is correct 
 compare('dlogprobs',dlogprobs, logprobs)
+
 # now if we were to calculated the logprobs like this : 
 #logprobs = probs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]].log()
 #loss = -logprobs.mean()
@@ -384,6 +442,7 @@ compare('dlogprobs',dlogprobs, logprobs)
 # and that would be it 
 # compare('dlogprobs',dlogprobs, logprobs)
 # and for the next round, we had to calculate the probs[...].log gradients
+# 
 # (side note: if we tried to print(probs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]].grad)
 # we'll get this error : 
 #  UserWarning: The .grad attribute of a Tensor that is not a leaf Tensor is being accessed. 
@@ -392,24 +451,27 @@ compare('dlogprobs',dlogprobs, logprobs)
 # If you access the non-leaf Tensor by mistake, make sure you access the leaf Tensor instead. 
 # See github.com/pytorch/pytorch/pull/30531 for more informations. 
 # (Triggered internally at /croot/pytorch_1686931851744/work/build/aten/src/ATen/core/TensorBody.h:486.)
-# basically that intermidiate operation(slicing, etc involved) is not available to us here, because it was temporarily
-# made and assigned. 
+# basically that intermidiate operation(slicing, etc involved) is not available to us here, 
+# because it was temporarily made and assigned.) 
+# 
 # so to see the gradients, we have to see the whole tensor.grad and then compare ours to it
 # that should be fine.(because we need to calculate the grdients for all elements anyway,
 # and for comparison that should suffice, however this seems like a bug to me, the grads are 
 # already calculated, so pytorch should be able to return them, but instead it executes the logic
-# that should only be called when calculating the gradients) anyway!
+# that should only be called when calculating the gradients, or maybe its because I didnt call
+# retain_grads on it?) anyway!
 # but what should we do now? how can we calculate the gradients of log(x)?
 # gradients of log(x) is 1/x (for reminder see : https://www.intmath.com/differentiation-transcendental/5-derivative-logarithm.php)
 # so if we had for example 
 # y = [log a , logb , logc] 
 # dy/da = 1/a
+# 
 # so in our case it would be 
 # dprobs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]] = 1/probs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]]
 # and what about the rest of the elements? like before, they would be zero
 # so we would have 
 # dprobs = torch.zeros_like(probs)
-# # since we have chain rule, we multiple the previous gradients times this one 
+# since we have chain rule, we multiple the previous gradients times this one 
 # dprobs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]] = dlogprobs * 1/probs[torch.arange(0,len(batch_idxs)), Y_tr[batch_idxs]]
 # compare('drpobs',dprobs, probs)
 # and we see this is exactly the answer
@@ -418,10 +480,12 @@ compare('dlogprobs',dlogprobs, logprobs)
 #
 # now for dprobs, we already saw the second scenario, so we know hwat to do 
 dprobs = torch.zeros_like(probs)
+# 
 # the derivative of log(x) is 1/x, and since its chain rule, we need to multiply
 # the previous gradients here as well (also recall that each function has a local gradient
 # here our function is log, and its local derivative is 1/probs, we need to multiply that
 # to the gradient from previous operation.)
+# 
 # also on a sidenote: what this line is effectively doing, is its boosting the gradients 
 # of the values that had low probabilities (recall that when probs are correct, its 1
 # and 1/1 is 1 basically passing through the dlogprobs, but if the probs are wrong, they
@@ -453,7 +517,7 @@ dlogcounts = logcountsum_inv * dprobs
 # multiply by the previous gradient which is dprob with shape of (32,27), as you see
 # the result would be 32,27, but we need it to be (32,1). this means we need to 
 # somehow get this to become (32,1). we use sum over the columns to do this (cuz remember
-# logcountsum_inv had to be broadcasted in first place to 32,27, and it did so by
+# logcountsum_inv had to be broadcasted in first place to be 32,27, and it did so by
 # replicating the same column to the right until 27 identical columns are created
 # therefore, when taking the gradients, we sum all of these replicated cells as well
 # to account for their true effect in the operation).
@@ -589,10 +653,11 @@ compare('dlogcounts', dlogcounts, logcounts)
 # lets see what we have here, we have logcounts which is (32,27)
 # and is being summed over so that it results in logcountsum with shape (32,1)
 # or a column vector (i.e. a vector that has only 1 full column!)
+# 
 # lets see what happens here with a simple example 
 # suppose we have a 3x3 tensor a, 
 # and its being summed to a column vector b of shape 3x1, and 
-# the b vector is mean by summing all the columns in each row:
+# the vector b is created by summing all the columns in each row:
 # [a11 a12 a13] ---> [b1]   [a11 + a12 + a13]
 # [a21 a22 a23] ---> [b2] = [a21 + a22 + a23]
 # [a31 a32 a33] ---> [b3]   [a31 + a32 + a33]
@@ -607,7 +672,8 @@ compare('dlogcounts', dlogcounts, logcounts)
 # so it has no effect on them. therefore the deravative of b1 with respect to 
 # all the elemenst in the rows 2 and 3 is basically zero, but its deravative with respect
 # to the first row (a1), is basically 1 for each element. 
-# so to finally calculate the gradients, we multiply the local gradients (which are 1s for each row for all columns)
+# so to finally calculate the gradients, we multiply the local gradients 
+# (which are 1s for each row for all columns)
 # by the gradients from previous operation, 
 # so we can create a (32,27) tensor and fill it accordingly, i.e. each row 
 # will have the gradients of the corrosponding row in dlogcountsum, replicated all the way
@@ -651,6 +717,7 @@ dlogits = 1*dlogitsnorm
 dlogits_max = (-1*dlogitsnorm).sum(dim=1, keepdim=True) 
 # compare('dlogits-incom', dlogits, logits)
 compare('dlogits_max', dlogits_max, logits_max)
+
 # side note1: that logits is involved in more operations, so its not yet complete
 # side note2: we said earlier that the reason we take the max and subtract the logits from it
 # is purely for the numerical stability, and it has no effect on the probablities, and 
@@ -736,7 +803,7 @@ compare(f'dlogits', dlogits, logits)
 # b2 : (1,27)
 # print(f'{out_tanh.shape=}  {W2.shape=} {b2.shape=} {dlogits.shape=}')
 # dout_tanh is W2 and dW2 is out_tanh, db2 would be 1
-# (note the + ,whenever theres + the gradient is just rounted)
+# (note the + ,whenever theres + the gradient is just routed)
 # as always we multiply our local derivative with the previous gradients
 # dout_tanh must have the same shape as out_tanh so it must be (32,100)
 # but W2.shape is (100,27) and dlogits.shape is (32,27), so what do we do? 
@@ -1067,9 +1134,9 @@ import torch.nn.functional as F
 # now the full vectorized version
 dEMB3=torch.vstack([torch.sum(dembds[x_batch == i], dim=0) for i in range(27)])
 # vectorized version 2 (a better version)
-dEMB4=(F.one_hot(x_batch).transpose(1, 2).float() @ dembds).sum(0)
+dEMB4=(F.one_hot(x_batch, num_classes=27).transpose(1, 2).float() @ dembds).sum(0)
 # another version taken from 
-dEMB5 = F.one_hot(x_batch).float().view(-1, EMB.shape[0]).T @ dembds.view(-1, EMB.shape[1])
+dEMB5 = F.one_hot(x_batch,num_classes=27).float().view(-1, EMB.shape[0]).T @ dembds.view(-1, EMB.shape[1])
 # another version
 dEMB6 = torch.zeros_like(EMB).scatter_add_(0, x_batch.view(-1,1).repeat(1,dembds.shape[-1]),dembds.view(-1, dembds.shape[-1]))
 #another version
@@ -1077,6 +1144,8 @@ dEMB7 = torch.zeros_like(EMB)
 dEMB7.index_add_(0, x_batch.view(-1), dembds.view(-1, 10))
 # print(dEMB3.shape)
 # print(dEMB4.shape)
+# if you see some of these report as not approx=True, its because of the set atol, 
+# try with atol=1e-7 or 1e-6 and they all pass
 compare('dEMB3', dEMB3, EMB)
 compare('dEMB4', dEMB4, EMB)
 compare('dEMB5', dEMB5, EMB)
@@ -1326,3 +1395,4 @@ for i in range (10):
             chsr=''
             break
             
+# %%

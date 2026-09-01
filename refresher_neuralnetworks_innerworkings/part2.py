@@ -12,9 +12,36 @@
 # we are going to implement a 2003 paper by bengio etal named A neural probablistic language model 
 # for several reasons that Im about to explain in a moment. 
 # basically the idea of this paper is that, knowing using contexts size larger 
-# than 4 or 5 in an ngram model can impose a huge overhead (and we are talking about words by the way)
-# to give you an idea, our character level bigram model had a context of 1 character, 
-
+# than 4 or 5 in an ngram model can impose a huge overhead because it grows 
+# exponentially with the size of the context and it becomes a serious problem pretty quickly!
+# and we are talking about words by the way. to give you an idea, our character level 
+# bigram model had a context of 1 character, so we cant go the ngram path as a result.
+# 
+# so what do we do now? here's where the paper comes in. the authors of this paper ask a 
+# qestion thats directly related to our problem here, that is, can we somehow get the
+# benifits of a large context without having to explictly memorize every possible 
+# combinatations of words?
+# and the answer is yes, and this is where neural networks come to our help!
+# the solution goes like this, instead of treating every word as a completely
+# independent symbol, we're going to learn a continuous representation of each word.
+# these representations are what we now know/call as embeddings!
+# 
+# the interesting thing about embeddings is that that words that
+# behave similarly in language can end up having similar 
+# representations/embeddings in this learned vector space.
+# so instead of saying that dog and cat are completely unrelated words,
+# our model can learn that they have something in common because they 
+# appear in similar contexts. this gives us a much more scalable way
+# of dealing with context. 
+# one more thing there's another important idea here, note we're no longer
+# going to explicitly count ngrams, we're going to let the neural network
+# learn the statistics of the language directly from the data, i.e. 
+# how its structured, what comes first, whats next, whats more related 
+# to which other words, etc. just like how we did in previous chpater.
+# this is the beginning of a very important transition in language modeling,
+# from counting discrete combinations of words to learning continuous representations
+# and using those representations to generalize to contexts that we've never explicitly seen before.
+# so let's see how we can implement this.
 
 # lets read the words, create an embedding this time. 
 # the input recieves 3 input character, and perdicts the 4th
@@ -34,20 +61,23 @@ import torch.nn.functional as F
 #muscle memory of mine!!!
 
 names = open('./data/names.txt').read().splitlines()
+print(f'names: {len(names):,}')
+print(f'{names[:10]=}')
 # lets extract the alphabet and create atoi and itoa mappings
 atoi={'.':0}
 atoi.update({ch:i for i,ch in enumerate(sorted(set(''.join(names))),start=1)})
 
 itoa = {v:k for k,v in atoi.items()}
 # lets test 
-print(f'{atoi=}')
-print(f'{itoa=}')
+print(f'atoi Length: {len(atoi)}, {atoi=}')
+print(f'itoa Length: {len(itoa)}, {itoa=}')
 # now we need to create dataset of inputs with 3 characters as input
 # and the next one be the label
 context = ''
 X=[]
 Y=[]
 block_size=3
+# try the first 5 names first
 for name in names[:5]:
     context = [0]*block_size
     for ch in name+'.':
@@ -64,8 +94,8 @@ g = torch.Generator().manual_seed(255)
 X=torch.tensor(X)
 Y=torch.tensor(Y)
 
-print(f'{X.shape}')
-print(f'{Y.shape}')
+print(f'{X.shape=}')
+print(f'{Y.shape=}')
 #  now that we have our data, let us create our embedding layer.
 # embedding layer is simply an array of some vectors, basically
 # each word/character is given a vector of length x, e.g. 2,10,30,etc
@@ -74,7 +104,8 @@ print(f'{Y.shape}')
 # each character can now be represented better and more freely
 # lets create our embedding matrix with initial random values
 # lets choose embeding size of 2 , each character is represented by 2 floats!
-C=torch.randn(size=(X.shape[0],2), generator=g)
+vocab_size = len(atoi)
+C=torch.randn(size=(vocab_size, 2), generator=g)
 print(f'{C.shape=}')
 # now how can we extract a specific emebding related to a specific input you say?
 idx0 = X[20][0]
@@ -97,6 +128,13 @@ print(f'C[X].shape: {C[X].shape}\nC[X][1].shape: {C[X][:1].shape}\nC[X][1]:{C[X]
 # each character triplet) in total our result shape would be 32(number of samples) 
 # x3(number of inputs which is 3 characters(make up a single sample) x 2(embedingsize)
 # )
+# lets see how our embeddings look like before any training
+plt.scatter(C[:,0].data, C[:,1].data, s=200)
+for i in range(C.shape[0]):
+    plt.text(C[i,0].item(),C[i,1].item(),s=itoa[i], ha='center', va='center', color='white')
+plt.grid('minor')
+# they look random! keep that in mind when we get back to this later
+ 
 # now that we have our embedding lets create our nn
 # the embedding layer doesnt need a W, because we want to optimize it ourselves 
 # its a collection of vectors that are random at first but need to learn
@@ -241,7 +279,7 @@ print(f'{probs=}')
 #%%
 # now that we have our loss lets do backprop
 # but before that make sure to zero out the gradients
-for param in parameters():
+for param in parameters:
     param.grad=None # this is more efficient than setting grad=0! 
     
 loss.backward()
@@ -270,7 +308,8 @@ Y=torch.tensor(Y)
 print(f'{X.shape}')
 print(f'{Y.shape}')
 
-C=torch.randn(size=(X.shape[0],2), generator=g)
+vocab_size = len(atoi)
+C=torch.randn(size=(vocab_size, 2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(1)
 W2= torch.randn(size=(100, 27),generator=g)
@@ -317,12 +356,28 @@ plt.scatter(C[:,0].data, C[:,1].data, s=200)
 for i in range(C.shape[0]):
     plt.text(C[i,0].item(),C[i,1].item(),s=itoa[i], ha='center', va='center', color='white')
 plt.grid('minor')
-    
+
+# we can see different clusters are formed this time, it doesnt look much, 
+# since we dont usually work at character level, this would have felt more
+# intuitive if we used words, but even with characters we can 
+# see quite a lot. e.g. we can see the model has clustered the 
+# characters that have similar roles/statistical behavior in 
+# the training data, end up closer together in the embedding space.
+# o and e, t and s, are closer to each other, while . e.g. is 
+# noticibly farther away from other characters.
+# note that we cant interpret these characters to be linguistically closer
+# because they happen to be closer in the embedding space, our model doesnt
+# have any information about the english language, things such as vowels, 
+# punctuations, pronounciations etc, do not exist, so it cant infer anything in that regard, 
+# therefore it only knows,e.g. when I see this character in a 3-character context, I found out 
+# that these characters are more likely to come next e.g. it doesnt mean its prefect in this sense
+# cuz for one, we really didnt train it much, and we didnt use larger embedding dimensions so 
+# it can pack more information to get this done better.
 #%%
 # but a problem exists here, it seems its really slow, can we speed it up? 
 # yes we can lets do this
 
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(1)
 W2= torch.randn(size=(100, 27),generator=g)
@@ -367,7 +422,11 @@ for i in range(200000): # iterations * batchsize must cover the whole dataset (a
         
 print(f'{loss.item()=:.4f}, {loss2.item()=:.4f}') # right away we got better loss : loss.item()=2.1308, loss2.item()=2.1308
 
-
+plt.figure(figsize=(8,8))
+plt.scatter(C[:,0].data, C[:,1].data, s=200)
+for i in range(C.shape[0]):
+    plt.text(C[i,0].item(),C[i,1].item(),s=itoa[i], ha='center', va='center', color='white')
+plt.grid('minor')
 #%%
 # theres another problem how do we comeup with a learning rate? 
 # this is one of the ways we can choose a learning rate
@@ -432,7 +491,7 @@ print(f'{lri}=')
 #         1.0000])=
 
 #%%
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(1)
 W2= torch.randn(size=(100, 27),generator=g)
@@ -493,7 +552,7 @@ ax2.plot(lrs, losses)
 
 #%%
 # now lets test the new found lr on the whole dataset !
-C=torch.randn(size=(X.shape[0],2), generator=g)
+C=torch.randn(size=(vocab_size,2), generator=g)
 W1 = torch.randn(size=(6, 100),generator=g)
 b1 = torch.ones(1)
 W2= torch.randn(size=(100, 27),generator=g)
@@ -576,7 +635,17 @@ for i in range (10):
             print(chsr)
             chsr=''
             break
-    
+# we get these outputs using our best model with loss.item()=1.8699, loss2.item()=1.8699:
+# layana.
+# damalaiseahbeel.
+# taylayradis.
+# plintlias.
+# zen.
+# lag.
+# komaira.
+# civi.
+# dohoahien.
+# kessel.    
 # %%
 # so to recap 
 # we learned about exp issues with large positive numbers which creates inf

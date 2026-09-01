@@ -949,10 +949,24 @@ print(preds[:3])
 # we want somehow these numbers to represent probablities for the next character, 
 # these numbers are not counts either, because counts are positive integer numbers tha a neural network cant produce
 # so what are these numbers? and how should we interpret them? 
-# these numbers are infact log-counts (also known as logits), so in order to get the counts, we need to exponentiate them 
-# what exp() does, is that it takes negative or positive numbers, and returns a number e^x
+# these numbers are infact log-counts (also known as logits), so in order to get the counts, we need to 
+# exponentiate them what exp() does, is that it takes negative or positive numbers, and returns a number e^x
 # if you feed it a negative number(<0), it always returns a number <1 and if you feed it a number>0
 # it will return a number>1. 
+# 
+# sidenote:
+# to be more precise, these numbers are just scores, unnormalized scores to be exact 
+# that happen to play the role of log-odds,(log of odds -> likely hood/chances of sth hapening over it not happening)
+# becasue of the way we are modeling this. that is, we are interpreting them as counts, so we 
+# can convert them into probablities.
+# see, our one-hot encoded input, is nothing special but a lookup table, it selects
+# one value from our weight matrix, the weight matrix happens to have random normal values
+# like 0.6, -0.2, 0.9, then backpropagation changes these random numbers/scores into
+# useful scores (so that they become useful for predicting the next character)
+# and since we are after modeling the probablity of predicting the next character
+# we can interpret these as counts(log-counts-like which we can exponetiate and 
+# get positive values so we can later normalize them and get probablities!
+
 print(preds[:3].exp())
 print(preds[:3][0,:2])
 print(preds[:3].exp()[0,:2])

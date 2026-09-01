@@ -1,5 +1,5 @@
 #%%
-# in the name of God the most compassionate the most merciful
+# In the name of God the most compassionate the most merciful
 # in this section we will have a look at how a transformer model works,
 # in this section we will implement the attention mechanism
 # which is the foundation of transformers, and see 
@@ -9,7 +9,7 @@
 # before we delve into the implementation details, we have to take a detour
 # and discuss some underlying concepts and techniques involved.
 # 
-# so how are we going about this. we need to create a language model
+# so how are we going about this? we need to create a language model
 # and then progressively imporve it with attention mechanism.
 # we will basically be creating a kind of chatgpt (minus its chat capability and
 # its obviously great perormance :)) 
@@ -46,88 +46,114 @@ with open('./data/tiny_shakespear.txt','r') as file:
 print(f'{dataset[:100]=}') 
 # prints:
 # dataset[:100]='First Citizen:\nBefore we proceed any further, hear me speak.\n\nAll:\nSpeak, speak.\n\nFirst Citizen:\nYou'
+# 
 # now lets create our atoi and itoa dictionaries for mapping
-# lets create our unique character list, which is infact our vocabulary or vocab for short
+# before that lets create our unique character list, which is
+# infact our vocabulary or vocab for short
 vocab_list = sorted(set(''.join(dataset)))
 vocab_size = len(vocab_list)
-# lets create our mapping dictionaries, we are basically going to use them
+# lets create our mapping dictionaries now, we are basically going to use them
 # for tokenization, converting our input into tokens which here are characters 
 # and ultimately their integer representations
-# so tokenization simply put, refers to converting an input into a list of numbers based on some creteria
-# here, we just use a simple index number to map our vocabulary characters, which represent all character
-# our model can use to generate text, to integer representation. 
-# for realworld applications, we usually use libraries such as sentecepeace by google which works on a subword
-# level which means, it doesnt encode the whole word, neither does it encode based on individual characters, it
-# use sth in between. 
+# so tokenization simply put, refers to converting an input into a list of numbers
+# based on some creteria. here, we just use a simple index number to map our 
+# vocabulary characters, which represent all characters our model can use to
+# generate text, to integer representation. 
+# for real-world applications, we usually use libraries such as sentecepeace 
+# by google which works on a subword level which means, it doesnt encode the 
+# whole word, neither does it encode based on individual characters, it use sth in between. 
 # (from its github repo: https://github.com/google/sentencepiece )
-# SentencePiece is a re-implementation of sub-word units, an effective way to alleviate the open vocabulary 
-# problems in neural machine translation. SentencePiece supports two segmentation algorithms, 
-# byte-pair-encoding (BPE) [Sennrich et al.] and unigram language model [Kudo.]. 
+# SentencePiece is a re-implementation of sub-word units, an effective way to 
+# alleviate the open vocabulary problems in neural machine translation. 
+# SentencePiece supports two segmentation algorithms, byte-pair-encoding 
+# (BPE) [Sennrich et al.] and unigram language model [Kudo.]. 
 #
+# sidenote:--------------------------------------------------------------------------
 # (For the reference:  
-# Byte Pair Encoding (BPE) is a subword tokenization technique used in natural language processing (NLP) 
-# and text processing tasks. It is a data compression algorithm that splits words into subword units. 
-# BPE is commonly used in tasks such as machine translation, text generation, and language modeling.
-# The basic idea behind BPE is to iteratively merge the most frequent pairs of characters or subword units
-# in a corpus to create a new subword vocabulary. This merging process is based on the statistical properties
-# of the corpus, specifically the frequency of character or subword pairs.
+# Byte Pair Encoding (BPE) is a subword tokenization technique used in natural
+# language processing (NLP) and text processing tasks. It is a data compression
+# algorithm that splits words into subword units. 
+# BPE is commonly used in tasks such as machine translation, text generation, 
+# and language modeling. The basic idea behind BPE is to iteratively merge 
+# the most frequent pairs of characters or subword units in a corpus to 
+# create a new subword vocabulary. This merging process is based on the 
+# statistical properties of the corpus, specifically the frequency of character
+# or subword pairs.
 #
-# Here's a high-level overview of the BPE algorithm:
-# 1. Initialize the vocabulary with all the characters or subwords in the corpus.
-# 2. Calculate the frequency of each character or subword in the corpus.
-# 3. While the desired vocabulary size or a maximum number of iterations is not reached:
-#    - Find the most frequent pair of characters or subwords in the corpus.
-#    - Merge the pair into a new subword unit by concatenating them.
-#    - Update the corpus by replacing occurrences of the merged pair with the new subword unit.
-#    - Update the vocabulary and frequency counts based on the new corpus.
-# 4. The final vocabulary is the set of subword units obtained after the desired number of iterations 
-#    or vocabulary size is reached.
+# Here's roughly how the BPE algorithm works:
+# first we initialize the vocabulary with all the characters or subwords in the corpus
+# then we calculate the frequency of each character or subword in the corpus,
+# after that until we reach the desired vocabulary size or a maximum number of
+# iterations we keep doing the following steps:
+#  1. Find the most frequent pair of characters or subwords in the corpus.
+#  2. Merge the pair into a new subword unit by concatenating them.
+#  3. Update the corpus by replacing occurrences of the merged pair with 
+#     the new subword unit.
+#  4. Update the vocabulary and frequency counts based on the new corpus.
+# The final vocabulary is then the set of subword units obtained after the desired
+# number of iterations or vocabulary size is reached.
 #
-# BPE allows for the representation of both known and unknown words in a corpus. It is effective in 
-# handling out-of-vocabulary (OOV) words and reducing the vocabulary size, which can improve the 
-# efficiency and performance of NLP models. By breaking down words into subword units, BPE can capture
-# morphological and semantic information more effectively, especially for languages with complex word 
+# Why do we care about BPE? 
+# BPE allows for the representation of both known and unknown words in a corpus.
+# It is effective in handling out-of-vocabulary (OOV) words and reducing the 
+# vocabulary size, which can improve the efficiency and performance of NLP models.
+# By breaking down words into subword units, BPE can capture morphological and 
+# semantic information more effectively, especially for languages with complex word 
 # formations and agglutinative structures.
 # 
-# tiktokenize repo explains BPE in a rather friendlier way: 
-# Models don't see text like you and I, instead they see a sequence of numbers (known as tokens). 
-# Byte pair encoding (BPE) is a way of converting text into tokens. It has a couple desirable properties:
+# tiktokenize repository explains BPE in a rather friendlier way: 
+# Models don't see text like you and I, instead they see a sequence of numbers
+# (known as tokens). 
+# Byte pair encoding (BPE) is a way of converting text into tokens. It has a 
+# couple desirable properties:
 # It's reversible and lossless, so you can convert tokens back into the original text
 # It works on arbitrary text, even text that is not in the tokeniser's training data
-# It compresses the text: the token sequence is shorter than the bytes corresponding to the original text. 
+# It compresses the text: the token sequence is shorter than the bytes corresponding
+# to the original text. 
 # On average, in practice, each token corresponds to about 4 bytes.(i.e. 4 characters!)
-# It attempts to let the model see common subwords. For instance, "ing" is a common subword in English, 
-# so BPE encodings will often split "encoding" into tokens like "encod" and "ing" 
-# (instead of e.g. "enc" and "oding"). Because the model will then see the "ing" token again and again 
-# in different contexts, it helps models generalise and better understand grammar.
+# It attempts to let the model see common subwords. For instance, "ing" is a common
+# subword in English, so BPE encodings will often split "encoding" into tokens like 
+# "encod" and "ing" (instead of e.g. "enc" and "oding"). Because the model will then
+# see the "ing" token again and again in different contexts, it helps models generalise
+# and better understand grammar.
 #
-# 
-# A unigram language model however, is a type of statistical language model that predicts the probability 
-# of each word in a sequence independently, based solely on the frequency of occurrence of individual 
-# words in the training data. It does not consider the context or the order of the words in the sequence.
-# In a unigram language model, the probability of a particular word is estimated by counting the frequency 
-# of that word in the training corpus and normalizing it by the total number of words in the corpus. 
-# The probability of a sequence of words is then calculated by multiplying the probabilities of each 
-# individual word in the sequence.
-# For example, consider the sentence "I love to eat pizza." In a unigram language model, the probability
-# of this sentence would be calculated as the product of the probabilities of each word which would be: 
+# Whats a Unigram lanugage model?
+# A unigram language model however, is a type of statistical language model that 
+# predicts the probability of each word in a sequence independently, based solely
+# on the frequency of occurrence of individual words in the training data. 
+# It does not consider the context or the order of the words in the sequence.
+# In a unigram language model, the probability of a particular word is estimated
+# by counting the frequency of that word in the training corpus and normalizing it
+# by the total number of words in the corpus. 
+# The probability of a sequence of words is then calculated by multiplying the 
+# probabilities of each individual word in the sequence.
+# For example, consider the sentence "I love to eat pizza." In a unigram language model,
+# the probability of this sentence would be calculated as the product of the probabilities
+# of each word which would be: 
 # P(I) * P(love) * P(to) * P(eat) * P(pizza).
-# Unigram models are the simplest form of language models and do not capture any contextual information
-# or dependencies between words. They are often used as a baseline or reference model in natural language 
-# processing tasks. While unigram models are not very accurate in capturing the complexities of natural 
-# language, they can be computationally efficient and useful in tasks where the context is less important, 
-# such as certain text classification tasks or language generation tasks where only the frequency of 
-# individual words matters.
 # 
+# Unigram models are the simplest form of language models and do not capture any 
+# contextual information or dependencies between words. They are often used as a 
+# baseline or reference model in natural language processing tasks. 
+# While unigram models are not very accurate in capturing the complexities of natural 
+# language, they can be computationally efficient and useful in tasks where the context
+# is less important, such as certain text classification tasks or language generation tasks
+# where only the frequency of individual words matters.
+# 
+# Openai/chatgpt for example uses its own tokenizer, called tiktoken 
+# (https://github.com/openai/tiktoken) there are other tokenizers as well.
+# huggingface has a good article on tokenizers (recommend it): 
+# https://huggingface.co/docs/transformers/main/tokenizer_summary 
+# 
+# -------------------------------------------------------------------------------
 #
-# Openai/chatgpt for example uses its own tokenizer, called tiktoken (https://github.com/openai/tiktoken)
-# there are other tokenizers as well.
-# huggingface has a good article on tokenizers (recommend it): https://huggingface.co/docs/transformers/main/tokenizer_summary 
-# its a given that, each model only works with the tokenizer by which it was used to train. 
-# so BERT, DistilBERT, and Electra only work with wordpiece, while chatgpt uses titoken and we! use
-# simple characters-indexes! also note that the choice of tokenizer obviously affects our vocab size and
+# its a given that, each model only works with the tokenizer by which it was 
+# used to train. so BERT, DistilBERT, and Electra only work with wordpiece, 
+# while chatgpt uses titoken and we! use simple characters-indexes! 
+# also note that the choice of tokenizer obviously affects our vocab size and
 # model overhead/performance as well. 
-# for example lets first implement our tokenizer and then compare it with sth like tiktoken module
+# for example lets first implement our tokenizer and then compare it with sth
+# like tiktoken module
 atoi = {c:n for n,c in enumerate(vocab_list)}
 itoa = {n:c for c,n in atoi.items()}
 print(f'{vocab_size=}, {vocab_list=}')
@@ -159,6 +185,7 @@ except:
     import os 
     os.system('pip install tiktoken')
     import tiktoken
+    
 # lets use the tokenizer for gpt2 model, this line downloads the gpt2 tokenizer and allows us to use it
 encoder_gpt = tiktoken.get_encoding('gpt2')
 # lets view its vocab size:
@@ -169,16 +196,17 @@ print(f'{encoder_gpt.encode(dataset[:10])=}') # prints [5962, 327, 8846]
 # this is 3 here with vocab size of 50,000!
 # so we can have a short vocab size, at the expense of a larger sequence size, 
 # or a large vocabsize and smaller sequence size.
-# so thats why in practice, these subwords tokenizers are used for real world applications. but for our case
-# we stick to our primitive tokenizer to keep things as simple as possible. 
+# so thats why in practice, these subwords tokenizers are used for real world applications. 
+# but for our case we stick to our primitive tokenizer to keep things as simple as possible. 
 # 
-# Ok, so far so good. now we need to create a dataset, like before we need to have an input/label pair
-# our input is a series of characters, (a sequence of some length), and our label is the next character
-# sicne we are using a simple bigram model, given a single character, we want the probablity of what comes
-# next. but, we also want to incorporate attention, and we want a context for our prediction, we want to
-# be able to look at the past, the past characters, and based on that do sth. this is the essence
-# of attention (although this is not accurate, but for now let assume this is the case, we will elaborate on this and expand
-# this metaphor and reasoning inshallah)
+# Ok, so far so good. now we need to create a dataset, like before we need to have
+# an input/label pair our input is a series of characters, (a sequence of some length),
+# and our label is the next character sicne we are using a simple bigram model,
+# given a single character, we want the probablity of what comes next. 
+# but, we also want to incorporate attention, and we want a context for our prediction,
+# we want to be able to look at the past, the past characters, and based on that do sth. 
+# this is the essence of attention (although this is not accurate, but for now let assume
+# this is the case, we will elaborate on this and expand this metaphor and reasoning inshallah)
 # 
 # lets first tokenize the whole dataset or corpus as its usually called in nlp nomenclature(well corpus 
 # usually is made of several bodies of text! but anyway you get the idea!)!
@@ -189,11 +217,12 @@ data_tensor = torch.tensor(data)
 print(data_tensor[:100])
 # now lets create a train/val split 
 train_length = int(0.9 * len(data_tensor))
-# note that we do not shuffle the data here like before, because we are not dealing with a list of samples!
-# like names, here we are dealing with the whole text, and if we shuffle it like that, we just destroy it
-# making it into a batch of random characters! which would not be useable for us anymore. we are trying to
-# learn the underlying semantic and relationships hidden in our data, and randomizing them like that just 
-# destroys those information! 
+# note that we do not shuffle the data here like before, because we are not dealing
+# with a list of samples!
+# like names, here we are dealing with the whole text, and if we shuffle it like that,
+# we just destroy it making it into a batch of random characters! which would not be 
+# useable for us anymore. we are trying to learn the underlying semantic and relationships
+# hidden in our data, and randomizing them like that just destroys those information! 
 # to see this in action try this
 _data_copy = data.copy()
 random.shuffle(_data_copy)
@@ -207,9 +236,10 @@ print(''.join(decode(_data_copy[:100])))
 # so we simple divide the data normally
 train_data = data_tensor[:train_length]
 val_data = data_tensor[train_length:] 
-# note that since we are planning on creating a simple transformer model, we usually dont feed the whole dataset
-# becaue its prohibitevly computation intensive, instead, what happens in practice is that we, grab chunks 
-# of data from the dataset and feed it to the model. these chunks, of course have a length, what length?
+# note that since we are planning on creating a simple transformer model, 
+# we usually dont feed the whole dataset becaue its prohibitevly computation intensive,
+# instead, what happens in practice is that we, grab chunks of data from the dataset
+# and feed it to the model. these chunks, of course have a length, what length?
 # we usually specify a maximum_length for the input on which our transformer model works.
 # this maximum_length is usually refered to as block_size or more famously context_size.
 # we had previously used different context_sizes and this is not really that different,
@@ -220,12 +250,13 @@ print(f'{train_data[:block_size]=}')
 # which prints:
 # train_data[:block_size]=tensor([18, 47, 56, 57, 58,  1, 15, 47])
 # 
-# one intresting observation we can make here is that, as simple as this seemingly ordindary list of numbers
-# looks, this sequence of numbers, actually contains several examples. 
+# one intresting observation we can make here is that, as simple as this seemingly ordindary 
+# list of numbers looks, this sequence of numbers, actually contains several examples. 
 # if you think about it, each number, is a token, representing a character (or word, subword, etc),
 # and it shows what comes after what. basically not only it shows several pairs so to speak, it also
 # shows, which characters are more likely to come, before a specific character comes later. 
-# what we are actually going to do is that, we are going to train all of these characters simultaneously
+# what we are actually going to do is that, we are going to train all of these characters 
+# simultaneously!
 # notice that in this example, we have 7 examples in a sequence of 8 characters:
 # lets elaborate on this more. consider [18, 47, 56, 57, 58,  1, 15, 47]) as input:
 # 1-in the context of 18, the next character is 47
@@ -244,8 +275,9 @@ x = train_data[:block_size]
 y = train_data[1:block_size+1]
 # what would be our label? we want the next character so it would be the previous locations +1
 # basically offset the input by 1!
-# thats why we started from 1, becasue the input started from 0, and since the input ended at block_size
-# its label(next character) would obviously be block_size+1, pretty obvious right?
+# thats why we started from 1, becasue the input started from 0, and since the input
+# ended at block_size its label(next character) would obviously be block_size+1, 
+# pretty obvious right?
 #
 # lets print this for better understanding 
 for pos in range(block_size):
@@ -262,28 +294,35 @@ for pos in range(block_size):
 # input is [18, 47, 56, 57, 58, 1, 15] label is 47
 # input is [18, 47, 56, 57, 58, 1, 15, 47] label is 58
 # so as you can see we started from context_size of 1 up to context_size of 8.
-# note that we do not do this simply for the efficancy aspect of it, but also, when we feed these to
-# our transformer model, we are making sure that the transformer model gets used to see all combinations
-# of our input as well (from the context size of 1 up tp the context size of 8). 
+# note that we do not do this simply for the efficancy aspect of it, 
+# but also, when we feed these to our transformer model, we are making sure 
+# that the transformer model gets used to see all combinations of our input 
+# as well (from the context size of 1 up tp the context size of 8). 
 # this way not only it sees the whole context_size as we initially expected
 # but also all sequences before it, and basically what consituted to make the sample. 
-# this allows us to later on, at test time be able to create sequences as small as context_size of only 1
-# up to the max_length which is our context_size of 8 in our case(and more).
-# so by doing this, the model can learn how to predict/create/genrate text up to context_size, and after
-# it reached that, we have to truncate it, becausse the model never recieves more than the
-# context_size as input when its predicting the next character.(we can continue generating infintely, but
-# really, what the model does, is to always generate the next character based on the 'last' context_size 
-# number of tokens. if context size is 8, only the last 8 characters are taken into account for creating
-# the next one. this matters if you think about it, the model can only memorize 8 tokens! all that came 
-# before is just gone! the model cant use any of them to infer new information! it can only use the last
-# context_size tokens! but nevertheless as we later see, we can continue to generate infinit characters
-# thogh they may not make sense if the context size is small as you can guess!)
+# this allows us to later on, at test time be able to create sequences as small
+# as context_size of only 1 up to the max_length which is our context_size of 8
+# in our case(and more).
+# so by doing this, the model can learn how to predict/create/genrate text up to
+# context_size, and after it reached that, we have to truncate it, becausse the 
+# model never recieves more than the context_size as input when its predicting 
+# the next character.(we can continue generating infintely, but really, what the
+# model does, is to always generate the next character based on the 'last' context_size 
+# number of tokens. if context size is 8, only the last 8 characters are taken into 
+# account for creating the next one. 
+# this matters if you think about it, the model can only memorize 8 tokens! all that came 
+# before is just gone! the model cant use any of them to infer new information! 
+# it can only use the last context_size tokens! but nevertheless as we later see, 
+# we can continue to generate infinit characters though they may not make sense 
+# if the context size is small as you can guess!)
 # 
-# so far what we covered here was the time dimension of our input. we have a sequence, and each entery
-# basically denotes a time t dimension, at which, a character is introduced. 
-# another imporatnt aspect we need to take care of is the batch dimension, cuz we are going to feed 
-# multiple examples at once, we use this to harness the gpu parallilization capalibity in pytorch
-# as without it, training this simple model would take a lot of time on cpu! 
+# so far what we covered here was the time dimension of our input. 
+# we have a sequence, and each entery basically denotes a time t dimension,
+# at which, a character is introduced. 
+# another imporatnt aspect we need to take care of is the batch dimension, 
+# cuz we are going to feed multiple examples at once, we use this to harness
+# the gpu parallilization capalibity in pytorch as without it, training this 
+# simple model would take a lot of time on cpu! 
 #
 # so lets create a function that gives us a batch of the inputs rather than a single list/tensor!
 # 
@@ -296,8 +335,9 @@ def get_batch(split, batch_size):
     data = train_data if split =='train' else val_data
     # we want a batch of 4 of 8 tokens/characters (context-size). 
     # to make a batch we can grab 4 random indices as input and then expand them
-    # by adding the next 8(context_size) characters to them, in order not to go past the 
-    # last index, we subtract the length of data(last valid index) from context size 
+    # by adding the next 8(i.e. context_size) characters to them, 
+    # in order not to go past the last index, we subtract the length
+    # of data(last valid index) from context size 
     idxs = torch.randint(low=0, high=len(data)-context_size, size=(batch_size,))
     # we have our indices, so lets create our samples
     # x = [data[i:i+context_size] for i in idxs]
@@ -311,12 +351,14 @@ def get_batch(split, batch_size):
     # x=[tensor([58, 39, 49, 43,  1, 51, 63,  1]), tensor([53, 59, 41, 46,  5, 42,  1, 61]), tensor([47, 53, 52,  1, 39, 57,  1, 63]), tensor([39, 57, 58,  1, 51, 63,  1, 50])]
     # y=[tensor([39, 49, 43,  1, 51, 63,  1, 54]), tensor([59, 41, 46,  5, 42,  1, 61, 47]), tensor([53, 52,  1, 39, 57,  1, 63, 53]), tensor([57, 58,  1, 51, 63,  1, 50, 53])]
     #
-    # as you can see we have a list of tensors. since we want a batch, we just stack them or concat them
+    # as you can see we have a list of tensors. since we want a batch, 
+    # we just stack them or concat them
     # on top of each other
     # using stack!
     # x = torch.stack(x)
     # y = torch.stack(y)
-    # stack() is intrestingly implemented by concat(), so if we want, we can do the same using concat!
+    # stack() is intrestingly implemented by concat(), so if we want, 
+    # we can do the same using concat!
     #
     # by default conact, concatenates all the tensors as one large tensor!
     # we need a reshape/view to get the right shape
@@ -329,14 +371,17 @@ def get_batch(split, batch_size):
     # y = torch.concat([t.unsqueeze(0) for t in y], dim=0)
     #
     # By unsqueezing, we ensure that the tensors have the same number of dimensions before 
-    # concatenating them with torch.cat/concat/concatenate.(side tip: concat and concatenate are aliases for cat) 
+    # concatenating them with torch.cat/concat/concatenate.
+    # (side tip: concat and concatenate are aliases for cat) 
     # This effectively replicates the behavior of torch.stack.
     # see torch.cat concatenates tensors along an existing dimension, and we only have 1 dimensional
-    # tensors, so it will concatenate them along that, effectively making one large 1 dimensional vector
-    # however, when we use unsqueeze on each tensor, using torch.unsqueeze(0), we are adding a new dimension
-    # (dim 0) to that tensor, making it 1,x instead of the original shape of (x,).  
-    # So, by unsqueezing each tensor along the desired dimension, which for us is the 0ths dimension (or row dim) 
-    # and then concatenating them with torch.cat, we achieve the same result as torch.stack.
+    # tensors, so it will concatenate them along that, effectively making one
+    # large 1 dimensional vector however, when we use unsqueeze on each tensor,
+    # using torch.unsqueeze(0), we are adding a new dimension(dim 0) to that tensor,
+    # making it 1,x instead of the original shape of (x,).  
+    # So, by unsqueezing each tensor along the desired dimension, which for us is 
+    # the 0ths dimension (or row dim) and then concatenating them with torch.cat,
+    # we achieve the same result as torch.stack.
     # 
     # in practice we'd like to do this all in one go!
     x = torch.stack([data[i:i+context_size] for i in idxs])
@@ -359,7 +404,8 @@ print(f'{x=}\n{y=}')
 #         [53, 52,  1, 39, 57,  1, 63, 53],
 #         [57, 58,  1, 51, 63,  1, 50, 53]])
 #
-# now this is our batch of data, 4 samples with 8 characters, bascially 32 examples, lets see that as well
+# now this is our batch of data, 4 samples with 8 characters, 
+# bascially 32 examples, lets see that as well
 for b in range(batch_size):
     # this is our time dimension
     for t in range(context_size):
@@ -400,54 +446,64 @@ for b in range(batch_size):
 # tensor([39, 57, 58,  1, 51, 63,  1, 50]) --> 53 
 #
 # so now that we have the data sorted out, lets create our model. 
-# as we said, we are going to use a bigram model as our language model here and later add attention
-# mechanism to it. 
+# as we said, we are going to use a bigram model as our language 
+# model here and later add attention mechanism to it. 
 # to make things easier and more self contained, lets add all the required logic to this model
 # like when we do a forward, we be able to calculate loss as well if we are given the targets
 #
-# side note:
-# review/reminder for some keyterms: language model, bi/n-gram models, seq-to-seq models:
-# A language model is a probabilistic model of a natural language. It’s used to predict the likelihood of
-# a sequence of words or tokens(characters,etc). 
-# Language models are used in a variety of tasks, including speech recognition, machine translation, 
-# natural language generation, optical character recognition, handwriting recognition, grammar induction, 
-# and information retrieval.
-# A bigram is a type of language model where the probability of the next word in a sequence depends only on
-# the previous word. It’s a sequence of two adjacent elements from a string of tokens, which are typically 
-# letters, syllables, or words. 
-# Bigrams, along with other n-grams, are used in most successful language models for tasks like speech recognition.
-# A sequence-to-sequence (Seq2Seq) model is used in sequence prediction tasks, such as language modeling and 
-# machine translation. 
-# The idea is to use one LSTM (Long Short-Term Memory), the encoder, to read the input sequence one timestep 
-# at a time, to obtain a large fixed dimensional vector representation (a context vector), and then to use 
-# another LSTM, the decoder, to extract the output sequence from that vector. 
-# The second LSTM is essentially a recurrent neural network language model except that it is conditioned on 
-# the input sequence. 
-# So, in essence, language models form the foundation of sequence-to-sequence models. They provide the 
-# mechanism for predicting the next element in a sequence, which is a key component of sequence-to-sequence 
-# models.
+# side note:-------------------------------------------------------------------------------
+# review/reminder for some key terms: language model, bi/n-gram models, seq-to-seq models:
+# A language model is a probabilistic model of a natural language. It's used to predict 
+# the likelihood of a sequence of words or tokens(characters,etc). 
+# Language models are used in a variety of tasks, including speech recognition, 
+# machine translation, natural language generation, optical character recognition,
+# handwriting recognition, grammar induction, and information retrieval.
+# A bigram is a type of language model where the probability of the next word in a
+# sequence depends only on the previous word. It's a sequence of two adjacent elements
+# from a string of tokens, which are typically letters, syllables, or words. 
+# Bigrams, along with other n-grams, are used in most successful language models for
+# tasks like speech recognition. 
 #
-# ! explain more about autoregressive models
+# A sequence-to-sequence (Seq2Seq) model is used in sequence prediction tasks, such 
+# as language modeling and machine translation. 
+# The idea is to use one LSTM (Long Short-Term Memory), the encoder, to read the input
+# sequence one timestep at a time, to obtain a large fixed dimensional vector representation
+# (a context vector), and then to use another LSTM, the decoder, to extract the output 
+# sequence from that vector. the second LSTM is essentially a recurrent neural network 
+# language model except that it is conditioned on the input sequence. 
+# So, in essence, language models form the foundation of sequence-to-sequence models. 
+# They provide the mechanism for predicting the next element in a sequence, which is 
+# a key component of sequence-to-sequence models.
+#
+# !explain this better later
 # side note about Autoregressive models : https://www.youtube.com/watch?v=vwG3KWzuACo
 # the class of models we are tyring to implement here is called autoregressive and they 
 # are shown to outperform recurrent networks (rnns/lstm/gru/etc)
-# an autoregressive model is a feedforward model that predicts the next variable xt in a time series
-# based on k previous variables (xt-1, xt-2,...) 
+# an autoregressive model is a feedforward model that predicts the next variable xt in 
+# a time series based on k previous variables (xt-1, xt-2,...) 
 # in RNNs, the parameters are shared across time (same function (f(.) at different t))
 # while Autoregressive models, make a strong conditional independence assumption. 
 # watch the video to have a clue!
+# -------------------------------------------------------------------------------
 #
 # so lets go
 class BigramModel(nn.Module):
     def __init__(self, vocab_size) -> None:
         super().__init__()
         self.vocab_size = vocab_size
-        # our bigram model was nothing more than a 2d array of vocab_size, we can achieve that using 
-        # a single weight matrix or torch.Embedding. we use torch.Embedding to not reinvent the wheel!
-        # and since all new language models use word-embeddings! so its a good choice for our base model anyway!
+        # our bigram model which we built in refresher section, was nothing more 
+        # than a 2d array of vocab_size, we can achieve the same behavior using 
+        # a single weight matrix or torch.Embedding. we use torch.Embedding to 
+        # not reinvent the wheel! and also cuz all new language models use word-embeddings!
+        # so its a good choice for our base model anyway!
         self.token_embedding = torch.nn.Embedding(vocab_size, vocab_size)
     
-    # since we want to be able to calculate loss, if there are labels, we get Y as well
+    # since we want to be able to calculate loss, if there are labels, we get it as well
+    # sidenote:---------------------------------------------------------------------------
+    # note, we are using __call__ to be in line with our previous examples/implementations
+    # from refresher section. in practice, we use forward() because we are using torch 
+    # nn.Module from now on. this allows us to use hooks if we ever need to. 
+    # ------------------------------------------------------------------------------------
     def __call__(self, inputs:torch.Tensor, labels:torch.Tensor=None) -> torch.Tensor:
         logits = self.token_embedding(inputs)
         loss = None
@@ -459,27 +515,30 @@ class BigramModel(nn.Module):
             # this is an issue for torch.crossentropy, as it expects the input
             # to be in the form of (B,C,T), that is, the channels/embeddings dimension
             # need to be right after the batch dimension or otherwise it wont work.
-            # so we need to account for that.
+            # so we need to account for it.
             # we can go on permuting the dimensions, like this and rectify the issue:
             # logits = logits.permute((0,2,1))
-            # however, if for some reason the output of logits in the form of (4,8,65) is not ideal for us, 
-            # and instead we want the usual form of (B,C) e.g, we can easily do it that way instead, 
-            # think about it, what really it is, is 4*8=32 examples arranged in a (4,8) shape and 
+            # however, if for some reason the output of logits in the form of (4,8,65)
+            # is not ideal for us, and instead we want the usual form of (B,C) e.g,
+            # we can easily do it that way instead, 
+            # think about it, what it really is, is 4*8=32 examples arranged in a (4,8) shape and 
             # if we rather a normal 2d tensor of shape (32,65), we can simply merge the first two dims!  
             # lets do just that, flatten the two dimensions into one and carry on!
             # we are basically concatenating the batch and time dimensions
-            # into one dimension (effectively, stacking samples on top of each other), instead of having 
-            # four compartments, each having 8 segments, we are going to have 1 long compartment with 32 segments/rows
-            # for the lack of better words!!
+            # into one dimension (effectively, stacking samples on top of each other), 
+            # instead of having four compartments, each having 8 segments, we are going to have
+            # 1 long compartment with 32 segments/rows for the lack of better words!!
             # so lets first get the shapes 
             # B,T,C = logits.shape
             # logits = logits.view(B*T,C)
+            # 
             # and we also need to do the same for the labels 
             # labels = labels.view(B*T)
             # we could also do,
             # labels = labels.view(-1)
-            # but thats not really needed, so we just simply permute logits temporarily so the logits shape
-            # stays the same regardless of calculating the loss or not :-)
+            # 
+            # but thats not really needed, so we just simply permute logits temporarily 
+            # so the logits shape stays the same regardless of calculating the loss or not :-)
             loss = F.cross_entropy(logits.permute((0,2,1)), labels)
         return logits, loss
     
@@ -495,7 +554,7 @@ class BigramModel(nn.Module):
         # turn logits to probs,
         # use torch.multinomial to sample from our probablity distribution
         # get the new character index, and add it to a list to gradually 
-        # -create our final text output
+        # create our final text output
         # so lets go 
         # our idx should have the shape [B,T]
         assert len(idx.shape) == 2, f'idx.shape({idx.shape}) should have (b,t) form.'
@@ -510,45 +569,58 @@ class BigramModel(nn.Module):
             # probs = torch.softmax(logits, dim=1)
             # but here, we want to only focus on the next character because this is what comes next
             # each time obviously, so we only take the last timestep to see what the model predicted.
-            # sidenote: you might ask we have 7 choices, why are we choosing the last character/token?
+            # sidenote: 
+            # you might ask we have 7 choices, why are we choosing the last character/token?
             # can we choose any of those 7 time dimensions? like 1,2,3...,7 as well?
-            # in this case it really doesnt matter and the loss stays the same, as its just a bigram model!
-            # if we chose the last token its not like, the model cares about all the context_size, no, its just 
-            # meaningless to it, it does not have the capability to utilize the context_size at all! 
-            # so for this specific case, we can select any dimension other than 0 obviously and the loss wont change!
-            # but to be consistent with our future changes, and not changing the codebase as much as possible, 
-            # and the fact that when generating text with the starting token (zeros(1,1) as we will see in a moment)
-            # we have a single time dimension (i.e. 0) so any other value (except -1) would result in an error, we 
-            # dont hardcode a specific dim, and instead use -1 to refer to the last dim whatever it happens to
-            # be at the time of execution. 
-            # also note that while the choice of dim here doesnt affect the loss, it 'does' affect the text generation. 
-            # try different dimensions when trying to generate text after you trained the model and see for yourself 
-            # you can also use different dimensions as we talked about during training and see the loss wont change!
+            # in this case it really doesnt matter and the loss stays the same, as its just 
+            # a bigram model!
+            # if we chose the last token its not like, the model cares about all the context_size,
+            # no, its just meaningless to it, it does not have the capability to utilize the context_size
+            # at all! 
+            # so for this specific case, we can select any dimension other than 0 obviously and 
+            # the loss wont change!
+            # but to be consistent with our future changes, and not changing the codebase as much as
+            # possible, and the fact that when generating text with the starting token (zeros(1,1) 
+            # as we will see in a moment)
+            # we have a single time dimension (i.e. 0) so any other value (except -1) would result
+            # in an error, we dont hardcode a specific dim, and instead use -1 to refer to the last
+            # dim whatever it happens to be at the time of execution. 
+            # also note that while the choice of dim here doesnt affect the loss, it 'does' affect 
+            # the text generation. 
+            # try different dimensions when trying to generate text after you trained the model and
+            # see for yourself you can also use different dimensions as we talked about during
+            # training and see the loss wont change! 
             # (provided you set seeds so the output becomes determinstic)
             # 
             logits = logits[:,-1,:] # this now becomes (B,C) instead of the initial (B,T,C)
             probs = torch.softmax(logits, dim=-1) 
             # now lets sample from it! what! why? you may ask!
-            # see genrating output really has nothing to do with the model, in a sense that, comming up
-            # with what we consider satisfactory can be more than just selecting the entry with highest probablity
-            # we can do all sorts of things to direct the generation process toward what we find satisfactory
-            # we can use temperature, top-p, etc to do just that. Using sampling using here is for this very reason
-            # To this end, we use torch.multinomial for generating the next token, this is a technique known as sampling! 
-            # instead of simply choosing the token with the highest probability (which is known as greedy decoding by the way),
-            # sampling selects the next token randomly according to the probability distribution produced by the model1.
-            # the reason we use sampling instead of the greedy decoding method (i.e. the normal way!) is to introduce more diversity
-            # and randomness into the generated output. 
-            # If we always choose the token with the highest probability, the generated text can become repetitive 
-            # and deterministic, especially over long sequences. By introducing some randomness like this, we can 
-            # generate more diverse and interesting output.
-            # note that this can sometimes generate less probable (and potentially less coherent) sequences
-            # as well (obviously!). The balance between diversity and coherence is a common challenge in text generation, and 
-            # different decoding strategies (like greedy decoding, sampling, beam search, using different temperatures, 
-            # or top-p, etc) offer different trade-offs.
-            # also replacement if true, means, if something is selected, it can be selected again! (basically 
-            # its place will be filled/replaced and ready to be used again, like if e.g. you chose/pickedup an
-            # apple! another apple will be repalce the old one, so you always have apple!)
+            # see genrating output really has nothing to do with the model, in a sense that,
+            # comming up with what we consider satisfactory can be more than just selecting 
+            # the entry with highest probablity.
+            # we can do all sorts of things to direct the generation process toward what we 
+            # find satisfactory. we can use temperature, top-p, etc to do just that. 
+            # Using sampling using here is for this very reason, to this end, we use torch.multinomial
+            # for generating the next token, this is a technique known as sampling! 
+            # instead of simply choosing the token with the highest probability 
+            # (which is known as greedy decoding by the way), sampling selects the next token randomly
+            # according to the probability distribution produced by the model.
+            # the reason we use sampling instead of the greedy decoding method (i.e. the highest probability way!)
+            # is to introduce more diversity and randomness into the generated output. 
+            # If we always choose the token with the highest probability, the generated text can becomes
+            # repetitive and deterministic, especially over long sequences. By introducing some 
+            # randomness like this, we can generate more diverse and interesting output.
+            # note that this can sometimes generate less probable (and potentially less coherent)
+            # sequences as well (obviously!). 
+            # The balance between diversity and coherence is a common challenge in text generation,
+            # and  different decoding strategies (like greedy decoding, sampling, beam search, 
+            # using different temperatures, or top-p, etc) offer different trade-offs.
+            # also replacement if true, means, if something is selected, it can be selected again!
+            # (basically its place will be filled/replaced and ready to be used again(reloaded), 
+            # like if e.g. you chose/pickedup an apple! another apple will be repalce the old one,
+            # so you always have apple!)
             # basically if a token is picked one, replacement=True, means it can be selected again
+            # (I'd like to call it replacemen = reloading!)
             idx_next_char = torch.multinomial(probs, num_samples=1, replacement=True) # shape is (B,1)
             # now lets add this to the next input to be fed to the model 
             # since idx has the shape(batch, T), we should add this tothe second dimension
@@ -556,9 +628,9 @@ class BigramModel(nn.Module):
             # creates the shape (B,T+1) 
             #this doesnt make sense for this particular model, becasue we are always checking
             # the next character given the previous one, so all the concatenation we are doing
-            # is just useless now. the reason we are implementing this like this, as I pointed out earlier
-            # is to create a base foundation, so that we can improve upon it when we add attention later on 
-            # which will use the history of previous characters.
+            # is just useless now. the reason we are implementing this like this, as I pointed 
+            # out earlier is to create a base foundation, so that we can improve upon it when 
+            # we add attention later on which will use the history of previous characters.
             idx = torch.cat((idx, idx_next_char), dim=1) 
         
         # and finally when all is done return the idx which by now should have the whole output
@@ -569,9 +641,10 @@ out,loss = model(x,y)
 print(f'{out.shape} {loss}')
 # prints:
 # torch.Size([32, 65]) 4.574285984039307
-# the loss is good, we learned previously that we can evaluate a base loss provided our number of classes
-# since we have 65 classes (our vocab_size or number of characters involved) the uniform probability for each class
-# would be 1/65 =0.015384615, which if we take its negative log would turn out to be -ln(1/65) = 4.17438727, 
+# the loss is good, we learned previously that we can evaluate a base loss provided 
+# our number of classes since we have 65 classes (our vocab_size or number of characters involved)
+# the uniform probability for each class would be 1/65 =0.015384615, which if we take
+# its negative log would turn out to be -ln(1/65) = 4.17438727, 
 # which is pretty close to the loss we'v got here, signifying its a pretty decent value to begin with.
 # also lets see the generate method at work
 # lets create a dummy input, basically a batch of 1 and sequence of 1 of zero!
@@ -635,35 +708,40 @@ for pos in range(max_iter):
 # 2.4135568141937256
 # 2.50952410697937
 # 2.574878215789795
-# relying on single batch loss is not a good idea to measure the performance of our model. moreover
-# relying on training loss, is not good either, so it would be much better if we considered more batches
-# for loss and even better we could also investivate the models performance on our validation set. 
-# so lets do just this and define a function that calculates loss for training and validation sets alike
-# but considers more batches for loss calculation
+
+# relying on a single batch loss is not a good idea to measure the performance of our model.
+# moreover relying on training loss, is not good either, so it would be much better if we 
+# considered more batches for loss and even better we could also investivate the models 
+# performance on our validation set. 
+# so lets do just this and define a function that calculates loss for training and 
+# validation sets alike but considers more batches for loss calculation
 
 # this decorator signals torch not to calculate gradients for its operations!
 @torch.no_grad()
 def evaluate_loss (iterations, device=None):
     results={}
-    # before calculating the loss, lets switch to eval mode,although for our specific case this doesnt matter
-    # but its good practice, as later on, we will add layers that their behavior do change depending on traing
-    # val mode.  
+    # before calculating the loss, lets switch to eval mode,
+    # although for our specific case this doesnt matter
+    # but its good practice, as later on, we will add layers
+    # that their behavior do change depending on traing/val mode.  
     model.eval()
     if device is None:
         # use the device assigned to what model params are assigned
         device = next(model.parameters()).device
-    # since we already used no_grad decorator, we dont need to use no_grad context manager here
+    # since we already used no_grad decorator, we dont need to use
+    # no_grad context manager here
     # with torch.no_grad():
     for split in ['train','val']:
         losses = torch.zeros(size=(iterations,), device=device)
         for i in range(iterations):
-            x,y = get_batch(split,batch_size)
+            x,y = get_batch(split, batch_size)
             x,y = tuple(t.to(device) for t in (x,y))
             logits, loss = model(x,y)
             losses[i] += loss
         results[split] = losses.mean(0)
-    # since we want to use this inside training loop, make sure we set the model back to train mode
-    # incase we use layers such as batchnorm,etc that the require being trained!
+    # since we want to use this inside training loop, make sure we set the model
+    # back to train mode incase we use layers such as batchnorm,etc that the 
+    # require being trained!
     model.train()
     return results
 
@@ -744,48 +822,60 @@ torch.manual_seed(255)
 # now that we have our base model, lets add the attention mechanism to it. 
 # The attention mechanism at its core is nothing but a communication mechanism, and what it does is
 # it tries to take advantage of the rich information embedded in the input/sequence. 
-# for our case here, this is specifically about the past history (i.e. past tokens and how they are related 
-# or show/affect the next token probablity)
+# for our case here, this is specifically about the past history (i.e. past tokens and how they
+# are related or show/affect the next token probablity)
 # but in general attention can utilize both past and future connections/sequence tokens. 
-# what we just described here is not the whole story, but its enough to gives us a foundation to build our
-# intuition as we continue on. 
-# we will elaborate more of course and hopefully gradually improve our definition
-# and understanding of the attention mechanism.
-# we said attention is a kind of communication mechanism, but what does that mean? how do tokens communicate?
-# to put it simply, by communication, we mean to somehow involve the value of one or more tokens in the operation
-# so that they can play a role in the final output. so one simple way could be to just sum all the values/weights 
-# assosiated with each token (previous tokens), and use that to determine the value/weight for the current token!
-# another way could be to use average instead of sum, of the said tokens! 
+# what we just described here is not the whole story, but its enough to gives us a foundation 
+# to build our intuition as we continue on. 
+# we will elaborate more of course and hopefully gradually improve our definition and 
+# understanding of the attention mechanism.
+# we said attention is a kind of communication mechanism, but what does that mean? 
+# how do tokens communicate? to put it simply, by communication, we mean to somehow 
+# involve the value of one or more tokens in the operation so that they can play a 
+# role in the final output. we can think of several ways of implementing this concept.
+# one simple way could be to just sum all the values/weights assosiated with each
+# token (previous tokens), and use that to determine the value/weight for the current token!
+# another way could be to use the average instead of the sum, of the said tokens!
+# so we are after finding a way, a good one, to include/incorporate every values/weights
+# for the tokens involved, so we get a better/more accurate value/weight for the current token.
+#
 # now lets expand on this and get an intuitive undrestanding what all of this means.
-# before we venture any further into the crux of the matter!(big words:-)), let us learn about a technique
-# thats used to efficiently implement attention mechanism, after this you should get a good idea about all of this.
+# before we venture any further into the crux of the matter!(big words:-)), 
+# let us learn about a technique thats used to efficiently implement attention mechanism, 
+# after this you should get a good idea about all of this. we need this to understand the whole
+# thing! so stay with me.
 # For this purpose,lets imagine we have a simple input like the following: 
 # lets create an input of the following shape
 B,T,C = (4,8,2)
 # to make it more intuitive lets make a tensor with known numbers and then reshape it
-x = torch.arange(0,64,dtype=torch.float).view(B,T,C)
+x = torch.arange(0, 64, dtype=torch.float).view(B,T,C)
 print(f'x={x}')
-# imagine we have an input like what we encountered previously in our examples. in this sample 
-# input, we have a batch of 4 samples, each having 8 sequences with each sequence having a vector of 2 values
-# what we are planning to do is to provide a way by which each token can communicate with other 
-# tokens. we have 8 tokens in our sequence. so we want our tokens to be able to communicate with
+# imagine we have an input like what we encountered previously in our examples. 
+# in this sample input, we have a batch of 4 samples, each having 8 sequences 
+# with each sequence having a vector of 2 values.
+# what we are planning to do is to provide a way by which each token can communicate
+# with other tokens. 
+# we have 8 tokens in our sequence. so we want our tokens to be able to communicate with
 # all the previous tokens that came before them. 
-# The reason we are only looking in the past token is simply becasue we are trying to perdict the future,
-# so it only makes sense to look at the past and current timestamp and infer on what to do for the future.  
-# as we said earlier, one of the easiest ways we could come up to implement such communication mechanism 
-# between tokens could be to sum or average the values of all previous tokens as a way of taking into account
-# their contribution to the [final] answer/output.
+# The reason we are only looking in the past token is simply becasue we are trying to 
+# perdict the future, so it only makes sense to look at the past and current timestamp 
+# and infer on what to do for the future.  
+# as we said earlier, one of the easiest ways we could come up to implement such communication
+# mechanism between tokens could be to sum or average the values of all previous tokens 
+# as a way of taking into account their contribution to the [final] answer/output.
 # that is, lets say if we are currently at token 5, we take the average of 
 # the current token and all previous tokens before it, effectively making a feature vector that
 # reflects our current status of the sequence so far, having taken all previous tokens/steps up to now.
-# note that as you may also have guessed, summing/averaging arent the best way to model such interations.
-# in fact they are an extremely weak form of interaction between tokens,
-# this kind of communicating is extremely lossy so to speak, that is we lose a great deal of information 
-# concerning the underlying relationships between tokens, their arrangements,their implicit interactions,
-# semantics, etc. but for now this is ok. we will later on see how we can fix this issue.
-# so now what we want to do, is to calculate the sum or average of all tokens up to the current token in 
-# all batches at the same time.
-# a naive way would be to do sth like this using a for loop:
+# note that as you may also have guessed, summing/averaging arent the best way to model 
+# such interations. in fact they are an extremely weak form of interaction between tokens,
+# this kind of communicating is extremely lossy so to speak, that is we lose a great deal 
+# of information concerning the underlying relationships between tokens, their arrangements,
+# their implicit interactions, semantics, etc. but for now this is ok. we will later on see 
+# how we can fix this issue.
+# 
+# so now what we want to do, is to calculate the sum or average of all tokens up to the current
+# token in all batches at the same time.
+# a naive way for calculating the average would be to do sth like this using a for loop:
 results = torch.zeros(size=(B,T,C))
 for b in range(B):
     for t in range(T):
@@ -829,45 +919,56 @@ print(f'{results=}')
 #          [54., 55.],
 #          [55., 56.]]])
 #
-# You may notice that, some people/researchers refer to what we did here(averaging) as BoW, or bag of words. 
+# you may notice that, some people/researchers refer to what we did here(averaging) as BoW, 
+# or bag of words. 
 # We are effectively averaging embeddings here and averaging embeddings can be considered a form of 
 # Bag of Words (BoW) representation. In BoW, the focus is on the occurrence and frequency of words, 
-# rather than their order or structure. By averaging embeddings, we are essentially treating each 'word'
-# as an independent feature and capturing its representation in the form of a numerical vector.
+# rather than their order or structure. 
+# By averaging embeddings, we are essentially treating each 'word' as an independent feature and
+# capturing its representation in the form of a numerical vector.
 #
 # Although what we have is basically embeddings and averaging embeddings does not capture the exact 
 # frequency of each word, it does however, capture the overall distribution and semantic information
 # present in the text. 
-# Like BoW, our approach here disregards word order and focuses on the presence and representation of words. 
-# also note that averaging embeddings may preserve some semantic relationships between words, which BoW 
-# representations might not capture as effectively.
+# Like BoW, our approach here disregards word order and focuses on the presence and representation
+# of words. 
+# also note that averaging embeddings may preserve some semantic relationships between words, which
+# BoW representations might not capture as effectively.
 # 
-# Side note: 
-# Bag of Words (BoW) is a commonly used technique in natural language processing (NLP) for representing text
-# as a numerical feature vector. It disregards the order and structure of words in a document and focuses only
-# on their occurrence and frequency.
-# In the BoW model, a document or a piece of text is represented as a "bag" (unordered set) of words, where 
-# each word is treated as an independent feature. The presence or absence of words in the document is encoded
-# as a binary value (0 or 1), and the frequency of each word is often used as the value in the feature vector.
+# sidenote: -------------------------------------------------------------------------------
+# Bag of Words (BoW) is a commonly used technique in natural language processing (NLP) for 
+# representing text as a numerical feature vector. It disregards the order and structure of
+# words in a document and focuses only on their occurrence and frequency.
+# In the BoW model, a document or a piece of text is represented as a "bag" (unordered set) 
+# of words, where each word is treated as an independent feature. The presence or absence of
+# words in the document is encoded as a binary value (0 or 1), and the frequency of each word
+# is often used as the value in the feature vector.
 # 
 # for the reference, this is how a BoW process works:
 # First, we have the tokenization phase, in which the text is split into individual words or tokens. 
-# punctuation marks, whitespace, and other special characters are usually removed or treated as separate tokens.
+# punctuation marks, whitespace, and other special characters are usually removed or treated as
+# separate tokens.
 # Then, a vocabulary is created by taking all unique words from the entire corpus (collection of documents). 
-# each unique word is assigned a unique index or position in the vocabulary. this is the vocabulary creation phase!
-# next each document is represented as a feature vector, typically a as one-hot encoded  vector or a count vector. 
-# (as the name suggests, in the one-hot encoding scheme, each word in the vocabulary corresponds to a binary feature, and the vector
-#    contains 1s in the positions where the word occurs and 0s elsewhere. 
-# while in a count vector, the value at each position represents the frequency of the corresponding word in the document)
-# and finally, the resulting feature vectors can be used as input to out models for tasks such as text classification,
-# sentiment analysis, document clustering, information retrieval, etc. 
-# Needless to say, BoW has some limitations as well. It does not capture the semantic meaning or context of the words,
-# as it treats each word independently. It also ignores the grammar and word order. 
-# Having all these said, BoW is simple, efficient, and can be a useful baseline representation for various NLP tasks.
+# each unique word is assigned a unique index or position in the vocabulary. this is the vocabulary 
+# creation phase!
 # 
-# so to recap one more time, we are basiaclly treating each timestep/sequence dimension, as a 'word', so we have
-# 8 tokens/words, and we are averaging them (we are infact averaging their embeddings, but thats obvious!)
-# so we got ourselves a bow representation!
+# next each document is represented as a feature vector, typically a as one-hot encoded vector or
+# a count vector. (as the name suggests, in the one-hot encoding scheme, each word in the vocabulary
+# corresponds to a binary feature, and the vector contains 1s in the positions where the word occurs
+# and 0s elsewhere. while in a count vector, the value at each position represents the frequency of 
+# the corresponding word in the document)
+#
+# and finally, the resulting feature vectors can be used as input to out models for tasks such as
+# text classification, sentiment analysis, document clustering, information retrieval, etc. 
+# Needless to say, BoW has some limitations as well. It does not capture the semantic meaning or 
+# context of the words, as it treats each word independently. It also ignores the grammar and word order. 
+# Having all these said, BoW is simple, efficient, and can be a useful baseline representation
+# for various NLP tasks.
+# -------------------------------------------------------------------------------
+#
+# so to recap one more time, we are basiaclly treating each timestep/sequence dimension, as a 'word',
+# so we have 8 tokens/words, and we are averaging them (we are infact averaging their embeddings, 
+# but thats obvious!) so we got ourselves a bow representation!
 # now back to our discussion, if we try to visualize the results we get 
 print(x[0])
 print(results[0])
@@ -890,23 +991,25 @@ print(results[0])
 #         [5., 6.],
 #         [6., 7.],
 #         [7., 8.]])
-# if you look closely, you'll notice that each row, contains the mean of all the rows before it
-# consider the first 3 rows in x[0], 
+# if you look closely, you'll notice that each row, contains the mean(average) of all the rows before
+# it. consider the first 3 rows in x[0], 
 # tensor([[ 0.,  1.],
 #         [ 2.,  3.],
 #         [ 4.,  5.],
-# now refer to the 3rd row in results[0] which is :
-#         [2., 3.],
+# now refer to the 3rd row in results[0] which is :  [2., 3.],
+# (for the 3 rows in X[0] we have [0+2+4, 1+3+5] -> [6/3, 9/3] -> [2,3])
 # likewise, consider the last row in results which contains the average for all the rows in x:
 # 0+2+4+6+8+10+12+14 = 56 which when divided by their count, 8, results in 7, 
 # and this is the same for the second column, thus we get:
 # results[0,7] = [7., 8.]])
-# this all good but the problem is using for loops to calculate this is very inefficient, it
-# happens that this operation can be efficiently calculated using matrix multiplication.
+# 
+# this is all good but the problem is using for loops to calculate this is very inefficient, 
+# it happens that this operation can be efficiently calculated using matrix multiplication.
+# 
 # lets learn this trick using an example: 
 # suppose we have the following as the input: 
-a = torch.ones(size=(3,3))
-b = torch.randint(0,10,size=(3,2)).float()
+a = torch.ones(size=(3, 3))
+b = torch.randint(0,10,size=(3, 2)).float()
 c = a@b
 print(f'{a=}')
 print(f'{b=}')
@@ -924,11 +1027,12 @@ print(f'{c=}\n----')
 #        [[20., 13.],
 #         [20., 13.],
 #         [20., 13.]])
-# nothing fancy here, we have matrix multiplication, the first row of 'a' is dot-producted by first col
-# of 'b', then sumed, it makes up the first col of first row in c. likewise the first row of 'a' dot 
-# the second col of 'b', then summed the results, makes up the second col of first row in c. and this 
-# goes on for the rest of the matrixes. this is what we learned back in higheschool, but what is it 
-# exactly that we are learning here exactly?!
+# nothing fancy here, we have matrix multiplication, the first row of 'a' is dot-producted by
+# first col of 'b', then sumed, it makes up the first col of first row in c. likewise the 
+# first row of 'a' dot the second col of 'b', then summed the results, makes up the second col
+# of first row in c. and this goes on for the rest of the matrixes. 
+# this is what we learned back in highschool, but what is it exactly that we are learning here
+# exactly?!
 # if you look closely, you'll notice that, the c cols are actually the sum of all the rows in b!
 #        [9]
 # b[:,0]=[5] 
@@ -938,15 +1042,16 @@ print(f'{c=}\n----')
 # b[:,1]=[5] 
 #        [5]
 # 3+5+5 is 13!
-# hence c = [20., 13.] which is repeated obviously because the second and third rows of a are all 1s as well.
+# hence c = [20., 13.] which is repeated obviously because the second and third rows of a are 
+# all 1s as well.
 #           [20., 13.]  
 #           [20., 13.] 
-# I guess you are now starting to get where we are going with this, if we can some how alter the 'a' matrix,
-# we may very well be able to achieve our goal! 
+# I guess you are now starting to get where we are going with this, if we can some how alter the
+# 'a' matrix, we may very well be able to achieve our goal! 
 # how you may ask? the answer is using torch.tril!
 # torch.tril() is a function that returns a matrix from a given tensor, so that half of it set to zero,
-# basially it creates a triangular tensor, where the right half is just zeros! lets see how it works, 
-# lets apply it on 'a'
+# basially it creates a triangular tensor, where the right half is just zeros! 
+# lets see how it works, lets apply it on 'a'
 a_tril = torch.tril(a)
 print(f'a_tril:\n{a_tril}')
 # it prints
@@ -954,7 +1059,8 @@ print(f'a_tril:\n{a_tril}')
 #        [[1., 0., 0.],
 #         [1., 1., 0.],
 #         [1., 1., 1.]])
-# as you can see the the right half is set to zero and we are left with a triangle shape of 1s on the left side
+# as you can see the the right half is set to zero and we are left with a triangle shape of 1s on 
+# the left side.
 # now if we do a@b this time we get:
 c = a_tril@b 
 print(f'b:\n{b}')
@@ -971,15 +1077,17 @@ print(f'c:\n{c}')
 # tensor([[ 9.,  3.],
 #         [14.,  8.],
 #         [20., 13.]])
-# now if you look closely, you'll notice that, this time, each row in c, is effectively the sum of the previous
-# rows in b, like the first row of 'a' is only 1 in the 0ths column, so the first row of b is copied in c intact
-# (workout the math and see why). 
-# the second row in 'a', now has two 1s in col 0 and 1 respectively, which effectively translates to summing the first
-# two rows in b. (9+5 =14, 3+5=8). likewise, the third row in 'a' is all 1s, signfigying all rows in b will
-# be summed which gives us (9+5+5=20, 3+5+5=13). 
-# so basically we are doing sums here, becasue our tensor a is all ones. so if we want to somehow calculate the
-# average, instead of sum, we can easily change 'a' by normalizing it so that the each row sums to 1 (i.e. all cols
-# sum to 1), this way the end result will be the average (becasue the 'b' is multiplied by a fraction/scale and then summed)
+# now if you look closely, you'll notice that, this time, each row in c, is effectively the sum of
+# the previous rows in b, like the first row of 'a' is only 1 in the 0ths column, so the first row
+# of b is copied in c intact (workout the math and see why). 
+# the second row in 'a', now has two 1s in col 0 and 1 respectively, which effectively translates 
+# to summing the first two rows in b. (9+5 =14, 3+5=8). likewise, the third row in 'a' is all 1s, 
+# signfigying all rows in b will be summed which gives us (9+5+5=20, 3+5+5=13). 
+# 
+# so basically we are doing sums here, becasue our tensor a is all ones. so if we want to somehow 
+# calculate the average, instead of sum, we can easily change 'a' by normalizing it so that the 
+# each row sums to 1 (i.e. all cols sum to 1), this way the end result will be the average 
+# (becasue the 'b' is multiplied by a fraction/scale and then summed)
 # so if we scale 'a' by the sum of all its columns, we should get average instead
 a = torch.ones(size=(3,3))
 a = torch.tril(a)
@@ -992,8 +1100,8 @@ print(f'a:\n{a}')
 #
 # note that, now each row, sums to 1. the first row, the first element is 1, because the rest are 0s
 # but in the second row, as there are two 1s, the probabality is divided between the two, each being 0.5
-# likewise, in the third row, as there are 3 1s, the probablity is divided between all of them, making each
-# to have the value 0.33
+# likewise, in the third row, as there are 3 1s, the probablity is divided between all of them, 
+# making each to have the value 0.33. 
 # and now if we try to multiply them, we get average as the result:
 c = a@b 
 print(f'calculating average:')
@@ -1009,6 +1117,7 @@ print(f'c:\n{c}')
 # tensor([[9.0000, 3.0000],
 #         [7.0000, 4.0000],
 #         [6.6667, 4.3333]])
+# 
 # we see that, each row in c, is the average of all the rows before it. 
 #
 # so using this trick, we can take the incremental average of any matrix we like. 
@@ -1069,14 +1178,15 @@ print(f'bow_results:\n{bow_results}')
 #          [54.0000, 55.0000],
 #          [55.0000, 56.0000]]])
 # which gives us the same results as we expected.
-# side note:
+# 
+# side note: -----------------------------------------------------------------------
 # one more thing before we continue on, note that the weight matrix is TxT while 
 # the input is (BxTxC). (T,T) and (B,T,C) are not compatible, so what happens is
 # that (T,T) is reshaped and a batch dimension is added to (T,T),making it (1,T,T)
 # and then this is broadcasted along the batch dimension (replicated) to become 
 # (B,T,T), then this will be multiplied by the (B,T,C)( note that at this stage
-# a@b will be a batch multiplication operation, if you set the batch dimension aside, youll
-# see that the rest of the dimensions match up, we have (T,T) and (T,C) which will
+# a@b will be a batch multiplication operation, if you set the batch dimension aside,
+# youll see that the rest of the dimensions match up, we have (T,T) and (T,C) which will
 # result in (T,C). now if we add the batches back in, we will endup with (B,T,C)
 # so in practice, the multiplication is done B times and then results are stacked.
 # the first batches will multiply each other (T,T)x(T,C) = (T,C)
@@ -1121,6 +1231,7 @@ print((c==c2).all())
 # dimension, we see we have a case of batch multiplication, that is we have 2
 # sets of compatible tensors that need to be multiplied together. so we use a 
 # simple for loop, to do multiplication, and stack the results and we are done!
+# -------------------------------------------------------------------------------
 #
 # now back to our discussion. as we just saw, the traingular form in our weighted
 # sum matrix, allows that each token at dimension t, can only interact with the tokens
@@ -1152,22 +1263,26 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # so you might ask, why would we want to do this? why make things more complicated?
 # only to achieve what we already achieved pretty efficiently before? it doesnt make any sense!
 # The answer is, this approach provides us with a flexibility that the previous ones
-# wouldnt provide us with. think about it for a moment, what would we do if we didnt want uniform probbablity
-# for all the tokens in a row? currently as you can see, we have uniform probablities in each row, we used that 
-# to calculate the average, becasue that was what we were after initially! but we said it earlier that 
-# average is a very weak form of communication! we lose a lot of information if we only use simple averaging 
-# like this. if you think a bit more, you'll notice that its really the uniform probablity that each token gets, 
-# uniform probablity means they are basically the same, in terms of impact on the output. 
-# thats like they are as important as the other tokens in every single situation! this assumption is
-# simply and clearly not true at all. again to understand why this is the case remember the weights matrices
-# in our models? if our model predicts all the classes the same, like at the very begining, when we havent 
-# started the training, the model is practically useless! until we train the model, and the weights get 
+# wouldnt provide us with. think about it for a moment, what would we do if we didnt 
+# want uniform probbablity for all the tokens in a row? 
+# currently as you can see, we have uniform probablities in each row, we used that 
+# to calculate the average, becasue that was what we were after initially! 
+# but we said it earlier that average is a very weak form of communication! we lose
+# a lot of information if we only use simple averaging like this. 
+# if you think a bit more, you'll notice that its really the uniform probablity that
+# each token gets, uniform probablity means they are basically the same, in terms of
+# impact on the output. 
+# thats like they are as important as the other tokens in every single situation! 
+# this assumption is simply and clearly not true at all. again to understand why 
+# this is the case remember the weights matrices in our models? if our model predicts
+# all the classes the same, like at the very begining, when we havent started the training,
+# the model is practically useless! until we train the model, and the weights get 
 # different values. remember trained weights vs raw weights! so this is the same here really.)
 # now if you see the previous implementation vs the newer one, you'll see that we basically 
 # the 'weight' matrix can essentially be anything and not just zeros! 
-# in other words, we have decoupled the 'weight' part from the constraint part (i.e. tril), which's job is 
-# to set the right half of the tensor to zero, so we actually get the expected behavior later on. 
-# (which is setting a constraint really (more later on))
+# in other words, we have decoupled the 'weight' part from the constraint part (i.e. tril),
+# which's job is to set the right half of the tensor to zero, so we actually get the expected
+# behavior later on. (which is setting a constraint really (more later on))
 # if you havent yet figured it out, the 'wieght' matrix, can be truly a weight matrix
 # which can show different strengths for each token, basically it can learn the interations
 # between tokens and manifest them. currently it is us who set it to all zeros, so we get
@@ -1175,27 +1290,30 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # all zeros, we actually learn the values from the data itself? that would make sense, and 
 # make it so that each token, can have a different connection(strength) to any other tokens
 # now, and thus build semantic/meaningful relation. 
-# This is infact what we are after. we want for tokens to learn associations and relations with other tokens
-# based on the data present in the dataset, having uniform weight like what we initially did, is really a 
-# far cry from what we intend, and therefore, we opt in to use this new approach that allows us to actually
-# exploit this new capability. 
-# This is infact the problem that attention solves, that is gathering
-# information from the past but in a data driven manner.(side note/reminder, we are not limited to 'past' 
-# information only per say, in this example, this is the case however, we will explain this 
-# in more detail)), we will see how attention does this exactly in a moment. 
+# This is infact what we are after. we want for tokens to learn associations and relations 
+# with other tokens based on the data present in the dataset, having uniform weight like what
+# we initially did, is really a far cry from what we intend, and therefore, we opt in to use 
+# this new approach that allows us to actually exploit this new capability. 
+# This is infact the problem that attention solves, that is gathering information from the 
+# past but in a data driven manner. 
+# (side note/reminder we are not limited to 'past' information only per say, in this example,
+# this is the case however, we will explain this in more detail)), we will see how attention 
+# does this exactly in a moment. 
 #
-# but before we jump into attention implementation also note that the tril part, infact is a hard-constrain here
-# that prevents tokens from the past from interacting with the tokens from the future. 
+# but before we jump into attention implementation also note that the tril part, infact is a
+# hard-constrain here that prevents tokens from the past from interacting with the tokens 
+# from the future. 
 # so to recap here, basically the idea is, this triangular form, allows us to have 
 # weighted aggregations of past elements. each element in the lower triangular part, 
 # specifies, the degree by which it plays a rule in the said outcome. 
-# that is how much of each element gets to get incorporated into the result of this specific position(i.e. current token's)
+# that is how much of each element gets to get incorporated into the result of this
+# specific position(i.e. current token's)
 #
 #
 # Attention does its job by using two vectors called, key and query.
-# basically this mean every single token, emits two vectors called key and query, the query verctor
-# as the name suggests, implies, what we are looking for, and the key vetcor, again as the
-# name suggets, implies, the contents, what it contains. 
+# basically this mean every single token, emits two vectors called key and query, 
+# the query verctor as the name suggests, implies, what we are looking for, and 
+# the key vetcor, again as the name suggets, implies, the contents, what it contains. 
 # note that "emit" here refers to the process of generating or producing something. 
 # When we say a token "emits" a key and a query vector, we mean that these vectors are produced 
 # or generated from the token through some transformation (usually a learned linear transformation). 
@@ -1207,17 +1325,20 @@ print(f'{torch.all(bow_results==bow_results2)}')
 # so effectively, the ones with higher number, are more similar to the query, the highest, 
 # obviously having the most relavancy/similarity to the query.
 #
-# side note: 
-# it might be intresting to include another point of view regarding tril-matrix and its interaction with query & key. 
-# From this point of view, the value of 1 at the position p, means the 'query' can attend to the 'key'
-# at that position, and the value of 0 means otherwise (i.e. query can not attend to the key at that position).
-# this in turn means : 
+# side note: --------------------------------------------------------------------------
+# it might be intresting to include another point of view regarding tril-matrix and its 
+# interaction with query & key. 
+# From this point of view, the value of 1 at the position p, means the 'query' can attend
+# to the 'key' at that position, and the value of 0 means otherwise (i.e. query can not 
+# attend to the key at that position). this in turn means : 
 # 1.each row corresponds to a query (the word we're predicting) and
 # 2.each column corresponds to a key (the words we’re attending to).
-# which once again shows, how we are evaluatiing multiple queries against multiple keys at the same time, 
-# which is a key feature of the attention mechanism in transformers.
-# furthermore,it shows that tril-matrix is simply a constraint on how query and key are prevented from communicating/attending
-# and how simple and straight forward the overall interaction between query and key is .
+# which once again shows, how we are evaluatiing multiple queries against multiple keys 
+# at the same time, which is a key feature of the attention mechanism in transformers.
+# furthermore,it shows that tril-matrix is simply a constraint on how query and key are 
+# prevented from communicating/attending and how simple and straight forward the overall
+# interaction between query and key is!
+#--------------------------------------------------------------------------------------
 #
 # its now time to implement a single attention head, we can later use this to create 
 # multi-attention-head which is basically several single attention heads working in 
@@ -1255,22 +1376,24 @@ weight_raw = q@k.transpose(2,1)
 # on the input and each return an output of (B,T,head_size), they are in fact, processing
 # all the tokens in the input, individually, simultaneously, all at the same time. so each 
 # token is both a query, and a key, and when we do a dotproduct, we are basically telling 
-# it to reveal the relation/similarity/relevance of every token with every other tokens in the same input
-# and as we explained earlier, this is infact our weight matrix (which was initially all zeros)
-# but is now learned from the data!
+# it to reveal the relation/similarity/relevance of every token with every other tokens in
+# the same input and as we explained earlier, this is infact our weight matrix (which was 
+# initially all zeros) but is now learned from the data!
 # print(f'weight_raw\n{weight_raw}')
 # now we can apply the constraint on it so that tokens can only communicate with the past 
 # so we use the tril trick now!
 tril_constrain = torch.tril(torch.ones(size=(T,T)))
-# apply the tril on our weight_matrix, so we thanos snaped:d the right half values so each token can only
-# talk to its past! (convinietly our weightmatrix is exactly the same dims as our tril! we see why!)
+# apply the tril on our weight_matrix, so we thanos snaped:d the right half values so each
+# token can only talk to its past! (convinietly our weightmatrix is exactly the same dims 
+# as our tril! we see why!)
 raw_wieghts_masked = weight_raw.masked_fill(tril_constrain==0, float('-inf'))
 # apply sotmax to get probablity for each token,
 # remember weight is (B,T,T) and we use the last dim, we could use -1 as well, 
 # but I wanted to make it explicitly clear here!
 weight = raw_wieghts_masked.softmax(dim=2) 
 # and finally we can apply our weight on the input (we called it raw for a reason, read on)
-# (by the way this is also called self-attention(without tril/masking part) and masked self-attention with the tril/masking part!)
+# (by the way this is also called self-attention(without tril/masking part) and 
+# masked self-attention with the tril/masking part!)
 bow_raw = weight@x 
 # lets print raw_weights and weights and have some intuitive observations 
 print(f'weight_raw\n{weight_raw}')
@@ -1391,9 +1514,9 @@ print(f'weight\n{weight}')
 #          [7.8726e-02, 1.1815e-01, 3.7190e-01, 1.2607e-02, 3.6387e-02, 1.1790e-01, 2.6434e-01, 0.0000e+00],
 #          [5.6646e-02, 7.4575e-02, 6.8217e-02, 3.1568e-02, 5.9024e-02, 1.1073e-01, 3.1662e-02, 5.6757e-01]]], grad_fn=<SoftmaxBackward0>)
 #
-# as you can see, our weight is initialized for each batch based on the input data, and each token has its own
-# weight, that is they are not uniform!, to get a better understanding lets consider the first batch of 
-# raw-weights[0], raw_masked_wieghts[0] and weight[0]:
+# as you can see, our weight is initialized for each batch based on the input data, and each token
+# has its own weight, that is they are not uniform!, to get a better understanding lets consider 
+# the first batch of raw-weights[0], raw_masked_wieghts[0] and weight[0]:
 #
 # raw_weights[0]
 # tensor([[[ 1.0082e+00,  6.7622e-01, -6.4624e-02,  6.1701e-01, -2.7026e-01,  5.0988e-01,  1.6494e-01,  3.3523e-02],
@@ -1426,43 +1549,47 @@ print(f'weight\n{weight}')
 #          [5.7514e-02, 3.2129e-01, 6.7772e-02, 9.0167e-02, 1.7979e-02, 3.9571e-01, 4.9572e-02, 0.0000e+00],
 #          [7.3912e-02, 4.0274e-02, 2.3164e-01, 1.2995e-02, 3.1978e-01, 5.1140e-02, 1.8424e-01, 8.6020e-02]],
 # 
-# take the last token, which is 8.6020e-02, notice this token, not only knows its content and own position in 
-# the sequence(its the 8th token after all!) but also knows which tokens comes before it and how much its 
-# related to any of them.(basically when it knows which token comes before it, it creates its own query so
-# to speak, and talks to every single previous token to find about which ones are more or less relavent to
-# it and to what extend.) 
+# take the last token, which is 8.6020e-02, notice this token, not only knows its content and own 
+# position in the sequence(its the 8th token after all!) but also knows which tokens comes before it
+# and how much its related to any of them.(basically when it knows which token comes before it, it 
+# creates its own query so to speak, and talks to every single previous token to find about which ones
+# are more or less relavent to it and to what extend.) 
 #
 # lets expand on this a bit more using an example, how could we interpret these numbers?  
 # obviously our input is random, and the relationship between each token is random as well. 
 # but if for a moment we imagine these to be the values for a model at the begining of the training, 
-# we may find some intersting intuitions. obviously this would be much more coherent and clear when working 
-# on an already trained set of weights. 
-# nonetheless, imagine these weights to belong to a sentence like "The cat sat on the red mat." (I just made it up!) 
-# our tokens would be ["The", "cat", "sat", "on", "the", "red","mat", "."].
+# we may find some intersting intuitions. obviously this would be much more coherent and clear when 
+# working on an already trained set of weights. 
+# nonetheless, imagine these weights to belong to a sentence like "The cat sat on the red mat." 
+# (which we just made up!) our tokens would be ["The", "cat", "sat", "on", "the", "red","mat", "."].
 # by looking at the weights we may infer: 
 #
-# 1.The first row would correspond to the word "The". The attention is entirely on itself (1.0000), and not on any
-#   other words (0.0000), which makes sense as there are no previous words to attend to.
+# 1.The first row would correspond to the word "The". The attention is entirely on itself (1.0000),
+# and not on any other words (0.0000), which makes sense as there are no previous words to attend to.
 # 
-# 2.The second row would correspond to the word "cat". It attends mostly to "The" (0.8064) and a bit to itself 
-#   "cat" (0.1936). This could be because the model is learning that "The" often precedes a noun.
+# 2.The second row would correspond to the word "cat". It attends mostly to "The" (0.8064) and a bit
+# to itself "cat" (0.1936). This could be because the model is learning that "The" often precedes a 
+# noun.
 #
-# 3.The third row would correspond to "sat". It attends mostly to "cat" (0.7787), then to "sat" (0.1688), and
-#   a bit to "The" (0.0525). This could be because "sat" is a verb that is often associated with the subject 
-#   "cat".
+# 3.The third row would correspond to "sat". It attends mostly to "cat" (0.7787), then to "sat" (0.1688),
+# and a bit to "The" (0.0525). This could be because "sat" is a verb that is often associated with the 
+# subject "cat".
 #
 # 4.The fourth row would correspond to "on". It attends mostly to "The" (0.7022), then to "cat" (0.2459), 
-#   a bit to "sat" (0.0422), and very little to "on" (0.0097). This could be because prepositions like "on" 
-#   often relate to the subject and verb in a sentence, hence higher number for "The" and "cat".
+# a bit to "sat" (0.0422), and very little to "on" (0.0097). This could be because prepositions like "on" 
+# often relate to the subject and verb in a sentence, hence higher number for "The" and "cat".
 # 
 # 5.The sixth row would correspond to "mat". It attends mostly to "red" (0.3957), then to "cat" (0.3213),
-#   a bit to "on" (0.0902) and "sat" (0.0678). This could be because "mat" is the object where the "cat" "sat" "on".
-#   and intrestingly the "red" is highly related to "mat", overall conveying all the important semantics and relationships.
+# a bit to "on" (0.0902) and "sat" (0.0678). This could be because "mat" is the object where the "cat"
+# "sat" "on". and intrestingly the "red" is highly related to "mat", overall conveying all the important
+# semantics and relationships.
 # 
-# as you noticed I didnt include other tokens as they wouldnt make much sense considering they are random
-# but we could comeup with an example nevertheless that could give us an intuive understanding of whats going 
-# on in a typical attention weight matrix.
-# below is a simple heatmap that shows the same wieghts which hopefully give you an evern better mental image:
+# as you noticed I didnt include other tokens as they wouldnt make much sense considering they are
+# random but we could comeup with an example nevertheless that could give us an intuive understanding
+# of whats going on in a typical attention weight matrix.
+# below is a simple heatmap that shows the same wieghts which hopefully give you an evern better mental
+# image:
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -1487,10 +1614,6 @@ plt.show()
 #
 # now back at our own example, lets visualize the weights for better understanding
 def plot_heatmap(weight, label, cmap='plasma', annotate=False):
-    import matplotlib.pyplot as plt 
-    import seaborn as sns 
-    import numpy as np 
-    
     # lets draw the heatmap for each tensor 
     plt.figure(figsize=(12,6))
     sns.heatmap(weight.numpy(),cmap=cmap, annot=annotate,)
@@ -1518,14 +1641,14 @@ plot_heatmap(raw_wieghts_masked[0].detach(), label='raw_wieghts_masked-first bat
 # since the colors are not that defined, maybe gray cmap shows this better! but either are ok
 plot_heatmap(weight[0].detach(),'weight-first batch',cmap='Blues')
 plot_heatmap(bow_raw[0].detach(),'bow_raw-first batch')
-#
 
-# So far we learned that when we get a high relevancy scale/response in the weights, when we do a softmax it 
-# will assign a large probablity to them, informing the network that we need more information from them, 
-# effectively allowing for aggregating a lot of their information into our position and we happen to learn
-# more about them this way.
-# However, in practice, we are not intrested in aggregating the 'inputs' raw values per say, rather we want their information, 
-# so instead of just using the raw values of our input(x), we instead use a representation of them. 
+# So far we learned that when we get a high relevancy scale/response in the weights, when we do a 
+# softmax it will assign a large probablity to them, informing the network that we need more 
+# information from them, effectively allowing for aggregating a lot of their information into our
+# position and we happen to learn more about them this way.
+# However, in practice, we are not intrested in aggregating the 'inputs' raw values per say, rather 
+# we want their information, so instead of just using the raw values of our input(x), we instead use
+# a representation of them. 
 # this is achieved using a third vector known as, 'value' and is the last vector we use. 
 # just like the key and query, we set its bias to False, so we only get a simple vector,
 # and a dotproduct output.(again this is the intuition, but how much adding a bias would
@@ -1683,9 +1806,9 @@ class AttentionHead(nn.Module):
     def __call__(self, inputs:torch.Tensor) -> torch.Tensor:
         B,T,C = inputs.shape # (4,8,16)
         # create the weight by using k,q,v
-        k = self.key(inputs)    #! (B,T,C)  (4,8,16)
-        q = self.query(inputs)  #! (B,T,C)  (4,8,16)
-        v = self.value(inputs)  #! (B,T,C)  (4,8,16)
+        k = self.key(inputs)    #! (B,T,C)  e.g. (4,8,16)
+        q = self.query(inputs)  #! (B,T,C)  e.g. (4,8,16)
+        v = self.value(inputs)  #! (B,T,C)  e.g. (4,8,16)
         # create the weight matrix and scale it by 1/sqrt(head_size) to keep weight unit variance 
         weight = q@k.transpose(-2,-1)* self.head_size**-0.5 # !(B,T,T)
         # apply the tril constraint - (this makes this suitable for a decoder block only!)
@@ -1724,13 +1847,19 @@ print(at(x).shape)
 import torch, torch.nn as nn
 # side-quest!:
 # TODO:  add the efficient/fused version 
-# before we add this to our base model, lets check and see if fusing kqv can improve our speed!
-# we might think its not really that efficient provided that usually when we have multiple operations, 
-# its much better to create 1 larger operation than several smaller one, and when it comes to multiplication,
-# we can do better for example, we can calculate k,q,v in one go! we need to merge their weights, do the calcs,
+# before we add this to our base model, lets check
+# and see if fusing kqv can improve our speed!
+# we might think its not really that efficient to
+# provided that usually when we have multiple operations, 
+# its much better to create 1 larger operation than 
+# having several smaller ones, and when it comes to 
+# multiplication we can do better. for example, 
+# we can calculate k,q,v in one go! and be more efficient!
+# for this we need to merge their weights, do the calcs,
 # and then split the result! 
-# well, lets first see how its done and then do a simple benchmark to see if it actually is any better!
-# to give you an intuitive undrestanding try the following example ,
+# well, lets first see how its done and then
+# do a simple benchmark to see if it actually is any better!
+# to give you an intuitive undrestanding try the following example,
 # suppose we have our k,q,v layers
 # key = nn.Linear(5,5, bias=False)
 # query = nn.Linear(5,5, bias=False)
@@ -1738,16 +1867,18 @@ import torch, torch.nn as nn
 # x = torch.randn(size = (3,2,5))
 # and we want to calculate their outputs. 
 # before we do the multiplication, lets make sure their weights
-# are the something fixed so we can easily see for ourselves whats going on. 
-# since the key,query and values' weights are 5,5, we have 25 values for each, 
+# are something fixed so we can easily see for ourselves whats going on. 
+# since the key,query and values' weights are (5,5), we have 25 values for each, 
 # lets initilize them with 0-25! and then reshape them to the proper form.
 # key.weight.data   =  torch.arange(25).view(5,5).float()
 # query.weight.data =  torch.arange(25).view(5,5).float()
 # value.weight.data =  torch.arange(25).view(5,5).float()
 # now lets calculte their outputs :
 # k,q,v = [m(x) for m in (key, query, value)]
-# now we said that we can do a single multiplication instead of 3 by merging the weights of key,query and
-# value how do we do that? we simply create a linear layer with 3 times the output size of the initial size
+# now we said that we can do a single multiplication 
+# instead of 3 by merging the weights of key,query and
+# value how do we do that? 
+# we simply create a linear layer with 3 times the output size of the initial size
 # used for k,q,v layers. 
 # kqv = nn.Linear(5,5*3, bias=False)
 # to work with the same values, with repeate the weights 3 times and then reshape
@@ -1761,19 +1892,24 @@ import torch, torch.nn as nn
 # print(torch.allclose(k,k2), torch.allclose(q,q2), torch.allclose(v,v2))
 # we get True,True,True , signifying they are actually doing the very same thing!
 # note that sometimes this may return false, due to numerical instability in floats
-# but these two operations are equivalent 100%. to be certain you can use int instead
-# and see the output of these two sets of operations are identical.
+# but these two operations are equivalent 100%. 
+# to be certain you can use int instead and see the output of these two sets
+# of operations are identical.
 # key = nn.Linear(5,5, bias=False)
 # query = nn.Linear(5,5, bias=False)
 # value = nn.Linear(5,5, bias=False)
 # x = torch.randint(30, size=(3,2,5))
-# #we set requires_gradient to false becasue a tensor that requires gradients must be floating point/complex dtype
+# 
+# #we set requires_gradient to false becasue a tensor that 
+# requires gradients must be floating point/complex dtype
 # [m.requires_grad_(False) for m in (key, query, value)]
 # key.weight.data   =  torch.arange(25).view(5,5)
 # query.weight.data =  torch.arange(25).view(5,5)
 # value.weight.data =  torch.arange(25).view(5,5)
 # k,q,v = [m(x) for m in (key, query, value)]
-# # same here, becasue we are setting the weights value to int, we set require_gradients to false
+# 
+# # same here, becasue we are setting the weights value to int,
+# we set require_gradients to false
 # kqv = nn.Linear(5,5*3, bias=False).requires_grad_(False)
 # kqv.weight.data = torch.arange(25).repeat(3).view(5*3,5)
 # kqv_output = kqv(x)
@@ -1855,47 +1991,72 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 # Number of parameters in original layers: 28,755,648
 # Number of parameters in fused layer: 28,755,648
 
-# we get contradictory results but why? 
-# Fusing several operations into a single operation does not always result in improved performance.
-# the improvement is directlt related to the implementations both software wise and more importantly
-# hardware wise. 
-# In general, fusing multiple operations into one larger one, improves performance by reducing memory access
-# and the overhead associated with those separate operations, but to what extend we dont know and benchmarking
-# or consulting the documentations both for the software(library we use) and or lowlevel hardware details are 
-# the only way to know forsure.  
-# in Pytorch documentation, its stated that usually fusing multiple separate kernels into one can improve 
-# performance, but this is mostly related to cuda operations and is indeed the case. however meddling around
-# with matrix multiplication of random sizes, as you can see maynot translate into what we expect for the outcome,
-# (e.g. cuda kernels, ops may be optimized specififcally for matrixes with certain size specificities, like being
-# in orders of 2, and do not yield the same pefromane when the tensors donot align properly so to speak!(are larger
-# than a specific size, are smaller than a specfic size, etc))
-# Thereore It's always recommended to benchmark and compare the performance of different approaches on our
-# specific hardware and input size to determine the most efficient solution.
-# fusing layers can be beneficial when the input size is large, and the number 
-# of parameters in the fused layer is smaller than the sum of the parameters in the original layers. 
-# This is because the fused layer requires fewer memory accesses and computations than the original 
-# layers.
+# we get seemingly contradictory results but why?
+# Fusing several operations into a single operation
+# does not always result in improved performance.
+# the improvement is directly related to the
+# implementations both software wise and more importantly hardware wise.
+# you can see fused operations are heavily used in many codebases/frameworks,
+# take forexample pytorch, it heavily uses this, especially when it comes to 
+# quantization or computation graph optimization) but if thats the case why
+# we are getting this outcome?let me elaborate a bit more.
+# you see in general, fusing multiple operations into one larger one,
+# improves performance by reducing memory access and intermediate memory writes
+# and the overhead associated with those separate operations.
+# but to what extent we dont know, and benchmarking or consulting
+# the documentations both for the software(library we use)
+# and/or lowlevel hardware details are usually the only way we can know for sure.
+# for example in Pytorch and CUDA related optimizations its 
+# often the case that multiple separate kernels/operations can
+# be fused into one, which can reduce kernel launch overhead and 
+# more importantly reduce the amount of data that needs to be moved around in memory.
+# but as we said this depends on whether the underlying compiler/backend
+# and layer supports it.
+# anyway, meddling around with matrix multiplication of random sizes,
+# like what we have been doing here, as we can see, may not always translate
+# into what we intuitively expect simply because cuda kernels and libraries 
+# are usually heavily optimized for certain matrix dimensions, memory layouts,
+# data types and alignments.
+# some sizes may fit particularly well with the underlying hardware,
+# tiling strategies or things such as tensor cores.
+# 
+# so a matrix being larger does not necessarily mean it performs worse,
+# and a smaller one does not necessarily mean it performs better either.
+# performance can vary quite significantly depending on the exact sizes
+# and whether they align well with what the hardware and library are optimized for.
+# 
+# haivng all this said, sometimes having several smaller operations 
+# can perform much better than a single larger and more complex fused operation.
+# a larger fused kernel may increase register pressure, affect cache behavior
+# or prevent the use of highly optimized specialized kernels so fusion can
+# also introduce its own problems.
+# 
+# Additionally, our code may behave quite differently depending on the hardware.
+# something that performs very well on a server GPU may perform differently
+# on a consumer level GPU due to differences in compute capabilities,
+# memory bandwidth, cache sizes, available vram and the overall architecture.
+# 
+# to recap in many cases it can significantly improve performance,
+# especially by reducing memory traffic and kernel launch overhead,
+# but it depends heavily on the operation, tensor sizes,
+# software implementation, compiler/backend and the hardware itself.
+# at the end of the day, benchmarking the actual workload
+# is usually the only way to know what performs better.
+# Thereore It's always recommended to benchmark and compare the performance 
+# of different approaches on our specific hardware and input size to determine
+# the most efficient solution.
 #
-# TODO: use scaled_dot_product_attention to use Flash Attention v2 which speeds up the calculation a lot 
-# since pytorch 2.1 we can use this, but in pytorch 2.2 flash attention v2 was implemented which gives 2x
-# more speed compared to previous version which was fast by itself alone!
-# ref : https://github.com/pytorch/pytorch/releases/tag/v2.2.0 
-# Updated flash attention kernel in scaled_dot_product_attention to use Flash Attention v2 (#105602)
-# Previously, the v1 Flash Attention kernel had a Windows implementation. So if a user on Windows had explicitly forced the flash attention kernel to be run by using sdp_kernel context manager with only flash attention enabled, it would work. In 2.2, if the sdp_kernel context manager must be used, use the memory efficient or math kernel if on Windows.
-# with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
-#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
-# # Don't force flash attention to be used if using sdp_kernel on Windows
-# with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=True):
-#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
 
 #%%
-#%% 
+#%% skip
 # side quest 2 : test with unscaled/unmasked/noposition attention
-# lets create a few arguments to our attentionhead so we can easily test different options and see how they
-# fair against eachother! and whether what we said stays correct!
+# lets create a few arguments to our attentionhead so we can easily 
+# test different options and see how they fair against eachother! 
+# and whether what we said stays correct!
 # remember our attentionhead currently doesnt use any positional information!
-# note that simply testing a single attentionhead does not show a significant difference between any of 
-# the mentioned changes. in order to see the actual difference, we need to test them in a better testcase
+# note that simply testing a single attentionhead does not show a 
+# significant difference between any of the mentioned changes.
+# in order to see the actual difference, we need to test them in a better testcase
 # which involves several attentionsheads/and layers to get a realistic sense of the differences. 
 # we will do this at the end inshaalah.
 # class AttentionHeadNoPos(nn.Module):
@@ -2038,77 +2199,84 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 
 # %%
 #
-# Earlier we mentioned that our implementation of attention so far, is refered to as self-attention, becasue 
-# the key, query and value vectors are applied on the same input (they use the same source!), hence the name, self attention.
-# Moreover, we also saw that for our specific case, tokens/nodes can not communicate with the future 
+# Earlier we mentioned that our implementation of attention so far, is refered to as self-attention,
+# becasue the key, query and value vectors are applied on the same input (they use the same source!),
+# hence the name, self attention.
+# Moreover, we also saw that for our specific case, tokens/nodes can not communicate with the future
 # nodes becasue we are developing an autoregressive language model, which by definition requires us
 # to make predictions solely based on what has come thus far. 
-# However, in general this constraint can be removed when it's advantageous for all tokens to interact, 
+# However, in general this constraint can be removed when it's advantageous for all tokens to interact,
 # such as in usecases like sentiment analysis and machine translation among other examples. 
-# Take sentiment analysis for example, inwhich we 'want', all the tokens, to able to communicate with 
-# eachother for an accurate analysis. we dont care if a previous token looks at a fture one or not, infact
-# we welcome all interactions between tokens so that it maximizes the chances of revealing as much information
-# as possible to ultimately reach to the right conclusion which determining the overal sentiment.
-# In these cases, we do this by employing an encoder block, which is similar to our current setup but without the 
-# constraint section.
+# Take sentiment analysis for example, inwhich we 'want', all the tokens, to able to communicate with
+# eachother for an accurate analysis. we dont care if a previous token looks at a fture one or not,
+# infact we welcome all interactions between tokens so that it maximizes the chances of revealing
+# as much information as possible to ultimately reach to the right conclusion which determins the
+# overal sentiment.
+# In these cases, we do this by employing an encoder block, which is similar to our current setup 
+# but without the constraint section.
 #
-# What we have implemented so far (with the tril, masking) is refered to as a decoder block, in which we are 
-# trying to generate a new token given the previous ones.
-# side note:
+# What we have implemented so far (with the tril, masking) is refered to as a decoder block,
+# in which we are trying to generate a new token given the previous ones.
+#
+# side note:----------------------------------------------------------------------------------
 # (loosly speaking, decoder is synomous with generation, just as the encoder is with encoding!
-# you can imagine, the decoder as a block that generates/produces something, as apposed to the encoder part/block 
-# which its job is to create a highlevel represenation of the input, (usually refered to as "latent space"/"encoding"),
-# to be consumed by others (like decoders!). this process is known as encoding and this is where the encoder gets its name.
+# you can imagine the decoder as a block that generates/produces something, as apposed to the
+# encoder part/block which its job is to create a highlevel represenation of the input, 
+# (usually refered to as "latent space"/"encoding"), to be consumed by others (like decoders!).
+# this process is known as encoding and this is where the encoder gets its name.
 # the encoder is there to capture important features and patterns in the input.
-# on the other hand, the decoder takes these highlevel representations and generates something meaningful
-# from it, such as text, image, etc. This process is known as decoding and hence the name decoder.
+# on the other hand, the decoder takes these highlevel representations and generates something 
+# meaningful from it, such as text, image, etc. 
+# This process is known as decoding and hence the name decoder.
 #
 
 # cross-attention:
 # The attention mechanism as we briefly pointed out, is quite versatile and can be 
 # utilized in various ways. One such example/way is the creation of something called cross-attention.
-# cross-attention is basically related to the scenarios in which we have encoder/decoder blocks in our model, 
-# in which the queries originate from decoder's input while the key and value are derived from an external 
-# source, sometimes from the encoder block itself. 
-# Cross-attention comes into play when we have a separate source of information we would like to extract from
-# and utilize. This is commonly seen in sequence-to-sequence models, such as machine translation.
+# cross-attention is basically related to the scenarios in which we have encoder/decoder blocks in our
+# model,in which the queries originate from decoder's input while the key and value are derived from
+# an external source, sometimes from the encoder block itself. 
+# Cross-attention comes into play when we have a separate source of information we would like to 
+# extract from and utilize. This is commonly seen in sequence-to-sequence models, such as machine translation.
 # In such models, we have two sources of information: the source text and the generated text (translation output). 
-# The goal is to maximize the translation accuracy by attending to the source material and enhancing its relationship 
-# with the output as much as possible(getting them as close as possible). 
-# The key and value are applied to the encoder/source material, while the query is applied to the decoder’s input. 
-# This process helps in creating a more accurate and contextually relevant translation.
+# The goal is to maximize the translation accuracy by attending to the source material and enhancing
+# its relationship with the output as much as possible(getting them as close as possible). 
+# The key and value are applied to the encoder/source material, while the query is applied to the 
+# decoder's input. this process helps in creating a more accurate and contextually relevant translation.
+# infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder
+# just like we described. 
 # 
-# infact the original paper's uscase was machine translation! and it incorporates an encoder and a decoder just like we 
-# described. 
-# 
-# The Attention being a communication mechanism between tokens, is not position aware for the most part, that is, by default
-# there is nothing in this mechanism that provides or enforces a notion of space/position for tokens involved.
-# by default these tokens/nodes/points whatever we call them, dont have any idea about where they are or how they are 
-# positioned (with resepect to eachother). 
-# to have a better mental picture, imagine each token as a node in a directed graph, each node has a connection to some
-# other nodes, (for example each node has a connection to itself, and another connection to other nodes,etc) as you can
-# see there is no notion of space or better said order between nodes. 
-# which one would you call is number 1 or 2, in a graph, in which the structure simply doesnt define any order by itself,
-# unless you define one using a mechanism of some sor?) 
-# The attention simply acts on a set of vectors in this graph, so if the order or position of these nodes 
-# is of any significance to us, then we need to encode them as well, 
+# The Attention being a communication mechanism between tokens, is not position aware for the most part,
+# that is, by default there is nothing in this mechanism that provides or enforces a notion of 
+# space/position for tokens involved.
+# by default these tokens/nodes/points whatever we call them, dont have any idea about where they are
+# or how they are positioned (with resepect to eachother). 
+# to have a better mental picture, imagine each token as a node in a directed graph, each node has a
+# connection to some other nodes, (for example each node has a connection to itself, and another 
+# connection to other nodes,etc) as you can see there is no notion of space or better said order 
+# between nodes. which one would we call is number 1 or 2, in a graph, in which the structure simply
+# doesnt define any order by itself, unless we define one using a mechanism of some sort) 
+# The attention simply acts on a set of vectors in this graph, so if the order or position of these 
+# nodes is of any significance to us, then we need to encode them as well, 
 #
-# as it happens in our case, the positional information is important to us, becasue we want to generate text, and order
-# matters here(text are inherntly sequential, and also we need to prevent leftward information flow in the decoder 
-# to preserve the auto-regressive property). 
-# models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially, and 
-# CNNs have spatial information, as they operate by sliding a fixed window over the input)
-# but this is not the case for attention. as we just stated, there is no notion of position, its just a set of individual
-# vectors being operated on) 
+# as it happens in our case, the positional information is important to us, becasue we want to generate
+# text, and order matters here(text are inherntly sequential, and also we need to prevent leftward 
+# information flow in the decoder to preserve the auto-regressive property). 
+# models such as RNNs or CNNs, are inherently position aware (RNNs process the input sequentially,
+# and CNNs have spatial information, as they operate by sliding a fixed window over the input)
+# but this is not the case for attention. as we just stated, there is no notion of position, its 
+# just a set of individual vectors being operated on) 
 #
 # As the original authors put it: 
-# "Since our model contains no recurrence and no convolution, in order for the model to make use of the order of the
-#  sequence, we must inject some information about the relative or absolute position of the tokens in the sequence."
+# "Since our model contains no recurrence and no convolution, in order for the model to make use of
+# the order of the sequence, we must inject some information about the relative or absolute position
+# of the tokens in the sequence."
 #
-# note that the(statistics from) connection between nodes, does give us a sense of structure, but it may not be enough to infer the underlying
-# semantic, imagine a case, where a word for example has several meaning, and may very well have high relevancy to a few 
-# tokens at the same time, but without additional positional information, an ambiguous semantic can be infered between the
-# tokens involved, however when positional information is also present, such ambiguity can be avoided) 
+# note that the(statistics from) connection between nodes, does give us a sense of structure, but it
+# may not be enough to infer the underlying semantic, imagine a case, where a word for example has 
+# several meaning, and may very well have high relevancy to a few tokens at the same time, but without
+# additional positional information, an ambiguous semantic can be infered between the tokens involved,
+# however when positional information is also present, such ambiguity can be avoided) 
 # (e.g. live to work! vs work to live! completely different meaninig based on the order of words)
 #
 # (See section 3.2.3 Applications of Attention in our Model in the paper)
@@ -2118,63 +2286,76 @@ print(f"Number of parameters in fused layer: {sum(p.numel() for p in at2.kqv.par
 
 #%%
 # Positional encoding:
-# As we pointed out earlier, the attention mechanism does not have any notion of position, unlike the cnn or rnns
-# that are inheritly sequential and are posision aware. 
-# without positional information, a sequence such as ABC would be the same as CBA, ACB, BCA, or any permutations of the 
-# tokens involved. this is specifically bad for an autoregressive task like generating text. 
-# in an autoregressive model, given a token, the model needs to comeup with a good prediction! obviously this requires
-# the knwoledge about the order of the tokens to be taken into account to create meaningful sequences/texts. 
-# imagine you expecing the model to greet you like: Hello, nice to meet you! but instead you get a random sequence of 
-# tokens like: ',to nice! Hello you meet' which is not what we are after! in reality the network might comeup with a 
-# weak notion of order, simply based on the statistics it saw in the dataset, however, it cant utilize that to comeup
-# with complex structures certainly not the ones that have subtle meaning changes, when the order of some parts are 
-# reversed! like :
+# As we pointed out earlier, the attention mechanism does not have any notion of position, unlike the
+# cnn or rnns that are inheritly sequential and are posision aware. 
+# without positional information, a sequence such as ABC would be the same as CBA, ACB, BCA, or any 
+# permutations of the tokens involved. this is specifically bad for an autoregressive task like generating text. 
+# in an autoregressive model, given a token, the model needs to comeup with a good prediction! 
+# obviously this requires the knwoledge about the order of the tokens to be taken into account to 
+# create meaningful sequences/texts. 
+# imagine you expecing the model to greet you like: Hello, nice to meet you! but instead you get a 
+# random sequence of tokens like: ',to nice! Hello you meet' which is not what we are after! 
+# in reality/practice the network might comeup with a weak notion of order, simply based on the statistics 
+# it saw in the dataset, however, it cant utilize that to comeup with complex structures certainly
+# not the ones that have subtle meaning changes, when the order of some parts are reversed! like :
 # live to work!
 # work to live!
-# as you can see the order plays a crucial role not only in generating text but also infering the undderlying meaning/sematic.
+# as you can see the order plays a crucial role not only in generating text but also infering the
+# undderlying meaning/sematic.
 # 
-# So how can we add this positional information. There are several ways we can think of to add this information. 
+# So how can we add this positional information. There are several ways we can think of to add this
+# information. 
 # we can learn these so called positional encoding the same way we learn the token embeddings. 
 # this is called abosulte positional encoding! it has some pros and cons we dont get to here (I explained them at the end). 
 # We can simply pre-compute these positional encodings. this is what the original paper of "attention is all you need", did.
-# their choice is refered to as sinusoidal positional encoding which provides relative positioning as well.
-# Basically the combination of sin/cos acts as a kind of unique identifier, some even thought of it as a counter
-# (imagine how binary system works, something to that effect), and this way the positional info for each token is 
-# calculated and provided to the network. (in practice, sin/cos paris is used to encode different unique values for
-# each position, form 0 up to infinity, they have some nice features/attributes that are crucial for our job and they
-# are explained at the end of this document)
+# their choice is refered to as sinusoidal positional encoding which provides relative positioning 
+# as well. 
+# Basically the combination of sin/cos acts as a kind of unique identifier, some even thought of it
+# as a counter (imagine how binary system works, something to that effect), and this way the positional
+# info for each token is calculated and provided to the network. (in practice, sin/cos paris is used 
+# to encode different unique values for each position, form 0 up to infinity, they have some nice 
+# features/attributes that are crucial for our job and they are explained at the end of this tutorial)
 # 
-# the author in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out that 
-# counting was was a hard problem, and 2 years later they came up with the sinusoidal positioning encoding. 
+# the authors in their previous work(Order Matters: Sequence to sequence for sets 2015), pointed out
+# that counting was was a hard problem, and 2 years later they came up with the sinusoidal positioning encoding. 
 # see 
 # https://www.reddit.com/r/learnmachinelearning/comments/9e4j4q/positional_encoding_in_transformer_model/
 # http://fastml.com/introduction-to-pointer-networks/
 # https://www.reddit.com/r/MachineLearning/comments/cttefo/d_positional_encoding_in_transformer/
 # https://arxiv.org/abs/1905.04226 )
-# hence why the chose sinusoidal positional encoding, to act like a counter, giving each token a identifiable indetifier!
-# later works however, showed that such embeddings can be learned and work just as well, infact BERT did exactly that 
-# and opted to use learned positional emebddings instead of the sinusoidal positional encoding used by the original paper.
-# (the original authors also tested with learned embeddings and reported the near identical results,but oppted out to use sinusoidal
-# positional encoding for its ability to model also relative distance)
-# later on, other versions such as rope or rotary positional encoding were introduced to provide relative positional 
-# encoding (better). after that another work AliBi, completely removed the positional embedding and instead used
-# constraints on relationships with respect to their distance! (i.e. decaying the strength of relationship based on
-# distance) so this is an active field of research and today as I write this, rope seems to be being used along with 
-# learned positional encoding. So its still a field of active research. we can use any of these, rope is more populare
-# followed by learned positions though.
 # 
-# side note: the authors also tested with learned embedding and got nearly identical results but ultimately chose sinusoidal
-# embedding becasue they thought: 
+# hence why the chose sinusoidal positional encoding, to act like a counter, giving each token a identifiable indetifier!
+# later works however, showed that such embeddings can be learned and work just as well, infact BERT 
+# did exactly that and opted to use learned positional emebddings instead of the sinusoidal positional
+# encoding used by the original paper.
+# (the original authors also tested with learned embeddings and reported the near identical results,
+# but oppted out to use sinusoidal positional encoding for its ability to model also relative distance)
+# later on, other versions such as rope or rotary positional encoding were introduced to provide relative
+# positional encoding (better). after that another work AliBi, completely removed the positional embedding
+# and instead used constraints on relationships with respect to their distance! (i.e. decaying the strength
+# of relationship based on distance) so this is an active field of research and today as I write this, 
+# rope seems to be being used along with learned positional encoding. So its still a field of active 
+# research. we can use any of these, rope is more populare followed by learned positions though.
+# 
+# side note: --------------------------------------------------------------------------------------
+# the authors also tested with learned embedding and got nearly identical results but ultimately 
+# chose sinusoidal embedding becasue they thought: 
 # "...because we hypothesized it would allow the model to easily learn to attend by relative positions, since for any
 # fixed offset k, P_Epos+k can be represented as a linear function of P_Epos.
 # and
 # "...it may allow the model to extrapolate to sequence lengths longer than the ones encountered during training."
-#
+# 
+# theres alot to talk about positional encoding, we are just scratching the surface! as we go on
+# we introduce more details!
+#--------------------------------------------------------------------------------------------------
+
 # %%
 #Ok positional encoding is good and we need to implement it. 
-# we can also add some flexibility to our attention module to allow us to test different configurations such as with positional
-# encoding, without positional encoding, stuff like that. But this is not the time now, as they may not show much difference using
-# a single head but when later on we add more heads, that would be a better time as it can show us how they really affect the performance. 
+# we can also add some flexibility to our attention module to allow us to test different configurations
+# such as with positional encoding, without positional encoding, stuff like that. 
+# But this is not the time now, as they may not show much difference using a single head but when
+# later on we add more heads, that would be a better time as it can show us how they really affect
+# the performance. 
 #
 # For now lets keep it simple. 
 # lets build our language model with the new attention head. 
@@ -2341,7 +2522,7 @@ print(f"{''.join(decode(output))}")
 # plot_positional_encoding_distance_total_3d(model.position_embd.weight.detach().numpy())
 #%%
 # prints
-#here are a few tries:
+# here are a few tries:
 # param count:  3,041
 # head size:    16
 # embd size:    16
@@ -2564,7 +2745,7 @@ class MultiHeadAttention(nn.Module):
         #                             bias_attn) for _ in range(num_head)]
         # but we can also use pytorch's nn.ModuleList which is a better equivalent than python list
         # becasue all the modules it contains are properly registered, and will be visible by all 
-        # Module methods. which is not the case for python lists (i.e. .parameters() .children(), 
+        # Module methods which is not the case for python lists (i.e. .parameters() .children(), 
         # .zero_grad, etc, e.g.) and therefore its best to use modulelist instead of pure python lists.
         # 
         # note that, nn.Sequential cant be used, becasue it runs the modules in succesion
@@ -2809,10 +2990,12 @@ print(f"{''.join(decode(output))}")
 # signifying the fact that it runs a computation after the attention module.
 # the idea behind this extra operation is simple, to provide a higher representation out of attention work
 # this network, causes every single token to have a nonlinear transformation and achieve a higher abstraction
-# possibly yielding new information benficial to the task. to put it in casual way, it can be seen as though
-# the attention gatheres some stats/information, and this step is akin to looking into it and thinking about it
-# comming up with some new findings, that is , if attention part is refered to as communication part, this is
-# the computation part/ or thinking part for the lack of a better word.
+# possibly yielding new information benficial to the task. 
+# to put it in casual way, it can be seen as though the attention gatheres some stats/information,
+# and this step is akin to looking into it and thinking about it comming up with some new findings,
+# that is , if attention part is refered to as communication part, this is the computation part/ or
+# thinking part for the lack of a better word.
+# 
 # lets implement this network in our bigram model and see if this seemingly simple change, affects us at all
 class BigramModelWithAttention(nn.Module):
     def __init__(self, vocab_size, context_size, embd_size, num_head, head_size, device='cpu', bias_attn=False) -> None:
@@ -2837,24 +3020,26 @@ class BigramModelWithAttention(nn.Module):
         # now let us create the feedforward network, which basically is a linear layer with relu
         # followed by another linear layer! for this so called network, the in_features and out_features
         # are simply the same, and is embd_size, because its a sandwich layer between our attention output
-        # and the last layer. this layer usually is (embedsize,embed_size) if you recall head_size is usally
-        # equal to embed_size. also note that in the paper the feedforward network is two linear layers with
-        # a relu (one linear layer with a relu plus another linear layer).if you look closely you'll notice 
-        # we already have a last layer after the attention, so we dont need to put a nother linear layer
-        # afterward, becasue that one linear layer suffices (multiple linear layers, dont provide
-        # any higher abstraction anyway, so its prefectly fine)
+        # and the last layer. 
+        # this layer usually is (embedsize,embed_size) if you recall head_size is usally
+        # equal to embed_size. also note that in the paper the feedforward network is two linear layers
+        # with a relu (one linear layer with a relu plus another linear layer).
+        # if you look closely you'll notice we already have a last layer after the attention, 
+        # so we dont need to put a nother linear layer afterward, becasue that one linear layer
+        # suffices (multiple linear layers, dont provide any higher abstraction anyway, 
+        # so its prefectly fine)
         # but on the other hand the paper's implementation has another change, it states 
         # the inner layers dim are increased by 4x, so to be faithful to the paper we also 
         # add the second linear layer, with the suggested change, this wont change the output 
         # shape, so we are fine. we just added an extra linear projection layer. 
         # this additional projection operation actually improves the result,however if we simply 
         # use the same dim linear layer (i.e. have sth like linear(head_size, head_size)) adds nothing
-        # to the representational power of the network and you wont see anything substantial vs if you
-        # completely remove this layer and only use linear/relu only.
+        # to the representational power of the network and you wont see anything substantial vs 
+        # if you completely remove this layer and only use linear/relu only.
         # why this works is becasue, we increase the nonlinear output neurons of the first layer by 4,
-        # increasing its representational capacity, and then use the second linear layer to get the output
-        # size compatible for the next layer (doing a linear projection), and hence our improvements lie
-        # in the nonlinearity this addition provides. 
+        # increasing its representational capacity, and then use the second linear layer to get the 
+        # output size compatible for the next layer (doing a linear projection), and hence our 
+        # improvements lie in the nonlinearity this addition provides. 
         self.feedforwardnet = nn.Sequential(nn.Linear(embd_size, head_size*4), nn.ReLU(),
                                             nn.Linear(head_size*4, head_size))
         # finally the output fc layer 
@@ -3285,7 +3470,7 @@ print(f"{''.join(decode(output))}")
 #
 # as you can see, we got wrose results than before! despite making the network larger, our loss
 # really didnt improve as we expected. 
-# is our initial hypothesis that having more blocks and higher nonlinearity/representation is benificial
+# is our initial hypothesis that having more blocks and higher nonlinearity/representation benificial
 # wrong? or is there something else thats causing the issue? 
 # as you might have guessed, its the latter. we are basically creating more layers, and with
 # more layers, we face training issues that we discussed earlier. 
@@ -3294,15 +3479,15 @@ print(f"{''.join(decode(output))}")
 # our sample (or basically each other!) in anyway, so what should we do? 
 # the paper utilizes two mechanisms or operations to tackle this issue. one being skip-connections
 # (also known as residual connction) and the other, layer-normalization. 
-# you should be familiar with skip-connections as they are the founding factor or resenets
-# and have been extremely influential. so to cut a long story short, skip connections are simply
-# connections from input skipping the operations involved in the block they reside and directly 
-# being added to the output and then returned the result.(basically F(x) + x)
-# as we know, the gradients are distributed equally when they reach addition, so input gets the gradients
-# without being weakened due to large depth of the network. 
-# so before we implement the layer normalization part, lets see howmuch of a change adding skip-connection
-# causes and whether it proves our initial hypothesis about depth and gradient signal weakening or not
-# we add this to our AttentionBlock (but we could add this to any submodule)
+# you should be familiar with skip-connections as they are the founding factor for resenets
+# and have been extremely influential. to cut a long story short, skip connections are simply
+# connections from input that skip the operations involved in the block they reside in and are
+# directly added to the output which is then returned as the result.(basically F(x) + x)
+# as we know, the gradients are distributed equally when they reach addition, so input gets the
+# gradients without being weakened due to large depth of the network. 
+# so before we implement the layer normalization part, lets see how much of a change adding 
+# a skip-connection causes and whether it proves our initial hypothesis about depth and gradient
+# signal weakening, we add this to our AttentionBlock (but we could add this to any submodule)
 #%%
 class FeedForward(nn.Module):
     def __init__(self, n_features, bias=True) -> None:
@@ -3347,7 +3532,14 @@ class AttentionwithFFNetBlock(nn.Module):
         # out = self.attn(inputs)
         # out =  self.ffnet(out)
         # return out + inputs 
+        # (TODO add comments/imporvements from my imagexlet project)
+        # sidenote:
+        # Our block works fine but its old and based on my knowledge of 2020-era GPT-2/GPT-3
+        # conventions. Modern LLMs do things differently now, but for now we keep going and
+        # at the end, I'll address these changes and talk about them.
         out = self.attn(inputs) + inputs
+        # out =  self.ffnet(out)  + out looks/sounds more natual,
+        # but in our case, using inputs on both ops, does slightly better!
         out =  self.ffnet(out)  + inputs
         return out
 
@@ -3586,36 +3778,34 @@ print(f"{''.join(decode(output))}")
 
 # as you can see, it greatly improved our results, and the text also got much better!
 # as we already pointed out, having skip-connections per modules, help much more than a single 
-# per module output only, nevertheless, we notice, using skip-connection really improved our results.
-# now lets add the second operation, layernorm. layernorm(https://arxiv.org/abs/1607.06450) is a normalization layer, just like batchnormalization
-# came a year later than batchnormalization paper, but the difference between them is that, unline batchnormalization
-# it works on a per sample basis and does not involve using othersamples to normalize a specific sample (basically
-# samples dont affect eachother)
+# per module output only, nevertheless, we notice, using skip-connection really improved 
+# our results.
+# now lets add the second operation, layernorm. 
+# layernorm(https://arxiv.org/abs/1607.06450) is a normalization layer, just like batchnormalization
+# it came a year later than batchnormalization paper, but the difference between them is that,
+# unlike batchnormalization it works on a per sample basis and does not involve using othersamples
+# to normalize a specific sample (basically samples dont affect eachother)
 # As pytorch docs puts it:
 # "Unlike Batch Normalization and Instance Normalization, 
 #  which applies scalar scale and bias for each entire channel/plane with the affine option,
 #  Layer Normalization applies per-element scale and bias with elementwise_affine"
 #
-# - LayerNorm: LayerNorm ensures that the mean of each feature across each example is zero and the standard 
-#   deviation is one. It preserves the relative relationships between the features within each example.
-# - BatchNorm: BatchNorm ensures that the mean of each feature across the entire batch is zero and the 
-#   standard deviation is one. It introduces dependencies between examples in the batch during training but can
-#   be disabled during inference to allow independent predictions.
-# 
-# - LayerNorm: LayerNorm is commonly used in recurrent neural networks (RNNs), such as LSTMs and GRUs, where
-#   the normalization is applied along the time steps (sequence length) dimension.
-# - BatchNorm: BatchNorm is typically used in convolutional neural networks (CNNs) and fully connected layers,
-#   where the normalization is applied across the batch dimension.
-# 
-# - LayerNorm: LayerNorm behaves the same during training and inference. It normalizes each example independently,
-#   making it suitable for both training and inference.
-# - BatchNorm: BatchNorm behaves differently during training and inference. During training, it normalizes 
-#   the activations across the batch dimension. During inference, the statistics (mean and variance) are usually
-#   calculated using a running average from the training phase, and normalization is applied based on these fixed statistics.
-# 
+# Layernorm makes sure that the mean and standard deviation of each feature across each example
+# is (0,1). It preserves the relative relationships between the features within each example.
+# on the other hand BatchNorm makes sure the mean and standard deviation of each feature across
+# the *entire batch* is (0,1)! because of this, it introduces dependencies between examples in 
+# the batch during training so for inference its disabled and a moving average it calculated during
+# training is used instead to allow independent predictions. unlike batchnormalization, layernorm
+# behaves the same during training and inference as it normalizes each example independently.
 
-# the implementation is similar to the batchnormalization, and it does not require calculating running_mean/var
-# we can use the pytorch module just fine, but since its really similar to BN, lets implement it here 
+# When Layernorm was published it was mostly used in recurrent neural networks (RNNs), such as
+# LSTMs and GRUs, where the normalization is applied along the time steps (sequence length) 
+# dimension, where BatchNorm wouldnt work, but on cnn it was not as effective as BatchNormalization.
+# later, it was also used on transformer architectures. now we need to use it here. 
+#  
+# Layernorm implementation is similar to the batchnormalization, and it does not require calculating
+# running_mean/var we can use the pytorch module just fine, but since its really similar to BN,
+# lets implement it here 
 # 
 #%%
 class LayerNorm(nn.Module):
@@ -3637,44 +3827,50 @@ class LayerNorm(nn.Module):
         # so we specify what we consider feature dims.
         #
         # note: initially I wrote 
-        # dims = tuple(i for i in range(inputs.ndim-1,0,-1)) which didnt cause any errors, and infact
-        # resulted in a very low loss, however the text generation seemed kind of random, and differed
-        # from the pytorch's Layernorm version(0.60 vs 1.90 of pytorch's which is a huge diference). 
-        # Further investigation revealed the issue which was caused by the dims involved. basically 
-        # We needed to only use the last column which would be (-1) in our specific case. basicallys
-        # what we want is to calculate mean/var for the dims that belong to features, e.g. in a 2d case like
-        # (B,C), we want to mean/var on dim=1. Having worked with BN, we might also assume the same here 
-        # that is if we have sth like (B,T,C) we would want to treat, B,T as batch and aggregate the mean/var
-        # along dim=(1,2). however, as we learned earlier, LayerNorm does not involve other samples at all, 
-        # and infact if we do this, we'll see despite the loss decreasing rapidly, our text generation are not
-        # good at all! so when it comes to LayerNorm we always normalize the feature dimensions, and in our case
-        # its just the last diminsion. 
-        # what was causing the issue here was this exact issue, since we were calculating the dims dynamically
-        # based on the inputs shape, for 2d inputs(ignoring batch) this would work as expected, but for 3d+, 
-        # it would aggregate other samples stats and therefore creating the discrepency in the output between 
-        # ours and pytorch's.
-        # (we were calculating the mean/var for dims=(1,2) while Pytorch was only calculating it on the last dim, 
-        # and hence the difference. (the output  shows that involving other samples adversly affect our output
-        # and hence  why BN is not used and instead LN is used.) 
+        # dims = tuple(i for i in range(inputs.ndim-1,0,-1)) to grab dims for calculating
+        # min/var for those dims dynamically for different input shapes!(2d or more)
+        # which didnt cause any errors, and infact resulted in a very low loss, however the 
+        # text generation seemed kind of random, and differed from the pytorch's Layernorm 
+        # (0.60 vs 1.90 of pytorch's which is a huge diference). 
+        # Further investigation revealed the issue was caused by the dims involved. 
+        # we needed to only use the last column which would be (-1) in our specific case. 
+        # basically what we want is to calculate mean/var for the dims that belong to features,
+        # e.g. in a 2d case like (B,C), we want to mean/var on dim=1. 
+        # Having worked with BN, we might also assume the same here that is if we have sth like 
+        # (B,T,C) we would want to treat, B,T as batch and aggregate the mean/var along dim=(1,2).
+        # however, as we learned earlier, LayerNorm does not involve other samples at all, 
+        # and infact if we do this, we'll see despite the loss decreasing rapidly, our text generation
+        # quality becoming abysmal! so when it comes to LayerNorm we always normalize the feature dimensions,
+        # and in our case its just the last diminsion. 
+        # what was causing the issue here was this exact issue, since I was calculating the dims
+        # dynamically based on the inputs shape, for 2d inputs(ignoring batch) this would work as expected,
+        # but for 3d+, it would aggregate other samples stats and therefore create the discrepency in 
+        # the output between ours and pytorch's.
+        # (we were calculating the mean/var for dims=(1,2) while Pytorch was only calculating it on 
+        # the last dim, and hence the difference. (the output shows that involving other samples adversly
+        # affect our output and hence why BN is not used and instead LN is used.) 
         # this happened becasue we dynamically tried to infer the dims by looking at the input shape
         # the behavior for 2d shapes will be the same, however, for the 3d shapes, our results differ.
         # we can define the aggregation along feature dims in Pytorch, so if we wanted to get the same 
         # behavior in pytorch we had to write sth like this: 
         # self.ln1 = nn.LayerNorm((context_size,head_size)) 
-        # that is instead of useing a single number denoting the dimension's size, we specify the dim's size
-        # explicticly. 
+        # that is instead of using a single number denoting the dimension's size, we specify the dim's 
+        # size explicticly. 
         # obviously since we are coding this for our usecase, we dont bother getting the input shape here
-        # and use -1 to get the job done, otherwise, we would be getting the dim's size as input just like
-        # pytorch and based on the dim's size, decide how to do mean/var. 
-        # side note: note that if we use sth self.ln1 = nn.LayerNorm((context_size,head_size))  in our code, 
-        # during text generation, we no longer can start with context_size of 1, we must always start with
-        # sth like initial_token = torch.zeros(size=(1,8)).int() to get it working otherwise it'd complain
-        # about shape mismatch which is expected because unlike our method, its static (while ours dynamically
-        # would calculate the mean/var based on the inputsize) anyway, this shouldnt be an issue, becasue we
-        # dont need to do this as not only it doesnt benifit us but also creates more hassle!.
-        # side note2: aggregation in LN, may be benificial in other domains, as BN was, but for us, now it isnt
+        # and use -1 to get the job done, otherwise, we would be getting the dim's size as input just 
+        # like pytorch and based on the dim's size, decide how to do mean/var. 
+        # side note: 
+        # note that if we use sth self.ln1 = nn.LayerNorm((context_size,head_size))  in our code, 
+        # during text generation, we no longer can start with context_size of 1, we must always start
+        # with sth like initial_token = torch.zeros(size=(1,8)).int() to get it working otherwise it'd
+        # complain about shape mismatch which is expected because unlike our method, its static 
+        # (while ours dynamically would calculate the mean/var based on the inputsize) anyway, 
+        # this shouldnt be an issue, becasue we dont need to do this as not only it doesnt benifit us 
+        # but also creates more hassle!
+        # side note2: 
+        # aggregation in LN, may be benificial in other domains, as BN was, but for us, now it isnt
         # so we only make the one that works with the last dim! 
-        # here's the wrong snipped that would create the wrong result for 3d inputs.
+        # here's the wrong snippet that would create the wrong result for 3d inputs.
         #dims = tuple(i for i in range(inputs.ndim-1,0,-1)) 
         # print(f'{dims=}')
         dims = -1
@@ -3732,20 +3928,13 @@ class AttentionwithFFNetBlock(nn.Module):
         self.ln2 = LayerNorm(head_size)
 
     def forward(self, inputs:torch.Tensor) -> torch.Tensor:
-        # since we have two blocks, we add skip-connection to both of them here
-        # we could aggerate them as one and a add the skip connection to their output
-        # but this is less benificial than creating seprate skip-connections for each block
-        # to see this in action, uncomment this and comment the latter part and run the test
-        # out = self.attn(inputs)
-        # out =  self.ffnet(out)
-        # return out + inputs 
         # note that when it comes to applying normalization, there are two ways of going about it
         # 1.normalize the outputs of the attention block
         # 2.normalize the inputs before going to the attention block
         # the first one is the one the paper initially used, but later on it was shown that actually
         # normalzing the input yields better result, so we test both cases here
-        # so check and see how it affects it! (personally,however, I found the first approach yielding midly
-        # better loss, but I only tested it on small scale, so we will test this more)
+        # so check and see how it affects it! (personally,however, I found the first approach
+        # yielding midly better loss, but I only tested it on small scale, so we will test this more)
         # method 1:
         # out = self.ln1(self.attn(inputs)) + inputs
         # out = self.ln2(self.ffnet(out))  + inputs
@@ -4032,15 +4221,20 @@ print(f"{''.join(decode(output))}")
 #
 #
 #
-# for some reason, our layernorm achieves a much lower loss, much quicker, however the text seems to be worse
-# than pytorch's for some reason and I have no idea what is causing this! 
-# ok there were two issues, 1.our gamma and beta werent trained! becasue we forgot to wrap them in nn.Parameter
-# and the second reason was, we were aggregating the last two dims like BN, whereas we should have only used the
-# last dim, as we should not involve other samples in normalization. (I explained this thoroughly in the LayerNorm class)
+# for some reason, our layernorm achieves a much lower loss, much quicker, 
+# however the text seems to be worse than pytorch's for some reason and
+# I have no idea what is causing this! 
+# ok there were two issues, 1.our gamma and beta werent trained! 
+# becasue we forgot to wrap them in nn.Parameter and 
+# the second reason was, we were aggregating the last two dims like BN,
+# whereas we should have only used the last dim, 
+# as we should not involve other samples in normalization. 
+# (I explained this thoroughly in the LayerNorm class)
 # 
-# now how can we improve more? we implemented the paper, basically we implemented transormer from scratch
-# and what remains is to test with different hyperparameters to see how well it can generate texts similar 
-# to our dataset. 
+# now how can we improve more? we implemented the paper, 
+# basically we implemented transormer from scratch
+# and what remains is to test with different hyperparameters 
+# to see how well it can generate texts similar to our dataset. 
 # so lets increase the model size now and see how much improvement we can get 
 # 
 # %%
@@ -4251,8 +4445,8 @@ print(f"{''.join(decode(output))}")
 # He that wretche with this.
 #----------------------------------
 #
-# which is remarkably better than all of our previous outputs. so as we increased our model capacity
-# we witnessed much better results. 
+# which is remarkably better than all of our previous outputs. 
+# so as we increased our model capacity we witnessed much better results. 
 # side note:note that our positinal emebdding's need to be placed on the cpu or gpu explicitly 
 # after model instantiation, or otherwise, as its set separately as the model, simply doing model.cpu()
 # or model.cuda() wouldnt do it. so here I simply used cuda. (or we have to set the device in forward
@@ -4445,414 +4639,9 @@ print(f"{''.join(decode(output))}")
 #%%
 #  lets talk about the models, glue activiation ufnction, efficiancy , chatgpt vs us, 
 # document completer vs chatgptetc 
-
-#ask chatgpt to write an introduction for each section (and explain someparts as if im 5!)
-
-# explain what an autoregressive mean and whats an autoregressive model and how its related to transformers, rnns or sequences, in depth
-# An autoregressive model is a type of statistical model where the current value in a sequence depends on the previous values in the same sequence.
-#  It assumes that the output is a function of the previous outputs, making it suitable for modeling sequential data.
-# In an autoregressive model, the prediction at each time step is conditioned on the previous values. This can be represented mathematically as:
-# y_t = f(y_{t-1}, y_{t-2}, ..., y_{t-n})
-# where y_t is the predicted value at time step t, f is the function that maps the previous values to the current prediction, and n is 
-# the order of the autoregressive model (i.e., the number of previous values considered).
-# Autoregressive models have been extensively used in various domains, including time series analysis, speech recognition, 
-# natural language processing, and image generation. They are particularly effective for modeling sequential data with temporal dependencies.
-# Now, let's discuss the relationship between autoregressive models and transformers, recurrent neural networks (RNNs), and sequences:
-
-# 1. Transformers:
-#    Transformers are a type of neural network architecture that have revolutionized various natural language processing tasks. 
-# They are based on the self-attention mechanism, which allows them to model dependencies between different positions in the input sequence.
-#  Transformers do not have an inherent autoregressive structure, as they can process all positions of the input sequence in parallel.
-#  However, they can be trained in an autoregressive manner using a technique called "masked language modeling" 
-# (e.g., in the case of the Transformer-based language model GPT).
-# 2. Recurrent Neural Networks (RNNs):
-#    RNNs are a class of neural networks that are widely used for modeling sequential data. They have a natural autoregressive structure,
-#  where the hidden state at each time step depends on the previous hidden states. RNNs can capture temporal dependencies in sequences by 
-# propagating information through time. However, RNNs suffer from vanishing or exploding gradients, limiting their ability to capture 
-# long-term dependencies effectively.
-# 3. Sequences:
-#    Autoregressive models are commonly used to model sequences, where the prediction at each time step depends on the previous values. 
-# This can be applied to various types of sequences, such as time series data, text, audio, or images. By considering the autoregressive
-# nature of the data, these models can capture the underlying dependencies and generate coherent and contextually relevant predictions 
-# or generate new samples.
-# In summary, autoregressive models capture dependencies between previous and current values in a sequence. Transformers, RNNs, 
-# and other models can be designed with autoregressive components to model sequences effectively. Transformers, while not inherently 
-# autoregressive, can be trained in an autoregressive manner. RNNs have a natural autoregressive structure, allowing them to model 
-# sequential data. Autoregressive models are commonly used for modeling various types of sequences, enabling tasks such as prediction,
-# generation, or sequence completion.
-
-# more exlpanation  for each point : 
-# Certainly! Let's delve deeper into each point:
-# 1. Transformers:
-#    Transformers are a type of neural network architecture that has gained significant attention in natural language processing tasks.
-#  Unlike traditional sequential models such as RNNs, transformers are based on the self-attention mechanism. This mechanism allows 
-# transformers to capture dependencies between different positions in the input sequence without relying on sequential processing. 
-# Thus, transformers do not have an inherent autoregressive structure as they can process all positions of the input sequence in parallel.
-#    However, transformers can be trained in an autoregressive manner using a technique called "masked language modeling." 
-# In this approach, during training, the model is fed with the input sequence where some positions are masked out. The model is then 
-# trained to predict the original values at the masked positions based on the unmasked context. This autoregressive training allows
-#  the model to learn the conditional dependencies between the previous and current positions in the sequence.
-# 2. Recurrent Neural Networks (RNNs):
-#    RNNs are a class of neural networks designed to model sequential data. They have a natural autoregressive structure due to 
-# their recurrent nature. At each time step, an RNN takes the current input and the previous hidden state as input and produces an 
-# output and a new hidden state. The hidden state at each time step encapsulates the information from previous time steps, allowing
-#  the model to capture the temporal dependencies within the sequence.
-#    RNNs are effective at modeling sequences with long-term dependencies, as they can propagate information through time. 
-# However, RNNs suffer from vanishing or exploding gradients, which can make it challenging for them to capture long-term dependencies 
-# effectively. This limitation led to the development of more advanced architectures like LSTMs and GRUs, which are variants of RNNs
-#  that address the gradient-related issues.
-# 3. Sequences:
-#    Autoregressive models are commonly used to model various types of sequences, including time series data, text, audio, 
-# or images. By considering the autoregressive nature of the data, these models can capture the underlying dependencies and generate 
-# coherent and contextually relevant predictions or generate new samples.
-#    For example, in time series analysis, autoregressive models such as ARIMA (AutoRegressive Integrated Moving Average) 
-# are widely used to predict future values based on past observations. In text generation, autoregressive language models like 
-# GPT (Generative Pre-trained Transformer) use the previously generated tokens to predict the next token, allowing for the generation 
-# of coherent and contextually relevant text.
-#    Autoregressive models are also employed in image generation tasks, such as PixelCNN, where each pixel is generated based 
-# on the previously generated pixels in a row-major or column-major order. This autoregressive approach ensures that the generated 
-# image is coherent and structurally meaningful.
-# In summary, while transformers do not have an inherent autoregressive structure, they can be trained in an autoregressive 
-# manner using techniques like masked language modeling. RNNs have a natural autoregressive structure, making them suitable for 
-# modeling sequential data. Autoregressive models can be applied to various types of sequences and are effective in capturing dependencies
-#  and generating coherent predictions or samples.
-
-
-# A transformer is a deep learning model architecture introduced in the paper "Attention Is All You Need" by Vaswani et al. in 2017.
-#  It was designed as an alternative to recurrent neural networks (RNNs) for tasks like machine translation but has since found applications 
-# in various natural language processing (NLP) and computer vision tasks.
-# The key idea behind the transformer architecture is the use of self-attention mechanisms. Instead of relying on recurrent connections,
-#  transformers utilize self-attention to capture dependencies between different positions in the input sequence. This allows the model 
-# to focus on relevant parts of the input sequence, improving parallelization and reducing the dependency on the sequence length.
-# Over the years, transformers have undergone various improvements and variations. Some notable developments include:
-# 1. Transformer-XL: Introduced in 2019, Transformer-XL addressed the limitation of fixed-length context windows in the original 
-# transformer. It introduced a recurrence mechanism to allow the model to consider longer-term dependencies.
-# 2. BERT: In 2018, Bidirectional Encoder Representations from Transformers (BERT) revolutionized NLP by pretraining transformers 
-# on large amounts of unlabeled text data. BERT models achieved state-of-the-art performance across multiple NLP tasks by fine-tuning 
-# on specific downstream tasks.
-# 3. GPT-3: Released in 2020, GPT-3 (Generative Pre-trained Transformer 3) is one of the largest transformer models ever built,
-#  with 175 billion parameters. It has demonstrated impressive performance on various language-related tasks, including language translation,
-#  text generation, and question-answering.
-# Transformers have found applications in a wide range of tasks, including machine translation, sentiment analysis, text generation,
-#  question-answering, image recognition, and more. Their ability to capture long-range dependencies and model context has made them 
-# highly effective in these domains.
-# In PyTorch, you can use the `torch.nn.Transformer` module to implement a transformer model. Training a transformer involves several
-#  important considerations:
-# 1. Dataset Preparation: Prepare your dataset by tokenizing text inputs, creating input sequences, and generating target sequences.
-# 2. Model Architecture: Design the transformer architecture by specifying the number of encoder and decoder layers, the size of the 
-# embedding and hidden layers, and the attention mechanism used.
-# 3. Hyperparameter Tuning: Important hyperparameters to tune include the learning rate, batch size, number of layers, hidden size,
-#  and dropout rate. You can experiment with different values and use techniques like grid search or random search to find optimal
-# hyperparameters.
-# 4. Training Loop: Train the model using backpropagation and optimize the model parameters. Monitor the loss and perform gradient 
-# updates using an optimizer like Adam.
-# 5. Evaluation: Evaluate the trained model on a separate validation or test set using appropriate metrics for the specific task. 
-# Adjust the model and hyperparameters as necessary based on the evaluation results.
-# 6. Regularization Techniques: Apply regularization techniques such as dropout, weight decay, or layer normalization to prevent 
-# overfitting and improve generalization.
-# 7. Pretrained Models: Utilize pretrained transformer models like BERT or GPT-3, which have been trained on large amounts of data.
-#  Fine-tune these models on your specific task to benefit from their transfer learning capabilities.
-# Remember that training a transformer can be computationally expensive due to the large number of parameters. It is recommended to 
-# use GPUs and distributed training techniques to speed up the training process.
-# Overall, transformers have significantly impacted the field of deep learning, especially in NLP tasks. They provide a powerful 
-# alternative to traditional recurrent architectures and have achieved state-of-the-art performance in various domains.
-
-# Certainly! Let's dive deeper into the first three paragraphs to provide a more detailed explanation of the transformer architecture,
-#  its key idea, and the subsequent developments:
-# 1. Transformer Architecture:
-#    The transformer architecture is a type of neural network model introduced in the paper "Attention Is All You Need". 
-# It was primarily designed as an alternative to recurrent neural networks (RNNs) for sequence-to-sequence tasks, such as machine
-#  translation. Unlike RNNs, which process sequential data sequentially, transformers operate on the entire input sequence simultaneously.
-#  This parallelization allows for more efficient computation and faster training.
-#    The transformer architecture consists of two main components: the encoder and the decoder. The encoder takes the input 
-# sequence and maps it into a set of high-dimensional representations, capturing the contextual information of each input element.
-#  The decoder then generates the output sequence based on the encoder's representations and the previously generated output elements.
-#  The key innovation of the transformer lies in its use of self-attention mechanisms, which enable the model to capture relationships
-# between different positions in the input sequence.
-# 2. Key Idea - Self-Attention Mechanism:
-#    The key idea behind the transformer architecture is the self-attention mechanism. Self-attention allows the model to weigh 
-# he importance of different input elements when generating a specific output element. It achieves this by computing attention 
-# scores between pairs of input elements, determining how much each element contributes to the representation of another element.
-#  These attention scores are then used to compute a weighted sum of the input elements, producing the final output representation.
-#    Self-attention mechanisms enable the model to focus on the most relevant parts of the input sequence, irrespective of their positions.
-#  This attention-based approach provides a more flexible and powerful way of modeling dependencies between elements compared to 
-# the fixed sequential processing of RNNs. By attending to relevant information in the input sequence, transformers can capture 
-# long-range dependencies and produce more accurate representations.
-# 3. Developments and Variations:
-#    Since the introduction of the transformer architecture, several developments and variations have emerged to address specific
-#  challenges or improve performance in different tasks. Two notable examples are Transformer-XL and BERT:
-#    - Transformer-XL: Introduced in 2019, Transformer-XL aimed to address the limitation of fixed-length context windows in the 
-# original transformer. It introduced a recurrence mechanism, allowing the model to consider longer-term dependencies within the 
-# input sequence. This recurrence mechanism, called "relative positional encoding," enables the model to capture context beyond 
-# the window size.
-#    - BERT: In 2018, BERT (Bidirectional Encoder Representations from Transformers) made significant advancements in NLP tasks. 
-# BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. This pretraining 
-# enables the model to learn contextual representations of words and sentences. BERT models can then be fine-tuned on specific 
-# downstream tasks, achieving state-of-the-art performance across various NLP benchmarks.
-# These developments highlight the adaptability and versatility of the transformer architecture. Researchers have explored different 
-# modifications, improvements, and pretraining techniques to make transformers more effective in specific domains and tasks. 
-# The transformer architecture has proven to be a transformative advancement in deep learning, particularly in the field of natural
-#  language processing, revolutionizing the way we approach sequence modeling and generation tasks.
-#
-# explain  more
-#Certainly! Let's delve deeper into the third point, focusing on the developments and variations in transformer architecture, 
-# particularly Transformer-XL and BERT:
-#
-# 1. Transformer-XL:
-#    Transformer-XL is an extension of the original transformer architecture introduced in 2019. It addresses the limitation of 
-# fixed-length context windows in the original transformer, which can restrict the model's ability to capture long-range dependencies.
-#    The main innovation of Transformer-XL is the introduction of a recurrence mechanism called "relative positional encoding." 
-# In the original transformer, positional encoding provides information about the absolute position of each element in the input 
-# sequence. However, it does not explicitly model the relative distances between elements.
-#    Transformer-XL overcomes this limitation by introducing relative positional encoding, which allows the model to capture 
-# relative distances between input elements. By considering relative positions, the model can capture longer-term dependencies 
-# within the input sequence, exceeding the fixed context window size of the original transformer.
-#    This recurrence mechanism enables Transformer-XL to handle longer sequences and better capture context beyond the fixed 
-# window size. It has been particularly effective in tasks that require modeling long-range dependencies, such as language 
-# modeling and document understanding.
-# 2. BERT (Bidirectional Encoder Representations from Transformers):
-#    BERT, introduced in 2018, made significant strides in natural language processing (NLP) tasks by leveraging transformer-based 
-# architectures. BERT pioneered the use of unsupervised pretraining followed by supervised fine-tuning, demonstrating remarkable 
-# performance across various NLP benchmarks.
-#    BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. During pretraining, 
-# a certain percentage of input tokens are randomly masked, and the model is trained to predict the original masked tokens based on 
-# the surrounding context. This process allows BERT to learn contextual representations of words and sentences, 
-# capturing rich semantic and syntactic information.
-#    After pretraining, BERT models can be fine-tuned on specific downstream tasks with labeled data. This fine-tuning stage involves 
-# adding task-specific layers and training the model on the task-specific objective. By leveraging the knowledge learned during 
-# pretraining, BERT models achieve state-of-the-art performance on a wide range of NLP tasks, including text classification, 
-# named entity recognition, question-answering, and more.
-#    BERT's bidirectional approach, where the model can access both left and right context during pretraining, allows it to capture a 
-# deeper understanding of the language. This bidirectional context modeling is achieved through the use of a "masked 
-# self-attention" mechanism, where attention is computed not only between different input elements but also between masked and unmasked elements.
-#    BERT has had a profound impact on NLP research and applications, setting new benchmarks and pushing the boundaries of language
-#  understanding tasks. It has also paved the way for subsequent models, such as GPT (Generative Pre-trained Transformer) 
-# and RoBERTa, which further improved upon the BERT architecture.
-# In summary, Transformer-XL and BERT are notable developments in the transformer architecture. Transformer-XL introduces a recurrence
-#  mechanism to capture longer-range dependencies, while BERT leverages unsupervised pretraining followed by supervised 
-# fine-tuning to achieve state-of-the-art performance on a range of NLP tasks. These advancements have significantly influenced 
-# the field of deep learning and have propelled the transformer architecture to the forefront of NLP research and applications.
-
-# more explanations 
-# Certainly! Let's delve even deeper into Transformer-XL and BERT, exploring their architecture and the specific innovations they 
-# bring to the transformer model:
-# 1. Transformer-XL:
-#    Transformer-XL is an extension of the original transformer architecture that addresses the limitation of fixed-length context windows.
-#  It introduces a recurrence mechanism called "relative positional encoding" to capture longer-range dependencies within the input sequence.
-#    In the original transformer, positional encoding provides information about the absolute positions of elements in the input sequence.
-#  However, it does not explicitly model the relative distances between elements. This limitation can lead to difficulties in 
-# capturing long-range dependencies, especially when the distance between relevant elements is larger than the fixed context window.
-#    Transformer-XL overcomes this limitation by incorporating memory mechanisms into the transformer architecture. It introduces two types
-#  of memories: segment-level recurrence and positional recurrence.
-#    - Segment-Level Recurrence: Transformer-XL maintains a memory of previously seen segments and incorporates this information into the 
-# current segment's processing. By doing so, the model can capture dependencies that span across segments, enabling it to consider longer-term context.
-#    - Positional Recurrence: To capture dependencies within a segment, Transformer-XL introduces a recurrence mechanism at the positional 
-# level. Instead of processing the segment in a strictly left-to-right manner, it allows information to flow from any position to 
-# any other position within the segment. This allows the model to capture longer-range dependencies within the fixed context window.
-#    By incorporating these recurrence mechanisms, Transformer-XL can capture longer-term dependencies both within segments and across segments. 
-# This makes it particularly effective for tasks that require modeling long-range context, such as language modeling, where 
-# understanding the context beyond a fixed window is crucial.
-# 2. BERT (Bidirectional Encoder Representations from Transformers):
-#    BERT, introduced in 2018, made significant advancements in NLP tasks by leveraging transformer-based architectures. It introduced the 
-# concept of unsupervised pretraining followed by supervised fine-tuning, allowing the model to learn rich contextual 
-# representations of words and sentences.
-#    BERT follows a two-step process: pretraining and fine-tuning.
-#    - Pretraining: BERT is pretrained on large amounts of unlabeled text data using a masked language modeling (MLM) objective. 
-# During pretraining, a certain percentage of input tokens are randomly masked, and the model is trained to predict the original 
-# masked tokens based on the surrounding context. By training on this MLM objective, BERT learns to capture deep contextual information 
-# and understand the relationships between words.
-#    - Fine-Tuning: After pretraining, BERT models are fine-tuned on specific downstream tasks using labeled data. During fine-tuning,
-#  task-specific layers are added on top of the pretrained BERT model, and the entire model is trained on the task-specific objective.
-#  Fine-tuning allows BERT to adapt its learned representations to the specific task at hand.
-#    The bidirectional nature of BERT is a key innovation. Unlike the original transformer, which processes input sequentially 
-# in one direction, BERT employs a "masked self-attention" mechanism. This mechanism allows the model to access both left and right 
-# context during pretraining, providing a deeper understanding of the language.
-#    By leveraging the contextual information learned during pretraining, BERT models achieve remarkable performance across various NLP tasks.
-#  The ability to capture rich semantic and syntactic information makes BERT highly effective for tasks such as text classification, 
-# named entity recognition, question-answering, and more.
-#    The success of BERT has spurred further developments, with subsequent models like GPT and RoBERTa adopting similar approaches 
-# to achieve even better performance on NLP benchmarks.
-# In summary, Transformer-XL introduces recurrence mechanisms to capture longer-range dependencies within the input sequence, 
-# while BERT leverages unsupervised pretraining followed by supervised fine-tuning to capture rich contextual representations of 
-# words and sentences. These advancements have significantly impacted the field of deep learning, particularly in the realm of NLP, 
-# setting new benchmarks and pushing the boundaries of language understanding tasks.
-
-# transformer in more depth
-# Certainly! Here's an in-depth explanation of transformers, including their underlying idea, how they work, the different versions,
-#  and the importance of libraries like Hugging Face:
-# 1. Underlying Idea:
-#    Transformers are a type of neural network architecture introduced in the paper "Attention Is All You Need" to tackle 
-# sequence-to-sequence tasks, such as machine translation. The underlying idea of transformers is to enable parallel processing of
-#  the entire input sequence, as opposed to the sequential processing of recurrent neural networks (RNNs).
-#    The key innovation of transformers lies in their use of self-attention mechanisms. Self-attention allows the model to 
-# weigh the importance of different input elements when generating a specific output element. By computing attention scores between 
-# pairs of input elements, transformers determine how much each element contributes to the representation of another element.
-#  This attention-based approach provides a flexible and powerful way of modeling dependencies between elements, capturing long-range 
-# relationships effectively.
-# 2. How Transformers Work:
-#    Transformers consist of two main components: the encoder and the decoder. Let's explain their functioning:
-#    - Encoder: The encoder takes the input sequence and maps it into a set of high-dimensional representations. It applies 
-# self-attention mechanisms to capture relationships between different positions in the input sequence. The encoder stack typically 
-# consists of multiple layers, each containing a self-attention mechanism followed by feed-forward neural networks. 
-# The self-attention mechanism allows the encoder to attend to relevant information from the entire input sequence, producing rich 
-# representations for each element.
-#    - Decoder: The decoder generates the output sequence based on the encoder's representations and the previously generated
-#  output elements. Like the encoder, the decoder also consists of multiple layers, but it additionally includes an attention mechanism 
-# that allows it to attend to the encoder's representations. This attention mechanism enables the decoder to focus on
-#  the most relevant parts of the input sequence while generating the output sequence step by step.
-#    By leveraging self-attention mechanisms in both the encoder and decoder, transformers can capture the relationships
-#  between input and output elements efficiently. This parallel processing of the entire sequence allows transformers to model 
-# long-range dependencies and generate accurate representations.
-# 3. Versions of Transformers:
-#    Since the introduction of the transformer architecture, several versions and variations have emerged to address specific 
-# challenges and improve performance in different tasks. Some notable versions include:
-#    - Transformer-XL: Introduced in 2019, Transformer-XL incorporates recurrence mechanisms to capture longer-range dependencies
-#  within the input sequence. It introduces segment-level recurrence and positional recurrence to handle longer sequences and context 
-# beyond the fixed window size.
-#    - BERT (Bidirectional Encoder Representations from Transformers): BERT revolutionized the field of NLP in 2018. 
-# It employs unsupervised pretraining followed by supervised fine-tuning to learn contextual representations of words and sentences.
-#  BERT models are pretrained on large amounts of unlabeled text data using a masked language modeling objective. After pretraining,
-#  they can be fine-tuned on specific supervised tasks, achieving state-of-the-art performance across various NLP benchmarks.
-#    - GPT (Generative Pre-trained Transformer): GPT models, introduced in 2018, focus on language generation tasks. 
-# They adopt a similar pretraining and fine-tuning approach as BERT but use a generative objective during pretraining. GPT models 
-# have been successful in tasks like text generation, language translation, and summarization.
-#    - RoBERTa: RoBERTa, introduced in 2019, builds upon BERT's architecture and training methodology. It modifies the 
-# training procedure and hyperparameters to achieve better performance. RoBERTa has shown improved results on a wide range of NLP tasks.
-#    These versions highlight the continuous advancements and refinements in the transformer architecture, addressing 
-# specific challenges and pushing the boundaries of performance in various domains.
-# 4. Importance of Libraries like Hugging Face:
-#    Hugging Face is a popular open-source library that provides tools and pre-trained models for natural language processing,
-#  with a strong focus on transformers. It offers a wide range of pre-trained transformer models, including BERT, GPT, RoBERTa, 
-# and many others.
-#    Hugging Face's library simplifies the process of working with transformers, providing easy-to-use APIs and tools for tasks
-#  like text classification, named entity recognition, question-answering, and more. It also enables users to fine-tune pre-trained 
-# models on specific downstream tasks with minimal effort.
-#    The library plays a crucial role in democratizing access to state-of-the-art transformer models, making them more 
-# accessible to researchers, developers, and practitioners. It has become a central hub for sharing, exploring, and utilizing 
-# transformer models, fostering rapid progress in the field of NLP.
-# In summary, transformers are neural network architectures that leverage self-attention mechanisms to process input sequences
-#  in parallel and capture long-range dependencies effectively. Versions like BERT, GPT, and RoBERTa have further improved upon 
-# the original transformer architecture, achieving remarkable results in various NLP tasks. Libraries like Hugging Face have played
-#  a vital role in making transformer models more accessible and facilitating their usage in a wide range of applications.
-# The importance of Hugging Face library in the context of transformers cannot be overstated. Hugging Face is an open-source 
-# library that provides a comprehensive set of tools and pre-trained models for natural language processing, with a particular focus on transformers.
-# Here are some key aspects and the relation of Hugging Face to transformers:
-# 1. Pre-trained Models: Hugging Face offers a vast collection of pre-trained transformer models, including BERT, GPT, RoBERTa, and more.
-#  These models have been trained on large amounts of text data and have learned rich contextual representations that can be fine-tuned
-#  for specific NLP tasks.
-# 2. Model Hub: Hugging Face provides a centralized Model Hub, which serves as a repository for sharing and accessing pre-trained 
-# transformer models. Researchers and practitioners can upload their trained models to the Model Hub, making them readily available 
-# for the community. This fosters collaboration, knowledge sharing, and enables easy experimentation with the latest transformer models.
-# 3. Tokenizers: Hugging Face provides efficient tokenization libraries that can handle various text processing tasks. Tokenization 
-# is a crucial step in transforming raw text data into a format suitable for input to transformer models. Hugging Face's tokenizers 
-# support multiple languages and offer customizable options for different tokenization strategies.
-# 4. Model Pipelines: Hugging Face offers high-level model pipelines that simplify the process of using transformer models for specific
-#  NLP tasks. These pipelines provide easy-to-use APIs for tasks like text classification, named entity recognition, question-answering, 
-# and more. With just a few lines of code, users can leverage pre-trained models and achieve state-of-the-art performance on various NLP benchmarks.
-# 5. Fine-tuning Framework: Hugging Face provides a fine-tuning framework that allows users to adapt pre-trained transformer models to
-#  specific downstream tasks. Fine-tuning involves training the pre-trained models on task-specific data to improve their performance 
-# on specific NLP tasks. Hugging Face's framework simplifies the fine-tuning process by providing utilities and APIs for efficient model adaptation.
-# 6. Community and Documentation: Hugging Face has a vibrant community of developers, researchers, and NLP enthusiasts. They actively
-#  contribute to the library, share their experiences, and provide support to fellow users. Hugging Face's documentation is comprehensive 
-# and user-friendly, making it easy for newcomers to get started with transformers and the library.
-# Overall, Hugging Face plays a pivotal role in making transformers more accessible and user-friendly. It provides a platform for 
-# sharing, exploring, and utilizing pre-trained models, tokenization tools, model pipelines, and fine-tuning frameworks. The library 
-# has become a go-to resource for researchers, developers, and practitioners working with transformers, enabling rapid 
-# progress and advancements in the field of NLP.
-
-
-# lash attention latest improvements https://arxiv.org/pdf/2205.14135.pdf
-# linformer, sparseattention(openai), Performer, Reformer, etc
-# https://www.youtube.com/watch?v=1RaIS98jj1Q  
-# Transformers are slow and memory-hungry on long sequences, since the time and memory complexity
-# of self-attention are quadratic in sequence length. Approximate attention methods have attempted
-# to address this problem by trading off model quality to reduce the compute complexity, but often do
-# not achieve wall-clock speedup. We argue that a missing principle is making attention algorithms IO-
-# aware—accounting for reads and writes between levels of GPU memory. We propose FlashAttention,
-# an IO-aware exact attention algorithm that uses tiling to reduce the number of memory reads/writes
-# between GPU high bandwidth memory (HBM) and GPU on-chip SRAM. We analyze the IO complexity
-# of FlashAttention, showing that it requires fewer HBM accesses than standard attention, and is
-# optimal for a range of SRAM sizes. We also extend FlashAttention to block-sparse attention, yielding
-# an approximate attention algorithm that is faster than any existing approximate attention method.
-# FlashAttention trains Transformers faster than existing baselines: 15% end-to-end wall-clock speedup
-# on BERT-large (seq. length 512) compared to the MLPerf 1.1 training speed record, 3 speedup on
-# GPT-2 (seq. length 1K), and 2.4 speedup on long-range arena (seq. length 1K-4K). FlashAttention
-# and block-sparse FlashAttention enable longer context in Transformers, yielding higher quality models
-# (0.7 better perplexity on GPT-2 and 6.4 points of lift on long-document classification) and entirely new
-# capabilities: the first Transformers to achieve better-than-chance performance on the Path-X challenge
-# (seq. length 16K, 61.4% accuracy) and Path-256 (seq. length 64K, 63.1% accuracy).
-
-#
-# https://python.plainenglish.io/swin-transformer-from-scratch-in-pytorch-31275152bf03
-# about vision transormers 
-# Certainly! Here's an in-depth explanation of vision transformers, including their underlying idea, how they work, 
-# the different versions, and the importance of libraries like Hugging Face:
-# 1. Underlying Idea:
-#    Vision transformers are a variant of transformers that have been adapted for computer vision tasks.
-#  While convolutional neural networks (CNNs) have traditionally been the dominant architecture for image processing,
-#  vision transformers aim to explore the effectiveness of transformers in visual tasks. The underlying idea is to 
-# apply self-attention mechanisms to capture global dependencies in images and enable parallel processing of the entire image.
-#    The key intuition behind vision transformers is that images can be reshaped into sequences of patches, 
-# similar to sentences in natural language processing. These patches are then fed into the transformer model, 
-# allowing it to capture relationships between patches and learn meaningful representations.
-# 2. How Vision Transformers Work:
-#    Vision transformers consist of an encoder, similar to the original transformer architecture. 
-# Let's explain their functioning:
-#    - Patch Extraction: The input image is divided into a set of smaller patches. Each patch represents a 
-# local region of the image and is typically represented as a vector.
-#    - Positional Embedding: Similar to transformers in NLP, vision transformers require positional information 
-# to capture spatial relationships between patches. Positional embeddings are added to each patch vector to encode 
-# its relative position within the image.
-#    - Encoder: The encoder processes the sequence of patch embeddings and performs self-attention operations to 
-# model the dependencies between patches. The self-attention mechanism allows each patch to attend to other patches, 
-# capturing global relationships in the image. The encoder stack typically consists of multiple layers, each containing 
-# self-attention mechanisms and feed-forward neural networks.
-#    - Classification Head: At the end of the encoder, a classification head is added to produce the final output.
-#  This head can be a simple linear layer that maps the transformer's output to the desired number of classes for classification tasks.
-#    By leveraging self-attention mechanisms, vision transformers can capture long-range dependencies and global 
-# context in images, allowing them to achieve competitive performance on various computer vision tasks.
-# 3. Versions of Vision Transformers:
-#    Vision transformers are a relatively new development, and several versions and variations have emerged to 
-# explore their effectiveness in different settings. Here are a few notable versions:
-#    - ViT (Vision Transformer): The Vision Transformer introduced in the paper "An Image Is Worth 16x16 Words" 
-# is the foundational work in this field. It demonstrated that transformers can achieve competitive performance 
-# on image classification tasks when applied to image patches.
-#    - DeiT (Data-efficient Image Transformers): The Data-efficient Image Transformers introduced in the paper 
-# "Training ViT Models on Noisy Datasets Improves ImageNet Classification" focused on improving the data efficiency 
-# of vision transformers. It introduced techniques such as distillation and noisy student training to achieve 
-# state-of-the-art performance even with limited labeled data.
-#    - TNT (Transformer in Transformer): The Transformer in Transformer introduced in the paper "Transformer in 
-# Transformer" explores an architecture with multiple layers of transformers. It applies a second-level self-attention 
-# mechanism within each transformer layer, allowing for more fine-grained modeling of local and global dependencies.
-#    These versions highlight the ongoing research and exploration in the field of vision transformers, aiming 
-# to improve performance, efficiency, and applicability in various computer vision tasks.
-# 4. Importance of Libraries like Hugging Face:
-#    Hugging Face, as mentioned in the previous response, is an essential library in the context of vision transformers.
-#  It provides tools and resources that facilitate working with vision transformers and accelerate research and 
-# development in computer vision. Here's how it relates to vision transformers:
-#    - Pre-trained Models: Hugging Face's Model Hub includes pre-trained vision transformer models like ViT and DeiT.
-#  These pre-trained models can be readily used for various computer vision tasks, such as image classification and object detection.
-#    - Transformers Library: Hugging Face's Transformers library, originally focused on NLP, has expanded to include 
-# vision transformers as well. It provides a consistent and user-friendly API for working with transformers, including
-#  vision transformers. This allows developers and researchers to leverage existing methodologies and tools to work
-# with vision transformer models seamlessly.
-#    - Data Processing and Augmentation: Hugging Face's library also includes utilities for data processing and 
-# augmentation specific to computer vision tasks. These tools help prepare and preprocess image data, enabling efficient
-#  training and evaluation of vision transformer models.
-#    - Community and Documentation: Hugging Face has a thriving community of researchers, developers, and enthusiasts
-#  working in the field of computer vision and transformers. The community actively contributes to the library, shares 
-# their experiences, and provides support to fellow users. Hugging Face's documentation is comprehensive and user-friendly, 
-# allowing users to quickly understand and utilize vision transformer models.
-#    The availability of pre-trained models, consistent APIs, data processing tools, and a supportive community makes 
-# Hugging Face an essential resource for researchers and practitioners working with vision transformers. It simplifies 
-# the development and deployment of vision transformer models, fostering rapid progress and advancements in the field of computer vision.
-# In summary, vision transformers adapt the transformer architecture for computervision tasks by dividing images into 
-# patches, applying self-attention mechanisms, and capturing global relationships. They have several versions such as 
-# ViT, DeiT, and TNT, each exploring different aspects of vision transformer architectures. Libraries like Hugging Face 
-# provide pre-trained models, tools for data processing, and a supportive community to facilitate working with vision 
-# transformers and accelerate research in computer vision.
 #
 #
+# a few introductary videos:
 # https://www.youtube.com/watch?v=2ih6BHD4v3I
 # https://www.youtube.com/watch?v=VoRQiKQcdcI
 # https://www.youtube.com/watch?v=3B6q4xnuFUE
@@ -4860,25 +4649,29 @@ print(f"{''.join(decode(output))}")
 # https://www.youtube.com/watch?v=tFYxJZBAbE8
 
 
-
-#%%
+#%% plotting refresher - needs tidying up
 # manifold related plots 
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-# Define a simple manifold function that maps 2D inputs to 1D outputs
-def manifold_function(x, y):
-    return np.sin(np.sqrt(x**2 + y**2))
+import sklearn
+from sklearn import datasets
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA, TruncatedSVD
 
-# Generate some random data points along the manifold
+# plot a manifold in 3d example
+# create bunch of random data points
 num_points = 500
+# we want 3 points for 3 axes.
 xs = np.random.uniform(-1, 1, size=num_points)
 ys = np.random.uniform(-1, 1, size=num_points)
-zs = manifold_function(xs, ys)
+# we can use sth like sin to map our 2D input to 1D output
+zs = np.sin(np.sqrt(xs**2 + ys**2))
 
-# Plot the data points in 3D space
+# and now the actual plotting 
 fig = plt.figure()
+# heres the kicker, by setting projection='3d' we get 3d plot!
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(xs, ys, zs)
 ax.set_xlabel('X')
@@ -4886,20 +4679,16 @@ ax.set_ylabel('Y')
 ax.set_zlabel('Z')
 plt.show()
 
-import matplotlib.pyplot as plt
-from sklearn import manifold, datasets
-
-# Load the digits dataset
+# example using a dataset with 6 classes
 digits = datasets.load_digits(n_class=6)
 X = digits.data
 y = digits.target
 n_samples, n_features = X.shape
 
-# Perform t-SNE manifold learning
-tsne = manifold.TSNE(n_components=2, init='pca', random_state=0)
+# use tsne for dimensionality reduction, instead of pca
+tsne = TSNE(n_components=2, init='pca', random_state=0)
 X_tsne = tsne.fit_transform(X)
 
-# Plot the results
 plt.figure(figsize=(6, 5))
 colors = "r", "g", "b", "c", "m", "y"
 for pos, c, label in zip(range(6), colors, digits.target_names):
@@ -4907,173 +4696,88 @@ for pos, c, label in zip(range(6), colors, digits.target_names):
 plt.legend()
 plt.show()
 
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-
-# Define the sinusoidal positional encoding function
-def positional_encoding(position, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
+#%% now lets experiment with the sinusoidal positional encoding 
+# sine only
+def positional_encoding_sine_only(position, d_model):
+    angle_rates = 1 / np.power(10_000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
     angle_rads = position * angle_rates
     sines = np.sin(angle_rads)
     return sines
 
+# standard sine/cosine pair
+def positional_encoding(position, d_model):
+    dimensions = np.arange(d_model)[np.newaxis, :]
+    angle_rates = 1 / np.power(10_000,(2 * (dimensions // 2)) / np.float32(d_model))
+    angle_rads = position * angle_rates
+    pos_encoding = np.sin(angle_rads)
+    pos_encoding[:, 1::2] = np.cos(angle_rads[:, 1::2])
+    return pos_encoding
+
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
 embd_dim = 512
+# pos_encodings = positional_encoding_sine_only(positions, embd_dim)
 pos_encodings = positional_encoding(positions, embd_dim)
 
-# Perform t-SNE manifold learning
-tsne = TSNE(n_components=2, init='pca', random_state=0)
-X_tsne = tsne.fit_transform(pos_encodings)
+tsne_2d = TSNE(n_components=2, init='pca', random_state=0)
+X_tsne = tsne_2d.fit_transform(pos_encodings)
 
-# Plot the results
 plt.figure(figsize=(6, 5))
 plt.scatter(X_tsne[:, 0], X_tsne[:, 1])
+plt.suptitle('TSNE - 2d projection of Sinusodal Positional Encoding')
 plt.show()
 
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-from mpl_toolkits.mplot3d import Axes3D
+# 3d
+tsne_3d = TSNE(n_components=3, init='pca', random_state=0)
+X_tsne = tsne_3d.fit_transform(pos_encodings)
 
-# Define the sinusoidal positional encoding function
-def positional_encoding(position, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
-    angle_rads = position * angle_rates
-    sines = np.sin(angle_rads)
-    return sines
-
-# Generate the positional encodings
-positions = np.arange(1000)[:, np.newaxis]
-embd_dim = 512
-pos_encodings = positional_encoding(positions, embd_dim)
-
-# Perform t-SNE manifold learning
-tsne = TSNE(n_components=3, init='pca', random_state=0)
-X_tsne = tsne.fit_transform(pos_encodings)
-
-# Plot the results
 fig = plt.figure(figsize=(6, 5))
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(X_tsne[:, 0], X_tsne[:, 1], X_tsne[:, 2])
+plt.suptitle('TSNE - 3d projection of Sinusodal Positional Encoding')
 plt.show()
 
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-from mpl_toolkits.mplot3d import Axes3D
-
-# Define the sinusoidal positional encoding function
-def positional_encoding(position, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
-    angle_rads = position * angle_rates
-    sines = np.sin(angle_rads)
-    return sines
-
-# Generate the positional encodings
-positions = np.arange(1000)[:, np.newaxis]
-embd_dim = 512
-pos_encodings = positional_encoding(positions, embd_dim)
-
-# Perform PCA
+# PCA
 pca = PCA(n_components=3)
 X_pca = pca.fit_transform(pos_encodings)
 
-# Plot the results
 fig = plt.figure(figsize=(6, 5))
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(X_pca[:, 0], X_pca[:, 1], X_pca[:, 2])
+plt.suptitle('PCA - 3d projection of Sinusodal Positional Encoding')
 plt.show()
 
-# import numpy as np
-# import matplotlib.pyplot as plt
-# from sklearn.decomposition import TruncatedSVD
-# from mpl_toolkits.mplot3d import Axes3D
-
-# # Define the sinusoidal positional encoding function
-# def positional_encoding(position, d_model):
-#     angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
-#     angle_rads = position * angle_rates
-#     sines = np.sin(angle_rads)
-#     return sines
-
-# # Generate the positional encodings
-# positions = np.arange(1000)[:, np.newaxis]
-# d_model = 512
-# pos_encodings = positional_encoding(positions, d_model)
-
-# # Perform SVD
-# svd = TruncatedSVD(n_components=3)
-# X_svd = svd.fit_transform(pos_encodings)
-
-# # Plot the results
-# fig = plt.figure(figsize=(6, 5))
-# ax = fig.add_subplot(111, projection='3d')
-# ax.scatter(X_svd[:, 0], X_svd[:, 1], X_svd[:, 2])
-# plt.show()
-
-# %matplotlib notebook
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.decomposition import TruncatedSVD
-from mpl_toolkits.mplot3d import Axes3D
-
-# Define the sinusoidal positional encoding function
-def positional_encoding(position, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
-    angle_rads = position * angle_rates
-    sines = np.sin(angle_rads)
-    return sines
-
-# Generate the positional encodings
-positions = np.arange(1000)[:, np.newaxis]
-embd_dim = 512
-pos_encodings = positional_encoding(positions, embd_dim)
-
-# Perform SVD
+# SVD
 svd = TruncatedSVD(n_components=3)
 X_svd = svd.fit_transform(pos_encodings)
 
-# Plot the results
 fig = plt.figure(figsize=(8, 6))
 ax = fig.add_subplot(111, projection='3d')
 scatter = ax.scatter(X_svd[:, 0], X_svd[:, 1], X_svd[:, 2], c=positions, cmap='viridis', alpha=0.6)
 
-# Make the plot more visually appealing
-ax.set_title('3D Visualization of Sinusoidal Positional Encodings', fontsize=16)
+ax.set_title('SVD - 3D Visualization of Sinusoidal Positional Encodings', fontsize=16)
 ax.set_xlabel('Component 1', fontsize=12)
 ax.set_ylabel('Component 2', fontsize=12)
 ax.set_zlabel('Component 3', fontsize=12)
 fig.colorbar(scatter, ax=ax, label='Position')
 plt.show()
 #%%
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-# Define the sinusoidal positional encoding function
-def positional_encoding(position, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (np.arange(d_model) // 2)) / np.float32(d_model))
-    angle_rads = position * angle_rates
-    sines = np.sin(angle_rads)
-    return sines
-
 # Generate the positional encodings
 positions = np.arange(1000)[:, np.newaxis]
 embd_dim = 512
 pos_encodings = positional_encoding(positions, embd_dim)
 
 # Select three dimensions to plot
-dim1, dim2, dim3 = 0, 1, 2  # Change these to select different dimensions
+dim1, dim2, dim3 = 0, 1, 2 # Change these to select different dimensions
+# dim1, dim2, dim3 = 100, 101, 102  
+# dim1, dim2, dim3 = 10, 200, 499  
 
-# Plot the results
 fig = plt.figure(figsize=(8, 6))
 ax = fig.add_subplot(111, projection='3d')
 scatter = ax.scatter(pos_encodings[:, dim1], pos_encodings[:, dim2], pos_encodings[:, dim3], c=positions, cmap='viridis', alpha=0.6)
 
 # Make the plot more visually appealing
-ax.set_title('3D Visualization of Sinusoidal Positional Encodings', fontsize=16)
+ax.set_title('3D Visualization of Sinusoidal Positional Encodings using 3 raw dims', fontsize=16)
 ax.set_xlabel('Dimension {}'.format(dim1), fontsize=12)
 ax.set_ylabel('Dimension {}'.format(dim2), fontsize=12)
 ax.set_zlabel('Dimension {}'.format(dim3), fontsize=12)
@@ -5125,7 +4829,7 @@ plt.show()
 # tokens (becasue there is no solid notion of order) so we need to comeup with something that satisfies these conditions.) 
 #
 #
-# The paper uses something called sinusodal positional encoding, to solve this issue by providing positional information. 
+# The paper uses something called sinusoidal positional encoding, to solve this issue by providing positional information. 
 # but why sinusoidal encoding? what if we tried to use numbers to index the positions ?
 # we know we can treat text as a sequence of words coming one after another, so why not count the tokens as
 # we go like 1,2,3,4,etc? 
@@ -5164,8 +4868,18 @@ plt.show()
 # rapid oscillations within the same range.
 # The following snippet shows this:
 #
-import matplotlib.pyplot as plt 
-import numpy as np 
+#
+# print(plt.style.available)
+# ['Solarize_Light2', '_classic_test_patch', '_mpl-gallery',
+# '_mpl-gallery-nogrid', 'bmh', 'classic', 'dark_background',
+# 'fast', 'fivethirtyeight', 'ggplot', 'grayscale', 
+# 'seaborn-v0_8', 'seaborn-v0_8-bright', 'seaborn-v0_8-colorblind',
+# 'seaborn-v0_8-dark', 'seaborn-v0_8-dark-palette', 'seaborn-v0_8-darkgrid',
+# 'seaborn-v0_8-deep', 'seaborn-v0_8-muted', 'seaborn-v0_8-notebook', 
+# 'seaborn-v0_8-paper', 'seaborn-v0_8-pastel', 'seaborn-v0_8-poster', 
+# 'seaborn-v0_8-talk', 'seaborn-v0_8-ticks', 'seaborn-v0_8-white', 
+# 'seaborn-v0_8-whitegrid', 'tableau-colorblind10']
+# 
 
 def plot_sin_cos_frequency(scale=5):
     # lets create 1000 points in the span of (0,4pi), 
@@ -5177,7 +4891,7 @@ def plot_sin_cos_frequency(scale=5):
     # uncomment this and see how playing with frequency can change the range of numbers available to you
     # freqs = [f(x) for x in [(1/scale)*x, scale*x] for f in [np.sin, np.cos]]
     freqs = [f(x) for x in [x, scale*x] for f in [np.sin, np.cos]]
-    plt.style.use('seaborn')
+    plt.style.use('seaborn-v0_8')
     plt.figure(figsize=(8, 4))
     fig, axs  = plt.subplots(2)
     fig.suptitle('Low Frequency vs High Frequency')
@@ -5193,62 +4907,73 @@ def plot_sin_cos_frequency(scale=5):
 plot_sin_cos_frequency(scale=10)
 #%%
 # !the concept of delta-distance (a fixed distance between all locations, bywhich the network can move relatively between tokens)
-# now if we manage to lower the frequency low enough to the point where it gives us a huge, preferably inifinit
-# numbers before the next period starts, that would be like our first suggetsion, linear range of numbers, but bounded!
-# but it we dont simply do that? this can provide us with an absolute positional information, which should work, but
-# there are two issues, how low should we set the frequency? becasue that affects the generated numbers, if we choose
-# a very low frequency, we might endup with tiny numbers, which would make it hard for the network to properly distinuish
-# between tokens/positions, especially the adjacent ones. 
-# (imagine if we trained our model on frequency x, and generated k positions, and later at test time, we wanted
-# to use longer sequences, so we had to use a lower frequency, this would generate different set of numbers compared
-# to previous frequency which is not desirable and can mess up our model output (becasue they are added to the word/
-# token embeddings thus a change in positional value can result in the change in output, therefore from this angle
-# this is also important to be consistent))
-# we might even, at the extreme end, face underflow issues, the numbers get so tiny, the float cant represent them properly. 
-# these reasons in addition to another intersting attribute that adding a cosine to the mix provides us with, made 
-# the main authors to use the sin/cos pair. the sin/cos pair is used extensively in some engineering fields such as
-# electrical engineering/signal processing, becasue of their desired attributes. for us one of such attributes is
-# they allow the model to have relative positional information in addition to the absolute positional information. 
-# as we see in the a bit later on, sine and cosine waves do different things which comes handy. but lets not get 
-# ahead of oursevlves. one of the main reasons that sin/cos are mixed, is to make each position as unique as it is
-# possible, and avoide duplicates. we start off with a somewhat higher frequency for the first embeddingd imension,
-# and as we go on, we lower the frequency. this way, we dont repeat a number, and the model can distinuish different
-# positions from different wavelengths(high frequency low wavelength, low frequency high wavelength). 
+# now if we manage to lower the frequency low enough to the point where it gives us a huge, 
+# preferably inifinit numbers before the next period starts, that would be like our first suggetsion,
+# linear range of numbers, but bounded!
+# but it we dont simply do that? this can provide us with an absolute positional information, which
+# should work, but there are two issues, how low should we set the frequency? becasue that affects 
+# the generated numbers, if we choose a very low frequency, we might endup with tiny numbers, which
+# would make it hard for the network to properly distinuish between tokens/positions, especially the
+# adjacent ones. 
+# (imagine if we trained our model on frequency x, and generated k positions, and later at test time,
+# we wanted to use longer sequences, so we had to use a lower frequency, this would generate different
+# set of numbers compared to previous frequency which is not desirable and can mess up our model output
+# (becasue they are added to the word/token embeddings thus a change in positional value can result in
+# the change in output, therefore from this angle this is also important to be consistent))
+# we might even, at the extreme end, face underflow issues, the numbers get so tiny, the float cant 
+# represent them properly. 
+# these reasons in addition to another intersting attribute that adding a cosine to the mix provides 
+# us with, made the main authors to use the sin/cos pair. the sin/cos pair is used extensively in some
+# engineering fields such as electrical engineering/signal processing, becasue of their desired attributes.
+# for us one of such attributes is they allow the model to have relative positional information in addition
+# to the absolute positional information. 
+# as we see in a bit later on, sine and cosine waves do different things which comes handy. but lets not
+# get ahead of oursevlves. one of the main reasons that sin/cos are mixed, is to make each position as 
+# unique as it is possible, and avoide duplicates. we start off with a somewhat higher frequency for the 
+# first embeddingd imension,and as we go on, we lower the frequency. this way, we dont repeat a number,
+# and the model can distinuish different positions from different wavelengths(high frequency low wavelength,
+# low frequency high wavelength). 
 #  
 # Questions: 
 # Now we have a good idea why this works, and its sufficient imho. 
 # from this point onward, I try to provide more intuition about different concepts involved.
-# these intuions come from different prespectives some may be intuitive and some may be streaching the idea a bit too far
-# so I present them all here and hopefully its for the best.: 
+# these intuions come from different prespectives some may be intuitive and some may be 
+# streaching the idea a bit too far so I present them all here and hopefully its for the best.:
+# 
+# sidenote: ****************************************************************************
+# before we continue, I need to add this, we can think of sinusoidal positions as unique identifiers
+# that each make each position unique it doesnt have to be a counter to make it intuitive!
+# now lets continue.
 # 
 # lets dive one level deeper and expand a bit more: 
-# we are going to gradually explain different points again with new prespectives, so we dont lose track of the ideas by
-# creating one giant block of text!
+# we are going to gradually explain different points again with new prespectives, so we dont lose
+# track of the ideas by creating one giant block of text!
 #
-# Previously we just talked about adding positional informations as a vector of numbers, like an embedding
-# and add it to the word embedding for each position. 
-# but we could also simply add the tokens absolute position to the token embedding as an extra dimension. 
-# Why dont we do this instead? 
+# Previously we just talked about adding positional informations as a vector of numbers, like 
+# an embedding and add it to the word embedding for each position. 
+# but we could also simply add the tokens absolute position to the token embedding as an extra
+# dimension. Why dont we do this instead? 
 #
-# First off if we use a normal decimal number, it might mess up the whole training procedure, if we opt out to 
-# learn it, then a single value, may not be descriptive enough and the model wouldnt have enough capacity to 
-# encode the required positional information into that single number, in which case if we increase the embedding
-# size, this would work but two issues pop up here. 
-# First how large should we take the positional embedding vector so that we can ensure the positional information
-# is not dominated by the token/word information or vice versa? if we use a shorter one, the word information may
-# overwhelm the positional information, if we use larger one, it may overwhelem the word information. so we use the
-# same size for both of them. but we do that, would over burdened us with more overhead, becasue in essence we would be 
-# contatenating the positional embedding to the word/token embedding, which just increases the overhead 
-# (the overhead increases quadradicly in multihead attention just think about it for a moment) 
-# and all of this is if we learn it, if we want it precomputed to enjoy the attributes we just stated for
-# sinuidoidal positional embedding, we need to comeup with something to encode
+# First off if we use a normal decimal number, it might mess up the whole training procedure, 
+# if we opt out to learn it, then a single value, may not be descriptive enough and the model
+# wouldnt have enough capacity to encode the required positional information into that single number,
+# in which case if we increase the embedding size, this would work but two issues pop up here. 
+# First how large should we take the positional embedding vector so that we can ensure the positional
+# information is not dominated by the token/word information or vice versa? if we use a shorter one,
+# the word information may overwhelm the positional information, if we use larger one, it may overwhelem
+# the word information. so we use the same size for both of them. but we do that, would over burdened
+# us with more overhead, becasue in essence we would be contatenating the positional embedding to 
+# the word/token embedding, which just increases the overhead (the overhead increases quadradicly
+# in multihead attention just think about it for a moment) 
+# and all of this is if we learn it, if we want it precomputed to enjoy the attributes we just stated 
+# for sinuidoidal positional embedding, we need to comeup with something to encode
 # the positional information in a single embedding cell or several one, which we just went over now with.
-# so in practice we use a separate vector the same size as a word/token embedding, and add them together to get 
-# the benifits we pointed out, like by clustering each position into its own feature subsapce the same way we 
-# have this for word embedding which allows us to do king - man = queen! or queen - woman = king! 
-# do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position, so that 
-# its semantic is preserved, and also the position is also separate from others. for this all dimensions of the 
-# embedding need to be taken into account, so thats why the emebdding portion makes sense! 
+# so in practice we use a separate vector the same size as a word/token embedding, and add them together
+# to get the benifits we pointed out, like by clustering each position into its own feature subsapce 
+# the same way we have this for word embedding which allows us to do king - man = queen! or queen - woman = king! 
+# do you get the idea? the idea is to somehow nodge each word ever so slightly to a specific position,
+# so that its semantic is preserved, and also the position is also separate from others. for this all 
+# dimensions of the embedding need to be taken into account, so thats why the emebdding portion makes sense! 
 # now if we take this route, we see that the scale needs to be the same, and all positions need to use the 
 # same identifier regardless of sequence length so network can actually differentiate between these positions
 # properly.
@@ -5259,551 +4984,272 @@ plot_sin_cos_frequency(scale=10)
 #=============================================================================================
 #=============================================================================================
 #=============================================================================================
-# Before we continue, lets review some concepts that come handy when we are explaining some of the 
-# concepts in depth from now on: 
+# Before we continue, lets review some concepts that come handy when we are explaining some of
+# the concepts in depth from now on: 
 #  
-# reminders about concepts we deal with here: 
+# reminders about concepts we deal with here, if you know, you can skip it but I suggest to 
+# skim over it, you may find something you didnt know or has forgot!
 #
 # Whats an embedding?
 # Embeddings can be thought of as a way to represent complex, high-dimensional data in a more simplified, 
 # lower-dimensional space while maintaining meaningful relationships between the data points. 
-# It's like capturing the essence of something intricate in a simpler form that retains its essence or crucial
-# characteristics.
-# We can imagine The embedding in different ways. Like for example just as a map condenses geographic
-# information into a flat surface without losing the relative positions of countries/places/etc, embeddings condense
-# data without losing crucial relationships.
-# Or think of it analogus to distilling the essence of a painting into a smaller sketch that still captures the main 
-# elements and style of the original painting.
-# or we may find it similar to organizing a library, in which embedding ensures that books on similar topics
-# are placed nearby, making it easier to find related information.
+# It's like capturing the essence of something intricate in a simpler form that retains its essence
+# or crucial characteristics.
+# We can imagine the embedding in different ways. Like for example a map, just as a map condenses
+# geographic information into a flat surface without losing the relative positions of countries/places/etc, 
+# embeddings condense data without losing crucial relationships. we can also think of it as distilling
+# the essence of a painting into a smaller sketch that still captures the main elements and style of
+# the original painting.(or summarizing a long story and keeping its key plots and points etc) 
+# (we could also view it as somewhat like a library, in which embedding makes sure that books on 
+# similar topics are placed nearby, making it easier to find related information, we can go on 
+# with more analogies, but you get the idea)
 # 
-# so an embedding, intuitively, is a condensed representation that retains essential information or relationships while 
-# simplifying the complexity of high-dimensional data. It's like summarizing a story without losing its essence or 
-# key plot points.
-# as for practical examples, we have already seen word embeddings, as words represented as vectors in which closer
-# words in the embedding space often have similar meanings or usage contexts.(we say often becasue this is not 100% all of the times, I guess it was around 75+%
-# as reported by mikolov in their word2vec paper! imnot sure though I need to recheck (!check this))
-# or the image embeddings, inwhich the images are represented in a lower-dimensional space where similar images 
-# are closer together, aiding tasks like image similarity search.
+# so an embedding, intuitively, is a condensed representation that retains essential information or 
+# relationships while simplifying the complexity of high-dimensional data. It's like summarizing a 
+# story without losing its essence or key plot points.
+# as for practical examples, we have already seen word embeddings, as words represented as vectors in
+# which closer words in the embedding space often have similar meanings or usage contexts.(we say often
+# becasue this is not 100% all of the times, I guess it was around 75+% as reported by mikolov in their
+# word2vec paper! imnot sure though I need to recheck (!check this))
+# or the image embeddings, inwhich the images are represented in a lower-dimensional space where 
+# similar images are closer together.
 # 
 #
-# Whats a manifold?
-# simply put, manifold is a topological space that looks locally like a Euclidean space, meaning that in a small enough region,
-# it resembles a familiar space like a plane. This has some implications for us which we get to rightaway.
-# but before that, what is a manifold really? its really kind of vague!
+# Whats a manifold? (todo: make it shorter and more on point 1 example should suffice imho)
+# simply put, manifold is a topological space that looks locally like a Euclidean space, meaning that
+# in a small enough region, it resembles a familiar space like a plane. 
+# This has some implications for us which we get to rightaway but before that, what is a manifold really?
+# its really kind of vague!
 # we can get better intuition about manifolds by visualizing them, and there are a lot of ways of doin this.
-# we can picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet, able
-# to take on various shapes within the higher-dimensional space.
+# we can picture a rubber sheet that can bend and curve. The manifold is like the surface of this sheet,
+# able to take on various shapes within the higher-dimensional space.
 # or we can imagine this rubber sheet to exist within a 3D space, but the manifold itself is a 2D surface. 
-# (The embedding process places data points on this flexible surface.)
-# Apart from these, there are other analogies that make this even more intuitive, for example:
-# Just as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data in a 
-# lower-dimensional space.
-# or if you think of a landscape with hills and valleys, the trails can be seen as the manifold, navigating the 
-# terrain while being constrained by the landscape's overall structure.
+# (the embedding process places data points on this flexible surface.)
+# Apart from these, there are other analogies that make this even more intuitive, for example, just 
+# as a paper map represents a curved Earth's surface on a flat sheet, a manifold represents complex data
+# in a lower-dimensional space or if you think of a landscape with hills and valleys, the trails can
+# be seen as the manifold, navigating the terrain while being constrained by the landscape's overall structure.
 #
-# so to put it simply, a manifold can be seen a flexible, curved surface in a higher-dimensional space, on which, each 
-# point represents a data point. the goal is to position these points on the surface so that the relationships between
-# them are preserved from the original, higher-dimensional data.
+# so to put it simply, a manifold can be seen a flexible, curved surface in a higher-dimensional space,
+# on which, each point represents a data point. the goal is to position these points on the surface
+# so that the relationships between them are preserved from the original, higher-dimensional data.
 # moreover, the curvature of the manifold reflects the relationships between the data points. 
-# Smooth curves indicate similar relationships, while abrupt turns may represent significant changes in the data.
-# In the context of embedding manifolds, it serves as the reduced-dimensional space where data points are positioned
-# after undergoing the embedding process, capturing essential relationships in a more manageable form.
-# !put a bulletpoint version down below as a summary 
+# Smooth curves indicate similar relationships, while abrupt turns may represent significant changes 
+# in the data.
+# In the context of embedding manifolds, it serves as the reduced-dimensional space where data points
+# are positioned after undergoing the embedding process, capturing essential relationships in a more
+# manageable form.
 # 
-# more technical elaboration: 
-# diving deeper into the concept of embedding manifolds involves understanding how data points are transformed from a
-# high-dimensional space to a lower-dimensional one while preserving their intrinsic/inherent/underlying relationships.
+# (a manifold retains certain intrinsic/inherent/underlying properties, such as local linearity 
+# or smoothness, even if embedded in a higher-dimensional space.)
 # 
-# Mathematics of Manifolds:
-# 
-# Topological Spaces: A manifold is a topological space that looks locally like Euclidean space, meaning that in 
-#     a small enough region, it resembles a familiar space like a plane.
-#     Intrinsic/inherent/underying Properties: It retains certain intrinsic/inherent/underlying properties, such
-#     as local linearity or smoothness, even if embedded in a higher-dimensional space.
-# 
-# Embedding Process:
-#     Dimensionality Reduction: The primary goal is to reduce the dimensions while retaining relevant information. 
-#     This is achieved by finding a way to project the data onto a lower-dimensional surface while preserving the 
-#     structure and relationships within the data.
-#     Preserving Relationships: Techniques used, like PCA or t-SNE, aim to maintain the proximity or similarity 
-#     between data points. Similar points in the original space should remain close in the lower-dimensional manifold.
-# 
-# Understanding the Manifold's Shape:
-#     Local Structure Preservation: The manifold captures local structures or relationships among data points. Think 
-#     of it as preserving how nearby points relate to each other.
-#     Global Shape: Understanding the overall shape of the manifold is crucial. It might have complex twists, turns,
-#     and curvatures, reflecting intricate relationships among data points.
-# Challenges and Considerations:
-#     Curse of Dimensionality: As the dimensionality decreases, some information may be lost. Finding an optimal 
-#     balance is essential to retain meaningful information.
-#     Choosing the Right Technique: Different techniques suit different types of data. Linear techniques like PCA 
-#     might not capture nonlinear relationships, which methods like t-SNE can handle.
-# Practical Applications:
-#     Machine Learning: Embedding manifolds play a vital role in various ML tasks, like clustering, classification, 
-#     and visualization, where high-dimensional data needs to be comprehensively analyzed.
-#     Semantic Understanding: In natural language processing, embeddings help understand word relationships, sentiments,
-#     and semantic meaning.
+# Now lets get back to our points, insted of explaning everything in one big block,
+# I decided to divide each point and present them in a question/answer form. Here they are:
 #
-# Conclusion:
-# An embedding manifold is a reduced-dimensional space where complex high-dimensional data is transformed while maintaining
-# essential relationships. Achieving this involves a delicate balance between reducing dimensions and preserving meaningful
-# information, crucial for various applications across multiple domains.
-#
-#
-# Now lets get back to our points, insted of explaning everything in one big block, I decided to separate 
-# each point and present them in a question/answer form. Here they are:
-#
-# Question: Sin and Cos are periodic functions, i.e. they repeat their values, how is this not a problem?
-# How is this addressed in here?
-# we explained this earlier, but here is a more verbose answer anyway.
-# The periodicity could pose a problem if we were to use these functions directly as positional encodings without any changes.
-# But as you know, we are using a specific equation to generate the arguments for sin/cos, for our embedding encodings. 
-# This is in fact how the periodic nature of sine and cosine functions is actually leveraged to address this issue.
-# we encode the position within the sequence using a combination of sine and cosine functions with different frequencies and phases. 
-# The frequency determines how quickly the function oscillates, while the phase determines the starting point of the oscillation.
-# By using different frequencies and phases for each dimension in the encoding, the sinusoidal positional encoding achieves
-# a unique representation for each position in the sequence. This means that even though sine and cosine functions are 
-# periodic, the combination of different frequencies and phases ensures that the positional encoding values do not repeat 
-# exactly for each position.
-# For example, consider encoding a sequence of length L. Each position in the sequence corresponds to a unique set of 
-# frequencies and phases for the sine and cosine functions. As a result, the encoding values for each position will have
-# a distinct combination of sine and cosine values, ensuring that the positional information is uniquely represented.
+# Q: sin and cos are periodic functions, i.e. they repeat their values, how is this not a
+# problem? How is this addressed in here?
+# we explained this earlier, the periodicity could pose a problem if we were to use these 
+# functions directly as positional encodings without any changes(i.e. alone by themselevs!)
+# we encode the positions within the sequence using the combination of sine and cosine functions
+# with different frequencies and phases. 
+# each pair is treated as a single positional point and each pair uses the same frequency, 
+# so position 1 uses 1 frenquency, position 2 uses another, etc.
+# this way some waves change quickly, while others change slowly therefore when we combine 
+# many waves each with different frequencies, this gives each position a very distinctive/unique pattern.
+# the fact that one wave repeats does not mean that all of the other waves repeat at the same time.
 # 
-#
-# Question: why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
-# There are several explanations for this.
-# we just explained one of the reasons, that being, to create uniqueness for each position. 
-# To do this, we need to capture different frequencies and phases in a systematic manner. 
-# This is in turn achieved by alternating between sine and cosine functions, which then allows the encoding
-# matrix to represent different frequencies and phases. 
-# So by combining both sine and cosine functions in this interleaved manner, the model is able to
-# differentiate between positions and capture the relative ordering of elements in the sequence.
+# also note that we dont use independently chosen phases for each dimension. for each frequency,
+# sine and cosine are used together, they are naturally 90 degrees out of phase (i.e. cos(x) = sin(x + pi/2)) 
+# so the core idea here is not different frequencies and different phases alone, but rather, 
+# the usage of many frequencies with sine/cosine pair for each frequency, yielding unique identifiers 
+# when we combine all of them and thus can use it to represent positions.
 # 
-# The other explanation you may also encounter is that, the sine function captures the position-dependent changes
-# with a periodic pattern, while the cosine function captures the position-independent changes with a 'constant pattern'.
-# and the intuition behind this interleaving pattern lies in the properties of sine and cosine functions. 
-# and then proceeds to say the reason as, the sine function is an odd function, that is, it is symmetric about 
-# the origin, while the cosine function is an even function, meaning it is symmetric about the y-axis.
-# (recall that a function is considered odd if for any number x, f(-x) = -f(x) and a function is considered
-# even if for any number x, f(-x) = f(x). and sin(-x)=-sin(x) while cos(-x)=cos(x))
+# sidenote:
+# The frequency determines how quickly the function oscillates, while the phase determines the 
+# starting point of the oscillation.
+#
+# 
+# Q: why are sin and cos interleaved/alternated like this whats the intuition or reason behind it? 
+# There are several explanations for this online (at the time of writing this in 2022/2023)!
+# but not all of them are actually correct.
+# I just explained the correct reason, that being, to create uniqueness for each position. 
+# 
+# Theres another explanation you may also encounter (I did) and it goes like this, 
+# the sine function captures the position-dependent changes with a periodic pattern, while 
+# the cosine function captures the position-independent changes with a 'constant pattern'.
+# this is completely bogus and incorrect. the reasoning/intuition behind this was that 
+# interleaving pattern lied in the properties of sine and cosine functions. the sine function
+# is an odd function, that is, it is symmetric about the origin, while the cosine function is
+# an even function, meaning it is symmetric about the y-axis.
+# (remember that a function is considered odd if for any number x, f(-x) = -f(x) and a function
+# is considered even if for any number x, f(-x) = f(x). and sin(-x)=-sin(x) while cos(-x)=cos(x))
 # thus one captures position-dependent while the other captures position independent changes.
 #
-# couple of clarification is needed here. 
-# First of all, the terms "position-dependent" and "position-independent" in this context refer to how the values
-# of the sine and cosine functions change with respect to the input (or position in the sequence), not that one is
-# position-dependent and the other isnt.
-# The sine function, sin(x), starts at 0 when x=0 and oscillates between -1 and 1 as x increases/decreases. 
-# This means that the output of the sine function is dependent on the position, and it changes as the
-# position changes, hence the term "position-dependent".
-# On the other hand, the cosine function, cos(x), starts at 1 when x=0 and also oscillates between -1 and 1 as 
-# x increases/decreases. 
-# However, the key difference is that the cosine function's maximum value occurs at x=0,
-# and it decreases from there. This means that the cosine function captures the highest value at the start of the 
-# sequence (position-independent), and then the value changes as the position changes.
-# The cosine function's initial high value provides a kind of "anchor" at the start of the sequence, 
-# while the sine function provides variation and differentiation across positions. 
-# This combination helps the model to understand the relative positions of elements in the sequence. 
-#
-# still doesnt make sense? lets expand on it a bit more before we get to rest of the discusion here: 
-# Both the sine and cosine functions are periodic and not constant and they both produce patterns that repeat over time.
-# However, the key difference lies in their starting points and their behavior around zero. The cosine function, cos(x),
-# starts at its maximum value (1) when x=0 and decreases from there, while the sine function, sin(x), starts at 0 when 
-# x=0 and increases from there. 
-# In the context of positional encoding, this means that for positions close to zero, the cosine-encoded positions will 
-# have higher values compared to the sine-encoded positions. This is often interpreted as the cosine function providing
-# a kind of "baseline" or "anchor" at the start of the sequence, hence the term "position-independent". 
-# It's important to note that both sine and cosine functions are still position-dependent in the sense that their values
-# change with the input position. However, the cosine function's initial high value at position zero provides a unique 
-# characteristic that is often associated with position-independent behavior in the context of positional encoding.
-#
-# let's consider a sequence of numbers from 1 to 10. If we apply the sine function to this sequence, we'll get
-# a new sequence of numbers that goes up and down between -1 and 1. 
-# This new sequence has a clear pattern that repeats every time we go from 1 to 10. 
-# This is what we mean when we say that the sine function captures "position-dependent" changes. The output of the
-# sine function depends on the input position.
-# On the other hand, if we apply the cosine function to the same sequence from 1 to 10, we'll also get a sequence of
-# numbers that goes up and down between -1 and 1. However, the pattern is different from the sine function. 
-# The cosine function starts at its maximum value when the input is 0 and then goes down and up again. This is what 
-# we mean when we say that the cosine function captures "position-independent" changes. 
-# The output of the cosine function changes in a way that is not directly tied to the input position.
-# In positional encoding, we interleave/alternate the sine and cosine functions which means we apply 
-# sine/cosine one after another, to even/odd positions. This interleaving of sine and cosine 
-# functions helps the model to capture different patterns of changes across the sequence, which in turn helps the
-# model to understand the relative positions of the elements in the sequence.
+# but actually sine and cosine are not doing two fundamentally different jobs such as sine is
+# position-dependent and cosine is position-independent. both of them are position-dependent!
+# as we said earlier, sine and cosine form a pair that represents the phase of "one" periodic
+# signal. for example, for one frequency w, we can look at: [sin(w*pos), cos(w*pos)] 
 # 
-# note that in practice it doesnt matter if we swap the order of sin/cos, because doing so in the positional 
-# encoding would not fundamentally change the properties of the encoding. (more on this later in plotting section) 
+# sidenote:
+# the `w` symbol that we are using here is actually omega and its angular frequency, 
+# (w=2Pif which is in radians), since we are using angular frequency, itd be better to use w
+# instead of just f, cuz for positional encoding we are actually doing angle_rads=position x angle_rate)
+#  
+# we can view this pair as a point rotating around the unit circle as the position changes,
+# at position 0: [sin(0), cos(0)] = [0, 1] as the position increases, the point moves around 
+# the circle. so the pair gives us a compact way of representing where we are within that 
+# periodic cycle.
 #
+# this is one of the main reasons for using both sine and cosine, together they preserve the
+# phase of the periodic signal. using only sine would lose some of this information because
+# sine takes the same value at multiple points in its cycle.(we can see this in our plot)
 #
-# (this is the first question, theres another one I'll explain later which approaches this from another angle)
-# Question: Why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation 
-# for our task?
-# In some tasks, using only sine functions might be sufficient to capture position-dependent information. 
-# The inclusion of cosine functions in positional encoding is not strictly necessary for all tasks. 
-# It depends on the specific requirements and characteristics of the problem at hand.
-# The reason for including cosine function alongside sine function is to provide a richer representation of positional
-# information. While sine functions capture position-dependent changes with a periodic pattern, cosine functions capture
-# position-independent changes with a constant pattern.
-# In some cases, position-independent information can be valuable for the model to learn and reason about the
-# sequence. It can provide a reference point or a baseline for the model to understand how each position deviates
-# from a standard or average position. By incorporating both sine and cosine functions, the model can potentially
-# gain a more comprehensive understanding of the sequence and its positional relationships.
-# 
-# lets use an example to make it more intuitive : 
-# let's consider a simple example of a sequence of words: "I", "love", "AI", "research".
-# If we were to use only sine functions for positional encoding, we might assign each word a unique sine value based
-# on its position in the sequence. For instance, "I" might be assigned sin(0)=0, "love" might be assigned sin(1)=0.8415,
-# "AI" might be assigned sin(2)=0.9093, and "research" might be assigned sin(3)=0.1411. 
-# These values capture the position-dependent changes in the sequence.
-# Now, let's add cosine functions to the mix. We might assign each word a unique cosine value based on its position in
-# the sequence. For instance, "I" might be assigned cos(0)=1, "love" might be assigned cos(1)=0.5403, "AI" might be
-# assigned cos(2)=-0.4161, and "research" might be assigned cos(3)=-0.9900. These values capture the position-independent
-# changes in the sequence.
-# By combining these sine and cosine values, we create a richer representation of each word's position in the sequence. 
-# For instance, the word "I" is now represented by the pair (0, 1), "love" is represented by the pair (0.8415, 0.5403),
-# "AI" is represented by the pair (0.9093, -0.4161), and "research" is represented by the pair (0.1411, -0.9900).
-# This interleaved pattern of sine and cosine values allows the model to capture both position-dependent and position-independent
-# changes in the sequence, providing a more comprehensive understanding of the sequence and its positional relationships.
+# moreover, there is also a particularly useful mathematical property here. a shift
+# in position corresponds to a rotation of the sine/cosine pair, that is we have:
+# sin(w(pos+k)) = sin(w*pos)cos(w*k) + cos(w*pos)sin(w*k)
+# cos(w(pos+k)) = cos(w*pos)cos(w*k) - sin(w*pos)sin(w*k)
 #
-# !Now lets have an intuition for when the cosine might not be strictly needed(see 'Extra explanation' below):
-# let's consider the task of language modeling, specifically predicting the next word in a sentence which is our case. 
-# In this case, the model needs to understand the order of the words,
-# but it might not necessarily need to understand the position of each word in an 'absolute' sense.
-# For example, in the sentence "I love AI research", the model needs to know that "AI" comes after "love" and before 
-# "research". This is position-dependent information, which can be captured by the sine function in positional encoding.
-# However, the model might not need to know that "AI" is the third word in the sentence in an absolute sense. This is 
-# position-independent information, which would be captured by the cosine function in positional encoding.
-# In this case, using only sine functions for positional encoding might be sufficient. 
-# The model can learn the relative positions of the words (i.e., which words come before and after each other) without 
-# needing to know their absolute positions in the sentence.
-# However, it's important to note that this is a simplification. In practice, transformer models often benefit from using
-# both sine and cosine functions in positional encoding, as it provides a richer representation of positional information. 
-# But in theory, for some tasks like the one described above, using only sine functions might be sufficient.
-# ! in our implementation we will see this in action where we use both sin-sin/cos/absolute positioning/no positional info
-# ! and see how they affect the model quality. 
+# meaning moving by k positions produces a predictable transformation of the encoding.
+# This is one reason sinusoidal positional encodings have useful structure for representing
+# relative positions.
 #
-# 
+# so why are sine and cosine interleaved like this?
+# we usually write the encoding as [sin(w0*pos), cos(w0*pos), sin(w1*pos), cos(w1*pos), sin(w2*pos), cos(w2*pos), ...]
+# where each adjacent pair belongs to the same frequency, dimensions 0,1 -> frequency w0,
+# dimensions 2,3 -> frequency w1, dimensions 4,5 -> frequency w2.
+# interleaving simply keeps the two coordinates belonging to each frequency together.
+# it is a convenient organizational choice it is not what creates uniqueness by itself.
+# we could just as well arrange the dimensions as [sin(w0*pos), sin(w1*pos), sin(w2*pos), ...,
+# cos(w0*pos), cos(w1*pos), cos(w2*pos), ...] and the fundamental positional information would
+# still be there. 
+# in other words, the important idea here is when sine and cosine are used as a pair
+# it gives us one frequency/one periodic (clock), so with many frequencies well have many clocks
+# running at different speeds, and the combined state of all the clocks gives us the distinctive
+# positional representation we are after.
 #
-# --Examples that would benifit from using cosine (along sine) for positional encoding:
-# 
-# 1. Machine Translation: In machine translation tasks, the relative positions of words in the source and target
-#    sentences are crucial for accurate translation. By including cosine functions in positional encoding, the 
-#    model can capture position-independent information, such as the difference between the first and last words
-#    in a sentence or the average position of words. These position-independent changes can provide valuable 
-#    contextual information for the translation process.
+# we can imagine many clocks where fast clock changes quickly with position a medium clock
+# changes at a medium rate and finally a slow clock changes slowly!
+# each of these clocks are represented by a sine/cosine pair. the positional encoding records 
+# the current state of all of these clocks at once.
 #
-# 2. Speech Recognition: In speech recognition tasks, the timing and ordering of phonemes or speech segments 
-#    play a vital role. By incorporating cosine functions in positional encoding, the model can capture 
-#    position-independent information, such as the overall duration or rhythm of a speech sequence. This can
-#    help the model understand the temporal relationships between different speech units.
+# any one clock will eventually repeat, because it is periodic but the complete combination of
+# many clocks running at different frequencies is much more distinctive for different positions.
 #
-# 3. Natural Language Understanding: In tasks involving natural language understanding, such as sentiment analysis
-#    or question answering, the relative positions of words or phrases can be important for context comprehension.
-#    By including cosine functions, the model can capture position-independent information, such as average position
-#    or general positional trends, which can aid in understanding the overall context or sentiment of a sentence.
+# so the core intuition is not only we do not avoid periodicity, we deliberately use periodic
+# functions because they provide smooth, structured signals. we use lots of frequencies so that
+# their combined pattern carries detailed information about the position.
 #
-# 4. Music Generation: In tasks related to music generation, such as composing melodies or generating harmonies,
-#    positional information is crucial for creating coherent musical sequences. Including cosine functions alongside
-#    sine functions enables the model to capture both position-dependent variations (captured by sine functions)
-#    and position-independent patterns (captured by cosine functions), helping to generate musically meaningful 
-#    sequences.
-# 5. Image Captioning: In image captioning tasks, the relative positions of objects or regions within an image can 
-#    provide important contextual information. By including cosine functions in positional encoding, the model can 
-#    capture position-independent information, such as the global layout or arrangement of objects in the image. 
-#    This can aid in generating more accurate and contextually relevant captions for the image.
-# 
-# 6. Document Classification: In document classification tasks, the position of words or paragraphs within a document 
-#    can be indicative of the document's topic or structure. By incorporating cosine functions in positional encoding, 
-#    the model can capture position-independent information, such as the overall organization or hierarchy of the 
-#    document. This can assist in better understanding the document's content and making more informed classification 
-#    decisions.
-# 
-# 7. Time Series Forecasting: In time series forecasting tasks, the temporal ordering and duration of events play a 
-#    critical role in predicting future values. By including cosine functions in positional encoding, the model can 
-#    capture position-independent information, such as the overall trend or seasonality in the time series. 
-#    This can help the model understand long-term patterns and make more accurate predictions.
-# 
-# 8. Video Processing: In video processing tasks, the temporal ordering and relationships between frames are crucial 
-#    for tasks like action recognition or video captioning. By incorporating cosine functions in positional encoding, 
-#    the model can capture position-independent information, such as the overall motion or rhythm in the video sequence.
-#    This can aid in recognizing actions or generating coherent captions for the video.
-# 
+# the sine/cosine pair is best understood as two coordinates describing the phase of one
+# periodic signal, rather than as "position-dependent" versus "position-independent" functions.
 #
-#! --Extra-explanation(its shorter version is explained above we may want to merge them (possibly remove this one)): 
-# recap:
-# sine functions capture position-dependent changes by introducing variations and a periodic pattern based
-# on the position within the sequence. On the other hand, cosine functions capture position-independent changes by 
-# providing a constant pattern that remains the same throughout the sequence. This combination of sine and cosine 
-# functions in positional encoding allows the model to capture both position-dependent and position-independent information,
-# providing a more comprehensive representation of positional relationships within a sequence.
+# sidenote:
+# note that if we swap sine and cosine it would not change the positional encoding fundamentally!
+# also interleaving them or grouping all the sine dimensions and cosine dimensions separately 
+# would not fundamentally change the representation either. those are mainly choices about
+# how the dimensions are organized.(more on this later in plotting section) 
 #
-#
+#(this is the first question, theres another one I'll explain later which approaches this from 
+# another angle)
 
-#
-#
-# !Question: if we used a low frequency with sin, it would provide us with a large range of numbers, wouldnt that alone be enough?
-# !(has overlaps with what we covered before)
-# aside from what we already covered in our previous explanation/observations, using a low frequency with sine functions
-# can indeed provide us with a larger range of numbers, but as we saw earlier, it may not be sufficient on its own to 
-# capture all the necessary positional information. 
-# In other words, while it can help differentiate between positions, it doesn't take into account the phase or timing
-# of the position within the sequence.
-# why would that matter? 
-# Including cosine functions alongside sine functions in our encoding scheme adds an additional dimension that 
-# captures position-independent changes (aside from making it richer/more unique).
-# The cosine function provides a constant pattern that remains the same throughout the sequence, allowing the model 
-# to understand the relative position of each element with respect to a reference point or baseline.
-# By combining sine and cosine functions, our encoding scheme captures both position-dependent and position-independent
-# changes. This richer representation allows the model to not only differentiate between positions but also understand the 
-# overall context and relationships between different positions within the sequence.
-# Moreover, its important to note that using a low frequency with sine functions alone could lead to potential overlaps
-# or interference between positional encodings, especially in longer sequences. (explanation given below)
-# Incorporating multiple frequencies and phases for both sine and cosine functions helps ensure that the positional encodings
-# are distinct and can be easily distinguished by the model.
+# why is taking into account the phase or timing of the position within the sequence important?
+# first of all, phase is not a separate feature that is explicitly added
+# to the encoding, rather the position changes the phase/location of the sinusoidal signal. 
+# in our sinusoidal positional encoding we typical have sth like:
+# PE(pos, 2i)   = sin(w_i * pos)
+# PE(pos, 2i+1) = cos(w_i * pos)
+# here sine and cosine are evaluated at different points along their oscillations
+# and the position(i.e. pos) determines where we are in the sinusoidal cycle.
+# this position also determines the "phase" of the sinusoidal signal.
+# now this is useful for us for mainly 3 practical reasons, 
+# the first of which is it gives us distinguishable/unique positions, 
+# i.e. different positions produce different patterns (of values) across the sinusoidal dimensions.
+# second it helps represent relative positional relationships because sine and cosine
+# have a useful angle-addition property, where the representation at position p+k can be
+# mathematically related to the representation at position p. 
+# for example, sin(w * (p+k)) = sin(w*p) * cos(w*k) + cos(w*p) * sin(w*k)
+# all of this means that relative offsets between positions can be represented through
+# the structure of the sinusoidal encoding.(again meaning that moving by k positions 
+# produces a predictable transformation of the encoding)
+# third sine and cosine provide complementary coordinates. cosine is a phase-shifted
+# version of sine(i.e. cos(x) = sin(x + pi/2)). 
+# to reiterate a previously mentioned point, sine and cosine act as the two coordinates of a 
+# point rotating around a circle(cos(theta), sin(theta)). as the position changes,
+# the point moves around the circle. Therefore, position can be thought of as movement
+# through the phase of the oscillation.
 # 
+# what does it mean when we say that sine and cosine are orthogonal, 
+# and why do we care about orthogonality?
 #
-#! Question: How could using a low frequency with sine functions alone, lead to potential overlaps or interference between
-#! positional encodings?(related to another question beofre)
-# When using sine functions for positional encoding, the frequency determines how quickly the function oscillates. 
-# A low frequency means that the sine function will complete fewer oscillations over a given range of positions. As a 
-# result, the values of the sine function will change more slowly as the position increases, leading to a larger range 
-# of numbers.
-# While this can help differentiate between positions to some extent, it may not be sufficient to capture all the necessary
-# positional information, especially in longer sequences. becasue:
-# For one, In longer sequences, using a low frequency with sine functions alone can result in overlapping
-#    encodings. Since the sine function changes slowly, adjacent positions in the sequence may have similar 
-#    or overlapping encoding values. This can lead to a loss of distinctiveness between positions, making it 
-#    harder for the model to differentiate between them accurately.
-# second, using a low frequency alone may not provide enough precision to capture subtle positional differences.
-#    The encoding values may not be fine-grained enough to accurately represent the relative positions within the sequence.
-#    This lack of precision can limit the model's ability to understand the precise relationships between elements in the
-#    sequence.
-# third, Sine functions alone do not capture position-independent changes or provide contextual 
-#    information. They only capture position-dependent changes. By incorporating cosine functions in addition to sine 
-#    functions, our positional encoding scheme captures both position-dependent patterns (sine functions) and position-independent
-#    patterns(cosine functions). This allows the model to understand the overall context and relationships between different
-#    positions in the sequence.
+# mathematically speaking, two vectors are orthogonal when their dot product is zero( a · b = 0)
+# this means the two vectors are perpendicular in relation to each other.
+# when we say sine and cosine are orthogonal functions, what we actually mean is that
+# their inner product is zero (under the appropriate interval, because they are not always orthogonal!)
+# for example, over a complete period integral[0 -> 2pi] sin(x) * cos(x) dx = 0) and 
+# this has an important implication which is sine and cosine give us distinct directions/components
+# in the representation.
+# note though, orthogonality does not mean that sine captures one type of information while
+# cosine "captures another type of information.
+# im saying this because one of the intuitions I encountered online when researching this
+# was that,"sine captures periodic patterns while cosine captures constant features" because they 
+# are independent. which is incorrect. Both sine and cosine are periodic functions. 
+# cosine doest encode "constant features". 
+# we already have a much better intuition ie. they are two coordinates describing 
+# the "same" oscillation (cos(theta), sin(theta)). cosine gives the horizontal
+# coordinate and sine gives the vertical coordinate and together they tell us 
+# where we are in the cycle, or equivalently, what the phase is. 
 # 
-# Therefore by including multiple frequencies and phases for both sine and cosine functions, our encoding scheme
-# ensures that each position has a distinct encoding value. This helps prevent overlaps or interference between 
-# positional encodings and provides a more comprehensive representation of positional information.
-#  so in summary, using a low frequency with sine functions alone may result in overlapping encodings, lack of precision, and 
-# limited contextual information. Incorporating multiple frequencies and phases, including the use of cosine functions, in 
-# our positional encoding scheme addresses these issues and provides a more effective representation of positional information.
+# this is useful for us in encoding positions because changing the position changes the phase. 
+# and moving from p to p + delta corresponds to rotating the point by an amount related to delta.
+# in fact:
+# [ cos(theta + delta) ]   [ cos(delta)  -sin(delta) ] [ cos(theta) ]
+# [ sin(theta + delta) ] = [ sin(delta)   cos(delta) ] [ sin(theta) ]
 #
-# Question: why does taking into account the phase or timing of the position within the sequence important?
-# Its important because it provides additional information about the relative ordering and relationships between elements
-# in the sequence. This is becasue :
-# First, the phase component of the positional encoding helps capture sequential dependencies 
-#    between elements in the sequence. It specifies the starting point or reference for the oscillation of the sine and cosine
-#    functions. By incorporating phase information, the model can understand the sequential order of the elements and how 
-#    they relate to each other in the context of the task. This is particularly essential in tasks where the order of the 
-#    elements carries significant meaning, such as natural language processing tasks or time series analysis.
-# Second, phase information enables the model to encode the relative positional information
-#    of elements within the sequence. It indicates how far along the sequence an element is compared to others. 
-#    by considering the phase, the model can differentiate between positions and understand the relative distances or
-#    intervals between elements. This is crucial for tasks that require understanding positional relationships, such as 
-#    machine translation or sentiment analysis.
-# Third, when using sine functions alone, different positions can have the same frequency but different phases. 
-#    by incorporating the phase component, each position obtains a unique encoding value, even if they share the 
-#    same frequency. This ensures that the model can distinguish between positions that have similar frequency-based
-#    changes but occur at different points within the sequence.
-# Forth, phase information can capture temporal or spatial patterns in the data. 
-#    For example, in time series analysis, the phase component can help capture the seasonality or periodic patterns 
-#    in the data. In spatial data analysis, it can capture the spatial arrangement or layout of objects within an image
-#    or a graph. By considering the phase, the model can learn to recognize and utilize these patterns effectively.
-# Incorporating the phase or timing of the position within the sequence in positional encoding provides the model with 
-# crucial information about sequential dependencies, positional relationships, and patterns in the data.
-# It enhances the model's ability to understand and exploit the temporal or spatial characteristics of the sequence, 
-# leading to improved performance in various tasks.
-# 
+# meaning that moving forward in position can be viewed as a rotation in the
+# sine/cosine representation.
 #
-# !Part2:(we can add this after the first part as a recap or incorporate this into the previous answer)
-# Why do we need to have postion-independent changes? isnt sin enough to capture position dependent inormation for our task?
-# we previously explained this why a cosine is benificial and why sin alone is not desirable.
-# Heres another take on this subject. 
-# Firts, sine function is well-suited for encoding positions with periodic patterns, such as sequences where certain positions exhibit
-# recurring behaviors or variations.
-# Second, it allows for shift Invariance, the combination of sine and cosine allows the positional encoding to exhibit 
-# a form of shift invariance. When a sequence is shifted, the phase relationships between sine and cosine components 
-# change accordingly, preserving the relative positional information.
-# Third, allows for handling different time scales, that is, sine can capture short-term variations or changes that occur
-# with a certain periodicity. while Cosine, being constant over time, is suitable for encoding long-term stability or 
-# features that remain consistent irrespective of position changes.
-# Fourth, the orthogonal nature of sine and cosine functions ensures that the 
-# information captured by each component is independent and non-redundant. This enhances the model's ability to 
-# distinguish between different positional characteristics and thus it reduces redundancy.
-# Fifth, it allows for handling diverse patterns, that is,  many sequences exhibit a mix of periodic and non-periodic
-# changes. The combination of sine and cosine allows the model to adapt to diverse patterns of positional information.
-# 
-# This approach enables the model to capture a wide range of patterns, both periodic and non-periodic, enhancing its ability
-# to understand and generalize across different sequences and tasks.
+# so to cut a long story short, sine and cosine together provide complementary 
+# coordinates that represent the phase of a periodic signal changing position changes that phase.
+# also orthogonality is useful because orthogonal components correspond to distinct directions
+# (not necessarily distinct (types of) information as we dicussed earlier) in the representation
+# space and avoid simply duplicating the same direction of information.
 #
-# !note: read the explanation about cosine -constant features at the end (this is not accurate and requires explanation)
-#  
-# # Question: We refer to sine and cosine as orthogonal to eachother, what does Orthogonality refer to here and how
-#   is it relavent or intuitive here basically why do we even care about orthogonality?
-# 
-# As you may know/remember in mathematics, orthogonality refers to the relationship between two vectors being perpendicular
-# to each other. This concept is very important/crucial in our case as well becasue it enhances the effectiveness of our encoding.
-# Basically when you hear, we say the sine and cosine functions are orthogonal to each other we mean, the information encoded 
-# by the sine component is independent of the information encoded by the cosine component, and vice versa. 
-# (i.e. we have independent components that do separate jobs).
-# In other words, the orthogonal nature ensures that each component is responsible for encoding different aspects of the 
-# sequence. sine may capture periodic patterns, while cosine encodes constant features. their orthogonality guarantees 
-# that the information captured by one does not overlap or interfere with the information captured by the other.
-# (i.e. allows distinct encoding of features)
-# not only that, orthogonality also enhances the model's ability to discriminate between different positional characteristics.
-# when the model processes the encoded sequence, it can rely on the fact that changes in one component do not inherently 
-# imply changes in the other. This separation of information contributes to a more subtle/accurate understanding of the 
-# sequence.(i.e. provides enhanced discrimination)
-# and the orthogonal relationship between them also simplifies the mathematical operations involving these components. 
-# becasue when combining sine and cosine components, their orthogonality ensures that their interactions are well-defined
-# and do not introduce complex dependencies.(provides mathematical simplicity)
-# moreover, in positional encoding, we would like to represent various aspects of the sequence in a way that minimizes 
-# redundancy. if the sine and cosine components were not orthogonal, there might be overlapping information between them, 
-# diminishing the effectiveness of the encoding.
-# example: 
-# Consider a scenario where a text sequence involves both daily fluctuations (modeled by sine) and long-term stability 
-# (modeled by cosine). The orthogonality ensures that the model can distinguish between the daily topics (captured by sine) 
-# and persistent themes (captured by cosine) without confusion.
-# so to recap, orthogonality of sine and cosine functions in positional encoding ensures independence between components,
-# reduction of redundancy, allows for distinct encoding of features and enhances discrimination capabilities 
-# and simplifies mathematical operations. This property is crucial for creating a versatile and effective positional 
-# encoding scheme in various sequence-related tasks.
-# 
-#
-#! Important note concerning Cosine and Constant feature analogy: 
-# I explained this once, but heres another take (I guess this one turned out better! - !repalce the old one with this one)
-# previously we had some remarks concerning cosine and its supposed role in sinusoidal positional encoding such as: 
-# "Cosine, with its constant oscillation, can effectively represent features that are consistent across different positions. 
-#  This helps in capturing position-independent characteristics that may not follow a periodic trend."
-# or 
-# "Sine may capture periodic patterns, while cosine encodes constant features"
-# This needs more clarification as its not entirely accurate and may very well be misunderstood. so lets elaborate:
-# 
-# See both sine and cosine functions are periodic and oscillate between -1 and 1 and neither of them encode "constant" features.
-# The thing is, the key difference between them is their phase, i.e., where they start from. The sine function sin(x) 
-# starts from 0 and goes up to 1, then down to -1, and back to 0 as x increases. This makes it suitable for capturing 
-# patterns that repeat after a certain period, hence why we said something like 'sin captures "periodic patterns"'.
-# The cosine function cos(x), on the other hand, starts from 1 (its maximum value) when x=0, then decreases to -1, and
-# back to 1. This means that for positions close to zero, the cosine-encoded positions will have higher values compared
-# to the sine-encoded positions. This unique characteristic of cosine function is often associated with "constant" or 
-# "baseline" features in the context of positional encoding, but it's important to note that the cosine function is not 
-# "constant" - it also varies with x.
-# Therefore, the alternating pattern of sine and cosine across dimensions helps the model to capture various frequency 
-# patterns and differentiate positions in the sequence. 
-# The cosine function's initial high value at position zero provides a kind of "anchor" or "baseline" at the start of 
-# the sequence, while the sine function provides variation and differentiation across positions.
-# So, a more accurate and befitting statement could be: 
-# "The cosine function, due to its behavior around the zero position, can provide a kind of 'baseline' or 'anchor' at 
-# the start of the sequence in positional encoding. This helps in capturing position-independent characteristics that 
-# may not follow a periodic trend."
-#
-#
+# so to recap, positional encoding turns position into phase, as we move through the sequence, 
+# we move/rotate through sinusoidal cycles, and using multiple frequencies gives
+# the model a rich signature of where we are in the sequence.
+# sine and cosine are not two completely different types of information they are complementary
+# coordinates of the same oscillation.
+
 # sidenote/reminder 
-# !(add the basic orthogonality definition and then expand this after)
-# Question: what does orthogonality in the context of neural networks mean?
+# what does orthogonality in the context of neural networks mean?
 # the definition is not really any different than its traditional mathematical definition, 
-# and the fundamental idea remains the same which simply put, is independence and lack of correlation between components.
-# lets explain it abit more:
-# Definition: 
-#   When we talk about orthogonality in neural networks, we usually mean weight orthogonality, 
-#   which refers to the orthogonal relationships between weight vectors in the weight space. 
-#   to be more specific, it involves ensuring that weight vectors are as orthogonal(independent) as possible to 
-#   each other during the training process(its been particularly relevant in deep learning architectures).
+# and the fundamental idea remains the same which simply put, is independence and lack 
+# of correlation between components.
+# when we talk about orthogonality in neural networks, we usually mean weight orthogonality, 
+# which refers to the orthogonal relationships between weight vectors in the weight space. 
+# that is ensuring that weight vectors are as orthogonal(independent) as possible to 
+# each other. when weight vectors are orthogonal, it means they are less likely to duplicate
+# or redundantly represent the same information, which can also help us in reducing overfitting!
+# furthermore it can help us achieve a more stable and efficient training becasue  when 
+# weight vectors are orthogonal, updating one weight vector doesnt strongly influence
+# the others, which results in a more independent learning and a more diverse and expressive
+# representation of the input data. (cuz each weight vector can capture unique features or 
+# aspects of the data without interference from others)
+# This will in turn affect the model's ability to better generalize and adapt to
+# different patterns in the input data. it also allows the model to learn a wide range 
+# of features without being overly constrained by correlations.
+# additionally they can help with vanishing/exploding gradients issues during backpropagation
+# aswll. for example, consider a typical convolutional network, if the weight vectors 
+# corresponding to different convolutional filters are orthogonal, it means that each 
+# filter is specialized in capturing a unique aspect of an image(whether it's edges,
+# textures or higher level features), which leads to a more robust and generalizable
+# representation of the input data. Orthogonal matrices have the property of preserving eigenvalues,
+# contributing to numerical stability during training and optimization processes.
 # 
-# Reducing Redundancy and Overfitting:
-#   moreover, when weight vectors are orthogonal, they are less likely to duplicate or redundantly represent the same information.
-#   This can help in reducing overfitting, where a model may learn noise or specific training examples rather than 
-#   the general patterns.
-#       
-# Facilitating Training:
-#    Orthogonality can aid in a more stable and efficient training process becasue when weight vectors are orthogonal, 
-#    updates to one weight vector do not strongly influence others, promoting more independent learning.
-#
-# Enhancing Representational Capacity:
-#    Orthogonal weight vectors can contribute to a more diverse and expressive representation of the input data. 
-#    Each weight vector can capture unique features or aspects of the data without interference from others.
-#
-# Generalization and Adaptability:
-#    orthogonality in neural networks enhances the model's ability to generalize and adapt to different patterns in
-#    the data. Independent weight vectors allow the model to learn a wide range of features without being overly 
-#    constrained by correlations.
-#     
-# Mitigating Vanishing or Exploding Gradients:
-#    Orthogonal weight matrices can also help address issues like vanishing or exploding gradients during backpropagation.
-#    This is particularly relevant in deep networks, where maintaining a stable gradient flow is crucial for effective training.
-# Example:
-# For example, consider a deep neural network processing images. If the weight vectors corresponding to different 
-# convolutional filters are orthogonal, it means that each filter is specialized in capturing a unique aspect of 
-# the image, whether it's edges, textures, or higher-level features. This diversity contributes to a more robust
-# and generalizable representation of the input data.
-#
-# recap/summary:
-# the core idea in orthogonality is centered around independence, lack of correlation, and promoting diverse
-# and efficient learning. In neural networks, weight orthogonality specifically addresses the relationships between 
-# weight vectors, which contribute to improved generalization, reduced redundancy, and more effective training.
-# 
-# !edit this
-# More Explanation : 
-# Orthogonality in Neural Networks: A Deeper Dive
-# In neural networks, orthogonality extends beyond its traditional geometric interpretation and takes on a specialized 
-# meaning within the context of weight matrices. 
-# Let's delve deeper into different aspects of weight orthogonality and its implications :
-# 1. Geometric Perspective:
-#     In mathematics, orthogonality between vectors implies a right-angle relationship.
-#     but in the context of neural networks, this concept is adapted to the weight space. weight vectors are considered 
-#     orthogonal if their dot product is close to zero, signifying independence.
-# 
-# 2. Weight Orthogonality:
-#     In neural networks, weight orthogonality refers to the idea that weight matrices
-#     (collections of weight vectors) are as orthogonal as possible.This concept is often applied to weight initialization or regularization techniques.
-# 
-# 3. Reducing Redundancy and Overfitting(Overfitting Mitigation):
-#     When weight vectors are orthogonal, they are less likely to redundantly encode similar patterns. 
-#     this property can mitigate overfitting by encouraging the model to learn distinctive features, reducing
-#     reliance on specific training examples.
-# 
-# 4. Facilitating Training Stability(Independent Learning):
-#     Orthogonal weight vectors contribute to stable training. Updates to one weight vector have less impact on others,
-#     promoting more independent learning. This is particularly important in deep networks where instability in training
-#     can be a challenge.
-# 
-# 5. Enhancing Representational Capacity(Diverse Representations):
-#     Orthogonal weight matrices enhance the network's representational capacity. 
-#     Each weight vector can specialize in capturing unique features or patterns, allowing the model to learn a rich
-#     and diverse set of representations.
-# 
-# 6. Generalization and Adaptability(Improved Generalization):
-#     Orthogonality leads to better generalization by ensuring that the model can adapt to a wide
-#     range of patterns. The independence between weight vectors allows the network to handle diverse input data 
-#     effectively. (or This is because they can maintain diversity among the features learned by the different neurons, 
-#     preventing any single feature from dominating.)
-# 
-# 7. Mitigating Gradient Issues(Addressing Gradient Challenges, Preservation of Gradient Norms):
-#     Orthogonal weight matrices can help mitigate issues like vanishing or exploding 
-#     gradients during backpropagation. This is critical for maintaining a stable gradient flow, especially in deep 
-#     networks. also orthogonal matrices preserve the norm of the input vectors, which can be beneficial for the 
-#     propagation of gradients during backpropagation.
-# 
-# 8. Example: Image Processing in Convolutional Networks:
-#     Role in Convolutional Filters: Consider a convolutional neural network (CNN) processing images. If the weight 
-#     vectors corresponding to different convolutional filters are orthogonal, each filter specializes in capturing 
-#     distinct visual features (edges, textures). This diversity enhances the model's ability to recognize a broad 
-#     range of image patterns.
-# 
-# 9. Mathematical Rigor:
-#     Eigenvalue Preservation: Orthogonal matrices have the property of preserving eigenvalues, contributing to 
-#     numerical stability during training and optimization processes.
-# 
-# 
-#  
-# Question: How do you change frequency for a sin/cos? 
-# changing the frequency involves modifying the rate at which these functions oscillate or complete cycles within a 
-# given interval. 
-# The frequency of a sine or cosine function determines how rapidly it repeats its pattern over time.
+# q: how to change frequency for a sin/cos? 
+# changing the frequency involves modifying the rate at which these functions
+# oscillate or complete cycles within a given interval. 
+# The frequency of a sine or cosine function determines how rapidly it repeats 
+# its pattern over time.
 # Changing Frequency in Sinusoidal Functions:
 # The formula for a sin/cos function is f(x)=Asin(Bx+C) and f(x)=Acos(Bx+C) in which:
 # (A) represents the amplitude (the peak value of the function).
@@ -5820,48 +5266,19 @@ plot_sin_cos_frequency(scale=10)
 # 
 # (cosine and sine have the same frequency but with a phase shift of (pi/2) radians or (90').)
 # 
-# In positional encoding, altering the frequency of sine and cosine functions helps represent different positional information
-# within a sequence. By adjusting the frequency parameters for sine and cosine functions, distinct patterns at various 
-# scales or positions can be encoded, allowing models to differentiate between different positions in a sequence.
-# Overall, changing the frequency parameter in sine and cosine functions involves adjusting the rate of oscillation, 
-# thereby affecting the speed at which these functions repeat their patterns. 
-# This adjustment is fundamental in encoding different positional information in sequence-related tasks within neural 
-# networks or signal processing applications.
-# 
-#
 # imagine sin(1), sin(1/2), sin(1/100), ..., sin(1/100^2), sin(1/100^3),... 
-# The frequency of sin(1/100^n) as n increases is inversely proportional to the period of the function. 
-# The period of sin(1/100^n) is 2π/(1/100^n) = 2π100^n. Therefore, the frequency of sin(1/100^n) is 1/(2π100^n).
-# As n increases, the frequency of sin(1/100^n) decreases exponentially. This means that the function oscillates 
-# more slowly as n increases, and the time between each oscillation increases.
-# side note: 
-# The 2π in the formula for the period of the sine function comes from the fact that the sine function
-# is periodic with a period of 2π radians. 
-# This means that the sine function repeats itself every 2π radians. 
-# The period of sin(1/100^n) is 2π/(1/100^n) = 2π*100^n 
-# siden ote2:
-# the reason we use increasing value for frequency fraction(lowering it for sin/cos as we go) for sin/cos
-# is to comeup with unique values for each dimension. note that its is true that cos has a phase shift of 90 degress
-# so you may think using the same freq with both of them would give different values (like sin(0)=0/cos(0)=1) but
-# they will have the same value at certain points like (sin(45)=cos(45)) so we use a different frequency for each
-# as you can imagine, up to a point it works, and atfer that we basically endup with almost constant values 
-# this is visible when we plot these positional encodings(see the plot section where I explain this in full details).
-#
-# sidenote 2: 
-# Question: are sin and cos orthogonal?
-# Yes, the sine and cosine functions are orthogonal to each other. Two functions are said to be orthogonal if their
-# inner product is zero. The inner product of two functions is defined as the integral of the product of the two 
-# functions over a given interval. In the case of the sine and cosine functions, their inner product over one period 
-# is zero, which means they are orthogonal.
-#
-# Question: but sin(45)==cos(45), how can they be orthogonal with respect to each other when they both produce the same value ?
-# sine and cosine functions have the same value at 45 degrees or pi/4 radians. However, orthogonality of two functions is 
-# defined as their inner product being zero. 
-# The inner product of two functions is defined as the integral of the product of the two functions over a given interval.
-# In the case of the sine and cosine functions, their inner product over one period is zero, which means they are orthogonal 
+# The frequency of sin(1/100^n) as n increases is inversely proportional to 
+# the period of the function. 
+# The period of sin(1/100^n) is 2π/(1/100^n) = 2π100^n. Therefore, the frequency 
+# of sin(1/100^n) is 1/(2π100^n).
+# As n increases, the frequency of sin(1/100^n) decreases exponentially. 
+# This means that the function oscillates more slowly as n increases, 
+# and the time between each oscillation increases.
 # 
-#
-#
+# side note: 
+# The 2π in the formula there because sine repeats itself every 2π radians.
+# the period of sin(1/100^n) is 2π/(1/100^n) = 2π*100^n 
+# ****************************************************************************
 #
 # =============================================================================================
 # =============================================================================================
@@ -5921,8 +5338,18 @@ plot_sin_cos_frequency(scale=10)
 # a lot of intresting intuitions and ideas behind it that can give me/you a new prespective and possibly allow you 
 # to learn and comeup with similar improvements knowing the concepts/reasons behind it)
 #
-#  
-
+# # update 2026:
+# unlike back in 2022/2023, modern architectures use RoPE pretty heavily. 
+# it's basically a precomputed encoding scheme that gives the model positional
+# information by rotating the query/key vectors based on where the tokens are,
+# so attention can naturally keep track of relative positions. 
+# I also removed many incorrect intuitions and explanations and moved this down, it
+# used to be at the top of the explanations concerning positional encoding. 
+# below is my cluttered/uncleaned code snippets/experiments with positional encodings
+# while I was learning about it. so not everything is correct initially as I was just
+# learning things from different sources, some of which didnt have a clue themeselves.
+# lucklily, today, there are much better resources, including the LLMs such as ChatGPT, 
+# Gemini,Grok,Claude,etc which I myself also used to rectify many of such issues I previously had.
 # 
 # 
 # 
@@ -5935,8 +5362,9 @@ plot_sin_cos_frequency(scale=10)
 ###############################################################################################################
 #
 # 
-#! https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative implementation(might remove it as my own
-# explanation and implemenetations seem to be more intuitive!)
+#! https://www.youtube.com/watch?v=ZMxVe-HK174&t=289s intresting alternative 
+# implementation(might remove it as my own explanation and implemenetations 
+# seem to be more intuitive!)
 #
 # lets implement sinusoidal positional embedding 
 # the sinusoidal equation is given in the paper and is as follows: 
@@ -5966,7 +5394,6 @@ def plot_vec(func, pos_cnt, embd_d,figsize=(6,4)):
     plt.show()
     
 plot_vec(sin_pos_enc_simple,pos_cnt=50, embd_d=512)
-#%%
 
 #%%
 # in practice however, we dont use for loops, so you may see vectorized implementation like this: 
@@ -5993,14 +5420,18 @@ def sin_pos_enc_vectorized(pos, embd_d):
     pos_vec[1::2] = np.cos(pos/div_term[1::2])
     return pos_vec
 
+# in practice, we don't need a for loop here. we can use NumPy's vectorized
+# operations and array slicing to compute all dimensions at once.
+
 # and we get the same result
 plot_vec(sin_pos_enc_vectorized,pos_cnt=50, embd_d=512)
 # in fact theres a slight difference, but its not that significant so in practice 
 # we dont really care about the odd/even separation and usually use the even dims 
 # for everything!
-# so to recap: the exact offset of 1 in the exponent doesn’t make a significant difference 
+# so to recap: the exact offset of 1 in the exponent doesnt make a significant difference 
 # in the positional encodings, and using the same term for both sine and cosine simplifies
 # the implementation so thats why in some implementations people started doing that.
+
 #%%
 # However in practice we instead use a more efficient implementation which is as folllows:
 def sin_pos_enc_eff(pos, embd_d):
@@ -6183,6 +5614,7 @@ def draw_postion_vector_heatmap(position_count, embd_dim, show_position_vec=Fals
     plot_positional_encoding(pos_vec)
 
 # test with a small number of positions and embeddings 
+# this shows us how distinct each position is
 draw_postion_vector_heatmap(position_count=5, embd_dim=6)
 # a bit larger
 draw_postion_vector_heatmap(position_count=20, embd_dim=30)
@@ -6801,3 +6233,129 @@ plt.plot(pos_vec)
 # https://github.com/jalammar/jalammar.github.io/blob/master/notebookes/transformer/transformer_positional_encoding_graph.ipynb
 # https://www.scaler.com/topics/nlp/positional-encoding/
 # https://towardsdatascience.com/master-positional-encoding-part-i-63c05d90a0c3
+
+
+#%%
+# misc sidenotes: 
+# sidenote:----------------------------------------------------------------------------
+# deprecated!
+# TODO: use scaled_dot_product_attention to use Flash Attention v2 which speeds up
+# the calculation a lot since pytorch 2.1 we can use this, but in pytorch 2.2 
+# flash attention v2 was implemented which gives 2x more speed compared to 
+# previous version which was fast by itself alone!
+# ref : https://github.com/pytorch/pytorch/releases/tag/v2.2.0 
+# Updated flash attention kernel in scaled_dot_product_attention to use Flash Attention v2 (#105602)
+# Previously, the v1 Flash Attention kernel had a Windows implementation. 
+# So if a user on Windows had explicitly forced the flash attention kernel
+# to be run by using sdp_kernel context manager with only flash attention enabled,
+# it would work. 
+# In 2.2, if the sdp_kernel context manager must be used, use the memory efficient
+# or math kernel if on Windows. 
+# with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
+# # Don't force flash attention to be used if using sdp_kernel on Windows
+# with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=True):
+#   torch.nn.functional.scaled_dot_product_attention(q,k,v)
+
+# update 2026
+# TODO: use scaled_dot_product_attention (SDPA) to take advantage of
+# note in practice we dont write the attention mechanism ourselves
+# because to actually get the most out of our hardware, we need lots
+# of optimizations both for much better efficient memory usage and
+# computtaion speed. for that we have a few options. lets talk about them. 
+# In Pytorch we can use its optimized attention kernels such as
+# FlashAttention when available for our software/hardware stack.
+# PyTorch automatically selects an appropriate SDPA backend depending on
+# the input tensors, hardware, dtype, sequence length, etc.
+# This can include FlashAttention, memory-efficient attention, cuDNN attention,
+# or fall back to the standard math implementation when an optimized kernel
+# is not available/supported.
+# In older versions, we had to pay much more attention to which
+# backend was being used. PyTorch 2.2 introduced FlashAttention-2 support
+# in scaled_dot_product_attention, which provided a significant performance
+# improvement over the previous FlashAttention implementation.
+# The API for manually controlling the SDPA backend has also changed.
+# We dont use the older torch.backends.cuda.sdp_kernel API for new code
+# anymoe, instead we use torch.nn.attention.sdpa_kernel from torch.nn.attention module:
+#
+# from torch.nn.attention import SDPBackend, sdpa_kernel
+#
+# with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+#     output = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+#
+# Also, we generally should *not* force a specific backend unless we have
+# benchmarked it and know that it is beneficial for our particular workload.
+# SDPA can automatically select the appropriate backend, so in most cases
+# simply calling scaled_dot_product_attention is the right way.
+#
+# Also note that Pytorch's built-in FlashAttention backend and the standalone
+# FlashAttention package are related but are not exactly the same thing.
+# The official FlashAttention project provides its own highly optimized CUDA
+# implementations and Python bindings, which can be installed separately.
+#
+# For example, installing the standalone package flash-attn (e.g. pip install flash-attn)
+# allows us to directly use the FlashAttention kernels.
+# (like e.g. 
+# from flash_attn import flash_attn_func
+# output = flash_attn_func(q, k, v, causal=True)
+# )
+#
+# This can sometimes be significantly faster than the default Pytorch
+# implementation for particular workloads, but it is NOT guaranteed to be
+# faster. The result depends heavily on the GPU architecture, tensor shapes,
+# dtype, sequence length, head dimension, CUDA/Pytorch versions and the
+# particular kernel that ends up being selected.
+#
+# The FlashAttention project has also continued to evolve considerably.
+# FlashAttention-2 was followed by FlashAttention-3, which targets Hopper
+# GPUs such as the H100, and the project now at the time or writing this(sep 2026) 
+# also has FlashAttention-4, which uses CuTeDSL and targets newer Hopper
+# and Blackwell GPUs These newer implementations are specifically optimized around the
+# capabilities of newer NVIDIA hardware.
+#
+# Therefore, if performance is important, it can be worth benchmarking:
+#
+# 1. regular PyTorch attention
+# 2. PyTorch SDPA with automatic backend selection
+# 3. SDPA with a specific backend forced
+# 4. the standalone FlashAttention package
+#
+# The fastest option can change depending on the GPU and input dimensions,
+# so we should benchmark the actual workload instead of assuming that
+# FlashAttention is always faster.
+#
+# In particular, dimensions such as head_dim, sequence length, batch size
+# and number of heads can have a large impact on which kernel is selected
+# and how efficiently the GPU can execute it.
+#
+# Another interesting PyTorch regarding attention implementation is its FlexAttention module.
+# we will learn more about it later on. (see the end for more)
+# -------------------------------------------------------------------------
+# Flex attention explanation: 
+# TODO: we need to talk about AliBi,RoPE, so the explanation below fully clicks. 
+# I need to bring the code/explanations from my ImageLet project over here
+# and then this part 
+# FlexAttention is a bit different from regular scaled_dot_product_attention (SDPA).
+# With SDPA, we basically describe standard attention and let PyTorch choose
+# the best available optimized attention backend.
+
+# however FlexAttention is built for cases where we want to customize the attention
+# computation itself, for example with custom score modifications, masks,
+# sliding-window attention, ALiBi, document masking, soft-capping, etc.
+#
+# Instead of writing our own CUDA/Triton kernel for every custom attention
+# variant, FlexAttention allows us to describe the modification in Python
+# through things such as score_mod and mask_mod, and torch.compile can then
+# generate a fused attention kernel for us.
+#
+# This is another good example of why fusing operations is not as simple
+# as just combining several Python operations into one.
+# The compiler can generate a completely different kernel underneath,
+# with different tiling strategies, memory accesses, register usage, etc.
+
+
+# todo : add updates and notes about transformer architectural updates, 
+# and positional encodings used from my imagelet project here. 
+# maybe even have a clean version without repeative comments 
+# and include only the novel version, and at the very end show
+# what we actually use in practice? 
