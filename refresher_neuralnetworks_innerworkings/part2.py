@@ -33,7 +33,7 @@ import torch.nn.functional as F
 # anymore to have figures/plots inlined! but im just writing it here for
 #muscle memory of mine!!!
 
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 # lets extract the alphabet and create atoi and itoa mappings
 atoi={'.':0}
 atoi.update({ch:i for i,ch in enumerate(sorted(set(''.join(names))),start=1)})

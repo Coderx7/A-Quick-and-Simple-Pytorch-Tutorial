@@ -38,7 +38,7 @@ torch.manual_seed(255)
 random.seed(255)
 
 # now lets read the dataset and build our dataset
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 # now lets create mappings to convert characters to numbers, since our network
 # works with numbers only!
 # first lets extract all the unique characters in our dataset

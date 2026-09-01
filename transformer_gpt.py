@@ -39,7 +39,7 @@ random.seed(255)
 # is around 1million characters (around 1MB in size), and our model is
 # supposed to create texts resembling this dataset.
 dataset = []
-with open('./tiny_shakespear.txt','r') as file:
+with open('./data/tiny_shakespear.txt','r') as file:
     # this time we read the whole text as one big str
     dataset = file.read()
     

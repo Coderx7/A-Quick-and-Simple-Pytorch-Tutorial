@@ -9,7 +9,7 @@
 import itertools
 import torch
 # we start off by reading the data and implementing our simple nn with emebdings
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 # we need to grab all the unique characters in the dataset
 # and sort them for ease of use
 character_list = sorted(set(''.join(names)))
@@ -1097,7 +1097,7 @@ import torch.nn.functional as F
 random.seed(255)
 g = torch.Generator().manual_seed(255)
 
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 character_list = sorted(set(''.join(names)))
 print(f'{character_list=}')
 character_list = ['.']+character_list

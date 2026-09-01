@@ -32,7 +32,7 @@ for ch1, ch2 in zip(name,name[1:]):
 # we create a bigram model first and then try to create an mlp doing the same thing and learn 
 # many concepts and stuff along the way and get a good intutin concerning them inshaallah
 
-words=open('./names.txt', 'r').read().splitlines()
+words=open('./data/names.txt', 'r').read().splitlines()
 words[:5]
 
 #%% in the name of God the most compassionate the most merciul 
@@ -69,7 +69,7 @@ words[:5]
 # in our case, we are going to build a character level bigram model, not a word level one!
 # we are going to use a name dataset that holds populare names in the united states of america
 # lets see a few of these names
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 print(f'{len(names)=:,}')
 print(f'shortest name has a length of: {min(len(name) for name in names)}')
 print(f'longest  name has a length of: {max(len(name) for name in names)}')

@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 %matplotlib inline
 
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 # lets extract the alphabet and create atoi and itoa mappings
 atoi={'.':0}
 atoi.update({ch:i for i,ch in enumerate(sorted(set(''.join(names))),start=1)})
@@ -1053,7 +1053,7 @@ class Flatten:
 
 
 # now lets create our exmaple here again
-names = open('./names.txt').read().splitlines()
+names = open('./data/names.txt').read().splitlines()
 # now lets create itoa and atoi dictionaries 
 atoi={'.':0}
 atoi.update({ch:i for i,ch in enumerate(sorted(set(''.join(names))),1)})
