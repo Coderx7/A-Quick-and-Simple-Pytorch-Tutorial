@@ -4769,5 +4769,5 @@ visualize_embedding_space(model.input_embedding, int2word, words_to_visualize=20
 
 #%%
 # Named-Entity Recognition(NER). 
-
+# a good video on positional encoding 2026 : https://www.youtube.com/watch?v=A-cgFIKDsPc
 # %%

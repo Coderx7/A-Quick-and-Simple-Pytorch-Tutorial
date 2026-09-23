@@ -362,8 +362,7 @@ plt.title('Loss')
 plt.legend()
 plt.show()
 
-#%%
-#DCGAN - Unsupervised representation learning With deep convolutional Generative adversarial networks - ICLR 2016
+#%% DCGAN - Unsupervised representation learning With deep convolutional Generative adversarial networks - ICLR 2016
 # the digits in vanilla GAN doesnt look that good, we pointed out earlier
 # that this is expected, as getting good generations is more involved than
 # what our simple setup could possibly offer. so now we will be covering 

@@ -1,3 +1,6 @@
 data/
 FutureTodos/
 notebook_exports/
+results/
+weights/
+.vscode/
