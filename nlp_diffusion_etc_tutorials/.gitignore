@@ -1,0 +1,8 @@
+*.mp4
+*.tar
+*.pth
+*.pt
+*.zip
+*.safetensors
+
+Codes/
