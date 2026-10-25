@@ -1101,13 +1101,26 @@ print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous().is_contiguous()}')  # False
 
 # sidenote:
-# For a tensor to be 'viewed', the new view size must be 'Compatible' with its 
-# original size and stride, i.e. each new view dimension must either:
-# i.be a subspace of an original dimension, or
-# ii.only span across original dimensions d,d+1,…,d+k that satisfy the following 
-# contiguity-like condition that ∀i=0,…,k−1
-# stride[i] = stride[i+1] × size[i+1]
-# Otherwise, contiguous() needs to be called before the tensor can be viewed. 
+# You may sometimes see view() refuses to reshape a
+# tensor, even though the number of elements stays the same! 
+# you might ask yourself, were'nt we supposed to be able
+# to reshape a tensor however we want using view()?
+# well, no! 
+# you see, the catch is that view() doesn't just care about
+# the shape, it also cares about how the tensor's data
+# is laid out in memory. For a tensor to be viewed with a
+# new shape, that shape must be compatible with the tensor's
+# original size and stride.
+# Basically, each dimension in the new shape must either:
+# - Fit entirely within a single original dimension, or
+# - Span multiple consecutive original dimensions, say (d, d+1, \ldots, d+k),
+# provided they satisfy the following contiguity-like condition:
+# [
+# \text{stride}[i] = \text{stride}[i+1] \times \text{size}[i+1]
+# ]
+# for all (i = d, \ldots, d+k-1).
+# If these conditions aren't met, we can't simply view the tensor with the new shape.
+# We'll first need to call contiguous() to make its memory layout compatible. 
 
 #sidenote:
 # what does contigueous mean and whats the deal with strides?
