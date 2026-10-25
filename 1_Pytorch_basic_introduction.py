@@ -1073,25 +1073,66 @@ print(f'  tensor:             {tensor}')
 print(f'  tensor transposed:  {tensorT}')
 
 # Pytorch offers another method named *view*. The `.view()` method behaves similarly 
-# to `reshape()`, with one important distinction, it only works on contiguous tensors
-# and therefore never allocates new memory.
-
+# to `reshape()`, with one important distinction, it never allocates new memory, 
+# rather it shares the underlying storage with the original tensor, provided the 
+# the new shape is compatible with the tensor’s existing shape and strides.
+# in other words, the number of elements must be the same and the strides be compatible.
+# lets see what this means with a few examples.
+#%%
 # In the previous example if we tried to use `.view()` we would haved faced 
 # a runtime error, which would interestingly instruct us to use `.reshape()` instead!
-
-# How can we tell whether a tensor is contiguous?
-# Using `is_contiguous()` we can easily determine if a tensor is contigous or not:
+# Obviously we know this happened because the tensor in that example is no 
+# longer contiguous. So if we make a tensor contiguous we should be fine!
+# 
+# But how can we tell whether a tensor is contiguous so before we try the `view()`
+# we know for sure whether its going to work or not? 
+# We can use `.is_contiguous()` to easily determine whether a tensor is contigous or not:
 print(f'tensor_3x4 contiguous:     {tensor_3x4.is_contiguous()}')      # True
 print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 
-# `.reshape()` as you saw is more flexible than `.view()`. Like a `.view()` 
-# it returns a view whenever possible, but if it can not rearrange the memory
-# layout, it transparently allocates a new tensor and returns a copy instead.
+# so we can only `.view()` on continuous tensors and reshape them however we like right?
+# well no, not quite!
+# `.view()` works only when the requested shape is compatible with the tensor’s 
+# existing shape and *strides*. we learned contiguous tensors always work  
+# because contiguity guarantees stride compatibility for reshaping, however 
+# some non-contiguous tensors also do work.
+# take our existing example, 
+tensor_3x4_t = tensor_3x4.t() 
+# because we use transpose() (`.t()`) operation, the result is no more contiguous,
+# evident by is_contiguous() result: 
+print(tensor_3x4_t.is_contiguous())  # False
+# However, despite not being contiguous, we can still use `view()`:
+result = tensor_3x4_t.view(4, 1, 3)
+# it works because the number of elements and strides are still compatible
+print(result.shape)          # torch.Size([4, 1, 3])
+
+# However, with a different view it fails: 
+# result = tensor_3x4_t.view(2, 1, 6)  # RuntimeError: view size is not compatible with input tensor's size and stride ...
+# 
+# flattening the very same tensor also fails! despite still having
+# the same number of elements!
+# flatten_ = tensor_3x4_t.view(12)      # RuntimeError: view size is not compatible with input tensor's size and stride ...
+# 
+# it fails because the original tensors *strides* are no longer compatible with 
+# the new tensor's strides. that would require a different memory-access
+# pattern! it can not produce a view like that without changing the way
+# its elements are accessed and thus issues an error. 
+# 
+# so the `.view()` can be used on both contiguous and non-contiguous tensors provided
+# they have compatible strides and same number of elements. as we saw here, the
+# congitguous tensor always satisfies this requirement while the non-contiguous does not
+# hence why you may see the `.view()` being often used with contiguous tensors. 
+#
 #
 # sidenote:
-# If a tensor is not contigeous, we can use `.contigeous()` and make it continueous
-# Note however, this means a copy occurs, so a `tensor.contigeous().view()` 
-# is no different that `tensor.reshape()`. 
+# Using `.contigeous()` we can turn a non-contiguous tensor, continueous!
+# note `.contigeous()` creates a new copy of the underlying data, so a `tensor.contigeous().view()`
+# is essentially no different that `tensor.reshape()`!
+#
+#
+# `.reshape()` as you se is more flexible than `.view()`. Like a `.view()` 
+# it returns a view whenever possible, but if it can not rearrange the memory
+# layout, it transparently allocates a new tensor and returns a copy instead.
 # 
 # This is why many suggest to use `.reshape()` instead, unless you want to make your
 # intent clear by using `view()` signifying, the tensor being worked on uses contigeous
@@ -1101,16 +1142,13 @@ print(f'tensor_3x4.t() contiguous: {tensor_3x4.t().is_contiguous()}')  # False
 print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous().is_contiguous()}')  # False
 
 # sidenote:
-# You may sometimes see view() refuses to reshape a
-# tensor, even though the number of elements stays the same! 
-# you might ask yourself, were'nt we supposed to be able
-# to reshape a tensor however we want using view()?
-# well, no! 
-# you see, the catch is that view() doesn't just care about
+# we saw that we may sometimes see view() refuses to reshape 
+# a tensor, even though the number of elements is the same! 
+# and learned `view()` doesn't just care about
 # the shape, it also cares about how the tensor's data
-# is laid out in memory. For a tensor to be viewed with a
-# new shape, that shape must be compatible with the tensor's
-# original size and stride.
+# is laid out in memory but what does that mean exactly?
+# For a tensor to be viewed with a new shape, that shape must
+# be compatible with the tensor's original size and stride.
 # Basically, each dimension in the new shape must either:
 # - Fit entirely within a single original dimension, or
 # - Span multiple consecutive original dimensions, say (d, d+1, \ldots, d+k),
@@ -1120,7 +1158,8 @@ print(f'tensor_3x4.t().contiguous().is_contiguous(): {tensor_3x4.t().contiguous(
 # ]
 # for all (i = d, \ldots, d+k-1).
 # If these conditions aren't met, we can't simply view the tensor with the new shape.
-# We'll first need to call contiguous() to make its memory layout compatible. 
+# We'll first need to call contiguous() to make its memory layout compatible.
+ 
 
 #sidenote:
 # what does contigueous mean and whats the deal with strides?
