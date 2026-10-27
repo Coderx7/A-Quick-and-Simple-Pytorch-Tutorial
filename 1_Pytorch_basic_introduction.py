@@ -588,8 +588,9 @@ print(f'Tensor layout:                         {tensor.layout}')
 # go wrong, and see it in error messages, is the contiguous property
 # of a tensor. 
 # A contiguous tensor is stored in one solid/uninterrupted block of memory.
-# A lot of PyTorch operations are faster on contiguous tensors, and some
-# operations (such as view()) require contiguity otherwise we face errors!
+# A lot of PyTorch operations are faster on contiguous tensors, and keeping
+# tensors contiguous helps avoid compatibility issues with operations like `.view()``,
+# which may otherwise fail depending on the tensor's memory layout.!
 print(f'Is tensor contiguous?                  {tensor.is_contiguous()}')
 
 # `grad_fn` property stores the operation that created this tensor.
