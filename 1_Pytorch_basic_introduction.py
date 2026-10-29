@@ -312,9 +312,9 @@ def show_tensor(name,t,newline=True):
 t = torch.Tensor(size=(1,))              # Using uninitialized scaler 
 t1_zeros = torch.zeros(size=(5,))        # using all zeros 
 t1_ones = torch.ones(size=(2, 2))        # using all ones
-t1_rand = torch.rand(size=(2, 2, 2))     # Using uniform distribution [0,1]
-t1_randn = torch.randn(size=(2, 2, 2))   # Using normal distribution (mean=0, std=1)
-t1_empty = torch.empty(size=(2, 2, 2))   # Using uninitialized memory
+t1_rand = torch.rand(size=(3, 5, 6))     # Using uniform distribution [0,1]
+t1_randn = torch.randn(size=(3, 5, 6))   # Using normal distribution (mean=0, std=1)
+t1_empty = torch.empty(size=(3, 5, 6))   # Using uninitialized memory
 
 # TODO : put all tensors on a new line so they look nicer when printed,
 print('Tensor((1,))')
@@ -328,6 +328,9 @@ print(t1_ones)
 
 print('\nRand((2,2,2)):')
 print(t1_rand)
+
+print('\nRandn((2,2,2)):')
+print(t1_randn)
 
 print('\nEmpty((2,2,2)):')
 print(t1_empty)
