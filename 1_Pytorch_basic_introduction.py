@@ -16,9 +16,9 @@ def show_tensor(name,t,newline=True):
     print(t)
 
 #%% Introduction
-# In this chapter we are going to learn about pytorch and see how we can build 
-# different kinds of models but before we actually do any of that, we first 
-# need to get familiar with the library we'll be using, which is obviously pytorch!
+# In this book, we’ll explore PyTorch and learn how to use it to build different
+# kinds of models. Before we jump into building models, though, we first need to
+# familiarize ourselves with PyTorch and understand the tools it provides.
 # 
 # before we continue, I just need to add that I initially wrote this for myself,
 # as a memo/reminder/review kind of thing so I could refresh my memory from time
