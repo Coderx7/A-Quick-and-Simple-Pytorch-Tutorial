@@ -312,8 +312,8 @@ def show_tensor(name,t,newline=True):
 t = torch.Tensor(size=(1,))              # Using uninitialized scaler 
 t1_zeros = torch.zeros(size=(5,))        # using all zeros 
 t1_ones = torch.ones(size=(2, 2))        # using all ones
-t1_rand = torch.rand(size=(3, 5, 6))     # Using uniform distribution [0,1]
-t1_randn = torch.randn(size=(3, 5, 6))   # Using normal distribution (mean=0, std=1)
+t1_rand = torch.rand(size=(2, 2, 2))     # Using uniform distribution [0,1]
+t1_randn = torch.randn(size=(2, 2, 2))   # Using normal distribution (mean=0, std=1)
 t1_empty = torch.empty(size=(3, 5, 6))   # Using uninitialized memory
 
 # TODO : put all tensors on a new line so they look nicer when printed,
@@ -332,7 +332,7 @@ print(t1_rand)
 print('\nRandn((2,2,2)):')
 print(t1_randn)
 
-print('\nEmpty((2,2,2)):')
+print('\nEmpty((3,5,6)):')
 print(t1_empty)
 
 # We use `torch.zeros()` when we want a tensor to have zero values everywhere.
@@ -347,16 +347,21 @@ print(t1_empty)
 # 
 # We may also want to create a tensor quickly, without initializing it 
 # with anything really, in this case we use `torch.empty()` which creates
-# an empty tensor in the sense that its not initialized so it has whatever
-# values that happens to be on the memory where it points to. 
-# its not empty(as in having all values equals to 0)
-# its empty in the sense, its not pre-initialized. this is especially
-# useful for cases where we want to fill a tensor with some calculations,
-# and thus it doesnt make sense to initialize it with a value to only be
-# replaced later, which would result in unnecessary computation overhead
-# and slower speed! its equivalent to doing `torch.Tensor()`
+# an empty tensor, a tensor whose elements are uninitialized and 
+# may contain whatever values that happen to be present in the allocated memory. 
+# it is not empty in the sense of having all its values equal to zero
+# rather, its elements are not assigned to specific values (.i.e not pre-initialized.)
+# this is especially useful for cases where we want to fill a tensor
+# with the results of some calculations, so it doesnt make sense to 
+# initialize it with a value to only be replaced later, which would 
+# result in unnecessary computation overhead and slower speed! 
+# its equivalent to doing `torch.Tensor()` which also uses uninitialized values.
 # 
+# In our case however it just happens that we get all zeros, its not guaranteed
+# and it can change to any random values. it depends solely on the allocated memory 
+# at the time of creation.
 
+#%%
 # What if we want our tensors to have specific data!
 # like we have our own data and need to create a tensor for it
 # how do we do that? 
@@ -433,7 +438,7 @@ print(f"PyTorch precision:     {torch._tensor_str.PRINT_OPTS.precision}")
 # or save the defaults before we apply any changes and then restore them
 # later.
 torch.set_printoptions(profile='default')
-np.set_printoptions(precision=8)    # manually set precision back to 8, the NumPys default.
+np.set_printoptions(precision=8, suppress=False)    # manually set precision back to 8, the NumPys default.
 
 print("\nUsing PrintOption's Default profile")
 print(f'Random Tensor:       {random_v}')
@@ -1789,22 +1794,33 @@ show_tensor("Y",Y)
 Z = torch.matmul(Y, X)
 show_tensor("Y @ X",Z)
 
-# As you just saw, `Y` was broadcasted so it could be multiplied by `X`
-# `Y` is 1D and it is treated as `(1,2)` so the dimensions between two tensors
-# are valid. Thus the output becomes a `1x3` tensor! 
+# Since Y is 1D tensor with shape `(2,)`, to make the multiplication
+# with X possible, torch treats Y as a row vector of shape `(1,2)`
+# so the operation is therefore equivalent to (1, 2) @ (2, 3),
+# which produces a result with shape (1, 3).
+# PyTorch then removes the added leading dimension of size 1,
+# so the actual output is a 1D tensor with shape (3,).
 
 # now lets transpose X and see what changes! we use .t() for transposing!
 
 Z = torch.matmul(X.t(), Y)
 show_tensor("X.t() @ Y",Z)
 
-# now in this example, the tensor_2 again is broadcasted and this time  
-# it is treated as (2x1) tensor so the dimensions between tensors are valid 
-# as you can see the output is a tensor of 3x1.
+# This time, X.t() has the shape (3, 2).
+# Since Y is a 1D tensor with shape (2,), in order to make the multiplication
+# possible, this time around, `torch.matmul` treats it as a column vector with
+# shape (2, 1) for the matrix multiplication.
+# The operation therefore is equivalent to (3, 2) @ (2, 1),
+# which produces a result with shape (3, 1), which the trailing dimension of 
+# size 1 is then removed so the actual output becomes a 1D tensor with shape (3,).
 
-# note that, since one of our tensors is 1D, the result is also shown as 1D
-# if we explictly make the tensor_2 2D, the output will follow suit as well
-# here we get a row vector which is (1,3) (A row vector is a one-dimensional array (or vector) that has a single row and multiple columns)
+# so as you see when one operand is 1D, `torch.matmul` handles it specially,
+# it temporarily adds a dimension for the matrix multiplication
+# and removes that dimension from the result.
+#
+# if we explictly make the Y 2D, the output will follow suit as well
+# here we get a row vector which is (1,3) (A row vector is a one-dimensional array
+# (or vector) that has a single row and multiple columns)
 
 Z = torch.matmul(Y.view(1,2), X)
 show_tensor("X",X)
@@ -1883,9 +1899,10 @@ X = torch.empty(5,7,3)
 Y = torch.empty(5,7,3)
 # Tensors with the same shapes are always broadcastable (i.e. the above rules always hold)
 
-X = torch.empty((0,))
-Y = torch.empty(2,2)
-# x and y are not broadcastable, because x does not have at least 1 dimension
+X = torch.empty((0,))       # 1d with 0 elements
+Y = torch.empty(2,2)        # 2d with 4 elements
+# x and y are not broadcastable, because their trailing dimensions
+# are neither equal nor 1, so they are incompatible.
 
 # can line up trailing dimensions
 X = torch.empty(5,3,4,1)
@@ -1983,7 +2000,7 @@ print(f"Sum = {repr(matrix.sum().item())}")
 # Reductions can also be performed along a specific dimension.
 show_tensor("Column sum(dim=0)",matrix.sum(dim=0))
 
-show_tensor("Column sum(dim=1)",matrix.sum(dim=1))
+show_tensor("Row sum(dim=1)",matrix.sum(dim=1))
 
 show_tensor("Column mean(dim=0)",matrix.mean(dim=0)) 
 #%% 7.6 Advanced Matrix Multiplication
@@ -2704,10 +2721,10 @@ with torch.device(device) as device:
     show_tensor("random_tensor_1 (Global RNG)",random_tensor_1)
     show_tensor("random_tensor_2 (local generator)",random_tensor_2)
     show_tensor("random_tensor_3 (local generator)",random_tensor_3)
-        
+
 # and we get : 
-#random_tensor_1=tensor([[-0.7056,  0.6741],
-#                        [-0.5454,  0.9107]])
+#random_tensor_1=tensor([[ 1.0861,  0.0499],
+#                        [-1.6674, -1.0434]])
 # random_tensor_2=tensor([[-0.4868, -0.6038],
 #                         [-0.5581,  0.6675]])
 # random_tensor_3=tensor([[-0.1974,  1.9428],
@@ -2974,7 +2991,7 @@ for i in range(torch.cuda.device_count()):
     # that are currently using a specific GPU vram. its a string and 
     # we can print it rightaway or parse it and extract relavent information
     processes = torch.cuda.memory.list_gpu_processes(i)
-    print(f'  - processes taking vram:')
+    print('  - processes taking vram:')
     print(f'  - \t{processes=}')
     
     # memory stats offer more information in the form of a dictionary. 
@@ -3190,7 +3207,8 @@ from contextlib import contextmanager
 
 @contextmanager
 def printoptions(**kwargs):
-    # save the options we care about
+    # set the default options to restore
+    # after the context is exited
     defaults = {
         "precision": 4,
         "threshold": 1000,
