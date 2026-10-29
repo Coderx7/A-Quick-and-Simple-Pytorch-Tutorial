@@ -399,11 +399,11 @@ print(f'\ntorch.tensor(10):\n{torch.tensor(10)}')  # Returns a LongTensor contai
 # note this is a great help for debugging which we later
 # come to talk about in the upcomming chapters. 
 # lets set the precision to 4 decimals 
-
+#%%
 random_v = torch.randn(3,)
 print("\nDefault Behavior")
 print(f'Random Tensor:       {random_v}')
-print(f'Random Tensor:       {random_v.numpy()}')
+print(f'Random Numpy Array:       {random_v.numpy()}')
 
 torch.set_printoptions(precision=2, sci_mode=False)
 np.set_printoptions(precision=2, suppress=True)
@@ -411,12 +411,26 @@ np.set_printoptions(precision=2, suppress=True)
 print("\nUsing PrintOption's Precision=2")
 print(f'Random Tensor:       {random_v}')
 print(f'Random Numpy Array:  {random_v.numpy()}')
+#%%
+# To see the current print options, we can use `np.get_printoptions()`
+# in NumPy, which returns a dictionary of settings. We can access a
+# specific setting by using its corresponding key.
+#
+# PyTorch uses a slightly different approach. We can access its print
+# options through the `torch._tensor_str.PRINT_OPTS` attribute.
+# By specifying the attribute name, we can retrieve the desired value.
+
+print(f"NumPy precision:       {np.get_printoptions()['precision']}")
+print(f"PyTorch precision:     {torch._tensor_str.PRINT_OPTS.precision}")
 
 # What if we need to reset it back to the defaults? 
-# pretty easy! we can use the `'default'` profile and
-# just go back to default!
+# pretty easy! in PyTorch we can use the `'default'` profile and
+# just go back to default! Numpy on the other hand doesnt support such
+# a behavior so the best move is to either use it as a context manager
+# or save the defaults before we apply any changes and then restore them
+# later.
 torch.set_printoptions(profile='default')
-np.set_printoptions()
+np.set_printoptions(precision=8)    # manually set precision back to 8, the NumPys default.
 
 print("\nUsing PrintOption's Default profile")
 print(f'Random Tensor:       {random_v}')
@@ -424,7 +438,7 @@ print(f'Random Numpy Array:  {random_v.numpy()}')
 
 # We will talk about this in more detail in the OprintOptions
 # chapter.
-
+#%%
 # 1.3 Shared Memory vs. Copying (Bridging PyTorch and NumPy)
 # We can directly create a new tensor from a numpy array! 
 # unlike the previous way, this uses the same underlying
@@ -1814,7 +1828,7 @@ show_tensor("torch.mm(Y.view(1,2), X)",Z)
 # now if we transposed X:
 Z = torch.mm(X.t(), Y.view(2,1))
 # print(f'data_1.t()(3x2) * data_2(2x1): {Z}')
-show_tensor("X.t()",X)
+show_tensor("X.t()",X.t())
 show_tensor("Y",Y)
 show_tensor("torch.mm(X.t(), Y.view(2,1))",Z)
 
