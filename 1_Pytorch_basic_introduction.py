@@ -821,6 +821,7 @@ print(f"XPU available:  {hasattr(torch, 'xpu') and torch.xpu.is_available()}")
 # 3. Inspecting a tensor's device
 # Every tensor knows which device it lives on. we can inspect it using the
 # `.device` property.
+tensor = torch.randn(size=(3,4), device='cuda')
 print(f"Tensor device: {tensor.device}")
 
 # On my machine, this prints 'cuda:0'!
@@ -1795,9 +1796,9 @@ show_tensor("Y.view(1,2) @ X",Z)
 
 # and likewise we get (3,1) or a column vector here
 Z = torch.matmul(X.t(), Y.view(2,1))
-show_tensor("X.t()",X)
+show_tensor("X.t()",X.t())
 show_tensor("Y",Y)
-show_tensor("t() @ Y.view(2,1)",Z)
+show_tensor("X.t() @ Y.view(2,1)",Z)
 
 # we can do all of these using mm! 
 # print('\nUsing torch.mm:')
